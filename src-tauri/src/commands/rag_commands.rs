@@ -1104,3 +1104,39 @@ pub async fn test_embedding_connection(
         }
     }
 }
+
+// ============================================================================
+// Memory Collection Management
+// ============================================================================
+
+/// Memory集合的固定名称和ID
+pub const MEMORY_COLLECTION_NAME: &str = "agent_memory";
+pub const MEMORY_COLLECTION_DESCRIPTION: &str = "Long-term memory storage for AI agents. Stores important solutions, workflows, and findings for future reference.";
+
+/// 确保memory集合存在，如果不存在则创建
+pub async fn ensure_memory_collection_exists() -> Result<String, String> {
+    info!("Ensuring memory collection exists");
+    
+    let rag_service = get_global_rag_service().await?;
+    
+    // 获取所有集合
+    let status = rag_service.get_status().await.map_err(|e| e.to_string())?;
+    
+    // 检查是否已存在memory集合
+    for collection in &status.collections {
+        if collection.name == MEMORY_COLLECTION_NAME {
+            info!("Memory collection already exists: {}", collection.id);
+            return Ok(collection.id.clone());
+        }
+    }
+    
+    // 不存在则创建
+    info!("Creating memory collection: {}", MEMORY_COLLECTION_NAME);
+    let collection_id = rag_service
+        .create_collection(MEMORY_COLLECTION_NAME, Some(MEMORY_COLLECTION_DESCRIPTION))
+        .await
+        .map_err(|e| format!("Failed to create memory collection: {}", e))?;
+    
+    info!("Memory collection created successfully: {}", collection_id);
+    Ok(collection_id)
+}

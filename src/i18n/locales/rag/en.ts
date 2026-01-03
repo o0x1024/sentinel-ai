@@ -69,6 +69,8 @@ export default {
         descriptionLabel: 'Description',
         descriptionPlaceholder: 'Enter collection description',
         noDescription: 'No description',
+        memoryBadge: 'Memory',
+        memoryTooltip: 'This is the built-in memory collection for AI agents',
     },
 
     // Document Ingestion

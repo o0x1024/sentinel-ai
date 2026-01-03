@@ -69,6 +69,8 @@ export default {
         descriptionLabel: '描述',
         descriptionPlaceholder: '输入集合描述',
         noDescription: '无描述',
+        memoryBadge: '记忆库',
+        memoryTooltip: '这是AI代理的内置记忆集合',
     },
 
     // 文档摄取

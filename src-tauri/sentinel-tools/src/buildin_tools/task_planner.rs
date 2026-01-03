@@ -101,10 +101,13 @@ impl TaskPlannerTool {
     pub fn new() -> Self {
         Self
     }
+    
+    pub const NAME: &'static str = "task_planner";
+    pub const DESCRIPTION: &'static str = "Manage and track the agent's execution plan. Actions: add_tasks (append), update_status (change status), get_plan (view), reset (clear all), replan (replace all tasks), update_task (modify description), delete_task (remove), insert_task (add at position). Mandatory for complex multi-step security tasks.";
 }
 
 impl Tool for TaskPlannerTool {
-    const NAME: &'static str = "task_planner";
+    const NAME: &'static str = Self::NAME;
     type Args = TaskPlannerArgs;
     type Output = TaskPlannerOutput;
     type Error = TaskPlannerError;
@@ -112,7 +115,7 @@ impl Tool for TaskPlannerTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Manage and track the agent's execution plan. Actions: add_tasks (append), update_status (change status), get_plan (view), reset (clear all), replan (replace all tasks), update_task (modify description), delete_task (remove), insert_task (add at position). Mandatory for complex multi-step security tasks.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(TaskPlannerArgs))
                 .unwrap_or_default(),
         }

@@ -331,6 +331,13 @@ export default {
     inputParameters: 'Input Parameters',
     executionResult: 'Execution Result',
     toolCallId: 'Tool Call ID',
+    // History summarization
+    historySummarized: 'History Automatically Summarized',
+    originalTokens: 'Original Tokens',
+    summarizedTokens: 'Summarized Tokens',
+    tokensSaved: 'Tokens Saved',
+    saved: 'saved',
+    summaryPreview: 'Summary Preview',
     // VisionExplorerPanel
     loginPageDetected: 'Login page detected, please enter credentials',
     alreadyLoggedIn: 'Logged In',

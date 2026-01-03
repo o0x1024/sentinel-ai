@@ -37,13 +37,13 @@ pub struct ToolExecutionResult {
 static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     // All tools enabled by default
-    map.insert("port_scan".to_string(), true);
-    map.insert("http_request".to_string(), true);
-    map.insert("local_time".to_string(), true);
-    map.insert("shell".to_string(), true);
-    map.insert("subdomain_brute".to_string(), true);
-    map.insert("web_search".to_string(), true);
-    map.insert("memory_manager".to_string(), true);
+    map.insert(PortScanTool::NAME.to_string(), true);
+    map.insert(HttpRequestTool::NAME.to_string(), true);
+    map.insert(LocalTimeTool::NAME.to_string(), true);
+    map.insert(ShellTool::NAME.to_string(), true);
+    map.insert(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(), true);
+    map.insert(sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(), true);
+    map.insert(sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(), true);
     RwLock::new(map)
 });
 
@@ -54,12 +54,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
 
     let mut tools = vec![
         BuiltinToolInfo {
-            id: "port_scan".to_string(),
-            name: "port_scan".to_string(),
-            description: "High-performance TCP port scanner with service identification. Scans target IP for open ports.".to_string(),
+            id: PortScanTool::NAME.to_string(),
+            name: PortScanTool::NAME.to_string(),
+            description: PortScanTool::DESCRIPTION.to_string(),
             category: "network".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("port_scan").unwrap_or(&true),
+            enabled: *states.get(PortScanTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -89,12 +89,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: "http_request".to_string(),
-            name: "http_request".to_string(),
-            description: "Make HTTP requests to any URL. Supports GET, POST, PUT, DELETE methods with custom headers and body.".to_string(),
+            id: HttpRequestTool::NAME.to_string(),
+            name: HttpRequestTool::NAME.to_string(),
+            description: HttpRequestTool::DESCRIPTION.to_string(),
             category: "network".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("http_request").unwrap_or(&true),
+            enabled: *states.get(HttpRequestTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -131,12 +131,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: "local_time".to_string(),
-            name: "local_time".to_string(),
-            description: "Get current local or UTC time in various formats.".to_string(),
+            id: LocalTimeTool::NAME.to_string(),
+            name: LocalTimeTool::NAME.to_string(),
+            description: LocalTimeTool::DESCRIPTION.to_string(),
             category: "utility".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("local_time").unwrap_or(&true),
+            enabled: *states.get(LocalTimeTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -154,12 +154,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: "shell".to_string(),
-            name: "shell".to_string(),
-            description: "Execute shell commands. Use with caution - some commands are restricted for security.".to_string(),
+            id: ShellTool::NAME.to_string(),
+            name: ShellTool::NAME.to_string(),
+            description: ShellTool::DESCRIPTION.to_string(),
             category: "system".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("shell").unwrap_or(&true),
+            enabled: *states.get(ShellTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -181,12 +181,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: "subdomain_brute".to_string(),
-            name: "subdomain_brute".to_string(),
-            description: "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.".to_string(),
+            id: sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
+            name: sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
+            description: sentinel_tools::buildin_tools::SubdomainBruteTool::DESCRIPTION.to_string(),
             category: "network".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("subdomain_brute").unwrap_or(&true),
+            enabled: *states.get(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -232,12 +232,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: "web_search".to_string(),
-            name: "web_search".to_string(),
-            description: "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.".to_string(),
+            id: sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
+            name: sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
+            description: sentinel_tools::buildin_tools::WebSearchTool::DESCRIPTION.to_string(),
             category: "network".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("web_search").unwrap_or(&true),
+            enabled: *states.get(sentinel_tools::buildin_tools::WebSearchTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -261,12 +261,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: "memory_manager".to_string(),
-            name: "memory_manager".to_string(),
-            description: "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.".to_string(),
+            id: sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(),
+            name: sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(),
+            description: sentinel_tools::buildin_tools::MemoryManagerTool::DESCRIPTION.to_string(),
             category: "ai".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get("memory_manager").unwrap_or(&true),
+            enabled: *states.get(sentinel_tools::buildin_tools::MemoryManagerTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {

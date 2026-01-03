@@ -53,8 +53,13 @@ pub enum MemoryManagerError {
 #[derive(Default)]
 pub struct MemoryManagerTool;
 
+impl MemoryManagerTool {
+    pub const NAME: &'static str = "memory_manager";
+    pub const DESCRIPTION: &'static str = "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.";
+}
+
 impl Tool for MemoryManagerTool {
-    const NAME: &'static str = "memory_manager";
+    const NAME: &'static str = Self::NAME;
     type Args = MemoryManagerArgs;
     type Output = MemoryManagerOutput;
     type Error = MemoryManagerError;
@@ -62,7 +67,7 @@ impl Tool for MemoryManagerTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(MemoryManagerArgs)).unwrap(),
         }
     }

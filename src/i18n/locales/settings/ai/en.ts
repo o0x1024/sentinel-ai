@@ -86,6 +86,8 @@ export default {
   temperatureHint: 'Lower values make the output more deterministic, higher values make it more random and creative',
   maxTokens: 'Max Generation Tokens',
   maxTokensHint: 'Limit the maximum length of the AI response per turn',
+  maxContextLength: 'Max Context Length',
+  maxContextLengthHint: 'Maximum context window size (tokens) supported by this provider. History will be auto-summarized when exceeded',
   toolOutputLimit: 'Tool Output Limit',
   toolOutputLimitHint: 'Truncate tool output (e.g. web scraping) to prevent context overflow',
   maxTurns: 'Max Conversation Turns',

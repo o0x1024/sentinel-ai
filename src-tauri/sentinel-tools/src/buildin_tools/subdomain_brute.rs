@@ -99,10 +99,13 @@ impl SubdomainBruteTool {
             .filter(|s| !s.is_empty())
             .collect()
     }
+
+    pub const NAME: &'static str = "subdomain_brute";
+    pub const DESCRIPTION: &'static str = "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.";
 }
 
 impl Tool for SubdomainBruteTool {
-    const NAME: &'static str = "subdomain_brute";
+    const NAME: &'static str = Self::NAME;
     type Args = SubdomainBruteArgs;
     type Output = SubdomainBruteOutput;
     type Error = SubdomainBruteError;
@@ -110,7 +113,7 @@ impl Tool for SubdomainBruteTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(SubdomainBruteArgs))
                 .unwrap_or_default(),
         }

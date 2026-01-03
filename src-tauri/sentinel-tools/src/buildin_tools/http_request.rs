@@ -86,10 +86,13 @@ impl HttpRequestTool {
     pub fn with_client(client: reqwest::Client) -> Self {
         Self { client }
     }
+
+    pub const NAME: &'static str = "http_request";
+    pub const DESCRIPTION: &'static str = "Make HTTP requests to any URL. Supports GET, POST, PUT, DELETE methods with custom headers and body.";
 }
 
 impl Tool for HttpRequestTool {
-    const NAME: &'static str = "http_request";
+    const NAME: &'static str = Self::NAME;
     type Args = HttpRequestArgs;
     type Output = HttpRequestOutput;
     type Error = HttpRequestError;
@@ -97,7 +100,7 @@ impl Tool for HttpRequestTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Make HTTP requests to any URL. Supports GET, POST, PUT, DELETE methods with custom headers and body.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(HttpRequestArgs))
                 .unwrap_or_default(),
         }

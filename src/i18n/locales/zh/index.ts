@@ -365,6 +365,13 @@ export default {
     inputParameters: '输入参数',
     executionResult: '执行结果',
     toolCallId: '工具调用 ID',
+    // History summarization
+    historySummarized: '历史消息已自动摘要',
+    originalTokens: '原始 Tokens',
+    summarizedTokens: '摘要后 Tokens',
+    tokensSaved: '节省 Tokens',
+    saved: '节省',
+    summaryPreview: '摘要预览',
     // VisionExplorerPanel
     loginPageDetected: '检测到登录页面，请输入凭证',
     alreadyLoggedIn: '已登录',

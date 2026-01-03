@@ -205,6 +205,9 @@ impl ShellTool {
         Self
     }
 
+    pub const NAME: &'static str = "shell";
+    pub const DESCRIPTION: &'static str = "Execute shell commands. Use with caution - commands are subject to security policies.";
+
     /// Validate command permissions
     async fn check_permission(&self, cmd: &str) -> Result<(), ShellError> {
         let config = SHELL_CONFIG.read().await;
@@ -243,7 +246,7 @@ impl ShellTool {
 }
 
 impl Tool for ShellTool {
-    const NAME: &'static str = "shell";
+    const NAME: &'static str = Self::NAME;
     type Args = ShellArgs;
     type Output = ShellOutput;
     type Error = ShellError;
@@ -251,7 +254,7 @@ impl Tool for ShellTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Execute shell commands. Use with caution - commands are subject to security policies.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(ShellArgs))
                 .unwrap_or_default(),
         }

@@ -104,7 +104,17 @@
                       </div>
                     </div>
                     <div>
-                      <div class="font-bold">{{ collection.name }}</div>
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold">{{ collection.name }}</span>
+                        <span 
+                          v-if="collection.name === 'agent_memory'"
+                          class="badge badge-info badge-sm"
+                          :title="t('ragManagement.collection.memoryTooltip')"
+                        >
+                          <i class="fas fa-brain mr-1"></i>
+                          {{ t('ragManagement.collection.memoryBadge') }}
+                        </span>
+                      </div>
                       <div class="text-sm opacity-50">{{ collection.id }}</div>
                     </div>
                   </div>

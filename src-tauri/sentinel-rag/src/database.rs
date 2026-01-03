@@ -255,7 +255,9 @@ impl LanceDbManager {
     }
     
     async fn call_lmstudio_embedding(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let base_url = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:1234");
+        let base_url_config = self.embedding_config.base_url.as_deref().unwrap_or("http://localhost:1234");
+        // Ensure base_url does not end with /v1 or / to avoid duplication when appending /v1/embeddings
+        let base_url = base_url_config.trim_end_matches('/').trim_end_matches("/v1").trim_end_matches('/');
         // Apply global proxy configuration
         let builder = reqwest::Client::builder();
         let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;

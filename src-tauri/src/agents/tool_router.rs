@@ -201,14 +201,14 @@ impl ToolRouter {
 
     /// 构建默认工具列表
     fn build_default_tools() -> Vec<ToolMetadata> {
+        use sentinel_tools::buildin_tools::*;
+
         vec![
             // 网络工具
             ToolMetadata {
-                id: "port_scan".to_string(),
-                name: "port_scan".to_string(),
-                description:
-                    "Scan TCP ports on target IP address to discover open ports and services"
-                        .to_string(),
+                id: PortScanTool::NAME.to_string(),
+                name: PortScanTool::NAME.to_string(),
+                description: PortScanTool::DESCRIPTION.to_string(),
                 category: ToolCategory::Network,
                 tags: vec![
                     "network".to_string(),
@@ -220,10 +220,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "http_request".to_string(),
-                name: "http_request".to_string(),
-                description: "Make HTTP/HTTPS requests to any URL with custom headers and body"
-                    .to_string(),
+                id: HttpRequestTool::NAME.to_string(),
+                name: HttpRequestTool::NAME.to_string(),
+                description: HttpRequestTool::DESCRIPTION.to_string(),
                 category: ToolCategory::Network,
                 tags: vec![
                     "http".to_string(),
@@ -235,9 +234,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "subdomain_brute".to_string(),
-                name: "subdomain_brute".to_string(),
-                description: "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.".to_string(),
+                id: SubdomainBruteTool::NAME.to_string(),
+                name: SubdomainBruteTool::NAME.to_string(),
+                description: SubdomainBruteTool::DESCRIPTION.to_string(),
                 category: ToolCategory::Network,
                 tags: vec![
                     "subdomain".to_string(),
@@ -251,10 +250,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "web_search".to_string(),
-                name: "web_search".to_string(),
-                description: "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups."
-                    .to_string(),
+                id: WebSearchTool::NAME.to_string(),
+                name: WebSearchTool::NAME.to_string(),
+                description: WebSearchTool::DESCRIPTION.to_string(),
                 category: ToolCategory::Network,
                 tags: vec![
                     "search".to_string(),
@@ -269,18 +267,18 @@ impl ToolRouter {
             },
             // 系统工具
             ToolMetadata {
-                id: "local_time".to_string(),
-                name: "local_time".to_string(),
-                description: "Get current local or UTC time in various formats".to_string(),
+                id: LocalTimeTool::NAME.to_string(),
+                name: LocalTimeTool::NAME.to_string(),
+                description: LocalTimeTool::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
                 tags: vec!["time".to_string(), "date".to_string(), "clock".to_string()],
                 cost_estimate: ToolCost::Low,
                 always_available: true,
             },
             ToolMetadata {
-                id: "shell".to_string(),
-                name: "shell".to_string(),
-                description: "Execute shell commands on the system (use with caution)".to_string(),
+                id: ShellTool::NAME.to_string(),
+                name: ShellTool::NAME.to_string(),
+                description: ShellTool::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
                 tags: vec![
                     "shell".to_string(),
@@ -293,9 +291,9 @@ impl ToolRouter {
             },
             // Planning tool
             ToolMetadata {
-                id: "task_planner".to_string(),
-                name: "task_planner".to_string(),
-                description: "Manage and track execution plans for complex tasks. Use this to maintain focus and structured progress.".to_string(),
+                id: TaskPlannerTool::NAME.to_string(),
+                name: TaskPlannerTool::NAME.to_string(),
+                description: TaskPlannerTool::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
                 tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string()],
                 cost_estimate: ToolCost::Low,
@@ -336,9 +334,9 @@ impl ToolRouter {
             },
             // Memory Manager
             ToolMetadata {
-                id: "memory_manager".to_string(),
-                name: "memory_manager".to_string(),
-                description: "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.".to_string(),
+                id: MemoryManagerTool::NAME.to_string(),
+                name: MemoryManagerTool::NAME.to_string(),
+                description: MemoryManagerTool::DESCRIPTION.to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "memory".to_string(),

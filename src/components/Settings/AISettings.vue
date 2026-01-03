@@ -371,6 +371,28 @@
                 </label>
               </div>
 
+              <!-- 最大上下文长度设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.maxContextLength') }}</span>
+                </label>
+                <input 
+                  type="number" 
+                  class="input input-bordered" 
+                  v-model.number="selectedProviderMaxContextLength"
+                  @blur="saveAiConfig"
+                  min="1000"
+                  max="1000000"
+                  step="1000"
+                  placeholder="128000"
+                />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.maxContextLengthHint') }}
+                  </span>
+                </label>
+              </div>
+
               <!-- 自定义请求头 -->
               <div class="form-control">
                 <label class="label">
@@ -1265,6 +1287,16 @@ const selectedProviderDefaultModel = computed({
   }
 })
 
+// 选中提供商的最大上下文长度（双向绑定）
+const selectedProviderMaxContextLength = computed({
+  get: () => selectedProviderConfig.value?.max_context_length || 128000,
+  set: (value: number) => {
+    if (selectedProviderConfig.value) {
+      selectedProviderConfig.value.max_context_length = value
+    }
+  }
+})
+
 // 提供商默认模型变更处理
 const onSelectedProviderModelChange = () => {
   saveAiConfig()
@@ -1594,27 +1626,27 @@ const applyAndExitFullscreen = () => {
 }
 
 // 统计计算属性
-const totalInputTokens = computed(() => {
+const totalInputTokens = computed<number>(() => {
   return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.input_tokens || 0), 0)
 })
 
-const totalOutputTokens = computed(() => {
+const totalOutputTokens = computed<number>(() => {
   return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.output_tokens || 0), 0)
 })
 
-const totalCost = computed(() => {
+const totalCost = computed<number>(() => {
   return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.cost || 0), 0)
 })
 
-const maxTokens = computed(() => {
+const maxTokens = computed<number>(() => {
   return Math.max(...Object.values(props.aiUsageStats).map((usage: any) => usage.total_tokens || 0), 1)
 })
 
-const totalRequests = computed(() => {
+const totalRequests = computed<number>(() => {
   return detailedStats.value.length
 })
 
-const totalTokensFormatted = computed(() => {
+const totalTokensFormatted = computed<string>(() => {
   const total = totalInputTokens.value + totalOutputTokens.value
   if (total >= 1_000_000) {
     return `${(total / 1_000_000).toFixed(2)}M`
@@ -1624,7 +1656,7 @@ const totalTokensFormatted = computed(() => {
   return total.toLocaleString()
 })
 
-const avgCostPerRequest = computed(() => {
+const avgCostPerRequest = computed<string>(() => {
   if (totalRequests.value === 0) return '0.0000'
   return (totalCost.value / totalRequests.value).toFixed(4)
 })

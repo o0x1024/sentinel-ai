@@ -78,10 +78,13 @@ impl WebSearchTool {
                 "TAVILY_API_KEY not configured. Set it in environment or AI settings.".to_string()
             ))
     }
+
+    pub const NAME: &'static str = "web_search";
+    pub const DESCRIPTION: &'static str = "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.";
 }
 
 impl Tool for WebSearchTool {
-    const NAME: &'static str = "web_search";
+    const NAME: &'static str = Self::NAME;
     type Args = WebSearchArgs;
     type Output = WebSearchOutput;
     type Error = WebSearchError;
@@ -89,7 +92,7 @@ impl Tool for WebSearchTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(WebSearchArgs))
                 .unwrap_or_default(),
         }

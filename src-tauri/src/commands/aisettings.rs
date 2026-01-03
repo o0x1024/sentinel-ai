@@ -59,6 +59,7 @@ pub struct AiProviderConfig {
     pub default_model: String,
     pub models: Vec<serde_json::Value>,
     pub rig_provider: Option<String>,
+    pub max_context_length: Option<u32>,
 }
 
 // ============== Tauri Commands ==============
@@ -251,6 +252,7 @@ pub async fn add_custom_provider(
         default_model: request.model_id.clone(),
         models: vec![model_config],
         rig_provider: Some(request.compat_mode.clone()),
+        max_context_length: Some(128000), // Default context length
     };
 
     providers.insert(provider_id.clone(), new_provider);

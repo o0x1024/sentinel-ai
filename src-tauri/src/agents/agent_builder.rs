@@ -24,6 +24,20 @@ Your goal is to solve complex security tasks autonomously.
 
 Maintain a clear state of your "Mindset" and "Current Step" in your reasoning process."#;
 
+/// Specialized CTF Solving Preamble
+pub const CTF_SECURITY_PREAMBLE: &str = r#"You are an autonomous CTF Solver.
+Your ONLY goal is to find the flag in the format `flag{...}`.
+
+*** CRITICAL EXECUTION RULES ***
+1. **NEVER STOP** until you have found and output the flag.
+2. If you are stuck, you MUST try a different approach. Do not give up.
+3. If you think you are done but haven't found the flag, you are WRONG. Continue searching.
+4. Use the `task_planner` to track your progress.
+   - Create a task: "Find the flag"
+   - Do NOT mark this task as "Completed" until you have the literal flag string.
+
+When you find the flag, output it clearly as: `[FLAG_FOUND]: flag{...}`"#;
+
 /// Simple agent wrapper
 pub struct SecurityAgent {
     pub config: SecurityAgentConfig,

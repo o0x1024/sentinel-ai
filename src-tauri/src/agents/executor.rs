@@ -4,8 +4,8 @@
 
 use anyhow::Result;
 use sentinel_db::Database;
-use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
-use sentinel_memory::{get_global_memory, ExecutionRecord, MemoryContextRequest, ToolCallSummary};
+use sentinel_llm::{LlmClient, LlmConfig, StreamContent, StreamingLlmClient};
+use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::{get_tool_server, mcp_adapter, ToolServer};
 use serde_json::json;
 use std::sync::Arc;
@@ -693,13 +693,142 @@ async fn execute_agent_with_tools(
             Vec::new()
         }
     };
-    let mut history = reconstruct_chat_history(&history_messages);
+    let mut history_chat_messages = reconstruct_chat_history(&history_messages);
 
     // 移除历史记录中最后一条用户消息，避免与当前任务重复发送
     // 因为 stream_chat_with_dynamic_tools 会自动将 user_prompt 添加到对话末尾
-    if let Some(last) = history.last() {
+    if let Some(last) = history_chat_messages.last() {
         if last.role == "user" {
-            history.pop();
+            history_chat_messages.pop();
+        }
+    }
+
+    // 6.5. Check context length and auto-summarize if needed
+    let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000);
+    let system_tokens = estimate_tokens(&final_system_prompt);
+    let task_tokens = estimate_tokens(&params.task);
+    
+    // Estimate history tokens from ChatMessages
+    let history_tokens: usize = history_chat_messages.iter().map(|msg| {
+        estimate_tokens(&msg.content)
+    }).sum();
+    let total_tokens = system_tokens + task_tokens + history_tokens;
+    
+    // Reserve 20% for output and safety margin
+    let context_threshold = (max_context_length as f64 * 0.8) as usize;
+    
+    tracing::info!(
+        "Context usage: {}/{} tokens (system: {}, task: {}, history: {})",
+        total_tokens,
+        max_context_length,
+        system_tokens,
+        task_tokens,
+        history_tokens
+    );
+
+    // If context is approaching limit, summarize history
+    if total_tokens > context_threshold && !history_chat_messages.is_empty() {
+        tracing::warn!(
+            "Context approaching limit ({}/{}), summarizing history...",
+            total_tokens,
+            max_context_length
+        );
+
+        match summarize_history_from_chat_messages(&history_chat_messages, &llm_config).await {
+            Ok(summary) => {
+                // Replace history with a single summary message
+                history_chat_messages.clear();
+                history_chat_messages.push(sentinel_llm::ChatMessage {
+                    role: "user".to_string(),
+                    content: format!("[Previous conversation summary]\n{}", summary),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    reasoning_content: None,
+                });
+                
+                let new_total = estimate_tokens(&final_system_prompt) 
+                    + estimate_tokens(&params.task) 
+                    + estimate_tokens(&summary);
+                
+                let saved_tokens = history_tokens.saturating_sub(estimate_tokens(&summary));
+                let saved_percentage = if history_tokens > 0 {
+                    (saved_tokens as f64 / history_tokens as f64 * 100.0).round() as u32
+                } else {
+                    0
+                };
+                
+                tracing::info!(
+                    "History summarized: {} -> {} tokens (total: {}, saved: {}%)",
+                    history_tokens,
+                    estimate_tokens(&summary),
+                    new_total,
+                    saved_percentage
+                );
+
+                // Save a system message to database indicating history was summarized
+                if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+                    use sentinel_core::models::database as core_db;
+                    use chrono::Utc;
+                    
+                    let summary_meta = json!({
+                        "kind": "history_summarized",
+                        "original_tokens": history_tokens,
+                        "summarized_tokens": estimate_tokens(&summary),
+                        "saved_tokens": saved_tokens,
+                        "saved_percentage": saved_percentage,
+                        "total_tokens": new_total,
+                        "summary_preview": summary.chars().take(200).collect::<String>(),
+                    });
+                    
+                    let summary_msg = core_db::AiMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        conversation_id: params.execution_id.clone(),
+                        role: "system".to_string(),
+                        content: format!(
+                            "History automatically summarized: {} messages compressed from {} to {} tokens (saved {}%)",
+                            history_chat_messages.len(),
+                            history_tokens,
+                            estimate_tokens(&summary),
+                            saved_percentage
+                        ),
+                        metadata: Some(summary_meta.to_string()),
+                        token_count: None,
+                        cost: None,
+                        tool_calls: None,
+                        attachments: None,
+                        reasoning_content: None,
+                        timestamp: Utc::now(),
+                        architecture_type: None,
+                        architecture_meta: None,
+                        structured_data: None,
+                    };
+                    
+                    let db_clone = db.inner().clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = db_clone.create_ai_message(&summary_msg).await {
+                            tracing::warn!("Failed to save history summary message: {}", e);
+                        }
+                    });
+                }
+
+                // Emit event to frontend
+                let _ = app_handle.emit(
+                    "agent:history_summarized",
+                    &json!({
+                        "execution_id": params.execution_id,
+                        "original_tokens": history_tokens,
+                        "summarized_tokens": estimate_tokens(&summary),
+                        "saved_tokens": saved_tokens,
+                        "saved_percentage": saved_percentage,
+                        "total_tokens": new_total,
+                        "message_count": history_chat_messages.len(),
+                    }),
+                );
+            }
+            Err(e) => {
+                tracing::error!("Failed to summarize history: {}", e);
+                // Continue with original history if summarization fails
+            }
         }
     }
 
@@ -733,7 +862,7 @@ async fn execute_agent_with_tools(
         .stream_chat_with_dynamic_tools(
             Some(&final_system_prompt),
             &params.task,
-            &history,
+            &history_chat_messages,
             None, // 无图片
             dynamic_tools,
             |content| {
@@ -1169,6 +1298,79 @@ fn truncate_for_memory(text: &str, max_len: usize) -> String {
     let mut out = text.chars().take(max_len).collect::<String>();
     out.push_str("...");
     out
+}
+
+/// Get provider's max context length from database config
+async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str) -> Result<u32> {
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        // Get providers config from database
+        if let Ok(Some(config_str)) = db.get_config_internal("ai", "providers_config").await {
+            if let Ok(providers) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&config_str) {
+                // Find provider config (case-insensitive)
+                for (key, value) in providers.iter() {
+                    if key.to_lowercase() == provider.to_lowercase() {
+                        if let Some(max_ctx) = value.get("max_context_length").and_then(|v| v.as_u64()) {
+                            return Ok(max_ctx as u32);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Default fallback values based on provider
+    let default = match provider.to_lowercase().as_str() {
+        "openai" => 128000,      // GPT-4 Turbo
+        "anthropic" => 200000,   // Claude 3
+        "gemini" => 1000000,     // Gemini 1.5 Pro
+        "deepseek" => 64000,     // DeepSeek
+        "moonshot" => 128000,    // Moonshot
+        "groq" => 32000,         // Groq
+        "ollama" => 8192,        // Ollama (varies by model)
+        "openrouter" => 128000,  // Varies by model
+        _ => 128000,             // Safe default
+    };
+    
+    Ok(default)
+}
+
+/// Estimate token count for text (rough approximation: 1 token ≈ 4 characters)
+fn estimate_tokens(text: &str) -> usize {
+    text.len() / 4
+}
+
+/// Summarize chat history to reduce context length
+/// We use the original ChatMessage history for summarization since it's easier to work with
+async fn summarize_history_from_chat_messages(
+    history: &[sentinel_llm::ChatMessage],
+    llm_config: &LlmConfig,
+) -> Result<String> {
+    if history.is_empty() {
+        return Ok(String::new());
+    }
+
+    // Build a summary prompt from ChatMessages
+    let mut history_text = String::new();
+    for (i, msg) in history.iter().enumerate() {
+        let role = &msg.role;
+        let content = &msg.content;
+        history_text.push_str(&format!("{}. {}: {}\n", i + 1, role, content));
+    }
+
+    let summary_prompt = format!(
+        "Please summarize the following conversation history concisely, preserving key information and context:\n\n{}\n\nSummary:",
+        history_text
+    );
+
+    // Use the same LLM to generate summary
+    let client = LlmClient::new(llm_config.clone());
+    let summary = client.completion(
+        Some("You are a helpful assistant that summarizes conversations concisely."),
+        &summary_prompt,
+    ).await?;
+
+    tracing::info!("Summarized {} messages into {} tokens", history.len(), estimate_tokens(&summary));
+    Ok(summary)
 }
 
 /// 工具调用结构

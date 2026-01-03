@@ -1,7 +1,54 @@
 <template>
+  <!-- History Summarized Message - Special System Message -->
+  <div v-if="isHistorySummarized" class="history-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning">
+    <!-- Panel Header -->
+    <div 
+      @click="toggleSummaryPanel" 
+      class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-warning/20 transition-colors"
+    >
+      <!-- Icon -->
+      <i class="fas fa-compress-alt text-warning text-lg"></i>
+      
+      <!-- Title -->
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-warning">{{ t('agent.historySummarized') }}</div>
+        <div class="text-xs text-base-content/60 mt-0.5">
+          {{ summaryStats }}
+        </div>
+      </div>
+      
+      <!-- Expand/Collapse Icon -->
+      <i :class="['fas transition-transform text-xs text-warning', isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+    </div>
+    
+    <!-- Panel Content (collapsible) -->
+    <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-warning/30">
+      <div class="px-4 py-3 bg-base-100/50">
+        <div class="text-xs text-base-content/70 space-y-2">
+          <div class="flex items-center justify-between">
+            <span>{{ t('agent.originalTokens') }}:</span>
+            <span class="font-mono font-semibold">{{ formatNumber(historySummaryMeta?.original_tokens) }}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span>{{ t('agent.summarizedTokens') }}:</span>
+            <span class="font-mono font-semibold text-success">{{ formatNumber(historySummaryMeta?.summarized_tokens) }}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span>{{ t('agent.tokensSaved') }}:</span>
+            <span class="font-mono font-semibold text-warning">{{ formatNumber(historySummaryMeta?.saved_tokens) }} ({{ historySummaryMeta?.saved_percentage }}%)</span>
+          </div>
+          <div v-if="historySummaryMeta?.summary_preview" class="mt-3 pt-3 border-t border-base-300">
+            <div class="text-xs text-base-content/50 mb-1">{{ t('agent.summaryPreview') }}:</div>
+            <div class="text-xs text-base-content/70 italic">{{ historySummaryMeta.summary_preview }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Shell Tool - Render as independent message block -->
   <ShellToolResult
-    v-if="isShellTool && message.type === 'tool_call'"
+    v-else-if="isShellTool && message.type === 'tool_call'"
     :args="message.metadata?.tool_args"
     :result="message.metadata?.tool_result"
     :error="message.metadata?.error"
@@ -217,12 +264,19 @@ const resultHasOverflow = ref(false)
 const argsBodyRef = ref<HTMLElement | null>(null)
 const resultBodyRef = ref<HTMLElement | null>(null)
 
+// Summary panel collapse state
+const isSummaryPanelExpanded = ref(false)
+
 const toggleDetails = () => {
   isExpanded.value = !isExpanded.value
 }
 
 const toggleToolPanel = () => {
   isToolPanelExpanded.value = !isToolPanelExpanded.value
+}
+
+const toggleSummaryPanel = () => {
+  isSummaryPanelExpanded.value = !isSummaryPanelExpanded.value
 }
 
 const toggleArgs = () => {
@@ -297,6 +351,31 @@ const isShellTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
   return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
 })
+
+// Check if this is a history summarized message
+const isHistorySummarized = computed(() => {
+  return props.message.type === 'system' && 
+         props.message.metadata?.kind === 'history_summarized'
+})
+
+// History summary metadata
+const historySummaryMeta = computed(() => {
+  if (!isHistorySummarized.value) return null
+  return props.message.metadata as any
+})
+
+// Format summary stats for header
+const summaryStats = computed(() => {
+  if (!historySummaryMeta.value) return ''
+  const { original_tokens, summarized_tokens, saved_percentage } = historySummaryMeta.value
+  return `${formatNumber(original_tokens)} → ${formatNumber(summarized_tokens)} tokens (${t('agent.saved')} ${saved_percentage}%)`
+})
+
+// Format number with commas
+const formatNumber = (num: number | undefined) => {
+  if (num === undefined) return '0'
+  return num.toLocaleString()
+}
 
 // Status icon
 const statusIcon = computed(() => {

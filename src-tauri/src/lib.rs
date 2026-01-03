@@ -208,10 +208,25 @@ pub fn run() {
                 {
                     tracing::error!("Failed to initialize global RAG service: {}", e);
                 } else {
+                    // Ensure memory collection exists
+                    match crate::commands::rag_commands::ensure_memory_collection_exists().await {
+                        Ok(collection_id) => {
+                            tracing::info!("Memory collection ready: {}", collection_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to ensure memory collection exists: {}", e);
+                        }
+                    }
+                    
                     // Initialize Memory Tool hooks via existing RAG service
                     let store_fn = Box::new(|content: String, tags: Vec<String>| {
                         Box::pin(async move {
                             let service = crate::commands::rag_commands::get_global_rag_service()
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e))?;
+
+                            // Get memory collection ID
+                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists()
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -225,7 +240,7 @@ pub fn run() {
                                 .ingest_text(
                                     "Agent Memory",
                                     &content,
-                                    None,
+                                    Some(&collection_id),
                                     Some(meta),
                                 )
                                 .await
@@ -244,9 +259,14 @@ pub fn run() {
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
+                            // Get memory collection ID
+                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists()
+                                .await
+                                .map_err(|e| anyhow::anyhow!(e))?;
+
                             let request = sentinel_rag::models::RagQueryRequest {
                                 query,
-                                collection_id: None,
+                                collection_id: Some(collection_id),
                                 top_k: Some(limit),
                                 use_mmr: Some(true),
                                 mmr_lambda: None,
@@ -1034,33 +1054,18 @@ async fn initialize_global_proxy(db_service: &DatabaseService) -> anyhow::Result
             Ok(proxy_config) => {
                 if proxy_config.enabled {
                     set_proxy_async(proxy_config.clone()).await;
-
-                    let tools_proxy_config = sentinel_tools::GlobalProxyConfig {
-                        enabled: proxy_config.enabled,
-                        scheme: proxy_config.scheme.clone(),
-                        host: proxy_config.host.clone(),
-                        port: proxy_config.port,
-                        username: proxy_config.username.clone(),
-                        password: proxy_config.password.clone(),
-                        no_proxy: proxy_config.no_proxy.clone(),
-                    };
-                    sentinel_tools::set_global_proxy(tools_proxy_config).await;
                 } else {
                     sentinel_core::global_proxy::clear_global_proxy().await;
-                    sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default())
-                        .await;
                 }
             }
             Err(e) => tracing::warn!("Failed to parse proxy configuration JSON: {}", e),
         },
         Ok(None) => {
             sentinel_core::global_proxy::clear_global_proxy().await;
-            sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         }
         Err(e) => {
             tracing::warn!("Failed to load proxy configuration from database: {}", e);
             sentinel_core::global_proxy::clear_global_proxy().await;
-            sentinel_tools::set_global_proxy(sentinel_tools::GlobalProxyConfig::default()).await;
         }
     }
     Ok(())

@@ -86,6 +86,8 @@ export default {
   temperatureHint: '较低的值使输出更加确定性，较高的值使输出更加随机和创造性',
   maxTokens: '最大生成令牌数 (Max Tokens)',
   maxTokensHint: '限制AI单次回复的最大长度，不影响上下文总容量',
+  maxContextLength: '最大上下文长度',
+  maxContextLengthHint: '该提供商支持的最大上下文窗口大小（tokens），超出时将自动摘要历史消息',
   toolOutputLimit: '工具输出截断阈值',
   toolOutputLimitHint: '限制工具（如网页抓取）返回的最大字符数，防止上下文溢出',
   maxTurns: '最大对话轮数',

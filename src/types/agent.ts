@@ -38,6 +38,12 @@ export interface MessageMetadata {
     citations?: any[]
   }
   execution_id?: string
+  kind?: string  // 消息类型标识（如 'history_summarized'）
+  original_tokens?: number  // 历史摘要：原始token数
+  summarized_tokens?: number  // 历史摘要：摘要后token数
+  saved_tokens?: number  // 历史摘要：节省的token数
+  saved_percentage?: number  // 历史摘要：节省百分比
+  summary_preview?: string  // 历史摘要：摘要预览
 }
 
 // Agent 消息

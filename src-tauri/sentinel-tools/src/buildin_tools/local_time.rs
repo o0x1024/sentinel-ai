@@ -39,8 +39,13 @@ pub enum LocalTimeError {
 #[derive(Debug, Clone, Default)]
 pub struct LocalTimeTool;
 
+impl LocalTimeTool {
+    pub const NAME: &'static str = "local_time";
+    pub const DESCRIPTION: &'static str = "Get current local or UTC time in various formats.";
+}
+
 impl Tool for LocalTimeTool {
-    const NAME: &'static str = "local_time";
+    const NAME: &'static str = Self::NAME;
     type Args = LocalTimeArgs;
     type Output = LocalTimeOutput;
     type Error = LocalTimeError;
@@ -48,7 +53,7 @@ impl Tool for LocalTimeTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Get current local or UTC time in various formats.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(LocalTimeArgs))
                 .unwrap_or_default(),
         }

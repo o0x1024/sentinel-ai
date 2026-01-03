@@ -65,6 +65,9 @@ pub enum PortScanError {
 pub struct PortScanTool;
 
 impl PortScanTool {
+    pub const NAME: &'static str = "port_scan";
+    pub const DESCRIPTION: &'static str = "High-performance TCP port scanner with service identification. Scans target IP for open ports.";
+
     /// Get common ports list
     fn common_ports() -> Vec<u16> {
         vec![
@@ -159,15 +162,16 @@ impl PortScanTool {
 }
 
 impl Tool for PortScanTool {
-    const NAME: &'static str = "port_scan";
+    const NAME: &'static str = Self::NAME;
     type Args = PortScanArgs;
     type Output = PortScanOutput;
     type Error = PortScanError;
 
+
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "High-performance TCP port scanner with service identification. Scans target IP for open ports.".to_string(),
+            description: Self::DESCRIPTION.to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(PortScanArgs))
                 .unwrap_or_default(),
         }

@@ -502,7 +502,10 @@ const loadSettings = async () => {
           Object.assign(settings.value.system, parsed.system)
         }
         if (parsed.ai) {
-          Object.assign(settings.value.ai, parsed.ai)
+          // Skip loading AI settings from localStorage as they are managed by the backend
+          // and loaded via get_config above. This prevents stale localStorage data
+          // from overwriting fresh backend configuration.
+          // Object.assign(settings.value.ai, parsed.ai)
         }
         if (parsed.database) {
           Object.assign(settings.value.database, parsed.database)
@@ -776,12 +779,8 @@ const setDefaultChatModel = async (model: string) => {
       return
     }
     
-    // 从提供商的模型列表中找到匹配的模型
+    // 从提供商的模型列表中找到匹配的模型（可选，用于显示友好名称）
     const modelInfo = providerConfig.models?.find((m: any) => m.id === model)
-    if (!modelInfo) {
-      dialog.toast.error('选择的模型不存在于当前提供商')
-      return
-    }
     
     // 调用后端API设置默认LLM模型 - 使用正确的命令
     const modelValue = `${currentProviderLower.toLowerCase()}/${model}`
@@ -793,7 +792,9 @@ const setDefaultChatModel = async (model: string) => {
     aiConfig.value.default_llm_model = modelValue
     console.log('Updated frontend default_llm_model state:', modelValue)
     
-    dialog.toast.success(`默认 Chat 模型已设置为 ${modelInfo.name}`)
+    // 如果找到模型信息则显示友好名称，否则显示模型ID
+    const displayName = modelInfo ? modelInfo.name : model
+    dialog.toast.success(`默认 Chat 模型已设置为 ${displayName}`)
   } catch (e) {
     dialog.toast.error('设置默认 Chat 模型失败')
   }
