@@ -643,7 +643,17 @@ pub async fn test_openrouter_connection(
 async fn test_openai_connection(
     request: TestConnectionRequest,
 ) -> Result<TestConnectionResponse, String> {
-    if request.api_key.is_none() {
+    let api_base = request
+        .api_base
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+    // Check if this is a local service (LM Studio, Ollama, etc.) that doesn't require API key
+    let is_local_service = api_base.starts_with("http://localhost") 
+        || api_base.starts_with("http://127.0.0.1")
+        || api_base.starts_with("http://0.0.0.0");
+
+    // For non-local services, API key is required
+    if !is_local_service && request.api_key.is_none() {
         return Ok(TestConnectionResponse {
             success: false,
             message: "OpenAI API key cannot be empty".to_string(),
@@ -654,14 +664,14 @@ async fn test_openai_connection(
     let client = create_client_with_proxy()
         .await
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    let api_base = request
-        .api_base
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
     let mut headers = reqwest::header::HeaderMap::new();
+    
+    // Use provided API key, or use a dummy key for local services
+    let api_key = request.api_key.unwrap_or_else(|| "lm-studio".to_string());
     headers.insert(
         "Authorization",
-        format!("Bearer {}", request.api_key.unwrap())
+        format!("Bearer {}", api_key)
             .parse()
             .map_err(|e| format!("Invalid API key: {}", e))?,
     );

@@ -666,7 +666,7 @@ const getStrategyDescription = (strategy: string) => {
     'LLM': '使用 LLM 智能分析任务，准确度高，有少量 token 成本',
     'Hybrid': '关键词初筛 + LLM 精选，兼顾速度和准确度',
     'Manual': '手动选择需要的工具',
-    'Ability': '渐进式披露：先选工具组，再暴露组内工具，token 可控',
+    'Ability': '能力组模式：按主题组织工具，支持按需查看详细定义',
     'All': '使用所有可用工具（不推荐，token 消耗大）',
   }
   return descriptions[strategy] || ''

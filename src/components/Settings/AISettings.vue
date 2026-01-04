@@ -1383,7 +1383,23 @@ const rigProviderOptions = [
 ]
 
 const needsApiKey = (provider: string) => {
-  return !['Ollama'].includes(provider)
+  // Ollama never needs API key
+  if (['Ollama'].includes(provider)) {
+    return false
+  }
+  
+  // Check if this is a local OpenAI-compatible service (like LM Studio)
+  const providerConfig = selectedProviderConfig.value
+  if (providerConfig && providerConfig.rig_provider === 'openai') {
+    const apiBase = providerConfig.api_base || ''
+    if (apiBase.startsWith('http://localhost') || 
+        apiBase.startsWith('http://127.0.0.1') ||
+        apiBase.startsWith('http://0.0.0.0')) {
+      return false
+    }
+  }
+  
+  return true
 }
 
 const testConnection = (provider: string) => {

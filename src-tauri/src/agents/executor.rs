@@ -614,7 +614,65 @@ async fn execute_agent_with_tools(
     );
 
     // 3. 获取 DynamicTool 实例（用于 rig-core 原生工具调用）
-    let dynamic_tools = tool_server.get_dynamic_tools(&selected_tool_ids).await;
+    let mut dynamic_tools = tool_server.get_dynamic_tools(&selected_tool_ids).await;
+
+    // 3.5. 如果是 Ability 模式，添加 get_tool_definition 工具用于渐进式披露
+    if selection_plan.selected_ability_group.is_some() {
+        use crate::agents::tools::GetToolDefinitionTool;
+        use sentinel_tools::{DynamicTool, DynamicToolBuilder, ToolSource};
+        use serde_json::Value;
+        
+        // Create tool router Arc for the tool
+        let tool_router_arc = Arc::new(tool_router);
+        let get_def_tool = GetToolDefinitionTool::new(tool_router_arc.clone());
+        
+        // Convert Tool to DynamicTool using builder
+        let tool_def = DynamicToolBuilder::new("get_tool_definition")
+            .description("Get detailed definition, parameters, and usage instructions for a specific tool. Use this when you need to know how to use a tool before calling it.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "The name or ID of the tool to get definition for"
+                    }
+                },
+                "required": ["tool_name"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(move |args: Value| {
+                let tool = get_def_tool.clone();
+                async move {
+                    // Parse args
+                    let tool_name = args.get("tool_name")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "Missing tool_name parameter".to_string())?;
+                    
+                    // Call the tool
+                    use rig::tool::Tool;
+                    let args_struct = crate::agents::tools::get_tool_definition::GetToolDefinitionArgs {
+                        tool_name: tool_name.to_string(),
+                    };
+                    
+                    let result = tool.call(args_struct).await
+                        .map_err(|e| format!("Tool execution failed: {:?}", e))?;
+                    
+                    Ok(serde_json::json!(result))
+                }
+            })
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build get_tool_definition: {}", e))?;
+        
+        let get_def_dynamic = DynamicTool::new(tool_def);
+        
+        // Add to the beginning so it's always available
+        dynamic_tools.insert(0, get_def_dynamic);
+        
+        tracing::info!(
+            "Added get_tool_definition tool for progressive disclosure in ability group '{}'",
+            selection_plan.selected_ability_group.as_ref().unwrap().name
+        );
+    }
 
     tracing::info!(
         "Got {} dynamic tool instances for rig-core native tool calling",
