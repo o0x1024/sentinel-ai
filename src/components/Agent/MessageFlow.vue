@@ -4,7 +4,23 @@
     ref="containerRef"
     @scroll="handleScroll"
   >
-    <div v-for="msg in messages" :key="msg.id" class="message-wrapper animate-fadeIn min-w-0">
+    <!-- Load More Button -->
+    <div v-if="hasMoreMessages" class="flex justify-center py-2">
+      <button 
+        @click="loadMore" 
+        class="btn btn-xs btn-ghost gap-2 text-base-content/50 hover:text-primary"
+      >
+        <i class="fas fa-history"></i>
+        {{ t('agent.loadMoreMessages', { count: props.messages.length - displayCount }) }}
+      </button>
+    </div>
+
+    <div 
+    v-for="msg in displayedMessages" 
+    :key="msg.id" 
+    v-memo="[msg.content, msg.metadata?.status, msg.metadata?.duration_ms, isVisionActive]"
+    class="message-wrapper animate-fadeIn min-w-0"
+    >
       <MessageBlock :message="msg" :is-vision-active="isVisionActive" @resend="handleResend" />
     </div>
     
@@ -49,8 +65,35 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null)
 const isUserAtBottom = ref(true)
+const displayCount = ref(50)
 
 const hasMessages = computed(() => props.messages.length > 0)
+
+const displayedMessages = computed(() => {
+  if (props.messages.length <= displayCount.value) {
+    return props.messages
+  }
+  return props.messages.slice(-displayCount.value)
+})
+
+const hasMoreMessages = computed(() => props.messages.length > displayCount.value)
+
+const loadMore = async () => {
+  const container = containerRef.value
+  if (!container) return
+  
+  // Save current scroll position and height
+  const previousScrollHeight = container.scrollHeight
+  const previousScrollTop = container.scrollTop
+
+  // Increase display count
+  displayCount.value += 50
+  
+  // After DOM update, adjust scroll position to maintain view
+  await nextTick()
+  const newScrollHeight = container.scrollHeight
+  container.scrollTop = previousScrollTop + (newScrollHeight - previousScrollHeight)
+}
 
 const handleScroll = () => {
   if (!containerRef.value) return
@@ -59,10 +102,25 @@ const handleScroll = () => {
   isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 50
 }
 
+// Throttled scroll to bottom for better performance during streaming
+let scrollTimer: any = null
+const throttledScrollToBottom = () => {
+  if (scrollTimer) return
+  scrollTimer = setTimeout(() => {
+    scrollToBottom()
+    scrollTimer = null
+  }, 100) // 100ms throttle
+}
+
 // Auto-scroll to bottom when new messages arrive
 watch(
   () => props.messages.length,
-  () => {
+  (newLen, oldLen) => {
+    // Reset display count if it's a new conversation
+    if (newLen === 0 || (newLen > 0 && oldLen === 0)) {
+      displayCount.value = 50
+    }
+
     // Scroll if user is at bottom or if it's a new conversation start
     if (isUserAtBottom.value || props.messages.length <= 1) {
       nextTick(() => {
@@ -77,9 +135,7 @@ watch(
   () => props.streamingContent,
   () => {
     if (isUserAtBottom.value) {
-      nextTick(() => {
-        scrollToBottom()
-      })
+      throttledScrollToBottom()
     }
   }
 )

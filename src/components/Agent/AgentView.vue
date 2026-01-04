@@ -181,6 +181,7 @@ import type { AgentMessage } from '@/types/agent'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useVisionEvents } from '@/composables/useVisionEvents'
 import { useTodos } from '@/composables/useTodos'
+import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
 import VisionExplorerPanel from './VisionExplorerPanel.vue'
@@ -247,7 +248,7 @@ const toolConfig = ref({
 })
 
 // Agent events
-const agentEvents = useAgentEvents()
+const agentEvents = useAgentEvents(computed(() => conversationId.value || ''))
 const messages = computed(() => agentEvents.messages.value)
 const isExecuting = computed(() => agentEvents.isExecuting.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
@@ -260,7 +261,7 @@ const visionEvents = useVisionEvents(agentEvents.currentExecutionId)
 const isVisionActive = computed(() => visionEvents.isVisionActive.value)
 
 // Todos management
-const todosComposable = useTodos()
+const todosComposable = useTodos(computed(() => conversationId.value || ''))
 const todos = computed(() => todosComposable.todos.value)
 const hasTodos = computed(() => props.showTodos && todosComposable.hasTodos.value)
 const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.value)
@@ -566,6 +567,22 @@ const loadConversationHistory = async (convId: string) => {
           return
         }
 
+        if (row.role === 'system') {
+          // System message (e.g., history summarized)
+          timeline.push({
+            msg: {
+              id: row.id,
+              type: 'system' as any,
+              content: row.content || '',
+              timestamp: ts,
+              metadata: parsedMetadata,
+            },
+            ts,
+            tie: tie++,
+          })
+          return
+        }
+
         const messageType = row.role === 'user' ? 'user' : 'final'
         const displayContent =
           row.role === 'user' && parsedStructured?.display_content
@@ -704,10 +721,12 @@ const handleSubmit = async () => {
   
   // Takeover: if currently executing, cancel previous stream first
   if (isExecuting.value && conversationId.value) {
+    console.log('[AgentView] Takeover: stopping current execution to handle new message')
     try {
       const partial = agentEvents.streamingContent.value?.trim()
       if (partial) {
         const partialMsgId = crypto.randomUUID()
+        console.log('[AgentView] Takeover: saving partial response:', partial.substring(0, 100))
         // First solidify the partial output of the old stream locally as the final assistant message
         agentEvents.messages.value.push({
           id: partialMsgId,
@@ -725,7 +744,14 @@ const handleSubmit = async () => {
           },
         })
       }
+      
+      // Stop the current execution
       await handleStop()
+      
+      // Wait a bit for the backend to fully stop
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      console.log('[AgentView] Takeover: previous execution stopped, proceeding with new message')
     } catch (e) {
       console.warn('[AgentView] Takeover stop failed, continuing:', e)
     }
@@ -878,6 +904,14 @@ watch(conversationId, async (newId) => {
     } catch (e) {
       console.error('[AgentView] Failed to update conversation title:', e)
     }
+  }
+})
+
+// Update session title in manager
+const { updateSessionTitle } = useAgentSessionManager()
+watch(currentConversationTitle, (newTitle) => {
+  if (conversationId.value && newTitle) {
+    updateSessionTitle(conversationId.value, newTitle)
   }
 })
 

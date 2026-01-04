@@ -29,6 +29,10 @@
               <i class="fas fa-plus"></i>
               {{ t('roles.newRole') }}
             </button>
+            <button @click="startAiGenerate" class="btn btn-outline btn-primary btn-sm w-full gap-2">
+              <i class="fas fa-magic text-xs"></i>
+              {{ t('roles.aiGenerate') }}
+            </button>
           </div>
 
           <div class="flex-1 overflow-y-auto p-2 space-y-2">
@@ -74,7 +78,50 @@
 
         <!-- Right Content: Editor & Preview -->
         <div class="flex-1 flex flex-col overflow-hidden bg-base-200/20">
-          <div v-if="showCreateForm || editingRole" class="flex-1 flex flex-col overflow-hidden">
+          <!-- AI Generation Form -->
+          <div v-if="showAiGenerateForm" class="flex-1 flex flex-col items-center justify-center p-8">
+            <div class="max-w-2xl w-full bg-base-100 rounded-2xl shadow-xl border border-base-300 p-8">
+              <div class="flex items-center gap-3 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                  <i class="fas fa-magic text-2xl"></i>
+                </div>
+                <div>
+                  <h3 class="text-xl font-bold">{{ t('roles.aiGenerate') }}</h3>
+                  <p class="text-sm text-base-content/60">{{ t('roles.aiInputHint') }}</p>
+                </div>
+              </div>
+
+              <div class="form-control w-full mb-6">
+                <textarea 
+                  v-model="aiPrompt"
+                  class="textarea textarea-bordered h-40 w-full focus:textarea-primary transition-all text-base leading-relaxed"
+                  :placeholder="t('roles.aiInputPlaceholder')"
+                  :disabled="isGenerating"
+                ></textarea>
+              </div>
+
+              <div class="flex justify-end gap-3">
+                <button 
+                  @click="showAiGenerateForm = false" 
+                  class="btn btn-ghost"
+                  :disabled="isGenerating"
+                >
+                  {{ t('common.cancel') }}
+                </button>
+                <button 
+                  @click="handleAiGenerate" 
+                  class="btn btn-primary min-w-[120px]"
+                  :disabled="isGenerating || !aiPrompt.trim()"
+                >
+                  <span v-if="isGenerating" class="loading loading-spinner loading-sm"></span>
+                  <i v-else class="fas fa-wand-magic-sparkles mr-2"></i>
+                  {{ isGenerating ? t('roles.generating') : t('roles.generate') }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="showCreateForm || editingRole" class="flex-1 flex flex-col overflow-hidden">
             <!-- Toolbar -->
             <div class="px-6 py-3 border-b bg-base-100 flex items-center justify-between shadow-sm z-10">
               <div class="flex items-center gap-2">
@@ -264,6 +311,7 @@ const {
   updateRole,
   deleteRole,
   loadRoles,
+  generateRole,
 } = useRoleManagement()
 
 // 搜索
@@ -281,10 +329,15 @@ const filteredRoles = computed(() => {
 
 // 表单状态
 const showCreateForm = ref(false)
+const showAiGenerateForm = ref(false)
 const editingRole = ref<Role | null>(null)
 const isSubmitting = ref(false)
 const isDeleting = ref(false)
+const isGenerating = ref(false)
 const roleToDelete = ref<Role | null>(null)
+
+// AI 生成相关
+const aiPrompt = ref('')
 
 // 表单数据
 const formData = reactive({
@@ -351,19 +404,49 @@ const editRole = (role: Role) => {
   formData.description = role.description
   formData.prompt = role.prompt
   showCreateForm.value = false
+  showAiGenerateForm.value = false
 }
 
 // 切换到创建模式
 const startCreate = () => {
   editingRole.value = null
   showCreateForm.value = true
+  showAiGenerateForm.value = false
   resetForm()
+}
+
+// 切换到 AI 生成模式
+const startAiGenerate = () => {
+  editingRole.value = null
+  showCreateForm.value = false
+  showAiGenerateForm.value = true
+  aiPrompt.value = ''
+}
+
+// 处理 AI 生成
+const handleAiGenerate = async () => {
+  if (!aiPrompt.value.trim()) return
+  
+  isGenerating.value = true
+  try {
+    const generated = await generateRole(aiPrompt.value.trim())
+    formData.title = generated.title
+    formData.description = generated.description
+    formData.prompt = generated.prompt
+    showAiGenerateForm.value = false
+    showCreateForm.value = true
+  } catch (error) {
+    console.error('Failed to generate role:', error)
+  } finally {
+    isGenerating.value = false
+  }
 }
 
 // 取消表单
 const cancelForm = () => {
   showCreateForm.value = false
   editingRole.value = null
+  showAiGenerateForm.value = false
   resetForm()
 }
 

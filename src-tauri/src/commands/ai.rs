@@ -831,6 +831,56 @@ pub async fn generate_plugin_stream(
     Ok(stream_id)
 }
 
+#[tauri::command]
+pub async fn generate_ai_role(
+    prompt: String,
+    app_handle: AppHandle,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<serde_json::Value, String> {
+    // Get actual default LLM provider from database config
+    let mut service_name = "default".to_string();
+    if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+            let provider_lc = default_llm_provider.to_lowercase();
+            if ai_manager.get_service(&provider_lc).is_some() {
+                service_name = provider_lc;
+            }
+        }
+    }
+
+    let service = ai_manager
+        .get_service(&service_name)
+        .or_else(|| ai_manager.get_service("default"))
+        .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
+
+    let llm_config = service.service.to_llm_config();
+    let client = sentinel_llm::LlmClient::new(llm_config);
+
+    let system_prompt = r#"You are a professional AI Assistant Role Creator. 
+Your task is to create a specific AI role based on user's description.
+Output MUST be in JSON format with the following fields:
+- title: A short, professional title for the role.
+- description: A brief summary of what the role does.
+- prompt: A comprehensive system prompt that defines the role's persona, expertise, tone, and specific instructions.
+
+ONLY return the JSON object, no other text."#;
+
+    let user_input = format!("Create an AI role for: {}", prompt);
+
+    match client.completion(Some(system_prompt), &user_input).await {
+        Ok(response) => {
+            // Try to parse JSON from the response
+            let cleaned = response.trim();
+            let json_start = cleaned.find('{').unwrap_or(0);
+            let json_end = cleaned.rfind('}').map(|e| e + 1).unwrap_or(cleaned.len());
+            let json_str = &cleaned[json_start..json_end];
+            
+            serde_json::from_str(json_str).map_err(|e| format!("Failed to parse generated role JSON: {}. Original response: {}", e, response))
+        }
+        Err(e) => Err(format!("Failed to generate AI role: {}", e)),
+    }
+}
+
 // 取消插件生成
 #[tauri::command]
 pub async fn cancel_plugin_generation(

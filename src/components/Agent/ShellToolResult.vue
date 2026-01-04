@@ -50,8 +50,13 @@
       </div>
       
       <!-- Output -->
-      <div v-if="stdout" class="stdout text-[#d4d4d4] whitespace-pre-wrap break-all mb-1">{{ stdout }}</div>
-      <div v-if="stderr" class="stderr text-[#f14c4c] whitespace-pre-wrap break-all">{{ stderr }}</div>
+      <div v-if="stdout" class="stdout text-[#d4d4d4] whitespace-pre-wrap break-all mb-1">{{ displayedStdout }}</div>
+      <div v-if="stderr" class="stderr text-[#f14c4c] whitespace-pre-wrap break-all">{{ displayedStderr }}</div>
+      
+      <!-- Truncation warning -->
+      <div v-if="isStdoutTruncated || isStderrTruncated" class="text-warning text-[10px] mt-1 italic">
+        (Output truncated for performance. Copy command to see full output.)
+      </div>
       
       <!-- Error message -->
       <div v-if="error && !stderr" class="error text-[#f14c4c] whitespace-pre-wrap break-all">{{ error }}</div>
@@ -265,6 +270,25 @@ const stdout = computed(() => {
   if (typeof r === 'string') return r
   
   return ''
+})
+
+// Max length for output display to prevent UI lag
+const MAX_OUTPUT_LENGTH = 10000
+
+const isStdoutTruncated = computed(() => stdout.value.length > MAX_OUTPUT_LENGTH)
+const displayedStdout = computed(() => {
+  if (isStdoutTruncated.value) {
+    return stdout.value.substring(0, MAX_OUTPUT_LENGTH) + '\n... [truncated]'
+  }
+  return stdout.value
+})
+
+const isStderrTruncated = computed(() => stderr.value.length > MAX_OUTPUT_LENGTH)
+const displayedStderr = computed(() => {
+  if (isStderrTruncated.value) {
+    return stderr.value.substring(0, MAX_OUTPUT_LENGTH) + '\n... [truncated]'
+  }
+  return stderr.value
 })
 
 // Extract stderr

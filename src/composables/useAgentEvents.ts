@@ -87,6 +87,26 @@ interface AgentErrorEvent {
   error: string
 }
 
+// 后端发送的 agent:history_summarized 事件
+interface AgentHistorySummarizedEvent {
+  execution_id: string
+  original_tokens: number
+  summarized_tokens: number
+  saved_tokens: number
+  saved_percentage: number
+  total_tokens: number
+  message_count: number
+  summary_preview?: string
+}
+
+// 后端发送的 agent:retry 事件
+interface AgentRetryEvent {
+  execution_id: string
+  retry_count: number
+  max_retries: number
+  error?: string
+}
+
 // 后端发送的 OrderedMessageChunk 结构 (兼容旧格式)
 interface OrderedMessageChunk {
   execution_id: string
@@ -637,6 +657,61 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       })
     })
     unlisteners.push(unlistenError)
+
+    // 监听 agent:history_summarized 事件
+    const unlistenHistorySummarized = await listen<AgentHistorySummarizedEvent>('agent:history_summarized', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] History summarized event received:', payload)
+
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: `History automatically summarized: compressed to ${payload.summarized_tokens} tokens`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'history_summarized',
+          original_tokens: payload.original_tokens,
+          summarized_tokens: payload.summarized_tokens,
+          saved_tokens: payload.saved_tokens,
+          saved_percentage: payload.saved_percentage,
+          total_tokens: payload.total_tokens,
+          summary_preview: payload.summary_preview,
+        }
+      })
+    })
+    unlisteners.push(unlistenHistorySummarized)
+
+    // 监听 agent:retry 事件
+    const unlistenRetry = await listen<AgentRetryEvent>('agent:retry', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.warn('[useAgentEvents] Agent retry event received:', payload)
+      
+      // 清理当前流式状态，准备迎接重试后的新内容
+      assistantSegmentBuffer.value = ''
+      streamingContent.value = ''
+      contentBuffer.value = ''
+      thinkingBuffer.value = ''
+      currentThinkingMessageId.value = null
+      currentAssistantMessageId.value = null
+
+      // 添加一条重试系统消息
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: `Something went wrong, retrying... (Attempt ${payload.retry_count}/${payload.max_retries})`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'retry_notification',
+          retry_count: payload.retry_count,
+          error: payload.error,
+        }
+      })
+    })
+    unlisteners.push(unlistenRetry)
 
     // 兼容旧的 message_chunk 事件
     const unlistenOldChunk = await listen<OrderedMessageChunk>('message_chunk', (event) => {

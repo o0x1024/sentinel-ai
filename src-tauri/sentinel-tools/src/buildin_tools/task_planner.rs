@@ -129,11 +129,14 @@ impl Tool for TaskPlannerTool {
             "add_tasks" => {
                 let new_tasks = args.tasks.ok_or_else(|| TaskPlannerError::MissingParameters("add_tasks".to_string()))?;
                 for desc in new_tasks {
-                    plan.tasks.push(Task {
-                        description: desc,
-                        status: TaskStatus::Pending,
-                        result: None,
-                    });
+                    // Avoid duplicate tasks by checking if description already exists
+                    if !plan.tasks.iter().any(|t| t.description == desc) {
+                        plan.tasks.push(Task {
+                            description: desc,
+                            status: TaskStatus::Pending,
+                            result: None,
+                        });
+                    }
                 }
                 if plan.current_task_index.is_none() && !plan.tasks.is_empty() {
                     plan.current_task_index = Some(0);
@@ -192,14 +195,17 @@ impl Tool for TaskPlannerTool {
             "replan" => {
                 let new_tasks = args.tasks.ok_or_else(|| TaskPlannerError::MissingParameters("replan".to_string()))?;
                 
-                // Clear existing tasks and add new ones
+                // Clear existing tasks and add new ones (deduplicated)
                 plan.tasks.clear();
+                let mut seen_descriptions = std::collections::HashSet::new();
                 for desc in new_tasks {
-                    plan.tasks.push(Task {
-                        description: desc,
-                        status: TaskStatus::Pending,
-                        result: None,
-                    });
+                    if seen_descriptions.insert(desc.clone()) {
+                        plan.tasks.push(Task {
+                            description: desc,
+                            status: TaskStatus::Pending,
+                            result: None,
+                        });
+                    }
                 }
                 
                 // Set first task as in progress

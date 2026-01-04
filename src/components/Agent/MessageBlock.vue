@@ -37,9 +37,11 @@
             <span>{{ t('agent.tokensSaved') }}:</span>
             <span class="font-mono font-semibold text-warning">{{ formatNumber(historySummaryMeta?.saved_tokens) }} ({{ historySummaryMeta?.saved_percentage }}%)</span>
           </div>
-          <div v-if="historySummaryMeta?.summary_preview" class="mt-3 pt-3 border-t border-base-300">
-            <div class="text-xs text-base-content/50 mb-1">{{ t('agent.summaryPreview') }}:</div>
-            <div class="text-xs text-base-content/70 italic">{{ historySummaryMeta.summary_preview }}</div>
+          <div v-if="historySummaryMeta?.summary_content" class="mt-3 pt-3 border-t border-base-300">
+            <div class="text-xs text-base-content/50 mb-2 font-medium">{{ t('agent.summaryContent') }}:</div>
+            <div class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto">
+              <MarkdownRenderer :content="historySummaryMeta.summary_content" />
+            </div>
           </div>
         </div>
       </div>

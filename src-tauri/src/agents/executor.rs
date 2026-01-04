@@ -269,54 +269,7 @@ async fn execute_agent_simple(
         config = config.with_base_url(api_base);
     }
 
-    // Build memory context from RAG (Semantic Memory)
-    let memory_context = if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
-        let mut filters = std::collections::HashMap::new();
-        filters.insert("type".to_string(), "agent_memory".to_string());
-        
-        // Use the current task as query
-        let request = sentinel_rag::models::RagQueryRequest {
-            query: params.task.clone(),
-            collection_id: None,
-            top_k: Some(5), // Retrieve top 5 relevant memories
-            use_mmr: Some(true),
-            mmr_lambda: None,
-            filters: Some(filters),
-            use_embedding: Some(true),
-            reranking_enabled: Some(true),
-            similarity_threshold: Some(0.45), // Strict threshold to avoid noise
-        };
-        
-        match rag_service.query(request).await {
-            Ok(response) => {
-                if response.results.is_empty() {
-                    None
-                } else {
-                    let mut lines = Vec::new();
-                    lines.push("[Memory Context (Recall from past experiences):]".to_string());
-                    for (i, res) in response.results.iter().enumerate() {
-                         lines.push(format!("{}. {}", i + 1, res.chunk.content.trim()));
-                    }
-                    tracing::info!("Injected {} semantic memories into context", response.results.len());
-                    Some(lines.join("\n"))
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to query RAG memory: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    let mut system_prompt = params.system_prompt.clone();
-    if let Some(context) = memory_context {
-        if !system_prompt.trim().is_empty() {
-            system_prompt.push_str("\n\n");
-        }
-        system_prompt.push_str(&context);
-    }
+    let system_prompt = params.system_prompt.clone();
 
     // 创建流式客户端
     let client = StreamingLlmClient::new(config);
@@ -614,65 +567,7 @@ async fn execute_agent_with_tools(
     );
 
     // 3. 获取 DynamicTool 实例（用于 rig-core 原生工具调用）
-    let mut dynamic_tools = tool_server.get_dynamic_tools(&selected_tool_ids).await;
-
-    // 3.5. 如果是 Ability 模式，添加 get_tool_definition 工具用于渐进式披露
-    if selection_plan.selected_ability_group.is_some() {
-        use crate::agents::tools::GetToolDefinitionTool;
-        use sentinel_tools::{DynamicTool, DynamicToolBuilder, ToolSource};
-        use serde_json::Value;
-        
-        // Create tool router Arc for the tool
-        let tool_router_arc = Arc::new(tool_router);
-        let get_def_tool = GetToolDefinitionTool::new(tool_router_arc.clone());
-        
-        // Convert Tool to DynamicTool using builder
-        let tool_def = DynamicToolBuilder::new("get_tool_definition")
-            .description("Get detailed definition, parameters, and usage instructions for a specific tool. Use this when you need to know how to use a tool before calling it.")
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "tool_name": {
-                        "type": "string",
-                        "description": "The name or ID of the tool to get definition for"
-                    }
-                },
-                "required": ["tool_name"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(move |args: Value| {
-                let tool = get_def_tool.clone();
-                async move {
-                    // Parse args
-                    let tool_name = args.get("tool_name")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| "Missing tool_name parameter".to_string())?;
-                    
-                    // Call the tool
-                    use rig::tool::Tool;
-                    let args_struct = crate::agents::tools::get_tool_definition::GetToolDefinitionArgs {
-                        tool_name: tool_name.to_string(),
-                    };
-                    
-                    let result = tool.call(args_struct).await
-                        .map_err(|e| format!("Tool execution failed: {:?}", e))?;
-                    
-                    Ok(serde_json::json!(result))
-                }
-            })
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build get_tool_definition: {}", e))?;
-        
-        let get_def_dynamic = DynamicTool::new(tool_def);
-        
-        // Add to the beginning so it's always available
-        dynamic_tools.insert(0, get_def_dynamic);
-        
-        tracing::info!(
-            "Added get_tool_definition tool for progressive disclosure in ability group '{}'",
-            selection_plan.selected_ability_group.as_ref().unwrap().name
-        );
-    }
+    let dynamic_tools = tool_server.get_dynamic_tools(&selected_tool_ids).await;
 
     tracing::info!(
         "Got {} dynamic tool instances for rig-core native tool calling",
@@ -685,53 +580,6 @@ async fn execute_agent_with_tools(
     } else {
         params.system_prompt.clone()
     };
-
-    // Build memory context from RAG (Semantic Memory)
-    let memory_context = if let Ok(rag_service) = crate::commands::rag_commands::get_global_rag_service().await {
-        let mut filters = std::collections::HashMap::new();
-        filters.insert("type".to_string(), "agent_memory".to_string());
-        
-        let request = sentinel_rag::models::RagQueryRequest {
-            query: params.task.clone(),
-            collection_id: None,
-            top_k: Some(5),
-            use_mmr: Some(true),
-            mmr_lambda: None,
-            filters: Some(filters),
-            use_embedding: Some(true),
-            reranking_enabled: Some(true),
-            similarity_threshold: Some(0.45),
-        };
-        
-        match rag_service.query(request).await {
-            Ok(response) => {
-                if response.results.is_empty() {
-                    None
-                } else {
-                    let mut lines = Vec::new();
-                    lines.push("[Memory Context (Recall from past experiences):]".to_string());
-                    for (i, res) in response.results.iter().enumerate() {
-                         lines.push(format!("{}. {}", i + 1, res.chunk.content.trim()));
-                    }
-                    tracing::info!("Injected {} semantic memories into context", response.results.len());
-                    Some(lines.join("\n"))
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to query RAG memory: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    if let Some(context) = memory_context {
-        if !final_system_prompt.trim().is_empty() {
-            final_system_prompt.push_str("\n\n");
-        }
-        final_system_prompt.push_str(&context);
-    }
 
     // Inject execution_id for task_planner tool
     final_system_prompt.push_str(&format!(
@@ -766,6 +614,11 @@ async fn execute_agent_with_tools(
     let system_tokens = estimate_tokens(&final_system_prompt);
     let task_tokens = estimate_tokens(&params.task);
     
+    // Check if history already contains a summary message
+    let has_summary = history_chat_messages.iter().any(|msg| {
+        msg.content.starts_with("[Previous conversation summary]")
+    });
+    
     // Estimate history tokens from ChatMessages
     let history_tokens: usize = history_chat_messages.iter().map(|msg| {
         estimate_tokens(&msg.content)
@@ -776,23 +629,71 @@ async fn execute_agent_with_tools(
     let context_threshold = (max_context_length as f64 * 0.8) as usize;
     
     tracing::info!(
-        "Context usage: {}/{} tokens (system: {}, task: {}, history: {})",
+        "Context usage: {}/{} tokens (system: {}, task: {}, history: {}), has_summary: {}",
         total_tokens,
         max_context_length,
         system_tokens,
         task_tokens,
-        history_tokens
+        history_tokens,
+        has_summary
     );
 
-    // If context is approaching limit, summarize history
+    // If context is approaching limit, handle based on whether summary exists
     if total_tokens > context_threshold && !history_chat_messages.is_empty() {
-        tracing::warn!(
-            "Context approaching limit ({}/{}), summarizing history...",
-            total_tokens,
-            max_context_length
-        );
+        if has_summary {
+            // Already has summary, trim older messages after the summary
+            tracing::warn!(
+                "Context still exceeding limit ({}/{}) even with existing summary, trimming old messages...",
+                total_tokens,
+                max_context_length
+            );
+            
+            // Find the summary message index
+            if let Some(summary_idx) = history_chat_messages.iter().position(|msg| {
+                msg.content.starts_with("[Previous conversation summary]")
+            }) {
+                // Keep summary and only recent messages after it
+                let _messages_after_summary = history_chat_messages.len() - summary_idx - 1;
+                
+                // Calculate how many messages to keep (aim for 50% of threshold)
+                let target_tokens = context_threshold / 2;
+                let mut kept_tokens = estimate_tokens(&history_chat_messages[summary_idx].content);
+                let mut keep_count = 1; // Start with summary
+                
+                // Add recent messages until we reach target
+                for i in (summary_idx + 1)..history_chat_messages.len() {
+                    let msg_tokens = estimate_tokens(&history_chat_messages[i].content);
+                    if kept_tokens + msg_tokens > target_tokens {
+                        break;
+                    }
+                    kept_tokens += msg_tokens;
+                    keep_count += 1;
+                }
+                
+                // Keep summary + recent messages
+                let keep_from = summary_idx;
+                history_chat_messages.drain(0..keep_from);
+                
+                if keep_count < history_chat_messages.len() {
+                    let remove_count = history_chat_messages.len() - keep_count;
+                    history_chat_messages.drain(1..(1 + remove_count)); // Keep summary at index 0
+                }
+                
+                tracing::info!(
+                    "Trimmed to {} messages ({} tokens) after existing summary",
+                    history_chat_messages.len(),
+                    kept_tokens
+                );
+            }
+        } else {
+            // No summary yet, create one
+            tracing::warn!(
+                "Context approaching limit ({}/{}), summarizing history...",
+                total_tokens,
+                max_context_length
+            );
 
-        match summarize_history_from_chat_messages(&history_chat_messages, &llm_config).await {
+            match summarize_history_from_chat_messages(&history_chat_messages, &llm_config).await {
             Ok(summary) => {
                 // Replace history with a single summary message
                 history_chat_messages.clear();
@@ -836,6 +737,7 @@ async fn execute_agent_with_tools(
                         "saved_percentage": saved_percentage,
                         "total_tokens": new_total,
                         "summary_preview": summary.chars().take(200).collect::<String>(),
+                        "summary_content": summary,
                     });
                     
                     let summary_msg = core_db::AiMessage {
@@ -883,9 +785,15 @@ async fn execute_agent_with_tools(
                     }),
                 );
             }
-            Err(e) => {
-                tracing::error!("Failed to summarize history: {}", e);
-                // Continue with original history if summarization fails
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to summarize history (will continue with original): {} - History: {} messages, {} tokens", 
+                        e,
+                        history_chat_messages.len(),
+                        history_tokens
+                    );
+                    // Continue with original history if summarization fails
+                }
             }
         }
     }
@@ -915,236 +823,201 @@ async fn execute_agent_with_tools(
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
 
-    // 7. 调用带动态工具的流式方法
-    let result = client
-        .stream_chat_with_dynamic_tools(
-            Some(&final_system_prompt),
-            &params.task,
-            &history_chat_messages,
-            None, // 无图片
-            dynamic_tools,
-            |content| {
-                if crate::commands::ai::is_conversation_cancelled(&execution_id) {
-                    return false;
-                }
-                match content {
-                StreamContent::Text(text) => {
-                    // Accumulate assistant text into a segment buffer.
-                    if let Ok(mut buf) = segment_buf.lock() {
-                        buf.push_str(&text);
-                    }
-                    let _ = app.emit(
-                        "agent:chunk",
-                        &json!({
-                            "execution_id": execution_id,
-                            "chunk_type": "text",
-                            "content": text,
-                        }),
-                    );
-                }
-                StreamContent::Reasoning(reasoning) => {
-                    // Accumulate reasoning content
-                    if let Ok(mut buf) = reasoning_buf.lock() {
-                        buf.push_str(&reasoning);
-                    }
-                    let _ = app.emit(
-                        "agent:chunk",
-                        &json!({
-                            "execution_id": execution_id,
-                            "chunk_type": "reasoning",
-                            "content": reasoning,
-                        }),
-                    );
-                }
-                StreamContent::ToolCallStart { id, name } => {
-                    tracing::info!("Tool call started via rig-core: {} ({})", name, id);
-                    let _ = app.emit(
-                        "agent:tool_call_start",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "tool_name": name,
-                        }),
-                    );
-                }
-                StreamContent::ToolCallDelta { id, delta } => {
-                    let _ = app.emit(
-                        "agent:tool_call_delta",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "delta": delta,
-                        }),
-                    );
-                }
-                StreamContent::ToolCallComplete {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    tracing::info!("Tool call complete via rig-core: {} ({})", name, id);
-                    
-                    // 记录 pending 的工具调用，等待结果
-                    if let Ok(mut pending_map) = pending.lock() {
-                        let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
-                        let started_at_ms = chrono::Utc::now().timestamp_millis() + seq as i64;
-                        pending_map.insert(id.clone(), (name.clone(), arguments.clone(), started_at_ms, seq));
-                    }
+    // 7. 调用带动态工具的流式方法，增加重试机制以应对模型抖动或解析错误
+    let mut retries = 0;
+    let max_retries = 2; // 最多重试 2 次
+    let mut last_error: Option<anyhow::Error> = None;
 
-                    // Flush assistant segment BEFORE inserting tool call message (preserve ordering on reload).
-                    if let Some(db) = db_for_stream.clone() {
-                        use sentinel_core::models::database as core_db;
-                        use chrono::TimeZone;
-                        let seg = segment_buf.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
-                        let seg_trimmed = seg.trim().to_string();
-                        if !seg_trimmed.trim().is_empty() {
-                            // Ensure segment timestamp is slightly before tool call timestamp.
-                            let seg_ts_ms = chrono::Utc::now().timestamp_millis() - 1;
-                            let seg_ts = chrono::Utc
-                                .timestamp_millis_opt(seg_ts_ms)
-                                .single()
-                                .unwrap_or_else(chrono::Utc::now);
-                            
-                            // Get reasoning content (for deepseek-reasoner with tool calls, always include it)
-                            // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
-                            let reasoning = reasoning_buf.lock().map(|g| {
-                                let r = g.clone();
-                                // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
-                                Some(if r.trim().is_empty() { String::new() } else { r })
-                            }).ok().flatten();
-                            
-                            let seg_msg = core_db::AiMessage {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                conversation_id: execution_id.clone(),
-                                role: "assistant".to_string(),
-                                content: seg_trimmed.clone(),
-                                metadata: None,
-                                token_count: Some(seg_trimmed.len() as i32),
-                                cost: None,
-                                tool_calls: None,
-                                attachments: None,
-                                reasoning_content: reasoning,
-                                timestamp: seg_ts,
-                                architecture_type: None,
-                                architecture_meta: None,
-                                structured_data: None,
-                            };
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
-                                    tracing::warn!("Failed to persist assistant segment: {}", e);
-                                }
-                            });
+    while retries <= max_retries {
+        if retries > 0 {
+            tracing::warn!(
+                "Retrying agent execution (attempt {}/{}) due to error: {}",
+                retries,
+                max_retries,
+                last_error.as_ref().map(|e| e.to_string()).unwrap_or_default()
+            );
+
+            // 发送重试事件给前端
+            let _ = app_handle.emit(
+                "agent:retry",
+                &json!({
+                    "execution_id": params.execution_id,
+                    "retry_count": retries,
+                    "max_retries": max_retries,
+                    "error": last_error.as_ref().map(|e| e.to_string()),
+                }),
+            );
+
+            // 重试前稍作延迟
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        }
+
+        let result = client
+            .stream_chat_with_dynamic_tools(
+                Some(&final_system_prompt),
+                &params.task,
+                &history_chat_messages,
+                None, // 无图片
+                dynamic_tools.clone(),
+                |content| {
+                    if crate::commands::ai::is_conversation_cancelled(&execution_id) {
+                        return false;
+                    }
+                    match content {
+                        StreamContent::Text(text) => {
+                            // Accumulate assistant text into a segment buffer.
+                            if let Ok(mut buf) = segment_buf.lock() {
+                                buf.push_str(&text);
+                            }
+                            let _ = app.emit(
+                                "agent:chunk",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "chunk_type": "text",
+                                    "content": text,
+                                }),
+                            );
                         }
-                    }
-
-                    // Persist tool call as a standalone message (role=tool) so history ordering is correct.
-                    if let Some(db) = db_for_stream.clone() {
-                        use sentinel_core::models::database as core_db;
-                        use chrono::TimeZone;
-                        let (started_at_ms, seq) = pending
-                            .lock()
-                            .ok()
-                            .and_then(|m| m.get(&id).map(|(_, _, ms, s)| (*ms, *s)))
-                            .unwrap_or((chrono::Utc::now().timestamp_millis(), 0));
-
-                        let started_at = chrono::Utc
-                            .timestamp_millis_opt(started_at_ms)
-                            .single()
-                            .unwrap_or_else(chrono::Utc::now);
-
-                        let tool_args_val: serde_json::Value = serde_json::from_str(&arguments)
-                            .unwrap_or_else(|_| json!({ "raw": arguments }));
-                        let meta = json!({
-                            "kind": "tool_call",
-                            "tool_name": name,
-                            "tool_args": tool_args_val,
-                            "tool_call_id": id,
-                            "status": "running",
-                            "sequence": seq,
-                            "started_at_ms": started_at_ms,
-                        });
-
-                        let tool_msg = core_db::AiMessage {
-                            id: id.clone(),
-                            conversation_id: execution_id.clone(),
-                            role: "tool".to_string(),
-                            content: String::new(),
-                            metadata: Some(meta.to_string()),
-                            token_count: None,
-                            cost: None,
-                            tool_calls: None,
-                            attachments: None,
-                            reasoning_content: None,
-                            timestamp: started_at,
-                            architecture_type: None,
-                            architecture_meta: None,
-                            structured_data: None,
-                        };
-                        tauri::async_runtime::spawn(async move {
-                            if let Err(e) = db.upsert_ai_message_append(&tool_msg).await {
-                                tracing::warn!("Failed to persist tool call message: {}", e);
+                        StreamContent::Reasoning(reasoning) => {
+                            // Accumulate reasoning content
+                            if let Ok(mut buf) = reasoning_buf.lock() {
+                                buf.push_str(&reasoning);
                             }
-                        });
-                    }
-                    
-                    let _ = app.emit(
-                        "agent:tool_call_complete",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "tool_name": name,
-                            "arguments": arguments,
-                        }),
-                    );
-                }
-                StreamContent::ToolResult { id, result } => {
-                    tracing::info!("Tool result via rig-core: id={}, result_preview={}", id, &result.chars().take(500).collect::<String>());
-                    
-                    // 将工具调用完整信息添加到收集器
-                    if let Ok(mut pending_map) = pending.lock() {
-                        if let Some((name, arguments, started_at_ms, seq)) = pending_map.remove(&id) {
-                            let completed_at_ms = chrono::Utc::now().timestamp_millis();
-                            let duration_ms = completed_at_ms.saturating_sub(started_at_ms);
-                            let name_for_meta = name.clone();
-                            let args_for_meta = arguments.clone();
-                            if let Ok(mut records) = collector.lock() {
-                                records.push(ToolCallRecord {
-                                    id: id.clone(),
-                                    name,
-                                    arguments,
-                                    result: Some(result.clone()),
-                                    success: !result.to_lowercase().contains("error"),
-                                    sequence: seq,
-                                    started_at_ms,
-                                    completed_at_ms,
-                                    duration_ms,
-                                });
+                            let _ = app.emit(
+                                "agent:chunk",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "chunk_type": "reasoning",
+                                    "content": reasoning,
+                                }),
+                            );
+                        }
+                        StreamContent::ToolCallStart { id, name } => {
+                            tracing::info!("Tool call started via rig-core: {} ({})", name, id);
+                            let _ = app.emit(
+                                "agent:tool_call_start",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "tool_call_id": id,
+                                    "tool_name": name,
+                                }),
+                            );
+                        }
+                        StreamContent::ToolCallDelta { id, delta } => {
+                            let _ = app.emit(
+                                "agent:tool_call_delta",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "tool_call_id": id,
+                                    "delta": delta,
+                                }),
+                            );
+                        }
+                        StreamContent::ToolCallComplete {
+                            id,
+                            name,
+                            arguments,
+                        } => {
+                            tracing::info!("Tool call complete via rig-core: {} ({})", name, id);
+
+                            // 记录 pending 的工具调用，等待结果
+                            if let Ok(mut pending_map) = pending.lock() {
+                                let seq = seq_counter.fetch_add(1, Ordering::Relaxed);
+                                let started_at_ms = chrono::Utc::now().timestamp_millis() + seq as i64;
+                                pending_map.insert(
+                                    id.clone(),
+                                    (name.clone(), arguments.clone(), started_at_ms, seq),
+                                );
                             }
 
-                            // Update persisted tool message with result (keep timestamp as started_at to avoid reordering).
+                            // Flush assistant segment BEFORE inserting tool call message (preserve ordering on reload).
                             if let Some(db) = db_for_stream.clone() {
                                 use sentinel_core::models::database as core_db;
                                 use chrono::TimeZone;
+                                let seg = segment_buf
+                                    .lock()
+                                    .map(|mut g| std::mem::take(&mut *g))
+                                    .unwrap_or_default();
+                                let seg_trimmed = seg.trim().to_string();
+                                if !seg_trimmed.trim().is_empty() {
+                                    // Ensure segment timestamp is slightly before tool call timestamp.
+                                    let seg_ts_ms = chrono::Utc::now().timestamp_millis() - 1;
+                                    let seg_ts = chrono::Utc
+                                        .timestamp_millis_opt(seg_ts_ms)
+                                        .single()
+                                        .unwrap_or_else(chrono::Utc::now);
+
+                                    // Get reasoning content (for deepseek-reasoner with tool calls, always include it)
+                                    // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
+                                    let reasoning = reasoning_buf
+                                        .lock()
+                                        .map(|g| {
+                                            let r = g.clone();
+                                            // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
+                                            Some(if r.trim().is_empty() {
+                                                String::new()
+                                            } else {
+                                                r
+                                            })
+                                        })
+                                        .ok()
+                                        .flatten();
+
+                                    let seg_msg = core_db::AiMessage {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        conversation_id: execution_id.clone(),
+                                        role: "assistant".to_string(),
+                                        content: seg_trimmed.clone(),
+                                        metadata: None,
+                                        token_count: Some(seg_trimmed.len() as i32),
+                                        cost: None,
+                                        tool_calls: None,
+                                        attachments: None,
+                                        reasoning_content: reasoning,
+                                        timestamp: seg_ts,
+                                        architecture_type: None,
+                                        architecture_meta: None,
+                                        structured_data: None,
+                                    };
+                                    tauri::async_runtime::spawn(async move {
+                                        if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
+                                            tracing::warn!(
+                                                "Failed to persist assistant segment: {}",
+                                                e
+                                            );
+                                        }
+                                    });
+                                }
+                            }
+
+                            // Persist tool call as a standalone message (role=tool) so history ordering is correct.
+                            if let Some(db) = db_for_stream.clone() {
+                                use sentinel_core::models::database as core_db;
+                                use chrono::TimeZone;
+                                let (started_at_ms, seq) = pending
+                                    .lock()
+                                    .ok()
+                                    .and_then(|m| m.get(&id).map(|(_, _, ms, s)| (*ms, *s)))
+                                    .unwrap_or((chrono::Utc::now().timestamp_millis(), 0));
+
                                 let started_at = chrono::Utc
                                     .timestamp_millis_opt(started_at_ms)
                                     .single()
                                     .unwrap_or_else(chrono::Utc::now);
 
-                                let tool_args_val: serde_json::Value = serde_json::from_str(&args_for_meta)
-                                    .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
+                                let tool_args_val: serde_json::Value =
+                                    serde_json::from_str(&arguments)
+                                        .unwrap_or_else(|_| json!({ "raw": arguments }));
                                 let meta = json!({
                                     "kind": "tool_call",
-                                    "tool_name": name_for_meta,
+                                    "tool_name": name,
                                     "tool_args": tool_args_val,
                                     "tool_call_id": id,
-                                    "status": "completed",
+                                    "status": "running",
                                     "sequence": seq,
                                     "started_at_ms": started_at_ms,
-                                    "completed_at_ms": completed_at_ms,
-                                    "duration_ms": duration_ms,
-                                    "tool_result": result,
-                                    "success": !result.to_lowercase().contains("error"),
                                 });
+
                                 let tool_msg = core_db::AiMessage {
                                     id: id.clone(),
                                     conversation_id: execution_id.clone(),
@@ -1163,190 +1036,331 @@ async fn execute_agent_with_tools(
                                 };
                                 tauri::async_runtime::spawn(async move {
                                     if let Err(e) = db.upsert_ai_message_append(&tool_msg).await {
-                                        tracing::warn!("Failed to persist tool result update: {}", e);
+                                        tracing::warn!("Failed to persist tool call message: {}", e);
                                     }
                                 });
                             }
+
+                            let _ = app.emit(
+                                "agent:tool_call_complete",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "tool_call_id": id,
+                                    "tool_name": name,
+                                    "arguments": arguments,
+                                }),
+                            );
                         }
-                    }
-                    
-                    let _ = app.emit(
-                        "agent:tool_result",
-                        &json!({
-                            "execution_id": execution_id,
-                            "tool_call_id": id,
-                            "result": result,
-                        }),
-                    );
-                }
-                StreamContent::Usage { input_tokens, output_tokens } => {
-                    let _ = app.emit(
-                        "agent:chunk",
-                        &json!({
-                            "execution_id": execution_id,
-                            "chunk_type": "usage",
-                            "input_tokens": input_tokens,
-                            "output_tokens": output_tokens,
-                        }),
-                    );
-                    
-                    // 记录 token 使用统计到数据库
-                    if input_tokens > 0 || output_tokens > 0 {
-                        use tauri::Manager;
-                        if let Some(db) = app.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
-                            let provider = params.rig_provider.clone();
-                            let model = params.model.clone();
-                            let cost = sentinel_llm::calculate_cost(&provider, &model, input_tokens, output_tokens);
-                            
-                            let db_clone = db.inner().clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = db_clone.update_ai_usage(&provider, &model, input_tokens as i32, output_tokens as i32, cost).await {
-                                    tracing::warn!("Failed to update AI usage stats: {}", e);
-                                } else {
-                                    tracing::info!(
-                                        "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
-                                        provider, model, input_tokens, output_tokens, cost
+                        StreamContent::ToolResult { id, result } => {
+                            // tracing::info!(
+                            //     "Tool result via rig-core: id={}, result_preview={}",
+                            //     id,
+                            //     &result.chars().take(500).collect::<String>()
+                            // );
+
+                            // 将工具调用完整信息添加到收集器
+                            if let Ok(mut pending_map) = pending.lock() {
+                                if let Some((name, arguments, started_at_ms, seq)) =
+                                    pending_map.remove(&id)
+                                {
+                                    let completed_at_ms = chrono::Utc::now().timestamp_millis();
+                                    let duration_ms = completed_at_ms.saturating_sub(started_at_ms);
+                                    let name_for_meta = name.clone();
+                                    let args_for_meta = arguments.clone();
+                                    if let Ok(mut records) = collector.lock() {
+                                        records.push(ToolCallRecord {
+                                            id: id.clone(),
+                                            name,
+                                            arguments,
+                                            result: Some(result.clone()),
+                                            success: !result.to_lowercase().contains("error"),
+                                            sequence: seq,
+                                            started_at_ms,
+                                            completed_at_ms,
+                                            duration_ms,
+                                        });
+                                    }
+
+                                    // Update persisted tool message with result (keep timestamp as started_at to avoid reordering).
+                                    if let Some(db) = db_for_stream.clone() {
+                                        use sentinel_core::models::database as core_db;
+                                        use chrono::TimeZone;
+                                        let started_at = chrono::Utc
+                                            .timestamp_millis_opt(started_at_ms)
+                                            .single()
+                                            .unwrap_or_else(chrono::Utc::now);
+
+                                        let tool_args_val: serde_json::Value =
+                                            serde_json::from_str(&args_for_meta)
+                                                .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
+                                        let meta = json!({
+                                            "kind": "tool_call",
+                                            "tool_name": name_for_meta,
+                                            "tool_args": tool_args_val,
+                                            "tool_call_id": id,
+                                            "status": "completed",
+                                            "sequence": seq,
+                                            "started_at_ms": started_at_ms,
+                                            "completed_at_ms": completed_at_ms,
+                                            "duration_ms": duration_ms,
+                                            "tool_result": result,
+                                            "success": !result.to_lowercase().contains("error"),
+                                        });
+                                        let tool_msg = core_db::AiMessage {
+                                            id: id.clone(),
+                                            conversation_id: execution_id.clone(),
+                                            role: "tool".to_string(),
+                                            content: String::new(),
+                                            metadata: Some(meta.to_string()),
+                                            token_count: None,
+                                            cost: None,
+                                            tool_calls: None,
+                                            attachments: None,
+                                            reasoning_content: None,
+                                            timestamp: started_at,
+                                            architecture_type: None,
+                                            architecture_meta: None,
+                                            structured_data: None,
+                                        };
+                                        tauri::async_runtime::spawn(async move {
+                                            if let Err(e) =
+                                                db.upsert_ai_message_append(&tool_msg).await
+                                            {
+                                                tracing::warn!(
+                                                    "Failed to persist tool result update: {}",
+                                                    e
+                                                );
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+
+                            let _ = app.emit(
+                                "agent:tool_result",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "tool_call_id": id,
+                                    "result": result,
+                                }),
+                            );
+                        }
+                        StreamContent::Usage {
+                            input_tokens,
+                            output_tokens,
+                        } => {
+                            let _ = app.emit(
+                                "agent:chunk",
+                                &json!({
+                                    "execution_id": execution_id,
+                                    "chunk_type": "usage",
+                                    "input_tokens": input_tokens,
+                                    "output_tokens": output_tokens,
+                                }),
+                            );
+
+                            // 记录 token 使用统计到数据库
+                            if input_tokens > 0 || output_tokens > 0 {
+                                use tauri::Manager;
+                                if let Some(db) =
+                                    app.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+                                {
+                                    let provider = params.rig_provider.clone();
+                                    let model = params.model.clone();
+                                    let cost = sentinel_llm::calculate_cost(
+                                        &provider,
+                                        &model,
+                                        input_tokens,
+                                        output_tokens,
                                     );
+
+                                    let db_clone = db.inner().clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) = db_clone
+                                            .update_ai_usage(
+                                                &provider,
+                                                &model,
+                                                input_tokens as i32,
+                                                output_tokens as i32,
+                                                cost,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!("Failed to update AI usage stats: {}", e);
+                                        } else {
+                                            tracing::info!(
+                                                "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
+                                                provider, model, input_tokens, output_tokens, cost
+                                            );
+                                        }
+                                    });
                                 }
-                            });
+                            }
+                        }
+                        StreamContent::Done => {
+                            tracing::info!("Stream completed - execution_id: {}", execution_id);
+                            // Flush any remaining assistant segment at the end (so history shows it after the last tool call).
+                            if let Some(db) = db_for_stream.clone() {
+                                use sentinel_core::models::database as core_db;
+                                let seg = segment_buf
+                                    .lock()
+                                    .map(|mut g| std::mem::take(&mut *g))
+                                    .unwrap_or_default();
+                                let seg_trimmed = seg.trim().to_string();
+                                if !seg_trimmed.trim().is_empty() {
+                                    // Get reasoning content for final segment
+                                    // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
+                                    let reasoning = reasoning_buf
+                                        .lock()
+                                        .map(|mut g| {
+                                            let r = std::mem::take(&mut *g);
+                                            // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
+                                            Some(if r.trim().is_empty() {
+                                                String::new()
+                                            } else {
+                                                r
+                                            })
+                                        })
+                                        .ok()
+                                        .flatten();
+
+                                    let seg_msg = core_db::AiMessage {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        conversation_id: execution_id.clone(),
+                                        role: "assistant".to_string(),
+                                        content: seg_trimmed.clone(),
+                                        metadata: None,
+                                        token_count: Some(seg_trimmed.len() as i32),
+                                        cost: None,
+                                        tool_calls: None,
+                                        attachments: None,
+                                        reasoning_content: reasoning,
+                                        timestamp: chrono::Utc::now(),
+                                        architecture_type: None,
+                                        architecture_meta: None,
+                                        structured_data: None,
+                                    };
+                                    tauri::async_runtime::spawn(async move {
+                                        if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
+                                            tracing::warn!(
+                                                "Failed to persist final assistant segment: {}",
+                                                e
+                                            );
+                                        }
+                                    });
+                                }
+                            }
                         }
                     }
+                    true
+                },
+            )
+            .await;
+
+        match result {
+            Ok(response) => {
+                tracing::info!(
+                    "Agent with tools completed - execution_id: {}, response_length: {}",
+                    params.execution_id,
+                    response.len()
+                );
+
+                let tool_summaries = tool_calls_collector
+                    .lock()
+                    .map(|calls| {
+                        calls
+                            .iter()
+                            .map(|call| ToolCallSummary {
+                                name: call.name.clone(),
+                                success: call.success,
+                                duration_ms: Some(call.duration_ms),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                if let Err(e) = get_global_memory()
+                    .record_execution(ExecutionRecord {
+                        id: params.execution_id.clone(),
+                        task: params.task.clone(),
+                        environment: Some(rig_provider.clone()),
+                        tool_calls: tool_summaries,
+                        success: true,
+                        error: None,
+                        response_excerpt: Some(truncate_for_memory(&response, 400)),
+                        created_at: chrono::Utc::now().timestamp(),
+                    })
+                    .await
+                {
+                    tracing::warn!("Failed to store memory record: {}", e);
                 }
-                StreamContent::Done => {
-                    tracing::info!("Stream completed - execution_id: {}", execution_id);
-                    // Flush any remaining assistant segment at the end (so history shows it after the last tool call).
-                    if let Some(db) = db_for_stream.clone() {
-                        use sentinel_core::models::database as core_db;
-                        let seg = segment_buf.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
-                        let seg_trimmed = seg.trim().to_string();
-                        if !seg_trimmed.trim().is_empty() {
-                            // Get reasoning content for final segment
-                            // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
-                            let reasoning = reasoning_buf.lock().map(|mut g| {
-                                let r = std::mem::take(&mut *g);
-                                // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
-                                Some(if r.trim().is_empty() { String::new() } else { r })
-                            }).ok().flatten();
-                            
-                            let seg_msg = core_db::AiMessage {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                conversation_id: execution_id.clone(),
-                                role: "assistant".to_string(),
-                                content: seg_trimmed.clone(),
-                                metadata: None,
-                                token_count: Some(seg_trimmed.len() as i32),
-                                cost: None,
-                                tool_calls: None,
-                                attachments: None,
-                                reasoning_content: reasoning,
-                                timestamp: chrono::Utc::now(),
-                                architecture_type: None,
-                                architecture_meta: None,
-                                structured_data: None,
-                            };
-                            tauri::async_runtime::spawn(async move {
-                                if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
-                                    tracing::warn!("Failed to persist final assistant segment: {}", e);
-                                }
-                            });
-                        }
+
+                return Ok(response);
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                // 检查是否是可重试的错误（主要是解析错误和网络抖动）
+                let is_retryable = err_msg.contains("Error parsing arguments")
+                    || err_msg.contains("expected value at line 1 column 1")
+                    || err_msg.contains("DeepSeek API Error")
+                    || err_msg.contains("timeout")
+                    || err_msg.contains("connection closed")
+                    || err_msg.contains("error sending request");
+
+                if is_retryable && retries < max_retries {
+                    retries += 1;
+                    last_error = Some(e);
+
+                    // 清理重试前的临时状态
+                    if let Ok(mut buf) = assistant_segment_buf.lock() {
+                        buf.clear();
                     }
-                }
-                }
-                true
-            },
-        )
-        .await;
+                    if let Ok(mut buf) = reasoning_content_buf.lock() {
+                        buf.clear();
+                    }
+                    if let Ok(mut p) = pending_calls.lock() {
+                        p.clear();
+                    }
 
-    match result {
-        Ok(response) => {
-            tracing::info!(
-                "Agent with tools completed - execution_id: {}, response_length: {}",
-                params.execution_id,
-                response.len()
-            );
-
-            // NOTE:
-            // We persist assistant output as multiple "assistant" segments and tool calls as "tool" messages
-            // during streaming, to preserve strict event ordering when reloading history.
-            // So we intentionally do NOT save a single aggregated assistant message here.
-
-            let tool_summaries = tool_calls_collector
-                .lock()
-                .map(|calls| {
-                    calls
-                        .iter()
-                        .map(|call| ToolCallSummary {
-                            name: call.name.clone(),
-                            success: call.success,
-                            duration_ms: Some(call.duration_ms),
+                    continue;
+                } else {
+                    // Final failure recording
+                    let tool_summaries = tool_calls_collector
+                        .lock()
+                        .map(|calls| {
+                            calls
+                                .iter()
+                                .map(|call| ToolCallSummary {
+                                    name: call.name.clone(),
+                                    success: call.success,
+                                    duration_ms: Some(call.duration_ms),
+                                })
+                                .collect::<Vec<_>>()
                         })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+                        .unwrap_or_default();
 
-            if let Err(e) = get_global_memory()
-                .record_execution(ExecutionRecord {
-                    id: params.execution_id.clone(),
-                    task: params.task.clone(),
-                    environment: Some(rig_provider.clone()),
-                    tool_calls: tool_summaries,
-                    success: true,
-                    error: None,
-                    response_excerpt: Some(truncate_for_memory(&response, 400)),
-                    created_at: chrono::Utc::now().timestamp(),
-                })
-                .await
-            {
-                tracing::warn!("Failed to store memory record: {}", e);
-            }
-
-            // 记录工具使用（用于智能选择学习）
-            // FIXME: record_tool_usage signature mismatch
-            // for tool_id in &selected_tool_ids {
-            //     record_tool_usage(tool_id, &params.task);
-            // }
-
-            Ok(response)
-        }
-        Err(e) => {
-            tracing::error!(
-                "Agent with tools failed - execution_id: {}, error: {}",
-                params.execution_id,
-                e
-            );
-            let tool_summaries = tool_calls_collector
-                .lock()
-                .map(|calls| {
-                    calls
-                        .iter()
-                        .map(|call| ToolCallSummary {
-                            name: call.name.clone(),
-                            success: call.success,
-                            duration_ms: Some(call.duration_ms),
+                    if let Err(err) = get_global_memory()
+                        .record_execution(ExecutionRecord {
+                            id: params.execution_id.clone(),
+                            task: params.task.clone(),
+                            environment: Some(rig_provider.clone()),
+                            tool_calls: tool_summaries,
+                            success: false,
+                            error: Some(e.to_string()),
+                            response_excerpt: None,
+                            created_at: chrono::Utc::now().timestamp(),
                         })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            if let Err(err) = get_global_memory()
-                .record_execution(ExecutionRecord {
-                    id: params.execution_id.clone(),
-                    task: params.task.clone(),
-                    environment: Some(rig_provider.clone()),
-                    tool_calls: tool_summaries,
-                    success: false,
-                    error: Some(e.to_string()),
-                    response_excerpt: None,
-                    created_at: chrono::Utc::now().timestamp(),
-                })
-                .await
-            {
-                tracing::warn!("Failed to store memory record: {}", err);
+                        .await
+                    {
+                        tracing::warn!("Failed to store memory record: {}", err);
+                    }
+                    return Err(e);
+                }
             }
-            Err(e)
         }
     }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries reached")))
 }
 
 fn truncate_for_memory(text: &str, max_len: usize) -> String {
@@ -1415,20 +1429,235 @@ async fn summarize_history_from_chat_messages(
         history_text.push_str(&format!("{}. {}: {}\n", i + 1, role, content));
     }
 
+    // Check if history is too long for single summarization
+    // Most models have 128K token limit, but we use conservative 50K for safety
+    const MAX_SUMMARY_INPUT_TOKENS: usize = 50_000;
+    let history_tokens = estimate_tokens(&history_text);
+    
+    if history_tokens > MAX_SUMMARY_INPUT_TOKENS {
+        tracing::warn!(
+            "History too long for single summarization ({} tokens > {} limit), using chunked approach",
+            history_tokens,
+            MAX_SUMMARY_INPUT_TOKENS
+        );
+        return summarize_history_chunked(history, llm_config, MAX_SUMMARY_INPUT_TOKENS).await;
+    }
+
     let summary_prompt = format!(
-        "Please summarize the following conversation history concisely, preserving key information and context:\n\n{}\n\nSummary:",
+        "Summarize the following conversation history:\n\n{}\n\nProvide a structured summary following the format specified in the system prompt.",
         history_text
     );
 
-    // Use the same LLM to generate summary
+    // Use the same LLM to generate summary with detailed system prompt
+    let summary_system_prompt = r#"You are a conversation history summarization assistant. Your task is to compress multiple rounds of dialogue into a summary that allows subsequent conversations to continue seamlessly.
+
+## Summarization Principles:
+
+### 1. Information That MUST Be Retained (by priority):
+- **User Identity and Background**: Personal information, role, use case mentioned by the user
+- **Core Requirements**: Goals the user wants to achieve or problems to solve
+- **Key Context**:
+  - Proper nouns, names, product names, project names
+  - Specific numbers, dates, version numbers
+  - Tech stack, tools, platform information
+  - Established constraints or preferences
+- **Progress Status**:
+  - Completed steps or resolved issues
+  - Tasks in progress
+  - Pending issues or next steps
+- **Important Decisions**: Choices made by the user and their reasoning
+- **Encountered Problems**: Errors, obstacles, pitfalls to avoid
+
+### 2. Information That Can Be Omitted:
+- Greetings and pleasantries
+- Repeated explanations (keep only the final version)
+- Rejected or abandoned approaches
+- Trial-and-error processes (unless helpful for understanding)
+
+### 3. Summary Structure:
+
+**[Conversation Context]**
+One sentence summarizing the user's core need and scenario
+
+**[Key Information]**
+- Important contextual details (in list format)
+- Technical/business-specific information
+
+**[Completed]**
+Problems solved or milestones achieved
+
+**[Current Status]**
+What was being discussed when the conversation paused, and at what stage
+
+**[To Be Resolved/Next Steps]**
+- Clearly list unfinished tasks
+- Potential directions the user may continue to explore
+
+**[Notes]**
+User's special preferences, approaches to avoid, important reminders
+
+### 4. Language Style:
+- Use third-person objective description
+- Concise but complete, without losing critical details
+- Use clear expressions like "The user wants to...", "It has been determined that..."
+- Preserve original terminology and expressions, do not rewrite professional vocabulary
+
+### 5. Quality Check:
+After completing the summary, ask yourself: If I only read this summary, can I:
+✓ Understand what the user is doing
+✓ Know what has been tried
+✓ Be clear about what should be done next
+✓ Understand important constraints and preferences"#;
+
     let client = LlmClient::new(llm_config.clone());
     let summary = client.completion(
-        Some("You are a helpful assistant that summarizes conversations concisely."),
+        Some(summary_system_prompt),
         &summary_prompt,
     ).await?;
 
-    tracing::info!("Summarized {} messages into {} tokens", history.len(), estimate_tokens(&summary));
+    // Check if summary is empty
+    if summary.trim().is_empty() {
+        tracing::error!("LLM returned empty summary! History length: {} messages, {} chars", 
+            history.len(), 
+            history_text.len()
+        );
+        return Err(anyhow::anyhow!("LLM returned empty summary"));
+    }
+
+    tracing::info!(
+        "Summarized {} messages into {} tokens (summary length: {} chars)", 
+        history.len(), 
+        estimate_tokens(&summary),
+        summary.len()
+    );
     Ok(summary)
+}
+
+/// Summarize very long history using chunked approach
+async fn summarize_history_chunked(
+    history: &[sentinel_llm::ChatMessage],
+    llm_config: &LlmConfig,
+    max_tokens_per_chunk: usize,
+) -> Result<String> {
+    // Split history into chunks that fit within token limit
+    let mut chunks: Vec<Vec<&sentinel_llm::ChatMessage>> = Vec::new();
+    let mut current_chunk = Vec::new();
+    let mut current_tokens = 0;
+
+    for msg in history {
+        let msg_tokens = estimate_tokens(&msg.content);
+        
+        // If adding this message exceeds limit, start new chunk
+        if current_tokens + msg_tokens > max_tokens_per_chunk && !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+            current_chunk = Vec::new();
+            current_tokens = 0;
+        }
+        
+        current_chunk.push(msg);
+        current_tokens += msg_tokens;
+    }
+    
+    // Add last chunk
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    tracing::info!(
+        "Split {} messages into {} chunks for summarization",
+        history.len(),
+        chunks.len()
+    );
+
+    // Summarize each chunk
+    let mut chunk_summaries = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        tracing::info!("Summarizing chunk {}/{} ({} messages)", i + 1, chunks.len(), chunk.len());
+        
+        // Build text for this chunk
+        let mut chunk_text = String::new();
+        for (j, msg) in chunk.iter().enumerate() {
+            chunk_text.push_str(&format!("{}. {}: {}\n", j + 1, msg.role, msg.content));
+        }
+
+        let summary_prompt = format!(
+            "Summarize the following conversation segment (part {}/{}). Focus on key information, decisions, and context:\n\n{}\n\nProvide a concise summary:",
+            i + 1,
+            chunks.len(),
+            chunk_text
+        );
+
+        let summary_system_prompt = r#"You are a conversation summarization assistant. Summarize the conversation segment concisely while preserving:
+- Key decisions and outcomes
+- Important context and facts
+- User goals and requirements
+- Technical details and constraints
+- Current status and next steps
+
+Keep the summary brief but informative."#;
+
+        let client = LlmClient::new(llm_config.clone());
+        match client.completion(Some(summary_system_prompt), &summary_prompt).await {
+            Ok(summary) if !summary.trim().is_empty() => {
+                chunk_summaries.push(format!("**Segment {}:**\n{}", i + 1, summary));
+            }
+            Ok(_) => {
+                tracing::warn!("Chunk {} returned empty summary, skipping", i + 1);
+            }
+            Err(e) => {
+                tracing::error!("Failed to summarize chunk {}: {}", i + 1, e);
+                // Continue with other chunks even if one fails
+            }
+        }
+    }
+
+    if chunk_summaries.is_empty() {
+        return Err(anyhow::anyhow!("All chunk summarizations failed"));
+    }
+
+    // Combine chunk summaries into final summary
+    let combined = chunk_summaries.join("\n\n");
+    
+    // If combined summary is still too long, do a final pass
+    let combined_tokens = estimate_tokens(&combined);
+    if combined_tokens > max_tokens_per_chunk / 2 {
+        tracing::info!("Combined summary still long ({} tokens), doing final consolidation", combined_tokens);
+        
+        let final_prompt = format!(
+            "Consolidate the following conversation summaries into a single coherent summary:\n\n{}\n\nProvide a unified summary:",
+            combined
+        );
+
+        let final_system_prompt = r#"You are a conversation history summarization assistant. Your task is to consolidate multiple conversation segment summaries into one coherent summary.
+
+**[Conversation Context]**
+Summarize the overall context and user's core needs
+
+**[Key Information]**
+- Important facts, decisions, and technical details
+- User requirements and constraints
+
+**[Progress]**
+What has been accomplished and current status
+
+**[Next Steps]**
+Pending tasks or likely next directions
+
+Keep it concise but complete."#;
+
+        let client = LlmClient::new(llm_config.clone());
+        match client.completion(Some(final_system_prompt), &final_prompt).await {
+            Ok(final_summary) if !final_summary.trim().is_empty() => {
+                tracing::info!("Final consolidated summary: {} tokens", estimate_tokens(&final_summary));
+                return Ok(final_summary);
+            }
+            _ => {
+                tracing::warn!("Final consolidation failed, using combined chunk summaries");
+            }
+        }
+    }
+
+    Ok(combined)
 }
 
 /// 工具调用结构

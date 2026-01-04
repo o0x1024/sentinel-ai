@@ -19,3 +19,6 @@ export { default as ShellToolResult } from './ShellToolResult.vue'
 // Todos 组件
 export { default as TodoPanel } from './TodoPanel.vue'
 export { default as TodoItem } from './TodoItem.vue'
+
+// 标签页组件
+export { default as AgentTabs } from './AgentTabs.vue'

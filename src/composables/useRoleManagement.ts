@@ -128,6 +128,17 @@ export function useRoleManagement() {
     return role.prompt
   }
 
+  // AI生成角色
+  const generateRole = async (prompt: string): Promise<CreateRoleRequest> => {
+    try {
+      const result = await invoke<CreateRoleRequest>('generate_ai_role', { prompt })
+      return result
+    } catch (error) {
+      console.error('Failed to generate role with AI:', error)
+      throw error
+    }
+  }
+
   return {
     roles: computed(() => roles.value),
     selectedRole: computed(() => selectedRole.value),
@@ -138,5 +149,6 @@ export function useRoleManagement() {
     deleteRole,
     selectRole,
     getRoleSystemPrompt,
+    generateRole,
   }
 }

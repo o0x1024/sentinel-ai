@@ -18,5 +18,13 @@ export default {
   listView: '列表视图',
   systemRole: '系统角色',
   systemRoleNoEdit: '系统角色无法编辑',
-  systemRoleNoDelete: '系统角色无法删除'
+  systemRoleNoDelete: '系统角色无法删除',
+  aiGenerate: 'AI 生成',
+  aiInputPlaceholder: '描述你想创建的角色，例如：SQL 注入分析专家...',
+  aiInputHint: 'AI 将根据你的描述自动生成名称、描述和系统提示词。',
+  generate: '生成',
+  generating: '生成中...',
+  generateSuccess: '角色生成成功，你可以根据需要进一步修改。',
+  generateError: '角色生成失败',
+  backToList: '返回列表',
 }

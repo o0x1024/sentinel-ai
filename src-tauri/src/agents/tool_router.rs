@@ -457,7 +457,7 @@ impl ToolRouter {
     }
 
     /// 获取所有可用工具（包括动态工具）
-    pub fn get_all_available_tools(&self) -> Vec<ToolMetadata> {
+    fn get_all_available_tools(&self) -> Vec<ToolMetadata> {
         let mut tools = self.all_tools.clone();
         tools.extend(self.workflow_tools.clone());
         tools.extend(self.mcp_tools.clone());
@@ -468,44 +468,6 @@ impl ToolRouter {
         tools.retain(|t| seen.insert(t.id.clone()));
         
         tools
-    }
-
-    /// 获取工具的完整定义（用于渐进式披露）
-    pub async fn get_tool_full_definition(&self, tool_id: &str) -> Result<crate::agents::ToolFullDefinition> {
-        
-        // Get tool metadata first
-        let all_tools = self.get_all_available_tools();
-        let tool_meta = all_tools
-            .iter()
-            .find(|t| t.id == tool_id)
-            .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", tool_id))?;
-        
-        // Try to get full definition from tool server
-        // For now, return basic structure with metadata
-        // In the future, this could query the actual tool for its schema
-        
-        let parameters = serde_json::json!({
-            "type": "object",
-            "description": format!("Parameters for {}", tool_meta.name),
-            "note": "Use the tool to see actual parameter validation"
-        });
-        
-        let usage_notes = Some(format!(
-            "Category: {:?}\nCost: {:?}\nTags: {}",
-            tool_meta.category,
-            tool_meta.cost_estimate,
-            tool_meta.tags.join(", ")
-        ));
-        
-        let examples = vec![
-            format!("Example: Use {} for {}", tool_meta.name, tool_meta.description)
-        ];
-        
-        Ok(crate::agents::ToolFullDefinition {
-            parameters,
-            usage_notes,
-            examples,
-        })
     }
 
     /// 关键词匹配选择工具（快速，无额外成本）
@@ -1028,10 +990,8 @@ impl ToolRouter {
         }
 
         // 构建 LLM prompt
-        let prompt = format!(
-            r#"Task: {}
-
-Available tools:
+        let system_prompt = format!(
+            r#"Available tools:
 {}
 
 Select the {} most relevant tools for this task. Consider:
@@ -1040,8 +1000,10 @@ Select the {} most relevant tools for this task. Consider:
 3. Prioritize tools that are essential over optional ones
 
 Return ONLY the tool names, one per line, no explanations or extra text."#,
-            task, tools_summary, remaining_slots
+            tools_summary, remaining_slots
         );
+
+        let user_prompt = format!("Task: {}", task);
 
         // 使用快速模型（优先使用用户配置，否则使用默认）
         let llm_cfg = if let Some(cfg) = llm_config {
@@ -1058,7 +1020,7 @@ Return ONLY the tool names, one per line, no explanations or extra text."#,
             task.chars().take(100).collect::<String>()
         );
 
-        match client.completion(None, &prompt).await {
+        match client.completion(Some(&system_prompt), &user_prompt).await {
             Ok(response) => {
                 // 解析响应，提取工具名称
                 let tool_names: Vec<String> = response
@@ -1124,21 +1086,20 @@ Return ONLY the tool names, one per line, no explanations or extra text."#,
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = format!(
-            r#"Task: {}
-
-Pre-selected candidate tools (from keyword matching):
+        let system_prompt = format!(
+            r#"Pre-selected candidate tools (from keyword matching):
 {}
 
 From these {} candidates, select the {} most essential tools for the task.
 Focus on tools that are directly needed, not just potentially useful.
 
 Return ONLY the tool names, one per line."#,
-            task,
             tools_summary,
             candidate_tools.len(),
             config.max_tools
         );
+
+        let user_prompt = format!("Task: {}", task);
 
         use sentinel_llm::{LlmClient, LlmConfig};
 
@@ -1150,7 +1111,7 @@ Return ONLY the tool names, one per line."#,
 
         let client = LlmClient::new(llm_cfg);
 
-        match client.completion(None, &prompt).await {
+        match client.completion(Some(&system_prompt), &user_prompt).await {
             Ok(response) => {
                 let tool_names: Vec<String> = response
                     .lines()
@@ -1194,11 +1155,12 @@ Return ONLY the tool names, one per line."#,
         &self,
         task: &str,
         config: &ToolConfig,
-        _llm_config: Option<&sentinel_llm::LlmConfig>,
+        llm_config: Option<&sentinel_llm::LlmConfig>,
         allowed_groups: &[String],
         _db_pool: Option<&sqlx::sqlite::SqlitePool>,
     ) -> Result<ToolSelectionPlan> {
         use sentinel_db::Database;
+        use sentinel_llm::{LlmClient, LlmConfig};
 
         // Need DB service for ability group queries
         let db = match &self.db_service {
@@ -1214,10 +1176,7 @@ Return ONLY the tool names, one per line."#,
             }
         };
 
-        // 🔑 新方案：不使用单独的LLM调用选择能力组
-        // 直接使用第一个匹配的能力组（如果指定了allowed_groups）
-        // 或者使用所有能力组的工具（如果没有指定）
-        
+        // Phase 1: Load group summaries
         let groups = if allowed_groups.is_empty() {
             db.list_ability_groups_summary().await?
         } else {
@@ -1234,25 +1193,33 @@ Return ONLY the tool names, one per line."#,
             });
         }
 
-        // 如果只有一个能力组，直接使用它
-        // 如果有多个，使用第一个（或者可以合并所有组的工具）
-        let selected_group_summary = if groups.len() == 1 {
-            groups.first().unwrap()
-        } else {
-            // 多个能力组时，使用第一个
-            // TODO: 未来可以考虑合并多个组的工具
-            tracing::info!("Multiple ability groups found ({}), using first one: {}", 
-                groups.len(), groups[0].name);
-            &groups[0]
-        };
+        // Build group selection prompt
+        let groups_summary = groups
+            .iter()
+            .map(|g| format!("- {}: {}", g.name, g.description))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        tracing::info!("Using ability group: '{}'", selected_group_summary.name);
+        let system_prompt = format!(
+            r#"Available ability groups (choose exactly ONE that best fits the task):
+{}
 
-        // Load full group details
-        let full_group = match db.get_ability_group(&selected_group_summary.id).await? {
-            Some(g) => g,
-            None => {
-                tracing::warn!("Ability group {} not found, falling back to Keyword", selected_group_summary.id);
+Return ONLY the ability group name (one line, no explanation)."#,
+            groups_summary
+        );
+
+        let user_prompt = format!("Task: {}", task);
+
+        // Call LLM to select group
+        let llm_cfg = llm_config.cloned().unwrap_or_else(|| {
+            LlmConfig::new("openai", "gpt-3.5-turbo").with_timeout(30)
+        });
+        let client = LlmClient::new(llm_cfg);
+
+        let selected_group_name = match client.completion(Some(&system_prompt), &user_prompt).await {
+            Ok(response) => response.trim().to_string(),
+            Err(e) => {
+                tracing::warn!("Ability group selection LLM call failed: {}, falling back to Keyword", e);
                 let tool_ids = self.select_by_keywords(task, config)?;
                 return Ok(ToolSelectionPlan {
                     tool_ids,
@@ -1262,56 +1229,81 @@ Return ONLY the tool names, one per line."#,
             }
         };
 
-        // 🔑 渐进式披露改进：注册所有工具但鼓励按需查看详情
-        // 这样既能调用工具，又能节省初始 token（通过简化的工具描述）
-        
+        // tracing::info!("LLM selected ability group: '{}'", selected_group_name);
+
+        // Phase 2: Match and load full group
+        // Try exact match first, then fuzzy
+        let matched_group = groups.iter().find(|g| {
+            g.name.eq_ignore_ascii_case(&selected_group_name)
+                || g.id == selected_group_name
+        });
+
+        let group_id = match matched_group {
+            Some(g) => g.id.clone(),
+            None => {
+                // Fuzzy match: check if response contains group name
+                let fuzzy_match = groups.iter().find(|g| {
+                    selected_group_name.to_lowercase().contains(&g.name.to_lowercase())
+                });
+                match fuzzy_match {
+                    Some(g) => {
+                        tracing::info!("Fuzzy matched ability group: '{}'", g.name);
+                        g.id.clone()
+                    }
+                    None => {
+                        tracing::warn!(
+                            "Could not match LLM response '{}' to any group, falling back to Keyword",
+                            selected_group_name
+                        );
+                        let tool_ids = self.select_by_keywords(task, config)?;
+                        return Ok(ToolSelectionPlan {
+                            tool_ids,
+                            injected_system_prompt: None,
+                            selected_ability_group: None,
+                        });
+                    }
+                }
+            }
+        };
+
+        // Load full group details
+        let full_group = match db.get_ability_group(&group_id).await? {
+            Some(g) => g,
+            None => {
+                tracing::warn!("Ability group {} not found, falling back to Keyword", group_id);
+                let tool_ids = self.select_by_keywords(task, config)?;
+                return Ok(ToolSelectionPlan {
+                    tool_ids,
+                    injected_system_prompt: None,
+                    selected_ability_group: None,
+                });
+            }
+        };
+
+        // Compute final tool_ids: fixed_tools + group.tool_ids - disabled_tools
         let all_available = self.get_all_available_tools();
         let available_ids: std::collections::HashSet<_> = all_available.iter().map(|t| &t.id).collect();
 
-        // Include fixed_tools + all group tools + get_tool_definition
         let mut final_tools: Vec<String> = config.fixed_tools.clone();
-        
-        // Add get_tool_definition tool (this will be registered separately)
-        if !final_tools.contains(&"get_tool_definition".to_string()) {
-            final_tools.push("get_tool_definition".to_string());
-        }
 
-        // Build tool list summary for system prompt
-        let mut tool_list_items = Vec::new();
-        
         // Add group tools (filter out non-existent and disabled)
         for tool_id in &full_group.tool_ids {
             if config.disabled_tools.contains(tool_id) {
                 continue;
             }
-            
+            // Check if tool exists
             let normalized_id = tool_id.replace("::", "__");
             let exists = available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
-            
-            if exists {
-                // Find tool metadata
-                let tool_meta = all_available.iter().find(|t| {
-                    &t.id == tool_id || t.id == normalized_id
+            if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id) {
+                final_tools.push(if available_ids.contains(&normalized_id) {
+                    normalized_id
+                } else {
+                    tool_id.clone()
                 });
-                
-                if let Some(meta) = tool_meta {
-                    tool_list_items.push(format!("- **{}**: {}", meta.name, meta.description));
-                    
-                    // Add to final_tools if not already present
-                    let tool_id_to_add = if available_ids.contains(&normalized_id) {
-                        normalized_id.clone()
-                    } else {
-                        tool_id.clone()
-                    };
-                    
-                    if !final_tools.contains(&tool_id_to_add) {
-                        final_tools.push(tool_id_to_add);
-                    }
-                }
             }
         }
 
-        // Remove disabled from final_tools
+        // Remove disabled from fixed_tools too
         final_tools.retain(|t| !config.disabled_tools.contains(t));
 
         // Respect max_tools
@@ -1320,7 +1312,7 @@ Return ONLY the tool names, one per line."#,
         }
 
         // Warn if no tools available
-        if tool_list_items.is_empty() {
+        if final_tools.is_empty() {
             tracing::warn!(
                 "Ability group '{}' has no available tools after filtering, falling back to Keyword",
                 full_group.name
@@ -1333,9 +1325,7 @@ Return ONLY the tool names, one per line."#,
             });
         }
 
-        // Build injected system prompt with progressive disclosure instructions
-        let tool_list = tool_list_items.join("\n");
-        
+        // Build injected system prompt
         let mut injected_content = full_group.instructions.clone();
         
         // Append additional_notes if present
@@ -1345,51 +1335,16 @@ Return ONLY the tool names, one per line."#,
         }
         
         let injected = format!(
-            r#"
-
-[AbilityContext: {}]
-Description: {}
-
-{}
-
-## Available Tools
-
-You have access to the following tools:
-{}
-
-### Tool Usage Guidelines
-
-**All tools are available for immediate use.** If you're unsure about a tool's parameters or usage:
-
-1. **Option 1 (Recommended)**: Try using the tool directly - the system will validate parameters
-2. **Option 2**: Call `get_tool_definition("tool_name")` to see detailed parameter specifications and examples
-
-**When to check tool definition**:
-- Complex tools with many parameters
-- When you need to see usage examples
-- When a tool call fails due to parameter errors
-
-**Example**:
-```
-User: "Scan the target website"
-Assistant: I'll use vision_explorer to scan the website.
-[If unsure about parameters, can call get_tool_definition("vision_explorer") first]
-[Then calls vision_explorer with parameters]
-```
-[End of AbilityContext]
-"#,
-            full_group.name, 
-            full_group.description,
-            injected_content, 
-            tool_list
+            "\n\n[AbilityInstructionsBegin: {}]\n{}\n[AbilityInstructionsEnd]",
+            full_group.name, injected_content
         );
 
         tracing::info!(
-            "Ability selection (Progressive Disclosure): group='{}', exposed_tools={:?}, available_tools_count={}, instructions_len={}",
+            "Ability selection: group='{}', tools={:?}, instructions_len={}, additional_notes_len={}",
             full_group.name,
             final_tools,
-            tool_list_items.len(),
-            full_group.instructions.len()
+            full_group.instructions.len(),
+            full_group.additional_notes.len()
         );
 
         Ok(ToolSelectionPlan {

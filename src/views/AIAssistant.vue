@@ -56,15 +56,34 @@
     </div>
 
     <!-- {{ t('aiAssistant.mainContentArea') }} -->
-    <div class="flex-1 overflow-hidden min-h-0">
-      <AgentView 
-        ref="agentViewRef"
-        :show-todos="true"
-        :selected-role="selectedRole"
-        @submit="handleAgentSubmit"
-        @complete="handleAgentComplete"
-        @error="handleAgentError"
-      />
+    <div class="flex-1 overflow-hidden min-h-0 flex flex-col">
+      <AgentTabs @new-tab="handleNewTab" />
+      
+      <div class="flex-1 relative overflow-hidden">
+        <template v-for="session in sessions" :key="session.id">
+          <AgentView 
+            v-show="session.id === activeSessionId"
+            :ref="el => setAgentRef(el, session.id)"
+            :execution-id="session.id"
+            :show-todos="true"
+            :selected-role="selectedRole"
+            class="absolute inset-0"
+            @submit="handleAgentSubmit"
+            @complete="handleAgentComplete"
+            @error="handleAgentError"
+          />
+        </template>
+        
+        <!-- Empty State -->
+        <div v-if="sessions.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/40 gap-4">
+          <i class="fas fa-robot text-6xl"></i>
+          <p>{{ t('aiAssistant.noActiveSessions', '暂无活跃对话，请开启新标签页') }}</p>
+          <button class="btn btn-primary btn-sm" @click="handleNewTab">
+            <i class="fas fa-plus"></i>
+            {{ t('aiAssistant.startNewConversation', '开启新对话') }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- {{ t('aiAssistant.roleManagementModal') }} -->
@@ -73,12 +92,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, onActivated, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, nextTick, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import RoleManagement from '@/components/RoleManagement.vue'
-import { AgentView } from '@/components/Agent'
+import { AgentView, AgentTabs } from '@/components/Agent'
 import { useRoleManagement } from '@/composables/useRoleManagement'
+import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 
 // {{ t('aiAssistant.trafficReferenceType') }}
 interface ReferencedTraffic {
@@ -111,8 +132,36 @@ const {
 // 角色管理状态
 const showRoleManagement = ref(false)
 
-// --- {{ t('aiAssistant.agentViewRelated') }} ---
-const agentViewRef = ref<any>(null)
+// --- 会话管理 ---
+const { sessions, activeSessionId, addSession } = useAgentSessionManager()
+const agentViewRefs = ref<Record<string, any>>({})
+
+const setAgentRef = (el: any, id: string) => {
+  if (el) {
+    agentViewRefs.value[id] = el
+  } else {
+    delete agentViewRefs.value[id]
+  }
+}
+
+const activeAgentView = computed(() => {
+  if (!activeSessionId.value) return null
+  return agentViewRefs.value[activeSessionId.value]
+})
+
+const handleNewTab = async () => {
+  try {
+    const convId = await invoke<string>('create_ai_conversation', {
+      request: {
+        title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+        service_name: 'default'
+      }
+    })
+    addSession(convId, t('agent.newConversationTitle'))
+  } catch (e) {
+    console.error('Failed to create new conversation for tab:', e)
+  }
+}
 
 // 流量事件监听器
 let unlistenTraffic: UnlistenFn | null = null
@@ -125,7 +174,7 @@ const handleSelectRole = async (role: any) => {
   }
 }
 
-// --- {{ t('aiAssistant.agentViewEventHandling') }} ---
+// --- 事件处理 ---
 const handleAgentSubmit = (task: string) => {
   console.log('Agent task submitted:', task)
 }
@@ -138,18 +187,31 @@ const handleAgentError = (error: string) => {
   console.error('Agent task error:', error)
 }
 
-// {{ t('aiAssistant.initialization') }}
+// 初始化
 onMounted(async () => {
   try {
     // 加载角色列表
     await loadRoles()
 
+    // 如果没有任何会话，尝试加载最近的一个或创建一个
+    if (sessions.value.length === 0) {
+      const conversations = await invoke<any[]>('get_ai_conversations')
+      if (conversations && conversations.length > 0) {
+        const latest = conversations.sort((a, b) => 
+          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        )[0]
+        addSession(latest.id, latest.title || t('agent.unnamedConversation'))
+      } else {
+        await handleNewTab()
+      }
+    }
+
     // 监听流量发送到助手事件
     unlistenTraffic = await listen<{ requests: ReferencedTraffic[], type?: 'request' | 'response' | 'both' }>('traffic:send-to-assistant', (event) => {
       console.log('AIAssistant: Received traffic data:', event.payload)
-      if (event.payload?.requests && agentViewRef.value?.addReferencedTraffic) {
+      if (event.payload?.requests && activeAgentView.value?.addReferencedTraffic) {
         const type = event.payload.type || 'both'
-        agentViewRef.value.addReferencedTraffic(event.payload.requests, type)
+        activeAgentView.value.addReferencedTraffic(event.payload.requests, type)
       }
     })
   } catch (error) {
@@ -157,7 +219,7 @@ onMounted(async () => {
   }
 })
 
-// {{ t('aiAssistant.cleanupEventListener') }}
+// 清理
 onUnmounted(() => {
   if (unlistenTraffic) {
     unlistenTraffic()
@@ -165,11 +227,10 @@ onUnmounted(() => {
   }
 })
 
-// 当组件被 keep-alive 激活时，自动聚焦输入框
+// 激活时聚焦
 onActivated(() => {
-  console.log('AIAssistant: Component activated, focusing input')
   nextTick(() => {
-    agentViewRef.value?.focusInput()
+    activeAgentView.value?.focusInput()
   })
 })
 </script>

@@ -1378,6 +1378,14 @@ export default {
     listView: 'List View',
     systemRoleNoEdit: 'System roles cannot be edited',
     systemRoleNoDelete: 'System roles cannot be deleted',
+    aiGenerate: 'AI Generate',
+    aiInputPlaceholder: 'Describe the role you want to create, e.g., SQL Injection Analysis Expert...',
+    aiInputHint: 'AI will automatically generate the title, description, and system prompt based on your description.',
+    generate: 'Generate',
+    generating: 'Generating...',
+    generateSuccess: 'Role generated successfully. You can further modify it if needed.',
+    generateError: 'Failed to generate role',
+    backToList: 'Back to List',
   },
   scanSessions: {
     title: 'Smart Scan Sessions',
@@ -1721,6 +1729,8 @@ export default {
     availableRoles: 'Available Roles',
     defaultRole: 'Default Assistant',
     noRoles: 'No custom roles',
+    noActiveSessions: 'No active sessions, please open a new tab',
+    startNewConversation: 'Start New Conversation',
   },
 
   plugins: {
@@ -1882,6 +1892,7 @@ export default {
     expandDetails: 'Expand Details',
     inputParameters: 'Input Parameters',
     executionResult: 'Execution Result',
+    newTab: 'New Tab',
     toolCallId: 'Tool Call ID',
     copyMessage: 'Copy Message',
     copy: 'Copy',
@@ -1893,6 +1904,7 @@ export default {
     statusPending: 'Pending',
     sourceCitation: 'View Source {number}',
     close: 'Close',
+    loadMoreMessages: 'Load {count} earlier messages',
     knowledgeBaseCited: 'Knowledge base cited ({count} times)',
     noKnowledgeBaseCitations: 'No knowledge base citations',
   }
