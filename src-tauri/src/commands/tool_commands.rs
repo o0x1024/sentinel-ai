@@ -279,6 +279,10 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                         "type": "string",
                         "description": "Content to store (if action='store') or query to retrieve (if action='retrieve')"
                     },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional title for the memory (only for 'store'). If not provided, a title will be generated from content."
+                    },
                     "tags": {
                         "type": "array",
                         "items": { "type": "string" },

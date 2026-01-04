@@ -346,6 +346,8 @@ impl ToolRouter {
                     "recall".to_string(),
                     "vector".to_string(),
                     "knowledge".to_string(),
+                    "naming".to_string(),
+                    "title".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
                 always_available: true,

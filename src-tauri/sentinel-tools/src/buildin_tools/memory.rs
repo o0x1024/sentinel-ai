@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::future::Future;
 use anyhow::Result;
 
-pub type StoreMemoryFn = Box<dyn Fn(String, Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
+pub type StoreMemoryFn = Box<dyn Fn(String, Option<String>, Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
 pub type RetrieveMemoryFn = Box<dyn Fn(String, usize) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send>> + Send + Sync>;
 
 static STORE_FN: OnceLock<StoreMemoryFn> = OnceLock::new();
@@ -25,6 +25,9 @@ pub struct MemoryManagerArgs {
     
     /// Content to store (if action="store") or query to retrieve (if action="retrieve")
     pub content: String,
+
+    /// Optional title for the memory (only for "store"). If not provided, a title will be generated from content.
+    pub title: Option<String>,
     
     /// Tags to categorize the memory (only for "store")
     pub tags: Option<Vec<String>>,
@@ -77,7 +80,7 @@ impl Tool for MemoryManagerTool {
             "store" => {
                 let handler = STORE_FN.get().ok_or(MemoryManagerError::MissingHandler)?;
                 let tags = args.tags.unwrap_or_default();
-                handler(args.content, tags).await
+                handler(args.content, args.title, tags).await
                     .map_err(|e| MemoryManagerError::OperationFailed(e.to_string()))?;
                 Ok(MemoryManagerOutput {
                     success: true,

@@ -219,7 +219,7 @@ pub fn run() {
                     }
                     
                     // Initialize Memory Tool hooks via existing RAG service
-                    let store_fn = Box::new(|content: String, tags: Vec<String>| {
+                    let store_fn = Box::new(|content: String, title: Option<String>, tags: Vec<String>| {
                         Box::pin(async move {
                             let service = crate::commands::rag_commands::get_global_rag_service()
                                 .await
@@ -236,9 +236,21 @@ pub fn run() {
                             }
                             meta.insert("type".to_string(), "agent_memory".to_string());
 
+                            let final_title = if let Some(t) = title {
+                                if t.trim().is_empty() {
+                                    format!("Memory: {}", content.chars().take(30).collect::<String>())
+                                } else {
+                                    t
+                                }
+                            } else {
+                                // Default title based on content snippet and timestamp
+                                let snippet = content.chars().take(30).collect::<String>();
+                                format!("Memory: {}...", snippet.trim())
+                            };
+
                             service
                                 .ingest_text(
-                                    "Agent Memory",
+                                    &final_title,
                                     &content,
                                     Some(&collection_id),
                                     Some(meta),
