@@ -568,7 +568,7 @@ async fn stream_chat_with_llm(
                 if let Err(e) = db.update_ai_usage(provider, model, input_tokens as i32, output_tokens as i32, cost).await {
                     tracing::warn!("Failed to update AI usage stats: {}", e);
                 } else {
-                    tracing::info!(
+                    tracing::debug!(
                         "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
                         provider, model, input_tokens, output_tokens, cost
                     );

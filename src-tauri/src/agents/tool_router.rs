@@ -301,6 +301,21 @@ impl ToolRouter {
             },
             // AI工具
             ToolMetadata {
+                id: OcrTool::NAME.to_string(),
+                name: OcrTool::NAME.to_string(),
+                description: OcrTool::DESCRIPTION.to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "ocr".to_string(),
+                    "text".to_string(),
+                    "image".to_string(),
+                    "extract".to_string(),
+                    "recognition".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
                 id: "vision_explorer".to_string(),
                 name: "vision_explorer".to_string(),
                 description: "Explore a website using vision capabilities to discover APIs, pages, and interactive elements.".to_string(),
@@ -566,6 +581,14 @@ impl ToolRouter {
                 || task_lower.contains("save"))
                 && tool.id == "memory_manager" {
                     score += 25; // High priority for memory operations
+                }
+            if (task_lower.contains("ocr")
+                || task_lower.contains("text from image")
+                || task_lower.contains("read image")
+                || task_lower.contains("图片文字")
+                || task_lower.contains("文字识别"))
+                && tool.id == "ocr" {
+                    score += 30;
                 }
 
             // 工作流工具匹配

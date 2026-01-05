@@ -214,13 +214,20 @@ where
         let mut assistant_content = String::new();
         let mut assistant_reasoning = String::new();
         let mut tool_calls_map: HashMap<u64, (String, String, String)> = HashMap::new();
+        let mut line_buffer = String::new();
 
         while let Some(chunk_res) = stream.next().await {
             let bytes = chunk_res?;
             let chunk_str = String::from_utf8_lossy(&bytes);
-            
-            for line in chunk_str.lines() {
+            line_buffer.push_str(&chunk_str);
+
+            while let Some(newline_idx) = line_buffer.find('\n') {
+                let line = line_buffer[..newline_idx].trim().to_string();
+                line_buffer.drain(..=newline_idx);
+
+                if line.is_empty() { continue; }
                 if !line.starts_with("data: ") { continue; }
+                
                 let data = &line["data: ".len()..];
                 if data == "[DONE]" { break; }
                 
@@ -253,16 +260,16 @@ where
                                     let entry = tool_calls_map.entry(index)
                                         .or_insert((String::new(), String::new(), String::new()));
                                     
+                                    let mut name_changed = false;
                                     if let Some(id) = tc["id"].as_str() { 
                                         entry.0 = id.to_string(); 
-                                        on_content(StreamContent::ToolCallStart { 
-                                            id: id.to_string(), 
-                                            name: String::new() 
-                                        });
                                     }
                                     
                                     if let Some(f) = tc.get("function") {
                                         if let Some(name) = f["name"].as_str() {
+                                            if entry.1.is_empty() && !name.is_empty() {
+                                                name_changed = true;
+                                            }
                                             entry.1 = name.to_string();
                                         }
                                         if let Some(args) = f["arguments"].as_str() {
@@ -272,6 +279,14 @@ where
                                                 delta: args.to_string() 
                                             });
                                         }
+                                    }
+
+                                    // If we just got the ID or the name for the first time, emit ToolCallStart
+                                    if !entry.0.is_empty() && (tc.get("id").is_some() || name_changed) {
+                                        on_content(StreamContent::ToolCallStart { 
+                                            id: entry.0.clone(), 
+                                            name: entry.1.clone() 
+                                        });
                                     }
                                 }
                             }

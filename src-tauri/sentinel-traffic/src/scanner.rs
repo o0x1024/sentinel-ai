@@ -806,8 +806,8 @@ impl ScanPipeline {
             info!("Found x-sentinel-internal header with value: {}", value);
             value == "true" || value == "1"
         } else {
-            info!("x-sentinel-internal header not found. Available headers: {:?}", 
-                headers.keys().collect::<Vec<_>>());
+            // info!("x-sentinel-internal header not found. Available headers: {:?}", 
+            //     headers.keys().collect::<Vec<_>>());
             false
         }
     }
@@ -819,10 +819,10 @@ impl ScanPipeline {
         let exclude_self = *self.exclude_self_traffic.read().await;
         let is_self = Self::is_self_traffic(&req_ctx.headers);
         
-        info!(
-            "Checking request scan: url={}, exclude_self_config={}, is_self_traffic={}", 
-            req_ctx.url, exclude_self, is_self
-        );
+        // info!(
+        //     "Checking request scan: url={}, exclude_self_config={}, is_self_traffic={}", 
+        //     req_ctx.url, exclude_self, is_self
+        // );
         
         if exclude_self && is_self {
             info!("✓ Skipping plugin scan for self traffic: url={}", req_ctx.url);

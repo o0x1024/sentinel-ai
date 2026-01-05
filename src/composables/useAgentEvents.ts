@@ -96,6 +96,7 @@ interface AgentHistorySummarizedEvent {
   saved_percentage: number
   total_tokens: number
   message_count: number
+  summary_content?: string
   summary_preview?: string
 }
 
@@ -677,6 +678,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           saved_tokens: payload.saved_tokens,
           saved_percentage: payload.saved_percentage,
           total_tokens: payload.total_tokens,
+          summary_content: payload.summary_content,
           summary_preview: payload.summary_preview,
         }
       })

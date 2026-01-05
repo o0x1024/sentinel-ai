@@ -49,3 +49,5 @@ rig-core = { workspace = true }
 schemars = "1.1.0"
 rsubdomain = "1.2.6"
 jsonschema = "0.17.1"
+oar-ocr = "0.5.0"
+image = "0.25"

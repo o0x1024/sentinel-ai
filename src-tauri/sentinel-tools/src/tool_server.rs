@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use crate::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool};
+use crate::buildin_tools::{
+    HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
+};
 use crate::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutor, ToolRegistry, ToolSource,
 };
@@ -488,6 +490,39 @@ impl ToolServer {
             .expect("Failed to build web_search tool");
 
         self.registry.register(web_search_def).await;
+
+        // Register ocr tool
+        let ocr_def = DynamicToolBuilder::new("ocr")
+            .description("Extract text from an image file using OCR (Optical Character Recognition). Support local file paths.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Path to the image file (absolute path or relative to CWD)"
+                    }
+                },
+                "required": ["image_path"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::ocr::{OcrArgs, OcrTool};
+                use rig::tool::Tool;
+                
+                let tool_args: OcrArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = OcrTool::default();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("OCR failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build ocr tool");
+
+        self.registry.register(ocr_def).await;
 
         *initialized = true;
         tracing::info!("Builtin tools initialized");

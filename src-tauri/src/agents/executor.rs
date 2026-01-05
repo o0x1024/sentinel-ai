@@ -621,7 +621,10 @@ async fn execute_agent_with_tools(
     
     // Estimate history tokens from ChatMessages
     let history_tokens: usize = history_chat_messages.iter().map(|msg| {
-        estimate_tokens(&msg.content)
+        let content_tokens = estimate_tokens(&msg.content);
+        let tool_calls_tokens = msg.tool_calls.as_ref().map(|tc| estimate_tokens(tc)).unwrap_or(0);
+        let reasoning_tokens = msg.reasoning_content.as_ref().map(|r| estimate_tokens(r)).unwrap_or(0);
+        content_tokens + tool_calls_tokens + reasoning_tokens
     }).sum();
     let total_tokens = system_tokens + task_tokens + history_tokens;
     
@@ -782,6 +785,8 @@ async fn execute_agent_with_tools(
                         "saved_percentage": saved_percentage,
                         "total_tokens": new_total,
                         "message_count": history_chat_messages.len(),
+                        "summary_content": summary,
+                        "summary_preview": summary.chars().take(200).collect::<String>(),
                     }),
                 );
             }
@@ -893,7 +898,7 @@ async fn execute_agent_with_tools(
                             );
                         }
                         StreamContent::ToolCallStart { id, name } => {
-                            tracing::info!("Tool call started via rig-core: {} ({})", name, id);
+                            tracing::debug!("Tool call started via rig-core: {} ({})", name, id);
                             let _ = app.emit(
                                 "agent:tool_call_start",
                                 &json!({
@@ -918,7 +923,7 @@ async fn execute_agent_with_tools(
                             name,
                             arguments,
                         } => {
-                            tracing::info!("Tool call complete via rig-core: {} ({})", name, id);
+                            tracing::debug!("Tool call complete via rig-core: {} ({})", name, id);
 
                             // 记录 pending 的工具调用，等待结果
                             if let Ok(mut pending_map) = pending.lock() {
@@ -1145,11 +1150,18 @@ async fn execute_agent_with_tools(
                                 }),
                             );
                         }
-                        StreamContent::Usage {
-                            input_tokens,
-                            output_tokens,
-                        } => {
-                            let _ = app.emit(
+                StreamContent::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => {
+                    tracing::info!(
+                        "Token usage report - execution_id: {}, input: {}, output: {}, estimated total: {}",
+                        execution_id,
+                        input_tokens,
+                        output_tokens,
+                        total_tokens
+                    );
+                    let _ = app.emit(
                                 "agent:chunk",
                                 &json!({
                                     "execution_id": execution_id,
@@ -1299,17 +1311,24 @@ async fn execute_agent_with_tools(
             }
             Err(e) => {
                 let err_msg = e.to_string();
+                
+                // 优化错误消息
+                let friendly_err = if err_msg.contains("error decoding response body") {
+                    if err_msg.contains("UnexpectedEof") || err_msg.contains("unexpected EOF") {
+                        anyhow::anyhow!("LLM provider connection closed unexpectedly. This might be a temporary issue with the provider or proxy. (Original error: {})", err_msg)
+                    } else {
+                        anyhow::anyhow!("Failed to decode LLM response. The provider may have returned an invalid format. (Original error: {})", err_msg)
+                    }
+                } else {
+                    e
+                };
+
                 // 检查是否是可重试的错误（主要是解析错误和网络抖动）
-                let is_retryable = err_msg.contains("Error parsing arguments")
-                    || err_msg.contains("expected value at line 1 column 1")
-                    || err_msg.contains("DeepSeek API Error")
-                    || err_msg.contains("timeout")
-                    || err_msg.contains("connection closed")
-                    || err_msg.contains("error sending request");
+                let is_retryable = !err_msg.is_empty();
 
                 if is_retryable && retries < max_retries {
                     retries += 1;
-                    last_error = Some(e);
+                    last_error = Some(friendly_err);
 
                     // 清理重试前的临时状态
                     if let Ok(mut buf) = assistant_segment_buf.lock() {
@@ -1346,7 +1365,7 @@ async fn execute_agent_with_tools(
                             environment: Some(rig_provider.clone()),
                             tool_calls: tool_summaries,
                             success: false,
-                            error: Some(e.to_string()),
+                            error: Some(err_msg),
                             response_excerpt: None,
                             created_at: chrono::Utc::now().timestamp(),
                         })
@@ -1354,7 +1373,7 @@ async fn execute_agent_with_tools(
                     {
                         tracing::warn!("Failed to store memory record: {}", err);
                     }
-                    return Err(e);
+                    return Err(friendly_err);
                 }
             }
         }
@@ -1395,7 +1414,7 @@ async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str)
         "openai" => 128000,      // GPT-4 Turbo
         "anthropic" => 200000,   // Claude 3
         "gemini" => 1000000,     // Gemini 1.5 Pro
-        "deepseek" => 64000,     // DeepSeek
+        "deepseek" => 128000,    // DeepSeek (V3/R1 support 128k)
         "moonshot" => 128000,    // Moonshot
         "groq" => 32000,         // Groq
         "ollama" => 8192,        // Ollama (varies by model)
@@ -1406,9 +1425,24 @@ async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str)
     Ok(default)
 }
 
-/// Estimate token count for text (rough approximation: 1 token ≈ 4 characters)
+/// Estimate token count for text (conservative approximation)
+/// For English, 1 token ≈ 4 characters
+/// For Chinese/CJK, 1 token ≈ 0.5-1.5 characters (we use 1:1 for safety)
 fn estimate_tokens(text: &str) -> usize {
-    text.len() / 4
+    if text.is_empty() {
+        return 0;
+    }
+
+    let mut total_estimated: f64 = 0.0;
+    for c in text.chars() {
+        if c.is_ascii() {
+            total_estimated += 0.25; // 1 token per 4 ascii chars
+        } else {
+            total_estimated += 1.0;  // 1 token per non-ascii char (conservative for CJK)
+        }
+    }
+    
+    total_estimated.ceil() as usize
 }
 
 /// Summarize chat history to reduce context length

@@ -16,18 +16,24 @@
     </div>
 
     <div 
-    v-for="msg in displayedMessages" 
+    v-for="(msg, index) in displayedMessages" 
     :key="msg.id" 
-    v-memo="[msg.content, msg.metadata?.status, msg.metadata?.duration_ms, isVisionActive]"
+    v-memo="[msg.content, msg.metadata?.status, msg.metadata?.duration_ms, isVisionActive, isExecuting && index === displayedMessages.length - 1]"
     class="message-wrapper animate-fadeIn min-w-0"
     >
-      <MessageBlock :message="msg" :is-vision-active="isVisionActive" @resend="handleResend" />
+      <MessageBlock 
+        :message="msg" 
+        :is-vision-active="isVisionActive" 
+        :is-executing="isExecuting && index === displayedMessages.length - 1"
+        @resend="handleResend" 
+      />
     </div>
     
-    <!-- Loading indicator (waiting for response) -->
-    <div v-if="isStreaming && !streamingContent" class="loading-indicator flex items-center gap-3 px-4 py-3 bg-base-200/50 rounded-lg">
+    <!-- Loading indicator (waiting for response or still working) -->
+    <div v-if="isExecuting" class="loading-indicator flex items-center gap-3 px-4 py-3 bg-base-200/50 rounded-lg mr-4 mb-2">
       <span class="loading loading-dots loading-md text-primary"></span>
-      <span class="text-sm text-base-content/70">{{ t('agent.aiIsThinking') }}</span>
+      <span v-if="!streamingContent" class="text-sm text-base-content/70">{{ t('agent.aiIsThinking') }}</span>
+      <span v-else class="text-xs text-base-content/50 italic">{{ t('agent.statusRunning') }}</span>
     </div>
     <!-- Streaming content is now rendered as an assistant message in the message list -->
     
@@ -54,6 +60,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   messages: AgentMessage[]
+  isExecuting?: boolean
   isStreaming?: boolean
   streamingContent?: string
   isVisionActive?: boolean
@@ -98,18 +105,21 @@ const loadMore = async () => {
 const handleScroll = () => {
   if (!containerRef.value) return
   const { scrollTop, scrollHeight, clientHeight } = containerRef.value
-  // Use a threshold (e.g., 50px) to determine if we are "at the bottom"
-  isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 50
+  // Use a very small threshold (e.g., 5px) to determine if we are "at the bottom"
+  // This makes it much more responsive to user scrolling up
+  isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 5
 }
 
 // Throttled scroll to bottom for better performance during streaming
 let scrollTimer: any = null
 const throttledScrollToBottom = () => {
-  if (scrollTimer) return
-  scrollTimer = setTimeout(() => {
-    scrollToBottom()
+  if (scrollTimer) cancelAnimationFrame(scrollTimer)
+  scrollTimer = requestAnimationFrame(() => {
+    if (containerRef.value && isUserAtBottom.value) {
+      containerRef.value.scrollTop = containerRef.value.scrollHeight
+    }
     scrollTimer = null
-  }, 100) // 100ms throttle
+  })
 }
 
 // Auto-scroll to bottom when new messages arrive
@@ -135,6 +145,7 @@ watch(
   () => props.streamingContent,
   () => {
     if (isUserAtBottom.value) {
+      // For streaming, we want to stay at bottom
       throttledScrollToBottom()
     }
   }
@@ -142,8 +153,8 @@ watch(
 
 const scrollToBottom = () => {
   if (containerRef.value) {
+    // Directly set scrollTop for maximum reliability
     containerRef.value.scrollTop = containerRef.value.scrollHeight
-    // We can assume we are at bottom after this
     isUserAtBottom.value = true
   }
 }
@@ -169,6 +180,12 @@ defineExpose({
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.message-flow {
+  /* Prevent browser from adjusting scroll position automatically, 
+     we handle it manually for better UX during streaming */
+  overflow-anchor: none;
 }
 
 .animate-fadeIn {

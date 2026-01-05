@@ -92,6 +92,12 @@ const renderedHtml = computed(() => {
       }
     )
     
+    // Add blinking cursor
+    content = content.replace(
+      /▍/g,
+      '<span class="typing-cursor">▍</span>'
+    )
+    
     return marked(content)
   } catch (e) {
     console.error('Markdown parsing error:', e)
@@ -236,6 +242,22 @@ const handleCitationClick = (event: MouseEvent) => {
   margin: 1rem 0;
   border: none;
   border-top: 1px solid hsl(var(--b3));
+}
+
+/* Typing cursor */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.markdown-body :deep(.typing-cursor) {
+  display: inline-block;
+  width: 0.5em;
+  animation: blink 1s infinite;
+  color: hsl(var(--p));
+  font-weight: bold;
+  vertical-align: middle;
+  margin-left: 2px;
 }
 
 /* Strong and emphasis */

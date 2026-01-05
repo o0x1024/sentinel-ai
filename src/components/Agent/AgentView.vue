@@ -101,6 +101,7 @@
         <MessageFlow 
           ref="messageFlowRef"
           :messages="messages"
+          :is-executing="isExecuting"
           :is-streaming="isStreaming"
           :streaming-content="streamingContent"
           :is-vision-active="isVisionActive"

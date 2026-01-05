@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
-use sentinel_tools::buildin_tools::{HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool};
+use sentinel_tools::buildin_tools::{
+    HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool,
+};
 use sentinel_tools::get_tool_server;
 
 /// Builtin tool info for frontend
@@ -44,6 +46,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(), true);
     map.insert(sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(), true);
     map.insert(sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(), true);
+    map.insert(OcrTool::NAME.to_string(), true);
     RwLock::new(map)
 });
 
@@ -295,6 +298,24 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     }
                 },
                 "required": ["action", "content"]
+            })),
+        },
+        BuiltinToolInfo {
+            id: OcrTool::NAME.to_string(),
+            name: OcrTool::NAME.to_string(),
+            description: OcrTool::DESCRIPTION.to_string(),
+            category: "ai".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: *states.get(OcrTool::NAME).unwrap_or(&true),
+            input_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Path to the image file to extract text from"
+                    }
+                },
+                "required": ["image_path"]
             })),
         },
     ];

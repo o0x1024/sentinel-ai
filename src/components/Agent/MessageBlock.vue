@@ -248,6 +248,7 @@ const { t } = useI18n()
 const props = defineProps<{
   message: AgentMessage
   isVisionActive?: boolean
+  isExecuting?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -526,35 +527,37 @@ const typeClass = computed(() => {
 // Format content based on message type
 const formattedContent = computed(() => {
   const { type, content, metadata } = props.message
+  const cursor = props.isExecuting ? ' ▍' : ''
 
   switch (type) {
     case 'thinking':
-      return `> **Thinking**\n>\n> ${content.replace(/\n/g, '\n> ')}`
+      return `> **Thinking**\n>\n> ${content.replace(/\n/g, '\n> ')}${cursor}`
     
     case 'planning':
-      return `**Planning**\n\n${content}`
+      return `**Planning**\n\n${content}${cursor}`
     
     case 'tool_result':
       // Wrap result in code block if not already markdown
+      let result = content
       if (!content.includes('```') && !content.includes('#')) {
-        return `\`\`\`\n${content}\n\`\`\``
+        result = `\`\`\`\n${content}\n\`\`\``
       }
-      return content
+      return result + cursor
     
     case 'progress': {
       const step = metadata?.step_index ?? 0
       const total = metadata?.total_steps ?? 0
-      return `**Progress** Step ${step}/${total}\n\n${content}`
+      return `**Progress** Step ${step}/${total}\n\n${content}${cursor}`
     }
     
     case 'error':
       return `> **Error**\n>\n> ${content}`
     
     case 'final':
-      return content
+      return content + cursor
     
     default:
-      return content
+      return content + cursor
   }
 })
 

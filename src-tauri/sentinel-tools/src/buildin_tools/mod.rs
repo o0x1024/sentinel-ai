@@ -6,6 +6,7 @@ pub mod subdomain_brute;
 pub mod task_planner;
 pub mod web_search;
 pub mod memory;
+pub mod ocr;
 
 pub use port_scan::PortScanTool;
 pub use http_request::HttpRequestTool;
@@ -15,6 +16,7 @@ pub use subdomain_brute::SubdomainBruteTool;
 pub use task_planner::TaskPlannerTool;
 pub use web_search::WebSearchTool;
 pub use memory::MemoryManagerTool;
+pub use ocr::OcrTool;
 
 use rig::tool::ToolSet;
 
@@ -29,6 +31,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(TaskPlannerTool);
     toolset.add_tool(WebSearchTool::default());
     toolset.add_tool(MemoryManagerTool);
+    toolset.add_tool(OcrTool);
     toolset
 }
 
@@ -43,6 +46,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(TaskPlannerTool),
         Box::new(WebSearchTool::default()),
         Box::new(MemoryManagerTool),
+        Box::new(OcrTool),
     ];
     
     let mut definitions = Vec::new();
