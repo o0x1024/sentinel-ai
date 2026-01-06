@@ -58,6 +58,17 @@
             <i class="fas fa-book text-info text-xs"></i>
             <span class="text-xs text-info font-medium">{{ t('agent.knowledgeBase') }}</span>
           </div>
+
+          <!-- Tenth Man Toggle -->
+          <button 
+            @click="tenthManEnabled = !tenthManEnabled"
+            class="btn btn-xs gap-1 transition-colors"
+            :class="tenthManEnabled ? 'btn-error text-white' : 'btn-ghost text-base-content/50'"
+            :title="tenthManEnabled ? 'Disable Tenth Man Rule (Strict Review)' : 'Enable Tenth Man Rule (Strict Review)'"
+          >
+            <i class="fas fa-user-secret"></i>
+            <span class="text-xs font-medium hidden sm:inline">10th Man</span>
+          </button>
         </div>
         <div class="flex items-center gap-2">
           <!-- Vision History Button - shows when there's exploration history -->
@@ -236,6 +247,7 @@ const currentConversationTitle = ref(t('agent.newConversationTitle'))
 // Feature toggles
 const ragEnabled = ref(false)
 const toolsEnabled = ref(false)
+const tenthManEnabled = ref(false)
 const pendingAttachments = ref<any[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
 
@@ -809,6 +821,7 @@ const handleSubmit = async () => {
         timeout_secs: 300,
         force_todos: props.showTodos,
         enable_rag: ragEnabled.value,
+        enable_tenth_man_rule: tenthManEnabled.value,
         conversation_id: conversationId.value,
         message_id: null,
         attachments: usedAttachments.length > 0 ? usedAttachments : undefined,

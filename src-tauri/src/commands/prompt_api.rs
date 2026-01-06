@@ -517,11 +517,60 @@ const response = await fetch('https://example.com/api', {
 const data = await response.json();
 ```
 
-**2. Logging** - Debug output:
+**2. File System API** - Read and write files:
+```typescript
+// Read text file
+const content = await Deno.readTextFile('/path/to/file.txt');
+
+// Write text file
+await Deno.writeTextFile('/path/to/output.txt', 'Hello, World!');
+
+// Read binary file
+const bytes = await Deno.readFile('/path/to/file.bin');
+
+// Write binary file
+await Deno.writeFile('/path/to/file.bin', new Uint8Array([1, 2, 3]));
+
+// Create directory
+await Deno.mkdir('/path/to/dir', { recursive: true });
+
+// List directory contents
+for await (const entry of Deno.readDir('/path/to/dir')) {
+    console.log(entry.name, entry.isFile ? 'file' : 'dir');
+}
+
+// Get file info
+const fileInfo = await Deno.stat('/path/to/file.txt');
+console.log('Size:', fileInfo.size, 'Modified:', fileInfo.mtime);
+
+// Copy file
+await Deno.copyFile('/path/to/source.txt', '/path/to/dest.txt');
+
+// Delete file or directory
+await Deno.remove('/path/to/file.txt');
+await Deno.remove('/path/to/dir', { recursive: true });
+
+// Create temporary file
+const tempFile = await Deno.makeTempFile({ prefix: 'sentinel_', suffix: '.tmp' });
+```
+
+**3. Logging** - Debug output:
 ```typescript
 Deno.core.ops.op_plugin_log('info', 'Tool started...');
 Deno.core.ops.op_plugin_log('error', 'Error occurred');
 ```
+
+**4. Standard Web APIs**:
+- `TextEncoder` / `TextDecoder` - Text encoding/decoding
+- `URL` / `URLSearchParams` - URL parsing
+- `console.log()` - Console output
+- `crypto.getRandomValues()` - Cryptographic random numbers
+
+**Important Notes**:
+- ✅ **File system operations are fully supported** for reading/writing files and managing directories
+- ✅ **Use `fetch()` for HTTP/HTTPS requests**
+- ❌ **Raw TCP/UDP socket operations are NOT supported**
+- 💡 **File paths**: Use absolute paths or relative to the current working directory
 
 ---
 

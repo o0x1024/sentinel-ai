@@ -3,6 +3,8 @@
 pub mod agent_builder;
 pub mod executor;
 pub mod tool_router;
+pub mod tenth_man;
+pub mod sliding_window;
 
 pub use agent_builder::*;
 pub use executor::{execute_agent, AgentExecuteParams};

@@ -215,7 +215,24 @@ fn parse_confidence(s: &str) -> Confidence {
 
 extension!(
     sentinel_plugin_ext,
-    ops = [op_emit_finding, op_plugin_log, op_plugin_return, op_fetch, op_tls_peer_certificate],
+    ops = [
+        op_emit_finding,
+        op_plugin_log,
+        op_plugin_return,
+        op_fetch,
+        op_tls_peer_certificate,
+        // File system operations
+        op_read_text_file,
+        op_write_text_file,
+        op_read_file,
+        op_write_file,
+        op_mkdir,
+        op_read_dir,
+        op_stat,
+        op_copy_file,
+        op_remove,
+        op_make_temp_file,
+    ],
     esm_entry_point = "ext:sentinel_plugin_ext/plugin_bootstrap.js",
     esm = [ dir "src", "plugin_bootstrap.js" ],
     state = |state| {
@@ -404,6 +421,160 @@ fn op_tls_peer_certificate(
 ) -> Option<serde_json::Value> {
     // Stub: return null for peer certificate
     None
+}
+
+// ============================================================
+// File System Operations (Custom Implementation)
+// ============================================================
+
+/// Read text file
+#[op2(async)]
+#[string]
+async fn op_read_text_file(#[string] path: String) -> Result<String, std::io::Error> {
+    tokio::fs::read_to_string(&path).await
+}
+
+/// Write text file
+#[op2(async)]
+async fn op_write_text_file(
+    #[string] path: String,
+    #[string] content: String,
+) -> Result<(), std::io::Error> {
+    tokio::fs::write(&path, content).await
+}
+
+/// Read binary file
+#[op2(async)]
+#[buffer]
+async fn op_read_file(#[string] path: String) -> Result<Vec<u8>, std::io::Error> {
+    tokio::fs::read(&path).await
+}
+
+/// Write binary file
+#[op2(async)]
+async fn op_write_file(
+    #[string] path: String,
+    #[buffer(copy)] data: Vec<u8>,
+) -> Result<(), std::io::Error> {
+    tokio::fs::write(&path, data).await
+}
+
+/// Create directory
+#[op2(async)]
+async fn op_mkdir(
+    #[string] path: String,
+    recursive: bool,
+) -> Result<(), std::io::Error> {
+    if recursive {
+        tokio::fs::create_dir_all(&path).await
+    } else {
+        tokio::fs::create_dir(&path).await
+    }
+}
+
+/// Directory entry
+#[derive(Serialize)]
+struct DirEntry {
+    name: String,
+    is_file: bool,
+    is_directory: bool,
+    is_symlink: bool,
+}
+
+/// Read directory contents
+#[op2(async)]
+#[serde]
+async fn op_read_dir(#[string] path: String) -> Result<Vec<DirEntry>, std::io::Error> {
+    let mut entries = Vec::new();
+    let mut read_dir = tokio::fs::read_dir(&path).await?;
+    
+    while let Some(entry) = read_dir.next_entry().await? {
+        let metadata = entry.metadata().await?;
+        entries.push(DirEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            is_file: metadata.is_file(),
+            is_directory: metadata.is_dir(),
+            is_symlink: metadata.is_symlink(),
+        });
+    }
+    
+    Ok(entries)
+}
+
+/// File information
+#[derive(Serialize)]
+struct FileInfo {
+    size: u64,
+    is_file: bool,
+    is_directory: bool,
+    is_symlink: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mtime: Option<u64>,
+}
+
+/// Get file information
+#[op2(async)]
+#[serde]
+async fn op_stat(#[string] path: String) -> Result<FileInfo, std::io::Error> {
+    let metadata = tokio::fs::metadata(&path).await?;
+    
+    let mtime = metadata.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    
+    Ok(FileInfo {
+        size: metadata.len(),
+        is_file: metadata.is_file(),
+        is_directory: metadata.is_dir(),
+        is_symlink: metadata.is_symlink(),
+        mtime,
+    })
+}
+
+/// Copy file
+#[op2(async)]
+async fn op_copy_file(
+    #[string] from: String,
+    #[string] to: String,
+) -> Result<(), std::io::Error> {
+    tokio::fs::copy(&from, &to).await.map(|_| ())
+}
+
+/// Remove file or directory
+#[op2(async)]
+async fn op_remove(
+    #[string] path: String,
+    recursive: bool,
+) -> Result<(), std::io::Error> {
+    let metadata = tokio::fs::metadata(&path).await?;
+    
+    if metadata.is_dir() {
+        if recursive {
+            tokio::fs::remove_dir_all(&path).await
+        } else {
+            tokio::fs::remove_dir(&path).await
+        }
+    } else {
+        tokio::fs::remove_file(&path).await
+    }
+}
+
+/// Create temporary file
+#[op2(async)]
+#[string]
+async fn op_make_temp_file(
+    #[string] prefix: String,
+    #[string] suffix: String,
+) -> Result<String, std::io::Error> {
+    let temp_dir = std::env::temp_dir();
+    let file_name = format!("{}{}{}", prefix, uuid::Uuid::new_v4(), suffix);
+    let temp_path = temp_dir.join(file_name);
+    
+    // Create the file
+    std::fs::File::create(&temp_path)?;
+    
+    Ok(temp_path.to_string_lossy().to_string())
 }
 
 // ============================================================

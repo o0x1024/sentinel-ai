@@ -25,7 +25,8 @@
         :message="msg" 
         :is-vision-active="isVisionActive" 
         :is-executing="isExecuting && index === displayedMessages.length - 1"
-        @resend="handleResend" 
+        @resend="handleResend"
+        @heightChanged="handleHeightChanged"
       />
     </div>
     
@@ -122,6 +123,31 @@ const throttledScrollToBottom = () => {
   })
 }
 
+// Force scroll to bottom with multiple attempts to handle async rendering
+const forceScrollToBottom = () => {
+  if (!containerRef.value || !isUserAtBottom.value) return
+  
+  const scroll = () => {
+    if (containerRef.value) {
+      containerRef.value.scrollTop = containerRef.value.scrollHeight
+    }
+  }
+  
+  // Immediate scroll
+  scroll()
+  
+  // Retry after nextTick to handle v-memo and other Vue optimizations
+  nextTick(() => {
+    scroll()
+    // Additional retry after animation frames to handle CSS animations
+    requestAnimationFrame(() => {
+      scroll()
+      // Final retry after a short delay to catch any async updates
+      setTimeout(scroll, 50)
+    })
+  })
+}
+
 // Auto-scroll to bottom when new messages arrive
 watch(
   () => props.messages.length,
@@ -133,9 +159,17 @@ watch(
 
     // Scroll if user is at bottom or if it's a new conversation start
     if (isUserAtBottom.value || props.messages.length <= 1) {
-      nextTick(() => {
-        scrollToBottom()
-      })
+      forceScrollToBottom()
+    }
+  }
+)
+
+// Watch for content changes in the last message (streaming updates)
+watch(
+  () => props.messages.length > 0 ? props.messages[props.messages.length - 1]?.content : '',
+  () => {
+    if (isUserAtBottom.value && props.isExecuting) {
+      throttledScrollToBottom()
     }
   }
 )
@@ -151,17 +185,43 @@ watch(
   }
 )
 
+// Watch for metadata changes (tool status, duration, etc.)
+watch(
+  () => props.messages.length > 0 ? props.messages[props.messages.length - 1]?.metadata : null,
+  () => {
+    if (isUserAtBottom.value && props.isExecuting) {
+      // Use throttled scroll for metadata updates to avoid excessive scrolling
+      throttledScrollToBottom()
+    }
+  },
+  { deep: true }
+)
+
 const scrollToBottom = () => {
   if (containerRef.value) {
     // Directly set scrollTop for maximum reliability
     containerRef.value.scrollTop = containerRef.value.scrollHeight
     isUserAtBottom.value = true
+    
+    // Double-check after a brief delay to handle any async rendering
+    setTimeout(() => {
+      if (containerRef.value && isUserAtBottom.value) {
+        containerRef.value.scrollTop = containerRef.value.scrollHeight
+      }
+    }, 100)
   }
 }
 
 // Handle resend event from MessageBlock
 const handleResend = (message: AgentMessage) => {
   emit('resend', message)
+}
+
+// Handle height change from MessageBlock (when tool panels expand/collapse)
+const handleHeightChanged = () => {
+  if (isUserAtBottom.value) {
+    throttledScrollToBottom()
+  }
 }
 
 // Expose scroll method

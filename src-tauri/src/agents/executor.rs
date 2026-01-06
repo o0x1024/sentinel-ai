@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use sentinel_db::Database;
-use sentinel_llm::{LlmClient, LlmConfig, StreamContent, StreamingLlmClient};
+use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::{get_tool_server, mcp_adapter, ToolServer};
 use serde_json::json;
@@ -12,7 +12,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::tool_router::{ToolConfig, ToolRouter};
-use crate::commands::ai::reconstruct_chat_history;
+use super::tenth_man::TenthMan;
+use super::sliding_window::{SlidingWindowManager, SlidingWindowConfig};
 
 /// Agent 执行配置
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct AgentExecuteParams {
     pub max_iterations: usize,
     pub timeout_secs: u64,
     pub tool_config: Option<ToolConfig>,
+    pub enable_tenth_man_rule: bool,
 }
 
 /// 执行 agent 任务
@@ -587,219 +589,47 @@ async fn execute_agent_with_tools(
         params.execution_id
     ));
 
-    // 5. Reuse the same history reconstruction logic as stream_chat_with_llm.
-    let history_messages = match db_service
-        .inner()
-        .get_ai_messages_by_conversation(&params.execution_id)
-        .await
-    {
-        Ok(msgs) => msgs,
+    // 5. 使用 SlidingWindowManager 管理上下文和历史
+    let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000) as usize;
+    
+    let sw_config = SlidingWindowConfig {
+        max_context_tokens: max_context_length,
+        ..Default::default()
+    };
+    
+    let mut sliding_window = match SlidingWindowManager::new(
+        app_handle, 
+        &params.execution_id, 
+        Some(sw_config)
+    ).await {
+        Ok(sw) => sw,
         Err(e) => {
-            tracing::warn!("Failed to get conversation history: {}", e);
-            Vec::new()
+            tracing::warn!("Failed to init SlidingWindowManager: {}", e);
+            return Err(e.into());
         }
     };
-    let mut history_chat_messages = reconstruct_chat_history(&history_messages);
+    
+    // 尝试压缩历史
+    if let Err(e) = sliding_window.compress_if_needed(&llm_config).await {
+        tracing::warn!("Sliding window compression failed: {}", e);
+    }
+    
+    // 构建上下文
+    let context_messages = sliding_window.build_context(&final_system_prompt);
+    
+    // 分离 System Prompt 和 历史消息
+    // SlidingWindow 将全局摘要和段落摘要放在第一个 System 消息中
+    let (final_system_prompt_content, mut history_chat_messages) = if !context_messages.is_empty() && context_messages[0].role == "system" {
+        (Some(context_messages[0].content.clone()), context_messages[1..].to_vec())
+    } else {
+        (Some(final_system_prompt), context_messages)
+    };
 
     // 移除历史记录中最后一条用户消息，避免与当前任务重复发送
     // 因为 stream_chat_with_dynamic_tools 会自动将 user_prompt 添加到对话末尾
     if let Some(last) = history_chat_messages.last() {
         if last.role == "user" {
             history_chat_messages.pop();
-        }
-    }
-
-    // 6.5. Check context length and auto-summarize if needed
-    let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000);
-    let system_tokens = estimate_tokens(&final_system_prompt);
-    let task_tokens = estimate_tokens(&params.task);
-    
-    // Check if history already contains a summary message
-    let has_summary = history_chat_messages.iter().any(|msg| {
-        msg.content.starts_with("[Previous conversation summary]")
-    });
-    
-    // Estimate history tokens from ChatMessages
-    let history_tokens: usize = history_chat_messages.iter().map(|msg| {
-        let content_tokens = estimate_tokens(&msg.content);
-        let tool_calls_tokens = msg.tool_calls.as_ref().map(|tc| estimate_tokens(tc)).unwrap_or(0);
-        let reasoning_tokens = msg.reasoning_content.as_ref().map(|r| estimate_tokens(r)).unwrap_or(0);
-        content_tokens + tool_calls_tokens + reasoning_tokens
-    }).sum();
-    let total_tokens = system_tokens + task_tokens + history_tokens;
-    
-    // Reserve 20% for output and safety margin
-    let context_threshold = (max_context_length as f64 * 0.8) as usize;
-    
-    tracing::info!(
-        "Context usage: {}/{} tokens (system: {}, task: {}, history: {}), has_summary: {}",
-        total_tokens,
-        max_context_length,
-        system_tokens,
-        task_tokens,
-        history_tokens,
-        has_summary
-    );
-
-    // If context is approaching limit, handle based on whether summary exists
-    if total_tokens > context_threshold && !history_chat_messages.is_empty() {
-        if has_summary {
-            // Already has summary, trim older messages after the summary
-            tracing::warn!(
-                "Context still exceeding limit ({}/{}) even with existing summary, trimming old messages...",
-                total_tokens,
-                max_context_length
-            );
-            
-            // Find the summary message index
-            if let Some(summary_idx) = history_chat_messages.iter().position(|msg| {
-                msg.content.starts_with("[Previous conversation summary]")
-            }) {
-                // Keep summary and only recent messages after it
-                let _messages_after_summary = history_chat_messages.len() - summary_idx - 1;
-                
-                // Calculate how many messages to keep (aim for 50% of threshold)
-                let target_tokens = context_threshold / 2;
-                let mut kept_tokens = estimate_tokens(&history_chat_messages[summary_idx].content);
-                let mut keep_count = 1; // Start with summary
-                
-                // Add recent messages until we reach target
-                for i in (summary_idx + 1)..history_chat_messages.len() {
-                    let msg_tokens = estimate_tokens(&history_chat_messages[i].content);
-                    if kept_tokens + msg_tokens > target_tokens {
-                        break;
-                    }
-                    kept_tokens += msg_tokens;
-                    keep_count += 1;
-                }
-                
-                // Keep summary + recent messages
-                let keep_from = summary_idx;
-                history_chat_messages.drain(0..keep_from);
-                
-                if keep_count < history_chat_messages.len() {
-                    let remove_count = history_chat_messages.len() - keep_count;
-                    history_chat_messages.drain(1..(1 + remove_count)); // Keep summary at index 0
-                }
-                
-                tracing::info!(
-                    "Trimmed to {} messages ({} tokens) after existing summary",
-                    history_chat_messages.len(),
-                    kept_tokens
-                );
-            }
-        } else {
-            // No summary yet, create one
-            tracing::warn!(
-                "Context approaching limit ({}/{}), summarizing history...",
-                total_tokens,
-                max_context_length
-            );
-
-            match summarize_history_from_chat_messages(&history_chat_messages, &llm_config).await {
-            Ok(summary) => {
-                // Replace history with a single summary message
-                history_chat_messages.clear();
-                history_chat_messages.push(sentinel_llm::ChatMessage {
-                    role: "user".to_string(),
-                    content: format!("[Previous conversation summary]\n{}", summary),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    reasoning_content: None,
-                });
-                
-                let new_total = estimate_tokens(&final_system_prompt) 
-                    + estimate_tokens(&params.task) 
-                    + estimate_tokens(&summary);
-                
-                let saved_tokens = history_tokens.saturating_sub(estimate_tokens(&summary));
-                let saved_percentage = if history_tokens > 0 {
-                    (saved_tokens as f64 / history_tokens as f64 * 100.0).round() as u32
-                } else {
-                    0
-                };
-                
-                tracing::info!(
-                    "History summarized: {} -> {} tokens (total: {}, saved: {}%)",
-                    history_tokens,
-                    estimate_tokens(&summary),
-                    new_total,
-                    saved_percentage
-                );
-
-                // Save a system message to database indicating history was summarized
-                if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
-                    use sentinel_core::models::database as core_db;
-                    use chrono::Utc;
-                    
-                    let summary_meta = json!({
-                        "kind": "history_summarized",
-                        "original_tokens": history_tokens,
-                        "summarized_tokens": estimate_tokens(&summary),
-                        "saved_tokens": saved_tokens,
-                        "saved_percentage": saved_percentage,
-                        "total_tokens": new_total,
-                        "summary_preview": summary.chars().take(200).collect::<String>(),
-                        "summary_content": summary,
-                    });
-                    
-                    let summary_msg = core_db::AiMessage {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        conversation_id: params.execution_id.clone(),
-                        role: "system".to_string(),
-                        content: format!(
-                            "History automatically summarized: {} messages compressed from {} to {} tokens (saved {}%)",
-                            history_chat_messages.len(),
-                            history_tokens,
-                            estimate_tokens(&summary),
-                            saved_percentage
-                        ),
-                        metadata: Some(summary_meta.to_string()),
-                        token_count: None,
-                        cost: None,
-                        tool_calls: None,
-                        attachments: None,
-                        reasoning_content: None,
-                        timestamp: Utc::now(),
-                        architecture_type: None,
-                        architecture_meta: None,
-                        structured_data: None,
-                    };
-                    
-                    let db_clone = db.inner().clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = db_clone.create_ai_message(&summary_msg).await {
-                            tracing::warn!("Failed to save history summary message: {}", e);
-                        }
-                    });
-                }
-
-                // Emit event to frontend
-                let _ = app_handle.emit(
-                    "agent:history_summarized",
-                    &json!({
-                        "execution_id": params.execution_id,
-                        "original_tokens": history_tokens,
-                        "summarized_tokens": estimate_tokens(&summary),
-                        "saved_tokens": saved_tokens,
-                        "saved_percentage": saved_percentage,
-                        "total_tokens": new_total,
-                        "message_count": history_chat_messages.len(),
-                        "summary_content": summary,
-                        "summary_preview": summary.chars().take(200).collect::<String>(),
-                    }),
-                );
-            }
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to summarize history (will continue with original): {} - History: {} messages, {} tokens", 
-                        e,
-                        history_chat_messages.len(),
-                        history_tokens
-                    );
-                    // Continue with original history if summarization fails
-                }
-            }
         }
     }
 
@@ -859,7 +689,7 @@ async fn execute_agent_with_tools(
 
         let result = client
             .stream_chat_with_dynamic_tools(
-                Some(&final_system_prompt),
+                final_system_prompt_content.as_deref(),
                 &params.task,
                 &history_chat_messages,
                 None, // 无图片
@@ -1155,11 +985,11 @@ async fn execute_agent_with_tools(
                     output_tokens,
                 } => {
                     tracing::info!(
-                        "Token usage report - execution_id: {}, input: {}, output: {}, estimated total: {}",
+                        "Token usage report - execution_id: {}, input: {}, output: {}, total: {}",
                         execution_id,
                         input_tokens,
                         output_tokens,
-                        total_tokens
+                        input_tokens + output_tokens
                     );
                     let _ = app.emit(
                                 "agent:chunk",
@@ -1307,6 +1137,60 @@ async fn execute_agent_with_tools(
                     tracing::warn!("Failed to store memory record: {}", e);
                 }
 
+                // Tenth Man Rule: Adversarial Review
+                if params.enable_tenth_man_rule {
+                    tracing::info!("Running Tenth Man Review for execution_id: {}", params.execution_id);
+                    let tenth_man = TenthMan::new(&params);
+                    // Use the task as context. Ideally we'd pass the whole history summary.
+                    let context_summary = format!("User Task: {}", params.task); 
+                    
+                    match tenth_man.review(&params.task, &context_summary, &response).await {
+                        Ok(critique) => {
+                            tracing::info!("Tenth Man Critique generated ({} chars)", critique.len());
+                            
+                            if let Some(db) = db_for_stream.clone() {
+                                use sentinel_core::models::database as core_db;
+                                let review_msg = core_db::AiMessage {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    conversation_id: params.execution_id.clone(),
+                                    role: "system".to_string(), 
+                                    content: critique.clone(),
+                                    metadata: Some(json!({
+                                        "kind": "tenth_man_critique",
+                                        "trigger": "automatic"
+                                    }).to_string()),
+                                    token_count: Some(critique.len() as i32),
+                                    cost: None,
+                                    tool_calls: None,
+                                    attachments: None,
+                                    reasoning_content: None,
+                                    timestamp: chrono::Utc::now(),
+                                    architecture_type: None,
+                                    architecture_meta: None,
+                                    structured_data: None,
+                                };
+                                
+                                if let Err(e) = db.create_ai_message(&review_msg).await {
+                                    tracing::warn!("Failed to save Tenth Man critique: {}", e);
+                                }
+                                
+                                // Emit event to frontend
+                                let _ = app.emit(
+                                    "agent:tenth_man_critique", 
+                                    &json!({
+                                        "execution_id": params.execution_id,
+                                        "critique": critique,
+                                        "message_id": review_msg.id
+                                    })
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Tenth Man Review failed: {}", e);
+                        }
+                    }
+                }
+
                 return Ok(response);
             }
             Err(e) => {
@@ -1425,274 +1309,6 @@ async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str)
     Ok(default)
 }
 
-/// Estimate token count for text (conservative approximation)
-/// For English, 1 token ≈ 4 characters
-/// For Chinese/CJK, 1 token ≈ 0.5-1.5 characters (we use 1:1 for safety)
-fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-
-    let mut total_estimated: f64 = 0.0;
-    for c in text.chars() {
-        if c.is_ascii() {
-            total_estimated += 0.25; // 1 token per 4 ascii chars
-        } else {
-            total_estimated += 1.0;  // 1 token per non-ascii char (conservative for CJK)
-        }
-    }
-    
-    total_estimated.ceil() as usize
-}
-
-/// Summarize chat history to reduce context length
-/// We use the original ChatMessage history for summarization since it's easier to work with
-async fn summarize_history_from_chat_messages(
-    history: &[sentinel_llm::ChatMessage],
-    llm_config: &LlmConfig,
-) -> Result<String> {
-    if history.is_empty() {
-        return Ok(String::new());
-    }
-
-    // Build a summary prompt from ChatMessages
-    let mut history_text = String::new();
-    for (i, msg) in history.iter().enumerate() {
-        let role = &msg.role;
-        let content = &msg.content;
-        history_text.push_str(&format!("{}. {}: {}\n", i + 1, role, content));
-    }
-
-    // Check if history is too long for single summarization
-    // Most models have 128K token limit, but we use conservative 50K for safety
-    const MAX_SUMMARY_INPUT_TOKENS: usize = 50_000;
-    let history_tokens = estimate_tokens(&history_text);
-    
-    if history_tokens > MAX_SUMMARY_INPUT_TOKENS {
-        tracing::warn!(
-            "History too long for single summarization ({} tokens > {} limit), using chunked approach",
-            history_tokens,
-            MAX_SUMMARY_INPUT_TOKENS
-        );
-        return summarize_history_chunked(history, llm_config, MAX_SUMMARY_INPUT_TOKENS).await;
-    }
-
-    let summary_prompt = format!(
-        "Summarize the following conversation history:\n\n{}\n\nProvide a structured summary following the format specified in the system prompt.",
-        history_text
-    );
-
-    // Use the same LLM to generate summary with detailed system prompt
-    let summary_system_prompt = r#"You are a conversation history summarization assistant. Your task is to compress multiple rounds of dialogue into a summary that allows subsequent conversations to continue seamlessly.
-
-## Summarization Principles:
-
-### 1. Information That MUST Be Retained (by priority):
-- **User Identity and Background**: Personal information, role, use case mentioned by the user
-- **Core Requirements**: Goals the user wants to achieve or problems to solve
-- **Key Context**:
-  - Proper nouns, names, product names, project names
-  - Specific numbers, dates, version numbers
-  - Tech stack, tools, platform information
-  - Established constraints or preferences
-- **Progress Status**:
-  - Completed steps or resolved issues
-  - Tasks in progress
-  - Pending issues or next steps
-- **Important Decisions**: Choices made by the user and their reasoning
-- **Encountered Problems**: Errors, obstacles, pitfalls to avoid
-
-### 2. Information That Can Be Omitted:
-- Greetings and pleasantries
-- Repeated explanations (keep only the final version)
-- Rejected or abandoned approaches
-- Trial-and-error processes (unless helpful for understanding)
-
-### 3. Summary Structure:
-
-**[Conversation Context]**
-One sentence summarizing the user's core need and scenario
-
-**[Key Information]**
-- Important contextual details (in list format)
-- Technical/business-specific information
-
-**[Completed]**
-Problems solved or milestones achieved
-
-**[Current Status]**
-What was being discussed when the conversation paused, and at what stage
-
-**[To Be Resolved/Next Steps]**
-- Clearly list unfinished tasks
-- Potential directions the user may continue to explore
-
-**[Notes]**
-User's special preferences, approaches to avoid, important reminders
-
-### 4. Language Style:
-- Use third-person objective description
-- Concise but complete, without losing critical details
-- Use clear expressions like "The user wants to...", "It has been determined that..."
-- Preserve original terminology and expressions, do not rewrite professional vocabulary
-
-### 5. Quality Check:
-After completing the summary, ask yourself: If I only read this summary, can I:
-✓ Understand what the user is doing
-✓ Know what has been tried
-✓ Be clear about what should be done next
-✓ Understand important constraints and preferences"#;
-
-    let client = LlmClient::new(llm_config.clone());
-    let summary = client.completion(
-        Some(summary_system_prompt),
-        &summary_prompt,
-    ).await?;
-
-    // Check if summary is empty
-    if summary.trim().is_empty() {
-        tracing::error!("LLM returned empty summary! History length: {} messages, {} chars", 
-            history.len(), 
-            history_text.len()
-        );
-        return Err(anyhow::anyhow!("LLM returned empty summary"));
-    }
-
-    tracing::info!(
-        "Summarized {} messages into {} tokens (summary length: {} chars)", 
-        history.len(), 
-        estimate_tokens(&summary),
-        summary.len()
-    );
-    Ok(summary)
-}
-
-/// Summarize very long history using chunked approach
-async fn summarize_history_chunked(
-    history: &[sentinel_llm::ChatMessage],
-    llm_config: &LlmConfig,
-    max_tokens_per_chunk: usize,
-) -> Result<String> {
-    // Split history into chunks that fit within token limit
-    let mut chunks: Vec<Vec<&sentinel_llm::ChatMessage>> = Vec::new();
-    let mut current_chunk = Vec::new();
-    let mut current_tokens = 0;
-
-    for msg in history {
-        let msg_tokens = estimate_tokens(&msg.content);
-        
-        // If adding this message exceeds limit, start new chunk
-        if current_tokens + msg_tokens > max_tokens_per_chunk && !current_chunk.is_empty() {
-            chunks.push(current_chunk);
-            current_chunk = Vec::new();
-            current_tokens = 0;
-        }
-        
-        current_chunk.push(msg);
-        current_tokens += msg_tokens;
-    }
-    
-    // Add last chunk
-    if !current_chunk.is_empty() {
-        chunks.push(current_chunk);
-    }
-
-    tracing::info!(
-        "Split {} messages into {} chunks for summarization",
-        history.len(),
-        chunks.len()
-    );
-
-    // Summarize each chunk
-    let mut chunk_summaries = Vec::new();
-    for (i, chunk) in chunks.iter().enumerate() {
-        tracing::info!("Summarizing chunk {}/{} ({} messages)", i + 1, chunks.len(), chunk.len());
-        
-        // Build text for this chunk
-        let mut chunk_text = String::new();
-        for (j, msg) in chunk.iter().enumerate() {
-            chunk_text.push_str(&format!("{}. {}: {}\n", j + 1, msg.role, msg.content));
-        }
-
-        let summary_prompt = format!(
-            "Summarize the following conversation segment (part {}/{}). Focus on key information, decisions, and context:\n\n{}\n\nProvide a concise summary:",
-            i + 1,
-            chunks.len(),
-            chunk_text
-        );
-
-        let summary_system_prompt = r#"You are a conversation summarization assistant. Summarize the conversation segment concisely while preserving:
-- Key decisions and outcomes
-- Important context and facts
-- User goals and requirements
-- Technical details and constraints
-- Current status and next steps
-
-Keep the summary brief but informative."#;
-
-        let client = LlmClient::new(llm_config.clone());
-        match client.completion(Some(summary_system_prompt), &summary_prompt).await {
-            Ok(summary) if !summary.trim().is_empty() => {
-                chunk_summaries.push(format!("**Segment {}:**\n{}", i + 1, summary));
-            }
-            Ok(_) => {
-                tracing::warn!("Chunk {} returned empty summary, skipping", i + 1);
-            }
-            Err(e) => {
-                tracing::error!("Failed to summarize chunk {}: {}", i + 1, e);
-                // Continue with other chunks even if one fails
-            }
-        }
-    }
-
-    if chunk_summaries.is_empty() {
-        return Err(anyhow::anyhow!("All chunk summarizations failed"));
-    }
-
-    // Combine chunk summaries into final summary
-    let combined = chunk_summaries.join("\n\n");
-    
-    // If combined summary is still too long, do a final pass
-    let combined_tokens = estimate_tokens(&combined);
-    if combined_tokens > max_tokens_per_chunk / 2 {
-        tracing::info!("Combined summary still long ({} tokens), doing final consolidation", combined_tokens);
-        
-        let final_prompt = format!(
-            "Consolidate the following conversation summaries into a single coherent summary:\n\n{}\n\nProvide a unified summary:",
-            combined
-        );
-
-        let final_system_prompt = r#"You are a conversation history summarization assistant. Your task is to consolidate multiple conversation segment summaries into one coherent summary.
-
-**[Conversation Context]**
-Summarize the overall context and user's core needs
-
-**[Key Information]**
-- Important facts, decisions, and technical details
-- User requirements and constraints
-
-**[Progress]**
-What has been accomplished and current status
-
-**[Next Steps]**
-Pending tasks or likely next directions
-
-Keep it concise but complete."#;
-
-        let client = LlmClient::new(llm_config.clone());
-        match client.completion(Some(final_system_prompt), &final_prompt).await {
-            Ok(final_summary) if !final_summary.trim().is_empty() => {
-                tracing::info!("Final consolidated summary: {} tokens", estimate_tokens(&final_summary));
-                return Ok(final_summary);
-            }
-            _ => {
-                tracing::warn!("Final consolidation failed, using combined chunk summaries");
-            }
-        }
-    }
-
-    Ok(combined)
-}
 
 /// 工具调用结构
 #[derive(Debug, Clone)]

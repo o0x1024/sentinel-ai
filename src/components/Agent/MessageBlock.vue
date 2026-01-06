@@ -1,6 +1,26 @@
 <template>
+  <!-- Tenth Man Critique - Special Alert Message -->
+  <div v-if="isTenthManCritique" class="tenth-man-panel rounded-lg overflow-hidden bg-error/10 border-l-4 border-error mb-2 shadow-lg">
+    <div class="flex items-center gap-3 px-4 py-3 bg-error/20 border-b border-error/20">
+      <div class="w-8 h-8 rounded-full bg-error flex items-center justify-center flex-shrink-0 shadow-sm">
+        <i class="fas fa-user-secret text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-bold text-error text-sm uppercase tracking-wide">The Tenth Man Rule</div>
+        <div class="text-xs text-error/70 font-medium">Adversarial Review Initiated</div>
+      </div>
+    </div>
+    <div class="px-5 py-4 bg-base-100/80 text-base-content relative">
+      <!-- Watermark -->
+      <i class="fas fa-exclamation-triangle absolute right-4 top-4 text-8xl text-error/5 pointer-events-none"></i>
+      <div class="relative z-10 prose prose-sm max-w-none">
+        <MarkdownRenderer :content="message.content" />
+      </div>
+    </div>
+  </div>
+
   <!-- History Summarized Message - Special System Message -->
-  <div v-if="isHistorySummarized" class="history-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning">
+  <div v-else-if="isHistorySummarized" class="history-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning">
     <!-- Panel Header -->
     <div 
       @click="toggleSummaryPanel" 
@@ -253,6 +273,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
+  (e: 'heightChanged'): void
 }>()
 
 const isExpanded = ref(false)
@@ -276,6 +297,10 @@ const toggleDetails = () => {
 
 const toggleToolPanel = () => {
   isToolPanelExpanded.value = !isToolPanelExpanded.value
+  // Emit height change event after animation completes
+  setTimeout(() => {
+    emit('heightChanged')
+  }, 250)
 }
 
 const toggleSummaryPanel = () => {
@@ -284,10 +309,18 @@ const toggleSummaryPanel = () => {
 
 const toggleArgs = () => {
   isArgsExpanded.value = !isArgsExpanded.value
+  // Emit height change event
+  setTimeout(() => {
+    emit('heightChanged')
+  }, 50)
 }
 
 const toggleResult = () => {
   isResultExpanded.value = !isResultExpanded.value
+  // Emit height change event
+  setTimeout(() => {
+    emit('heightChanged')
+  }, 50)
 }
 
 // Check if content overflows
@@ -359,6 +392,12 @@ const isShellTool = computed(() => {
 const isHistorySummarized = computed(() => {
   return props.message.type === 'system' && 
          props.message.metadata?.kind === 'history_summarized'
+})
+
+// Check if this is a Tenth Man Critique message
+const isTenthManCritique = computed(() => {
+  return props.message.type === 'system' && 
+         props.message.metadata?.kind === 'tenth_man_critique'
 })
 
 // History summary metadata

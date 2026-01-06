@@ -10,7 +10,7 @@ authors = ["Sentinel AI Team"]
 sentinel-core = { path = "../sentinel-core" }
 
 # Deno Core and extensions for plugin execution
-# deno_core 0.373.0 is required for compatibility with deno_web/deno_fetch
+# Using deno_core 0.373.0 for stability, file system via custom ops
 deno_core = "0.373.0"
 deno_ast = { version = "0.51.0", features = ["transpiling"] }
 deno_error = "0.7.0"

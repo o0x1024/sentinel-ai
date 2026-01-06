@@ -4,9 +4,10 @@
 //! - ESM/TypeScript 模块加载
 //! - 插件加载与热重载
 //! - 全权限沙箱（--allow-all）
-//! - 原生 Web API 支持（via deno_web/deno_webidl/deno_fetch）
+//! - 原生 Web API 支持（via deno_web/deno_webidl）
+//! - 文件系统操作（via custom ops）
 //!
-//! 基于 deno_core 0.373.0 + deno_web 0.254.0 + deno_fetch 0.247.0
+//! 基于 deno_core 0.373.0 + deno_web 0.254.0
 
 use crate::error::{PluginError, Result};
 use crate::plugin_ops::{sentinel_plugin_ext, PluginContext};
@@ -301,7 +302,7 @@ impl PluginEngine {
             deno_crypto::deno_crypto::init(None),
             // deno_net: TCP/UDP/TLS networking APIs (2 args: root_cert_store_provider, unsafely_ignore_certificate_errors)
             deno_net::deno_net::init(None, None),
-            // sentinel_plugin_ext: custom ops for plugin system (emitFinding, log, fetch)
+            // sentinel_plugin_ext: custom ops for plugin system (emitFinding, log, fetch, file operations)
             sentinel_plugin_ext::init(),
         ];
 

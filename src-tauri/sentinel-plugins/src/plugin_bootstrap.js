@@ -61,6 +61,9 @@ import * as tls from 'ext:deno_net/02_tls.js'
 // deno_crypto (Web Crypto)
 import { crypto, Crypto, SubtleCrypto } from 'ext:deno_crypto/00_crypto.js'
 
+// File system operations (custom ops)
+// No import needed, ops are available via Deno.core.ops
+
 // Sentinel plugin API
 globalThis.Sentinel = {
   emitFinding: (finding) => {
@@ -294,6 +297,108 @@ globalThis.Deno.resolveDns = net.resolveDns
 globalThis.Deno.connectTls = tls.connectTls
 globalThis.Deno.listenTls = tls.listenTls
 globalThis.Deno.startTls = tls.startTls
+
+// ============================================================
+// Deno File System API (Custom Implementation via ops)
+// ============================================================
+
+/**
+ * Read text file
+ * @param {string} path - File path
+ * @returns {Promise<string>} File content
+ */
+globalThis.Deno.readTextFile = async function(path) {
+  return await Deno.core.ops.op_read_text_file(path)
+}
+
+/**
+ * Write text file
+ * @param {string} path - File path
+ * @param {string} data - File content
+ */
+globalThis.Deno.writeTextFile = async function(path, data) {
+  return await Deno.core.ops.op_write_text_file(path, data)
+}
+
+/**
+ * Read binary file
+ * @param {string} path - File path
+ * @returns {Promise<Uint8Array>} File content
+ */
+globalThis.Deno.readFile = async function(path) {
+  return await Deno.core.ops.op_read_file(path)
+}
+
+/**
+ * Write binary file
+ * @param {string} path - File path
+ * @param {Uint8Array} data - File content
+ */
+globalThis.Deno.writeFile = async function(path, data) {
+  const bytes = data instanceof Uint8Array ? Array.from(data) : data
+  return await Deno.core.ops.op_write_file(path, bytes)
+}
+
+/**
+ * Create directory
+ * @param {string} path - Directory path
+ * @param {object} options - Options { recursive: boolean }
+ */
+globalThis.Deno.mkdir = async function(path, options = {}) {
+  const recursive = options.recursive || false
+  return await Deno.core.ops.op_mkdir(path, recursive)
+}
+
+/**
+ * Read directory contents (async iterator)
+ * @param {string} path - Directory path
+ * @returns {AsyncIterable<{name: string, isFile: boolean, isDirectory: boolean, isSymlink: boolean}>}
+ */
+globalThis.Deno.readDir = async function*(path) {
+  const entries = await Deno.core.ops.op_read_dir(path)
+  for (const entry of entries) {
+    yield entry
+  }
+}
+
+/**
+ * Get file info
+ * @param {string} path - File path
+ * @returns {Promise<{size: number, isFile: boolean, isDirectory: boolean, isSymlink: boolean, mtime?: number}>}
+ */
+globalThis.Deno.stat = async function(path) {
+  return await Deno.core.ops.op_stat(path)
+}
+
+/**
+ * Copy file
+ * @param {string} from - Source file path
+ * @param {string} to - Destination file path
+ */
+globalThis.Deno.copyFile = async function(from, to) {
+  return await Deno.core.ops.op_copy_file(from, to)
+}
+
+/**
+ * Remove file or directory
+ * @param {string} path - File or directory path
+ * @param {object} options - Options { recursive: boolean }
+ */
+globalThis.Deno.remove = async function(path, options = {}) {
+  const recursive = options.recursive || false
+  return await Deno.core.ops.op_remove(path, recursive)
+}
+
+/**
+ * Create temporary file
+ * @param {object} options - Options { prefix?: string, suffix?: string }
+ * @returns {Promise<string>} Temporary file path
+ */
+globalThis.Deno.makeTempFile = async function(options = {}) {
+  const prefix = options.prefix || 'sentinel_'
+  const suffix = options.suffix || '.tmp'
+  return await Deno.core.ops.op_make_temp_file(prefix, suffix)
+}
 
 // Deno.core (already available, but ensure it's exposed)
 globalThis.Deno.core = globalThis.Deno.core || Deno.core

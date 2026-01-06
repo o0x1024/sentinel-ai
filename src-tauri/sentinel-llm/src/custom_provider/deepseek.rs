@@ -90,10 +90,12 @@ impl From<RigToolCall> for ToolCall {
 fn convert_message(message: RigMessage) -> Vec<Message> {
     match message {
         RigMessage::User { content } => {
-            let mut messages = vec![];
+            let mut user_messages = vec![];
+            let mut tool_messages = vec![];
+
             for item in content.into_iter() {
                 match item {
-                    UserContent::Text(text) => messages.push(Message::User {
+                    UserContent::Text(text) => user_messages.push(Message::User {
                         content: text.text,
                         name: None,
                     }),
@@ -102,7 +104,7 @@ fn convert_message(message: RigMessage) -> Vec<Message> {
                             ToolResultContent::Text(t) => t.text.clone(),
                             ToolResultContent::Image(_) => "[Image]".to_string(),
                         }).collect::<Vec<String>>().join("");
-                        messages.push(Message::ToolResult {
+                        tool_messages.push(Message::ToolResult {
                             tool_call_id: res.id,
                             content,
                         });
@@ -110,7 +112,13 @@ fn convert_message(message: RigMessage) -> Vec<Message> {
                     _ => {}
                 }
             }
-            messages
+            
+            // Critical: Tool messages must come BEFORE user messages to immediately follow 
+            // the preceding Assistant message that likely contains the tool_calls.
+            // Interleaving User messages between Assistant(tool_calls) and ToolResult 
+            // causes "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'" error.
+            tool_messages.extend(user_messages);
+            tool_messages
         }
         RigMessage::Assistant { content, .. } => {
             let mut text_content = String::new();
@@ -185,6 +193,65 @@ where
     // Add user message
     current_messages.extend(convert_message(user_message));
     
+    // FIX: DeepSeek API requires ToolResult to strictly follow the Assistant message with tool_calls.
+    // Problem 1: Orphaned ToolResults - if chat history was truncated (e.g. by sliding window),
+    //            a ToolResult might exist without its parent Assistant message.
+    // Problem 2: Interleaved messages - User or Assistant text messages between Assistant(calls) and ToolResult.
+    
+    // Pass 1: Collect all valid tool_call_ids from Assistant messages
+    let mut valid_call_ids = std::collections::HashSet::new();
+    let mut call_id_to_assistant_idx = HashMap::new();
+    for (i, msg) in current_messages.iter().enumerate() {
+        if let Message::Assistant { tool_calls, .. } = msg {
+            for call in tool_calls {
+                valid_call_ids.insert(call.id.clone());
+                call_id_to_assistant_idx.insert(call.id.clone(), i);
+            }
+        }
+    }
+
+    // Pass 2: Remove orphaned ToolResults (those without a parent Assistant in the current messages)
+    current_messages.retain(|msg| {
+        if let Message::ToolResult { tool_call_id, .. } = msg {
+            valid_call_ids.contains(tool_call_id)
+        } else {
+            true
+        }
+    });
+
+    // Pass 3: Reorder ToolResults to immediately follow their parent Assistant message
+    let mut i = 0;
+    while i < current_messages.len() {
+        if let Message::ToolResult { tool_call_id, .. } = &current_messages[i] {
+            if let Some(&parent_idx) = call_id_to_assistant_idx.get(tool_call_id) {
+                // Find the correct insertion position: after parent and after any existing ToolResults
+                let mut target_idx = parent_idx + 1;
+                while target_idx < i {
+                    if let Message::ToolResult { .. } = &current_messages[target_idx] {
+                        target_idx += 1;
+                    } else {
+                        // Found a non-ToolResult message, need to move current item here
+                        let msg = current_messages.remove(i);
+                        current_messages.insert(target_idx, msg);
+                        // After moving, the item at position i is now a different message
+                        // We need to re-check position i (don't increment)
+                        // But to avoid infinite loop, we break and continue outer loop
+                        break;
+                    }
+                }
+                // If target_idx reached i, the message is already in correct position
+                if target_idx >= i {
+                    i += 1;
+                }
+            } else {
+                // This shouldn't happen after Pass 2, but just in case
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
     let mut final_content = String::new();
     
     for _iteration in 0..max_iterations {

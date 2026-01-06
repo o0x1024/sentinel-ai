@@ -1883,6 +1883,8 @@ pub struct AgentExecuteConfig {
     pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub force_todos: Option<bool>,
+    #[serde(default)]
+    pub enable_tenth_man_rule: Option<bool>,
 }
 
 /// Agent执行请求
@@ -1917,6 +1919,7 @@ pub async fn agent_execute(
         max_iterations: None,
         timeout_secs: None,
         force_todos: None,
+        enable_tenth_man_rule: None,
     });
 
     let conversation_id = config
@@ -2223,6 +2226,7 @@ pub async fn agent_execute(
                     max_iterations: config.max_iterations.unwrap_or(10),
                     timeout_secs: config.timeout_secs.unwrap_or(300),
                     tool_config: effective_tool_config.clone(),
+                    enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
                 };
 
                 // 调用工具支持的代理执行器

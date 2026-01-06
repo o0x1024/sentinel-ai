@@ -108,6 +108,13 @@ interface AgentRetryEvent {
   error?: string
 }
 
+// 后端发送的 agent:tenth_man_critique 事件
+interface AgentTenthManCritiqueEvent {
+  execution_id: string
+  critique: string
+  message_id: string
+}
+
 // 后端发送的 OrderedMessageChunk 结构 (兼容旧格式)
 interface OrderedMessageChunk {
   execution_id: string
@@ -714,6 +721,26 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       })
     })
     unlisteners.push(unlistenRetry)
+
+    // 监听 agent:tenth_man_critique 事件
+    const unlistenTenthMan = await listen<AgentTenthManCritiqueEvent>('agent:tenth_man_critique', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] Tenth Man critique received:', payload.message_id)
+
+      messages.value.push({
+        id: payload.message_id,
+        type: 'system',
+        content: payload.critique,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'tenth_man_critique',
+          execution_id: payload.execution_id
+        }
+      })
+    })
+    unlisteners.push(unlistenTenthMan)
 
     // 兼容旧的 message_chunk 事件
     const unlistenOldChunk = await listen<OrderedMessageChunk>('message_chunk', (event) => {
