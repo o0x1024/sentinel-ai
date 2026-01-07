@@ -38,7 +38,53 @@
       @preview-ai-code="handlePreviewAiCode"
       @exit-preview-mode="handleExitPreviewMode"
       @test-current-plugin="handleTestPlugin"
+      @clear-history="handleClearHistory"
     />
+
+    <!-- Custom Context Menu for Editor - Teleport to body to escape stacking context -->
+    <Teleport to="body">
+      <div v-if="contextMenu.show" 
+        data-context-menu
+        class="fixed"
+        :style="{
+          left: contextMenu.x + 'px',
+          top: contextMenu.y + 'px',
+          zIndex: 9999999,
+          backgroundColor: '#2a2e37',
+          color: '#fff',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+          border: '2px solid rgba(99, 102, 241, 0.5)',
+          borderRadius: '8px',
+          padding: '6px',
+          minWidth: '180px',
+          pointerEvents: 'auto'
+        }"
+        v-click-outside="() => contextMenu.show = false"
+        @mousedown.stop>
+        <button 
+          :style="{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            width: '100%',
+            padding: '10px 16px',
+            fontSize: '14px',
+            borderRadius: '6px',
+            transition: 'all 0.2s',
+            cursor: 'pointer',
+            border: 'none',
+            backgroundColor: 'transparent',
+            color: 'inherit',
+            textAlign: 'left'
+          }"
+          @click.stop="addSelectedToAiContext"
+          @mouseenter="e => (e.target as HTMLElement).style.backgroundColor = '#6366f1'"
+          @mouseleave="e => (e.target as HTMLElement).style.backgroundColor = 'transparent'">
+          <i class="fas fa-robot" style="width: 16px"></i>
+          <span>{{ $t('plugins.addToAiContext', '添加到 AI 上下文') }}</span>
+        </button>
+      </div>
+    </Teleport>
 
     <!-- Minimized Indicator -->
     <div v-if="store.isMinimized" 
@@ -84,9 +130,88 @@ import { basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 
+// 扩展 HTMLElement 类型以支持自定义属性
+declare module '@vue/runtime-core' {
+  interface HTMLElement {
+    _clickOutsideHandler?: (event: MouseEvent) => void
+  }
+}
+
 const store = usePluginEditorStore()
 const { t } = useI18n()
 const dialogRef = ref<InstanceType<typeof PluginCodeEditorDialog>>()
+
+// 右键菜单状态
+const contextMenu = ref({
+  show: false,
+  x: 0,
+  y: 0,
+  selectedText: ''
+})
+
+// 追踪菜单打开时间，防止立即被关闭
+let contextMenuOpenTime = 0
+
+const addSelectedToAiContext = () => {
+  console.log('addSelectedToAiContext called', contextMenu.value.selectedText)
+  if (contextMenu.value.selectedText) {
+    const lines = contextMenu.value.selectedText.split('\n')
+    store.selectedCodeRef = {
+      code: contextMenu.value.selectedText,
+      preview: lines[0].substring(0, 50) + (lines.length > 1 || lines[0].length > 50 ? '...' : ''),
+      startLine: 0, // CodeMirror 选区坐标计算较复杂，这里简化处理
+      endLine: 0,
+      isFullCode: false
+    }
+    store.showAiPanel = true
+    showToast(t('plugins.addedToContext', '已添加到上下文'), 'success')
+  }
+  contextMenu.value.show = false
+}
+
+// Click outside directive - 使用 mousedown 而不是 click，避免与 contextmenu 冲突
+const vClickOutside = {
+  mounted(el: any, binding: any) {
+    el._clickOutsideHandler = (event: MouseEvent) => {
+      // 忽略右键点击
+      if (event.button === 2) {
+        console.log('Ignoring right click')
+        return
+      }
+      
+      // 检查菜单是否刚刚打开（300ms 内不关闭）
+      const timeSinceOpen = Date.now() - contextMenuOpenTime
+      if (timeSinceOpen < 300) {
+        console.log('Menu just opened, ignoring click outside', timeSinceOpen)
+        return
+      }
+      
+      if (!(el === event.target || el.contains(event.target as Node))) {
+        console.log('Click outside detected, closing context menu')
+        binding.value()
+      }
+    }
+    // 立即添加监听器，通过时间戳来过滤
+    console.log('Adding click outside listener')
+    document.addEventListener('mousedown', el._clickOutsideHandler!, true)
+  },
+  unmounted(el: any) {
+    if (el._clickOutsideHandler) {
+      console.log('Removing click outside listener')
+      document.removeEventListener('mousedown', el._clickOutsideHandler, true)
+      delete el._clickOutsideHandler
+    }
+  }
+}
+
+// 验证状态
+const validationState = ref<{
+  validating: boolean
+  result: any | null
+}>({
+  validating: false,
+  result: null
+})
 
 // CodeMirror Instances
 let codeEditorView: EditorView | null = null
@@ -160,6 +285,49 @@ const initCodeEditor = () => {
       codeEditorReadOnly.of(EditorView.editable.of(!isReadOnly)),
       EditorView.updateListener.of((update: ViewUpdate) => {
         if (update.docChanged) store.pluginCode = update.state.doc.toString()
+      }),
+      EditorView.domEventHandlers({
+        contextmenu: (e, view) => {
+          const selection = view.state.sliceDoc(
+            view.state.selection.main.from,
+            view.state.selection.main.to
+          )
+          console.log('Context menu event triggered, selection:', selection)
+          if (selection.trim()) {
+            e.preventDefault()
+            e.stopPropagation() // 阻止事件冒泡
+            
+            // 确保坐标正确
+            const x = e.clientX
+            const y = e.clientY
+            console.log('Setting context menu at', x, y)
+            
+            // 记录菜单打开时间
+            contextMenuOpenTime = Date.now()
+            
+            // 使用 nextTick 确保 Vue 响应性系统正确更新
+            nextTick(() => {
+              contextMenu.value = {
+                show: true,
+                x: x,
+                y: y,
+                selectedText: selection
+              }
+              
+              console.log('Context menu state after nextTick:', contextMenu.value, 'openTime:', contextMenuOpenTime)
+              
+              // 验证 DOM 元素是否真的存在
+              nextTick(() => {
+                const menuEl = document.querySelector('[data-context-menu]')
+                console.log('Menu DOM element:', menuEl)
+              })
+            })
+            
+            return true
+          }
+          console.log('No selection, showing default menu')
+          return false
+        }
       })
     ],
     parent: container
@@ -187,6 +355,49 @@ const initFullscreenCodeEditor = () => {
       codeEditorReadOnly.of(EditorView.editable.of(!isReadOnly)),
       EditorView.updateListener.of((update: ViewUpdate) => {
         if (update.docChanged) store.pluginCode = update.state.doc.toString()
+      }),
+      EditorView.domEventHandlers({
+        contextmenu: (e, view) => {
+          const selection = view.state.sliceDoc(
+            view.state.selection.main.from,
+            view.state.selection.main.to
+          )
+          console.log('Context menu event triggered, selection:', selection)
+          if (selection.trim()) {
+            e.preventDefault()
+            e.stopPropagation() // 阻止事件冒泡
+            
+            // 确保坐标正确
+            const x = e.clientX
+            const y = e.clientY
+            console.log('Setting context menu at', x, y)
+            
+            // 记录菜单打开时间
+            contextMenuOpenTime = Date.now()
+            
+            // 使用 nextTick 确保 Vue 响应性系统正确更新
+            nextTick(() => {
+              contextMenu.value = {
+                show: true,
+                x: x,
+                y: y,
+                selectedText: selection
+              }
+              
+              console.log('Context menu state after nextTick:', contextMenu.value, 'openTime:', contextMenuOpenTime)
+              
+              // 验证 DOM 元素是否真的存在
+              nextTick(() => {
+                const menuEl = document.querySelector('[data-context-menu]')
+                console.log('Menu DOM element:', menuEl)
+              })
+            })
+            
+            return true
+          }
+          console.log('No selection, showing default menu')
+          return false
+        }
       })
     ],
     parent: container
@@ -202,14 +413,30 @@ const initDiffEditor = () => {
   if (diffEditorViewA) { diffEditorViewA.destroy(); diffEditorViewA = null }
   if (diffEditorViewB) { diffEditorViewB.destroy(); diffEditorViewB = null }
   
+  // 创建头部标签
+  const header = document.createElement('div')
+  header.style.cssText = 'display: flex; background: oklch(var(--b3)); border-bottom: 1px solid oklch(var(--bc) / 0.2); height: 3rem;'
+  
+  const leftHeader = document.createElement('div')
+  leftHeader.style.cssText = 'flex: 1; display: flex; align-items: center; padding: 0 1rem; gap: 0.5rem; font-weight: 600; color: oklch(var(--bc) / 0.7);'
+  leftHeader.innerHTML = '<i class="fas fa-file-code"></i><span>' + t('plugins.currentCode', '当前代码') + '</span>'
+  
+  const rightHeader = document.createElement('div')
+  rightHeader.style.cssText = 'flex: 1; display: flex; align-items: center; padding: 0 1rem; gap: 0.5rem; font-weight: 600; color: oklch(var(--p)); border-left: 2px solid oklch(var(--bc) / 0.2);'
+  rightHeader.innerHTML = '<i class="fas fa-magic"></i><span>' + t('plugins.aiSuggestion', 'AI 建议') + '</span>'
+  
+  header.appendChild(leftHeader)
+  header.appendChild(rightHeader)
+  container.appendChild(header)
+  
   const wrapper = document.createElement('div')
   wrapper.style.cssText = 'display: flex; height: calc(100% - 3rem); width: 100%;'
   
   const leftContainer = document.createElement('div')
-  leftContainer.style.cssText = 'flex: 1; border-right: 2px solid oklch(var(--bc) / 0.2);'
+  leftContainer.style.cssText = 'flex: 1; border-right: 2px solid oklch(var(--bc) / 0.2); position: relative;'
   
   const rightContainer = document.createElement('div')
-  rightContainer.style.cssText = 'flex: 1;'
+  rightContainer.style.cssText = 'flex: 1; position: relative;'
   
   wrapper.appendChild(leftContainer)
   wrapper.appendChild(rightContainer)
@@ -528,48 +755,66 @@ const handleSendAiMessage = async (message: string) => {
   const streamId = `plugin_assistant_${Date.now()}`
   
   try {
+    // 增强的系统提示词构建逻辑
     const isAgentPlugin = store.newPluginMetadata.mainCategory === 'agent'
-    const baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
+    let baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: isAgentPlugin ? 'agent' : 'traffic',
       vulnType: 'custom',
       severity: store.newPluginMetadata.default_severity
     })
     
-    // 为编辑对话场景设计的 System Prompt
-    const systemPrompt = `${baseSystemPrompt}
+    // 1. 清理基础提示词中的“生成”倾向，将其转变为“参考文档”
+    baseSystemPrompt = baseSystemPrompt
+      .replace(/Now generate the Traffic Scan Plugin\./gi, '')
+      .replace(/Now generate the Agent Tool Plugin\./gi, '')
+      .replace(/Return ONLY the TypeScript plugin code wrapped in a markdown code block/gi, 'Please use the following interface definitions as a reference for your edits.')
 
-## 重要：你现在是代码编辑助手模式
+    // 2. 构建代码上下文区块
+    const codeContextBlock = codeContext ? `
+### 用户选中的代码片段 (Focus Context)
+\`\`\`typescript
+${codeContext}
+\`\`\`
+` : ''
 
-你正在帮助用户编辑和改进现有的插件代码。请遵循以下规则：
+    const currentCodeBlock = `
+### 当前插件全量代码 (Full Code)
+\`\`\`typescript
+${latestCode}
+\`\`\`
+`
 
-### 响应策略
-1. **仅在需要时返回代码**：
-   - 如果用户只是提问、咨询、解释需求 → 只用文字回答，不要返回代码
-   - 如果用户明确要求修改、优化、添加功能 → 返回修改后的完整代码
-   - 如果用户说"不要修改代码"、"只是问问" → 绝对不要返回代码块
+    const systemPrompt = `你现在是一名顶级的安全研究员和 TypeScript 专家，正在以【代码编辑助手】的身份协助用户。
 
-2. **理解用户意图**：
-   - 提问类：解释、说明、咨询 → 文字回答
-   - 修改类：优化、修复、添加、改进 → 返回代码
-   - 审查类：检查、分析、建议 → 列出问题和建议，不返回代码（除非用户明确要求）
+### 核心任务
+你的任务是理解用户的意图，并根据提供的上下文（见下方的代码区块）进行回答或代码修改。
 
-3. **代码返回格式**：
-   - 只有在确定需要修改代码时，才返回完整的 TypeScript 代码块
-   - 代码必须用 \`\`\`typescript 包裹
-   - 代码必须是完整可运行的
+${codeContextBlock}
+${currentCodeBlock}
 
-### 示例
+### 规则与约束
+1. **元数据保护（极其重要）**：
+   - 必须保留代码顶部的 \`/** @plugin ... */\` JSDoc 元数据块。
+   - 除非用户明确要求修改插件 ID、名称、版本或描述，否则**严禁更改**元数据块中的内容。
 
-**用户说："这段代码有什么问题吗？"**
-→ 回答：分析代码问题，列出建议，不返回代码
+2. **响应策略**：
+   - **咨询/解释**：如果用户只是提问（如“这段代码在干什么？”或“这里是否有漏洞？”），请结合上方的【当前插件全量代码】提供详尽的文字解释，**不要**返回完整代码块。
+   - **修改/优化**：如果用户要求修改代码、修复 Bug 或优化，请先简要说明你的思路，然后返回修改后的**完整且可运行**的 TypeScript 代码。
+   - **局部与全局**：如果提供了【用户选中的代码片段】，表示用户当前正关注这部分内容。在修改时应优先解决该片段的问题，但返回的代码必须是涵盖整个文件的完整代码。
 
-**用户说："帮我优化一下性能"**
-→ 回答：返回优化后的完整代码
+3. **思维链分析**：
+   - 在返回代码块之前，请先用 1-2 句话分析当前代码的不足，并说明你的改进方案。
 
-**用户说："你好，不要做代码修改"**
-→ 回答：好的，我不会修改代码。有什么我可以帮您的吗？
+4. **技术规范**：
+   - 必须使用 \`\`\`typescript 格式包裹代码。
+   - 对于流量插件，确保导出 \`scan_transaction\` 并绑定到 \`globalThis\`。
+   - 对于 Agent 插件，如果修改了参数逻辑，请同步更新 \`get_input_schema\`。
 
-现在开始对话。`
+---
+### 接口参考文档
+${baseSystemPrompt}
+
+现在，请根据用户的消息和上方提供的代码上下文开始协助。`
 
     let generatedContent = ''
     
@@ -646,13 +891,32 @@ const handleAiQuickAction = (action: string) => {
   const actions: Record<string, string> = {
     'explain': '请解释这段插件代码的功能和工作原理',
     'optimize': '请优化这段代码，提高性能和可读性',
-    'fix': '请检查并修复这段代码中可能存在的问题'
+    'fix': '请检查并修复这段代码中可能存在的问题',
+    'refactor': '请重构这段代码，提高代码质量和可维护性',
+    'security': '请对这段代码进行安全审查，找出潜在的安全漏洞',
+    'document': '请为这段代码添加详细的注释和文档说明',
+    'test': '请为这段代码生成测试用例，覆盖主要功能和边界情况'
   }
   handleSendAiMessage(actions[action] || action)
 }
 
-const handleApplyAiCode = (code: string, context?: CodeReference | null) => {
+const handleApplyAiCode = async (code: string, context?: CodeReference | null) => {
   if (!code) return
+  
+  // 先验证代码
+  const validationResult = await validateCode(code)
+  
+  if (!validationResult.is_valid) {
+    const errorMsg = validationResult.errors.join('\n')
+    if (!confirm(t('plugins.codeHasErrors', { errors: errorMsg }))) {
+      return
+    }
+  } else if (validationResult.warnings.length > 0) {
+    // 只有警告，显示提示但允许应用
+    const warningMsg = validationResult.warnings.join('\n')
+    showToast(t('plugins.codeHasWarnings', { warnings: warningMsg }), 'warning')
+  }
+  
   let finalCode = store.pluginCode
   if (context && !context.isFullCode && store.pluginCode.includes(context.code)) {
     finalCode = store.pluginCode.replace(context.code, code)
@@ -663,6 +927,23 @@ const handleApplyAiCode = (code: string, context?: CodeReference | null) => {
   updateEditorsContent(finalCode)
   showToast(t('plugins.codeApplied', '代码已应用'), 'success')
   if (!store.isEditing) handleEnableEditing()
+}
+
+const validateCode = async (code: string): Promise<any> => {
+  try {
+    const result = await invoke('validate_plugin_code', { code })
+    return result
+  } catch (error) {
+    console.error('Validation failed:', error)
+    return {
+      is_valid: true, // 验证失败时不阻止用户
+      syntax_valid: true,
+      has_required_functions: true,
+      security_check_passed: true,
+      errors: [],
+      warnings: [String(error)]
+    }
+  }
 }
 
 const handlePreviewAiCode = (code: string) => {
@@ -707,6 +988,19 @@ const handleTestPlugin = async () => {
   }
 }
 
+const handleClearHistory = () => {
+  if (!store.editingPlugin) return
+  
+  // 确认对话框
+    const pluginId = store.editingPlugin.metadata.id
+    // 先清空当前显示的消息
+    store.aiChatMessages = []
+    // 再清除并保存（这会同时清除内存和 localStorage）
+    store.clearChatHistory(pluginId)
+    showToast(t('plugins.historyCleared', '对话历史已清除'), 'success')
+  
+}
+
 // Watch for minimized state to handle visibility
 watch(() => store.isMinimized, (minimized) => {
   if (minimized) {
@@ -749,12 +1043,68 @@ watch(() => store.isOpen, (open) => {
   }
 })
 
-// ESC key handler for fullscreen mode
+// Global keyboard shortcuts handler
 const handleKeyDown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && store.isFullscreen) {
+  // ESC: 退出全屏或关闭 AI 面板
+  if (e.key === 'Escape') {
+    if (store.isFullscreen) {
+      e.preventDefault()
+      e.stopPropagation()
+      handleToggleFullscreen()
+    } else if (store.showAiPanel) {
+      e.preventDefault()
+      store.showAiPanel = false
+    }
+    return
+  }
+
+  const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+  const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey
+
+  // Ctrl/Cmd + K: 打开/关闭 AI 助手
+  if (ctrlOrCmd && e.key === 'k') {
     e.preventDefault()
-    e.stopPropagation()
+    store.showAiPanel = !store.showAiPanel
+    return
+  }
+
+  // Ctrl/Cmd + S: 保存插件
+  if (ctrlOrCmd && e.key === 's') {
+    e.preventDefault()
+    if (store.editingPlugin && store.isEditing) {
+      handleSavePlugin()
+    } else if (!store.editingPlugin) {
+      handleCreateNewPlugin()
+    }
+    return
+  }
+
+  // Ctrl/Cmd + Shift + F: 格式化代码
+  if (ctrlOrCmd && e.shiftKey && e.key === 'F') {
+    e.preventDefault()
+    handleFormatCode()
+    return
+  }
+
+  // Ctrl/Cmd + Shift + C: 复制插件代码
+  if (ctrlOrCmd && e.shiftKey && e.key === 'C') {
+    e.preventDefault()
+    handleCopyPlugin()
+    return
+  }
+
+  // F11: 切换全屏
+  if (e.key === 'F11') {
+    e.preventDefault()
     handleToggleFullscreen()
+    return
+  }
+
+  // Ctrl/Cmd + E: 启用编辑模式
+  if (ctrlOrCmd && e.key === 'e' && store.editingPlugin && !store.isEditing) {
+    e.preventDefault()
+    handleEnableEditing()
+    return
   }
 }
 

@@ -8,10 +8,21 @@
       <div class="flex items-center gap-2">
         <i class="fas fa-robot text-primary"></i>
         <span class="font-semibold">{{ $t('plugins.aiAssistant', 'AI 助手') }}</span>
+        <span v-if="messages.length > 0" class="badge badge-sm badge-primary">{{ messages.length }}</span>
       </div>
-      <button class="btn btn-xs btn-ghost btn-circle" @click="$emit('close')">
-        <i class="fas fa-times"></i>
-      </button>
+      <div class="flex items-center gap-1">
+        <button 
+          v-if="messages.length > 0"
+          class="btn btn-xs btn-ghost btn-circle" 
+          @click="$emit('clearHistory')"
+          :title="$t('plugins.clearHistory', '清除历史')"
+        >
+          <i class="fas fa-trash-alt"></i>
+        </button>
+        <button class="btn btn-xs btn-ghost btn-circle" @click="$emit('close')">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
     </div>
     
     <!-- Chat Messages -->
@@ -28,6 +39,18 @@
           </button>
           <button class="btn btn-xs btn-outline" @click="$emit('quickAction', 'fix')">
             <i class="fas fa-bug mr-1"></i>{{ $t('plugins.fixBugs', '修复问题') }}
+          </button>
+          <button class="btn btn-xs btn-outline" @click="$emit('quickAction', 'refactor')">
+            <i class="fas fa-code mr-1"></i>{{ $t('plugins.refactorCode', '重构代码') }}
+          </button>
+          <button class="btn btn-xs btn-outline" @click="$emit('quickAction', 'security')">
+            <i class="fas fa-shield-alt mr-1"></i>{{ $t('plugins.securityCheck', '安全检查') }}
+          </button>
+          <button class="btn btn-xs btn-outline" @click="$emit('quickAction', 'document')">
+            <i class="fas fa-file-alt mr-1"></i>{{ $t('plugins.addComments', '添加注释') }}
+          </button>
+          <button class="btn btn-xs btn-outline" @click="$emit('quickAction', 'test')">
+            <i class="fas fa-vial mr-1"></i>{{ $t('plugins.generateTests', '生成测试') }}
           </button>
         </div>
       </div>
@@ -76,6 +99,20 @@
                   <div class="suggestion-info">
                     <span class="text-[10px] font-mono opacity-70">#{{ bIdx + 1 }}</span>
                     <div class="flex gap-1 ml-auto">
+                      <button 
+                        class="btn btn-mini h-6 min-h-0 btn-ghost px-2" 
+                        @click="copyCodeBlock(block)"
+                        :title="$t('plugins.copyCode', '复制代码')"
+                      >
+                        <i class="fas fa-copy text-[10px]"></i>
+                      </button>
+                      <button 
+                        class="btn btn-mini h-6 min-h-0 btn-ghost px-2" 
+                        @click="toggleCodeExpand(idx, bIdx)"
+                        :title="expandedBlocks.has(`${idx}-${bIdx}`) ? $t('plugins.collapse', '收起') : $t('plugins.expand', '展开')"
+                      >
+                        <i :class="expandedBlocks.has(`${idx}-${bIdx}`) ? 'fas fa-chevron-up' : 'fas fa-chevron-down'" class="text-[10px]"></i>
+                      </button>
                       <button class="btn btn-mini h-6 min-h-0 btn-primary px-2" @click="handleApplyCode(block, idx)">
                         {{ $t('plugins.apply', '应用') }}
                       </button>
@@ -84,7 +121,10 @@
                       </button>
                     </div>
                   </div>
-                  <pre class="suggestion-preview"><code>{{ block.length > 100 ? block.substring(0, 100) + '...' : block }}</code></pre>
+                  <pre 
+                    class="suggestion-preview" 
+                    :class="{ 'expanded': expandedBlocks.has(`${idx}-${bIdx}`) }"
+                  ><code class="language-typescript">{{ expandedBlocks.has(`${idx}-${bIdx}`) ? block : (block.length > 100 ? block.substring(0, 100) + '...' : block) }}</code></pre>
                 </div>
               </div>
               
@@ -159,11 +199,12 @@
         rows="2"
         :disabled="streaming"
         @keydown.enter.exact.prevent="handleSendMessage"
+        @keydown.enter.shift="handleShiftEnter"
       ></textarea>
       <div class="ai-chat-input-actions">
         <div class="flex items-center gap-2 text-xs opacity-60">
-          <i class="fas fa-info-circle"></i>
-          <span>{{ $t('plugins.contextMenuHint', '右键编辑器添加代码到上下文') }}</span>
+          <i class="fas fa-keyboard"></i>
+          <span>{{ $t('plugins.shortcutHint', 'Enter发送 · Shift+Enter换行 · Ctrl+K切换面板') }}</span>
         </div>
         <button 
           class="btn btn-sm btn-primary" 
@@ -183,6 +224,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { CodeReference, TestResultReference, AiChatMessage } from './types'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   show: boolean
@@ -201,12 +243,15 @@ const emit = defineEmits<{
   'previewCode': [code: string]
   'clearCodeRef': []
   'clearTestResultRef': []
+  'clearHistory': []
 }>()
 
+const { t } = useI18n()
 const aiChatMessagesRef = ref<HTMLDivElement>()
 const inputText = ref('')
 const panelWidth = ref(400)
 const isResizing = ref(false)
+const expandedBlocks = ref<Set<string>>(new Set())
 
 // Configure marked for streaming content
 marked.setOptions({
@@ -252,6 +297,40 @@ const handleSendMessage = () => {
   if (inputText.value.trim() && !props.streaming) {
     emit('sendMessage', inputText.value)
   }
+}
+
+const handleShiftEnter = (e: KeyboardEvent) => {
+  // Shift+Enter: 允许换行，不做任何事
+  // 浏览器默认行为会插入换行符
+}
+
+const copyCodeBlock = async (code: string) => {
+  try {
+    await navigator.clipboard.writeText(code)
+    showToast(t('plugins.copySuccess', '复制成功'), 'success')
+  } catch (error) {
+    showToast(t('plugins.copyFailed', '复制失败'), 'error')
+  }
+}
+
+const toggleCodeExpand = (messageIdx: number, blockIdx: number) => {
+  const key = `${messageIdx}-${blockIdx}`
+  if (expandedBlocks.value.has(key)) {
+    expandedBlocks.value.delete(key)
+  } else {
+    expandedBlocks.value.add(key)
+  }
+}
+
+const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+  const toast = document.createElement('div')
+  toast.className = 'toast toast-top toast-end z-[99999]'
+  toast.style.top = '5rem'
+  const alertClass = { success: 'alert-success', error: 'alert-error', info: 'alert-info' }[type]
+  const icon = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle' }[type]
+  toast.innerHTML = `<div class="alert ${alertClass} shadow-lg"><i class="fas ${icon}"></i><span>${message}</span></div>`
+  document.body.appendChild(toast)
+  setTimeout(() => toast.remove(), 3000)
 }
 
 const startResize = (e: MouseEvent) => {
@@ -825,6 +904,12 @@ defineExpose({
   overflow: hidden;
   color: oklch(var(--bc) / 0.6);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  transition: max-height 0.3s ease;
+}
+
+.suggestion-preview.expanded {
+  max-height: 400px;
+  overflow: auto;
 }
 
 .suggestion-preview code {

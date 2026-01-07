@@ -6,6 +6,7 @@ use std::sync::Arc;
 use chrono::Utc;
 
 use crate::services::database::DatabaseService;
+use crate::generators::validator::{PluginValidator, ValidationResult};
 use sentinel_db::Database;
 
 /// Response for plugin review operations
@@ -491,6 +492,33 @@ pub async fn get_plugin_review_statistics(
                 message: format!("Failed to get statistics: {}", e),
                 data: None,
             })
+        }
+    }
+}
+
+/// Validate plugin code syntax and structure
+#[tauri::command]
+pub async fn validate_plugin_code(
+    code: String,
+) -> Result<ValidationResult, String> {
+    log::debug!("Validating plugin code, length: {}", code.len());
+    
+    let validator = PluginValidator::new();
+    
+    match validator.validate(&code).await {
+        Ok(result) => {
+            log::debug!(
+                "Plugin validation completed - valid: {}, syntax_valid: {}, errors: {}, warnings: {}",
+                result.is_valid,
+                result.syntax_valid,
+                result.errors.len(),
+                result.warnings.len()
+            );
+            Ok(result)
+        }
+        Err(e) => {
+            log::error!("Plugin validation failed: {}", e);
+            Err(format!("Validation error: {}", e))
         }
     }
 }

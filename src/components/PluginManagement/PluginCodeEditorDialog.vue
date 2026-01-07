@@ -3,12 +3,65 @@
   <dialog ref="codeEditorDialogRef" class="modal" :class="{ 'fullscreen-mode-active': isFullscreenEditor }" @cancel="handleDialogCancel">
     <div class="modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-y-auto" :class="{ 'invisible': isFullscreenEditor }">
       <div class="flex justify-between items-start mb-4 sticky top-0 bg-base-100 z-10 pb-2">
-        <h3 class="font-bold text-lg">
-          {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
-          <span v-if="editingPlugin" class="text-sm font-normal text-gray-500 ml-2">
-            {{ editingPlugin.metadata.name }} ({{ editingPlugin.metadata.id }})
-          </span>
-        </h3>
+        <div class="flex items-center gap-2">
+          <h3 class="font-bold text-lg">
+            {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
+            <span v-if="editingPlugin" class="text-sm font-normal text-gray-500 ml-2">
+              {{ editingPlugin.metadata.name }} ({{ editingPlugin.metadata.id }})
+            </span>
+          </h3>
+          <div class="relative">
+            <button 
+              class="btn btn-xs btn-ghost btn-circle" 
+              :title="$t('plugins.shortcuts', '快捷键')"
+              @click="toggleShortcutsMenu"
+            >
+              <i class="fas fa-keyboard"></i>
+            </button>
+            <transition name="fade-scale">
+              <div 
+                v-if="showShortcutsMenu"
+                v-click-outside="closeShortcutsMenu"
+                class="absolute top-full right-0 mt-2 p-3 shadow-xl bg-base-200 rounded-lg w-80 text-xs z-[1000] border border-base-300"
+              >
+                <div class="flex items-center gap-2 mb-3 pb-2 border-b border-base-300">
+                  <i class="fas fa-keyboard text-primary"></i>
+                  <span class="font-semibold text-sm">{{ $t('plugins.keyboardShortcuts', '键盘快捷键') }}</span>
+                </div>
+                <div class="space-y-1">
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.toggleAiPanel', '切换AI面板') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + K</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.savePlugin', '保存插件') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + S</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.formatCode', '格式化代码') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + Shift + F</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.copyCode', '复制代码') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + Shift + C</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.toggleFullscreen', '切换全屏') }}</span>
+                    <kbd class="kbd kbd-xs">F11</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.enableEdit', '启用编辑') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + E</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.exitFullscreen', '退出全屏') }}</span>
+                    <kbd class="kbd kbd-xs">ESC</kbd>
+                  </div>
+                </div>
+              </div>
+            </transition>
+          </div>
+        </div>
         <button @click="closeDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
       </div>
 
@@ -186,9 +239,10 @@
           @quick-action="$emit('aiQuickAction', $event)"
           @apply-code="(...args) => $emit('applyAiCode', ...args)"
           @preview-code="$emit('previewAiCode', $event)"
-          @clear-code-ref="$emit('clearCodeRef')"
-          @clear-test-result-ref="$emit('clearTestResultRef')"
-        />
+            @clear-code-ref="$emit('clearCodeRef')"
+            @clear-test-result-ref="$emit('clearTestResultRef')"
+            @clear-history="$emit('clearHistory')"
+          />
       </div>
 
       <!-- Floating Toolbar - centered in editor area -->
@@ -314,10 +368,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
 import { mainCategories } from './types'
 import AiAssistantPanel from './AiAssistantPanel.vue'
+
+// Type extension for click outside handler
+declare module '@vue/runtime-core' {
+  interface HTMLElement {
+    _clickOutsideHandler?: (event: MouseEvent) => void
+  }
+}
+
+// Click outside directive implementation
+const vClickOutside = {
+  mounted(el: HTMLElement, binding: any) {
+    el._clickOutsideHandler = (event: MouseEvent) => {
+      if (!el.contains(event.target as Node)) {
+        binding.value()
+      }
+    }
+    setTimeout(() => {
+      document.addEventListener('click', el._clickOutsideHandler)
+    }, 0)
+  },
+  beforeUnmount(el: HTMLElement) {
+    if (el._clickOutsideHandler) {
+      document.removeEventListener('click', el._clickOutsideHandler)
+    }
+  }
+}
 
 const props = defineProps<{
   editingPlugin: PluginRecord | null
@@ -365,6 +445,7 @@ const emit = defineEmits<{
   'clearCodeRef': []
   'clearTestResultRef': []
   'addTestResultToContext': []
+  'clearHistory': []
   // Test related emits
   'testCurrentPlugin': []
 }>()
@@ -380,6 +461,17 @@ const isCompactToolbar = ref(false)
 const toolbarPosition = ref<{ x: number | null, y: number | null }>({ x: null, y: null })
 const isDraggingToolbar = ref(false)
 const dragOffset = ref({ x: 0, y: 0 })
+
+// Shortcuts menu state
+const showShortcutsMenu = ref(false)
+
+const toggleShortcutsMenu = () => {
+  showShortcutsMenu.value = !showShortcutsMenu.value
+}
+
+const closeShortcutsMenu = () => {
+  showShortcutsMenu.value = false
+}
 
 // Toolbar drag functionality
 const startToolbarDrag = (e: MouseEvent) => {
@@ -754,5 +846,26 @@ defineExpose({
   .fullscreen-floating-toolbar.with-ai-panel {
     left: calc((100% - 320px) / 2);
   }
+}
+/* Shortcuts menu animation */
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-scale-enter-from {
+  opacity: 0;
+  transform: scale(0.95) translateY(-10px);
+}
+
+.fade-scale-leave-to {
+  opacity: 0;
+  transform: scale(0.95) translateY(-10px);
+}
+
+.fade-scale-enter-to,
+.fade-scale-leave-from {
+  opacity: 1;
+  transform: scale(1) translateY(0);
 }
 </style>

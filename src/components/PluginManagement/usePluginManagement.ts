@@ -79,7 +79,7 @@ export function usePluginManagement() {
   const editingPlugin = ref<PluginRecord | null>(null)
   const pluginCode = ref('')
   const originalCode = ref('')
-  const isEditing = ref(false)
+  const isEditing = ref(true)
   const saving = ref(false)
   const codeError = ref('')
   const isFullscreenEditor = ref(false)

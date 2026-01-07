@@ -848,6 +848,7 @@ pub fn run() {
             commands::plugin_review_commands::approve_plugin,
             commands::plugin_review_commands::reject_plugin,
             commands::plugin_review_commands::review_update_plugin_code,
+            commands::plugin_review_commands::validate_plugin_code,
             commands::config_commands::get_auto_approval_config,
             commands::config_commands::update_auto_approval_config,
             commands::config_commands::get_config_presets,
