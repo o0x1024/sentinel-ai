@@ -5,7 +5,6 @@
 
 pub mod types;
 pub mod vision_explorer_v2;
-pub mod test_explorer_v1;
 
 pub use types::*;
 

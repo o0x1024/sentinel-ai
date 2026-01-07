@@ -561,7 +561,12 @@ export default {
       totalTokens: 'Total Tokens',
       estimatedCost: 'Estimated Cost',
       selectModel: 'Please select a model',
-      refreshModels: 'Refresh Models'
+      refreshModels: 'Refresh Models',
+      workingDirectory: 'Working Directory',
+      workingDirectoryPlaceholder: 'Enter the working directory path for AI assistant',
+      workingDirectoryDescription: 'AI assistant will use this directory as the working directory when performing file operations and executing scripts',
+      selectDirectory: 'Select Directory',
+      workingDirectoryHint: 'Set the default working directory for AI assistant to execute file operations, run scripts and other tasks'
     },
     scheduler: {
       title: 'Scheduler Strategy Configuration',

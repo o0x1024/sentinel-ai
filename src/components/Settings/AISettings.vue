@@ -487,6 +487,42 @@
         </div>
       </div>
 
+      <!-- AI 工作目录设置 -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-3 mb-2">
+            <i class="fas fa-folder text-primary text-lg"></i>
+            <h3 class="font-semibold">{{ t('settings.ai.workingDirectory') }}</h3>
+          </div>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ t('settings.ai.workingDirectory') }}</span>
+            </label>
+            <div class="input-group">
+              <input 
+                v-model="workingDirectoryLocal" 
+                type="text" 
+                class="input input-bordered flex-1" 
+                :placeholder="t('settings.ai.workingDirectoryPlaceholder')" 
+              />
+              <button class="btn btn-outline" @click="selectWorkingDirectory">
+                <i class="fas fa-folder-open mr-1"></i>
+                {{ t('settings.ai.selectDirectory') }}
+              </button>
+            </div>
+            <label class="label">
+              <span class="label-text-alt">{{ t('settings.ai.workingDirectoryHint') }}</span>
+            </label>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+              <i class="fas fa-save mr-1"></i>
+              {{ t('settings.ai.save') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Tavily Search 设置 -->
       <div class="card bg-base-100 shadow-sm mt-6">
         <div class="card-body p-4">
@@ -1423,9 +1459,50 @@ const clearUsageStats = () => {
 }
 
 const saveAiConfig = async () => {
+  await saveWorkingDirectory()
   await saveTavilyConfig()
   await saveAliyunConfig()
   emit('saveAiConfig')
+}
+
+// --- AI Working Directory Settings ---
+const workingDirectoryLocal = ref('')
+
+const loadWorkingDirectory = async () => {
+  try {
+    const items = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
+    const map = new Map(items.map(i => [i.key, i.value]))
+    workingDirectoryLocal.value = String(map.get('working_directory') || '')
+  } catch (e) {
+    console.warn('Failed to load working directory config', e)
+  }
+}
+
+const saveWorkingDirectory = async () => {
+  try {
+    const configs = [
+      { category: 'ai', key: 'working_directory', value: workingDirectoryLocal.value || '', description: 'AI assistant working directory', is_encrypted: false },
+    ]
+    await invoke('save_config_batch', { configs })
+  } catch (e) {
+    console.error('Failed to save working directory config', e)
+  }
+}
+
+const selectWorkingDirectory = async () => {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: t('settings.ai.selectDirectory'),
+    })
+    if (selected) {
+      workingDirectoryLocal.value = selected as string
+    }
+  } catch (e) {
+    console.error('Failed to select directory', e)
+  }
 }
 
 // --- Tavily Search Settings ---
@@ -1692,6 +1769,7 @@ const formatLastUsed = (timestamp: string | null) => {
 }
 
 onMounted(() => {
+  loadWorkingDirectory()
   loadTavilyConfig()
   loadAliyunConfig()
   loadDetailedStats()

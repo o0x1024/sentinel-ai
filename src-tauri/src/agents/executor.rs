@@ -134,107 +134,6 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
            }
         }
 
-        // Register TestExplorerTool if enabled (unified tool for text-based web exploration)
-        if tool_config.enabled && !tool_config.disabled_tools.contains(&"test_explorer".to_string()) {
-            use sentinel_tools::dynamic_tool::{DynamicToolBuilder, ToolSource};
-            use crate::engines::test_explorer_v1::{TestExplorerV1Engine, TestExplorerV1Config};
-
-            let app = app_handle.clone();
-            let exec_id = params.execution_id.clone();
-
-            let tool_def = DynamicToolBuilder::new("test_explorer")
-                .description("Explore a website using text-based automation with LLM. Automatically navigates, interacts with elements, captures API requests, and completes exploration tasks. Best for discovering web APIs and endpoints.")
-                .input_schema(serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "target_url": {
-                            "type": "string",
-                            "description": "The target URL to explore and discover APIs from"
-                        },
-                        "task": {
-                            "type": "string",
-                            "description": "Optional task instruction (e.g., 'collect all API endpoints'). If not provided, defaults to API discovery."
-                        },
-                        "max_steps": {
-                            "type": "integer",
-                            "description": "Maximum number of exploration steps (default: 20)",
-                            "default": 20
-                        },
-                        "headless": {
-                            "type": "boolean",
-                            "description": "Run browser in headless mode (default: true)",
-                            "default": true
-                        }
-                    },
-                    "required": ["target_url"]
-                }))
-                .source(ToolSource::Builtin)
-                .executor(move |args| {
-                    let app = app.clone();
-                    let exec_id = exec_id.clone();
-                    async move {
-                        let target_url = args["target_url"].as_str()
-                            .ok_or_else(|| "Missing target_url parameter".to_string())?;
-                        let task = args["task"].as_str()
-                            .unwrap_or("Explore the website and discover all API endpoints, forms, and interactive elements.");
-                        let max_steps = args["max_steps"].as_u64().unwrap_or(20) as u32;
-                        let headless = args["headless"].as_bool().unwrap_or(true);
-
-                        // Create TestExplorerV1Config with correct fields
-                        let config = TestExplorerV1Config {
-                            target_url: target_url.to_string(),
-                            max_steps,
-                            headless,
-                            capture_network: true,
-                            viewport_width: 1280,
-                            viewport_height: 720,
-                            page_load_timeout_ms: 30000,
-                            user_agent: None,
-                        };
-
-                        // Create engine (async new)
-                        let mut engine = TestExplorerV1Engine::new(config, None).await
-                            .map_err(|e| format!("Failed to initialize browser: {}", e))?;
-                        
-                        // Execute exploration with the task
-                        let result = engine.execute_direct(task).await
-                            .map_err(|e| format!("Exploration failed: {}", e))?;
-                        
-                        // Format result
-                        let output = serde_json::json!({
-                            "success": result.success,
-                            "target_url": target_url,
-                            "captured_apis": result.captured_apis.len(),
-                            "steps_taken": result.steps_taken.len(),
-                            "final_url": result.final_state.url,
-                            "final_title": result.final_state.title,
-                            "interactive_elements": result.final_state.interactive_elements.len(),
-                            "total_duration_ms": result.total_duration_ms,
-                            "apis": result.captured_apis,
-                        });
-                        
-                        // Emit event to frontend
-                        let _ = app.emit(
-                            "test_explorer:complete",
-                            &serde_json::json!({
-                                "execution_id": exec_id,
-                                "result": output,
-                            }),
-                        );
-                        
-                        Ok(output)
-                    }
-                })
-                .build();
-
-            if let Ok(tool_def) = tool_def {
-                tool_server.register_tool(tool_def).await;
-                tracing::info!("Registered TestExplorerTool");
-            } else if let Err(e) = tool_def {
-                tracing::warn!("Failed to build TestExplorerTool definition: {}", e);
-            }
-        }
-
         // 打印当前注册的工具列表
         let registered_tools = tool_server.list_tools().await;
         tracing::info!(
@@ -588,6 +487,19 @@ async fn execute_agent_with_tools(
         "\n\n[SystemContext: Current Execution ID is '{}'. Use this for task_planner calls.]",
         params.execution_id
     ));
+
+    // Inject working directory if configured
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        if let Ok(Some(working_dir)) = db.get_config("ai", "working_directory").await {
+            if !working_dir.is_empty() {
+                final_system_prompt.push_str(&format!(
+                    "\n\n[Working Directory: Your working directory is '{}'. When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
+                    working_dir
+                ));
+                tracing::info!("Injected working directory into system prompt: {}", working_dir);
+            }
+        }
+    }
 
     // 5. 使用 SlidingWindowManager 管理上下文和历史
     let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000) as usize;

@@ -18,7 +18,7 @@ mod fingerprint_tests {
         let ctx1 = PageContext {
             url: "https://example.com/page".to_string(),
             title: "Test Page".to_string(),
-            screenshot: None,
+            screenshot: vec![1, 2, 3],
             dom_snapshot: "<html><body><div><p>Hello</p></div></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -26,34 +26,34 @@ mod fingerprint_tests {
         let ctx2 = PageContext {
             url: "https://example.com/page".to_string(),
             title: "Test Page".to_string(),
-            screenshot: None,
+            screenshot: vec![4, 5, 6],
             dom_snapshot: "<html><body><div><p>Goodbye</p></div></body></html>".to_string(), // Different text
             accessibility_tree: None,
         };
 
-        // Same structure, different text -> should have same fingerprint
+        // Same URL, Same Title -> should have same fingerprint (since we removed DOM from fingerprint)
         assert_eq!(ctx1.fingerprint(false), ctx2.fingerprint(false));
     }
 
     #[test]
-    fn test_fingerprint_different_structure_different_hash() {
+    fn test_fingerprint_different_title_different_hash() {
         let ctx1 = PageContext {
             url: "https://example.com/page".to_string(),
-            title: "Test Page".to_string(),
-            screenshot: None,
+            title: "Test Page 1".to_string(),
+            screenshot: vec![1, 2, 3],
             dom_snapshot: "<html><body><div><p>Hello</p></div></body></html>".to_string(),
             accessibility_tree: None,
         };
 
         let ctx2 = PageContext {
             url: "https://example.com/page".to_string(),
-            title: "Test Page".to_string(),
-            screenshot: None,
-            dom_snapshot: "<html><body><div><span>Hello</span></div></body></html>".to_string(), // Different tag
+            title: "Test Page 2".to_string(),
+            screenshot: vec![1, 2, 3],
+            dom_snapshot: "<html><body><div><p>Hello</p></div></body></html>".to_string(),
             accessibility_tree: None,
         };
 
-        // Different structure -> should have different fingerprint
+        // Different title -> should have different fingerprint
         assert_ne!(ctx1.fingerprint(false), ctx2.fingerprint(false));
     }
 
@@ -62,7 +62,7 @@ mod fingerprint_tests {
         let ctx1 = PageContext {
             url: "https://example.com/page?session=abc123".to_string(),
             title: "Test Page".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -70,7 +70,7 @@ mod fingerprint_tests {
         let ctx2 = PageContext {
             url: "https://example.com/page?session=xyz789".to_string(),
             title: "Test Page".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -84,7 +84,7 @@ mod fingerprint_tests {
         let ctx1 = PageContext {
             url: "https://example.com/page".to_string(),
             title: "Dashboard".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -92,7 +92,7 @@ mod fingerprint_tests {
         let ctx2 = PageContext {
             url: "https://example.com/page".to_string(),
             title: "Settings".to_string(), // Different title
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -106,7 +106,7 @@ mod fingerprint_tests {
         let ctx = PageContext {
             url: "https://example.com/page".to_string(),
             title: "Dashboard".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -129,6 +129,8 @@ mod safety_tests {
             action_type: "click".to_string(),
             value: None,
             confidence: 0.9,
+            x: None,
+            y: None,
         };
 
         let result = safety.check_action(&action);
@@ -145,6 +147,8 @@ mod safety_tests {
             action_type: "click".to_string(),
             value: None,
             confidence: 0.9,
+            x: None,
+            y: None,
         };
 
         let result = safety.check_action(&action);
@@ -160,6 +164,8 @@ mod safety_tests {
             action_type: "click".to_string(),
             value: None,
             confidence: 0.9,
+            x: None,
+            y: None,
         };
 
         let result = safety.check_action(&action);
@@ -199,6 +205,8 @@ mod safety_tests {
                 action_type: "click".to_string(),
                 value: None,
                 confidence: 0.9,
+                x: None,
+                y: None,
             },
             SuggestedAction {
                 description: "Delete account".to_string(),
@@ -206,6 +214,8 @@ mod safety_tests {
                 action_type: "click".to_string(),
                 value: None,
                 confidence: 0.8,
+                x: None,
+                y: None,
             },
             SuggestedAction {
                 description: "View settings".to_string(),
@@ -213,6 +223,8 @@ mod safety_tests {
                 action_type: "click".to_string(),
                 value: None,
                 confidence: 0.7,
+                x: None,
+                y: None,
             },
         ];
 
@@ -235,6 +247,8 @@ mod safety_tests {
             action_type: "click".to_string(),
             value: None,
             confidence: 0.9,
+            x: None,
+            y: None,
         };
 
         let result = safety.check_action(&action);
@@ -251,7 +265,7 @@ mod auth_agent_tests {
         let ctx = PageContext {
             url: "https://example.com/login".to_string(),
             title: "Welcome".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -264,7 +278,7 @@ mod auth_agent_tests {
         let ctx = PageContext {
             url: "https://example.com/auth".to_string(),
             title: "Welcome".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: r#"
                 <html><body>
                     <form>
@@ -286,7 +300,7 @@ mod auth_agent_tests {
         let ctx = PageContext {
             url: "https://example.com/dashboard".to_string(),
             title: "Dashboard".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: "<html><body><h1>Welcome to Dashboard</h1></body></html>".to_string(),
             accessibility_tree: None,
         };
@@ -299,7 +313,7 @@ mod auth_agent_tests {
         let ctx = PageContext {
             url: "https://example.com/login".to_string(),
             title: "Login".to_string(),
-            screenshot: None,
+            screenshot: vec![],
             dom_snapshot: r#"
                 <html><body>
                     <div class="error">Invalid username or password</div>

@@ -14,7 +14,7 @@ use crate::engines::vision_explorer_v2::driver::{BrowserDriver, NavigatorAgent, 
 use crate::engines::vision_explorer_v2::emitter::V2MessageEmitter;
 use crate::engines::vision_explorer_v2::graph::ExplorationGraph;
 use crate::engines::vision_explorer_v2::perception::{
-    PerceptionAgent, StructuralAnalyst, VisualAnalyst,
+    PerceptionAgent, VisualAnalyst,
 };
 use crate::engines::vision_explorer_v2::persistence::{
     ExplorationSnapshot, ExplorationStats, PersistenceManager,
@@ -167,13 +167,10 @@ impl V2Engine {
         let mut event_rx = self.event_rx.take().expect("Engine already started");
 
         // 1. Initialize LLM Configs from AIConfig
-        let fast_llm_config = self.config.ai_config.fast_llm_config();
         let vision_llm_config = self.config.ai_config.vision_llm_config();
 
         log::info!(
-            "V2Engine using Fast LLM: {} ({}), Vision LLM: {} ({})",
-            self.config.ai_config.fast_model_id,
-            self.config.ai_config.fast_provider,
+            "V2Engine using Vision LLM: {} ({})",
             self.config.ai_config.vision_model_id,
             self.config.ai_config.vision_provider
         );
@@ -213,18 +210,7 @@ impl V2Engine {
             self.event_tx.clone(),
         );
 
-        // Perception Agents - use fast_llm_config for structural analysis
-        let structural_analyst = Box::new(StructuralAnalyst::new(
-            fast_llm_config.clone(),
-            self.config.ai_config.fast_model_id.clone(),
-        ));
-        let analyst_agent = PerceptionAgent::new(
-            "structural_analyst".to_string(),
-            structural_analyst,
-            self.event_tx.clone(),
-        );
-
-        // Vision Agent - use vision_llm_config for visual analysis
+        // Perception Agent - use vision_llm_config for visual analysis
         let visual_analyst = Box::new(VisualAnalyst::new(
             vision_llm_config.clone(),
             self.config.ai_config.vision_model_id.clone(),
@@ -374,13 +360,6 @@ impl V2Engine {
                                 emitter.emit_error(step_count, &format!("Navigator error: {}", e));
                             }
                         }
-                    } else if agent_id == &analyst_agent.id() {
-                        if let Err(e) = analyst_agent.handle_event(&event).await {
-                            log::error!("StructuralAnalyst error: {}", e);
-                            if let Some(ref emitter) = self.emitter {
-                                emitter.emit_error(step_count, &format!("Analyst error: {}", e));
-                            }
-                        }
                     } else if agent_id == &visual_agent.id() {
                         if let Err(e) = visual_agent.handle_event(&event).await {
                             log::error!("VisualAnalyst error: {}", e);
@@ -431,19 +410,15 @@ impl V2Engine {
                             if let Some(data) = &result.data {
                                 if let Ok(ctx) = serde_json::from_value::<PageContext>(data.clone())
                                 {
+                                    let screenshot_b64 = base64::Engine::encode(
+                                        &base64::engine::general_purpose::STANDARD,
+                                        &ctx.screenshot,
+                                    );
                                     emitter.emit_screenshot(
                                         step_count,
                                         &ctx.url,
                                         &ctx.title,
-                                        ctx.screenshot
-                                            .as_ref()
-                                            .map(|b| {
-                                                base64::Engine::encode(
-                                                    &base64::engine::general_purpose::STANDARD,
-                                                    b,
-                                                )
-                                            })
-                                            .as_deref(),
+                                        Some(&screenshot_b64),
                                     );
                                 }
                             }

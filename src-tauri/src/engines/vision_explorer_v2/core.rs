@@ -1,7 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::Debug;
+
+// ==================== Event System ====================
 
 /// Event types for the Vision Explorer V2 Event Bus
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +53,7 @@ pub enum Event {
 }
 
 /// Login form field information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginField {
     pub id: String,
     pub field_type: String, // "text", "password", "email", etc.
@@ -67,24 +70,11 @@ pub struct TaskResult {
     pub data: Option<serde_json::Value>,
 }
 
-/// The Perception Engine Trait (Analyst)
-/// Responsible for understanding the page content.
-#[async_trait]
-pub trait PerceptionEngine: Send + Sync {
-    /// Analyze the current page context and return a decision or analysis result.
-    async fn analyze(&self, context: &PageContext) -> Result<PerceptionResult>;
-
-    /// Extract specific structured data from the page.
-    async fn extract_data(
-        &self,
-        context: &PageContext,
-        schema: &serde_json::Value,
-    ) -> Result<serde_json::Value>;
-}
+// ==================== Agent Interface ====================
 
 /// A standard agent in the system
 #[async_trait]
-pub trait Agent: Send + Sync {
+pub trait Agent: Send + Sync + Debug {
     /// Get the agent's unique ID
     fn id(&self) -> String;
 
@@ -92,19 +82,22 @@ pub trait Agent: Send + Sync {
     async fn handle_event(&self, event: &Event) -> Result<()>;
 }
 
-/// Context passed to analysts
+// ==================== Perception Data Types ====================
+
+/// Context passed to analysts and agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageContext {
     pub url: String,
     pub title: String,
-    pub screenshot: Option<Vec<u8>>,
+    pub screenshot: Vec<u8>,
     pub dom_snapshot: String,
     pub accessibility_tree: Option<serde_json::Value>,
+    pub viewport_size: Option<(u32, u32)>,
+    pub timestamp: u64, // Unix timestamp millis
 }
 
 impl PageContext {
     /// Generate a unique fingerprint for this page state.
-    /// Uses URL + normalized DOM structure hash for SPA support.
     pub fn fingerprint(&self, is_authenticated: bool) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -115,133 +108,156 @@ impl PageContext {
         let url_base = self.url.split('?').next().unwrap_or(&self.url);
         url_base.hash(&mut hasher);
 
-        // 2. DOM Structure Hash (not content, just structure)
-        let structure_hash = Self::compute_dom_structure_hash(&self.dom_snapshot);
-        structure_hash.hash(&mut hasher);
-
-        // 3. Title (helps distinguish same-URL states like tabs)
+        // 2. Title (helps distinguish same-URL states like tabs)
         self.title.hash(&mut hasher);
 
-        // 4. Auth Status (distinguishes logged in vs logged out versions of the same page)
+        // 3. Auth Status (distinguishes logged in vs logged out versions of the same page)
         is_authenticated.hash(&mut hasher);
 
         format!("{:016x}", hasher.finish())
     }
-
-    /// Compute a hash of the DOM structure, ignoring dynamic content.
-    /// This extracts tag names, hierarchy, and key functional attributes (id, name, type, etc.),
-    /// filtering out text content, volatile classes, and other noise.
-    fn compute_dom_structure_hash(dom: &str) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-
-        // Extract structural elements only (tag names and their nesting)
-        let mut depth: u32 = 0;
-        let mut in_tag = false;
-        let mut tag_content = String::new();
-        let mut is_closing = false;
-
-        for ch in dom.chars() {
-            match ch {
-                '<' => {
-                    in_tag = true;
-                    tag_content.clear();
-                    is_closing = false;
-                }
-                '/' if in_tag && tag_content.is_empty() => {
-                    is_closing = true;
-                }
-                '>' => {
-                    if in_tag && !tag_content.is_empty() {
-                        // Split tag name and attributes
-                        let parts: Vec<&str> = tag_content.split_whitespace().collect();
-                        if let Some(tag_name_raw) = parts.first() {
-                            let normalized = tag_name_raw.to_lowercase();
-
-                            // Skip script/style content and dynamic elements
-                            if !matches!(
-                                normalized.as_str(),
-                                "script" | "style" | "noscript" | "iframe"
-                            ) {
-                                // Hash: depth + tag name
-                                depth.hash(&mut hasher);
-                                normalized.hash(&mut hasher);
-
-                                // For interactive elements, hash key attributes to distinguish state
-                                if matches!(
-                                    normalized.as_str(),
-                                    "input" | "button" | "a" | "select" | "textarea" | "form"
-                                ) {
-                                    for attr in &parts[1..] {
-                                        if let Some((key, val)) = attr.split_once('=') {
-                                            let key_lc = key.to_lowercase();
-                                            // Only hash stable and functional attributes
-                                            if matches!(
-                                                key_lc.as_str(),
-                                                "id" | "name" | "type" | "href" | "value" | "placeholder" | "role"
-                                            ) {
-                                                key_lc.hash(&mut hasher);
-                                                val.hash(&mut hasher);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if is_closing {
-                                depth = depth.saturating_sub(1);
-                            } else if !normalized.ends_with('/') && !is_self_closing(&normalized) {
-                                // Increase depth for opening tags that aren't self-closing
-                                depth += 1;
-                            }
-                        }
-                    }
-                    in_tag = false;
-                }
-                _ if in_tag => {
-                    if tag_content.len() < 500 {
-                        // Limit tag content length
-                        tag_content.push(ch);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        hasher.finish()
-    }
 }
 
-/// Helper to identify common self-closing tags
-fn is_self_closing(tag: &str) -> bool {
-    matches!(
-        tag,
-        "area"
-            | "base"
-            | "br"
-            | "col"
-            | "embed"
-            | "hr"
-            | "img"
-            | "input"
-            | "link"
-            | "meta"
-            | "param"
-            | "source"
-            | "track"
-            | "wbr"
-    )
+/// Type of page detected
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PageType {
+    Login,
+    Dashboard,
+    Form,
+    List,
+    Detail,
+    Api,
+    Error,
+    Static,
+    Unknown,
 }
 
-/// Output of a perception analysis
+/// Authentication status detected on the page
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthStatus {
+    Authenticated { username: Option<String> },
+    NotAuthenticated,
+    Unknown,
+}
+
+/// Interactive element found on the page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageElement {
+    pub element_type: String,
+    pub selector: String,
+    pub text: Option<String>,
+    pub attributes: HashMap<String, String>,
+    pub coordinates: Option<(i32, i32)>,
+    pub bounding_box: Option<(i32, i32, u32, u32)>,
+    pub confidence: f32,
+    pub is_visible: bool,
+    pub is_interactive: bool,
+}
+
+/// Form information detected on the page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormInfo {
+    pub selector: String,
+    pub action: Option<String>,
+    pub method: String,
+    pub fields: Vec<FormField>,
+    pub is_login_form: bool,
+    pub is_search_form: bool,
+}
+
+/// Form field information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormField {
+    pub name: String,
+    pub field_type: String,
+    pub label: Option<String>,
+    pub required: bool,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+}
+
+/// API endpoint information detected
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiEndpoint {
+    pub url: String,
+    pub method: String,
+    pub parameters: Vec<String>,
+    pub requires_auth: bool,
+    pub response_format: Option<String>,
+}
+
+/// Pure perception result - only describes what was found
+/// Note: Decision making (suggested actions) is moved to Planner
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerceptionResult {
-    pub summary: String,
-    pub suggested_actions: Vec<SuggestedAction>,
+    /// Type of page detected
+    pub page_type: PageType,
+    
+    /// Authentication status
+    pub auth_status: AuthStatus,
+    
+    /// Summary of page content
+    pub content_summary: String,
+    
+    /// Interactive elements found
+    pub elements: Vec<PageElement>,
+    
+    /// Forms detected
+    pub forms: Vec<FormInfo>,
+    
+    /// API endpoints discovered
+    pub api_endpoints: Vec<ApiEndpoint>,
+    
+    /// Errors or warnings detected
+    pub errors: Vec<String>,
+    
+    /// Additional metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+    
+    /// Confidence in the analysis (0.0 to 1.0)
+    pub confidence: f32,
 }
 
+/// Capabilities of a perception engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerceptionCapabilities {
+    pub name: String,
+    pub version: String,
+    pub supported_analysis: Vec<String>,
+    pub supports_vision: bool,
+    pub supports_dom: bool,
+    pub supports_accessibility: bool,
+}
+
+// ==================== Perception Interface ====================
+
+/// The Perception Engine Trait (Analyst)
+/// Responsible for understanding the page content.
+#[async_trait]
+pub trait PerceptionEngine: Send + Sync {
+    /// Analyze the current page context and return understanding
+    async fn analyze(&self, context: &PageContext) -> Result<PerceptionResult>;
+
+    /// Extract specific structured data from the page.
+    async fn extract_data(
+        &self,
+        context: &PageContext,
+        schema: &serde_json::Value,
+    ) -> Result<serde_json::Value>;
+
+    /// Detect if this is a login page
+    async fn detect_login_page(&self, context: &PageContext) -> Result<bool>;
+
+    /// Extract login form fields if present
+    async fn extract_login_fields(&self, context: &PageContext) -> Result<Vec<FormField>>;
+
+    /// Get engine capabilities/metadata
+    fn capabilities(&self) -> PerceptionCapabilities;
+}
+
+// ==================== Planner/Graph Types ====================
+
+/// Action suggested by the Planner (connected to Edges in ExplorationGraph)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuggestedAction {
     pub description: String,
@@ -249,4 +265,6 @@ pub struct SuggestedAction {
     pub action_type: String,
     pub value: Option<String>,
     pub confidence: f32,
+    pub x: Option<i32>, // Pure vision: X coordinate
+    pub y: Option<i32>, // Pure vision: Y coordinate
 }

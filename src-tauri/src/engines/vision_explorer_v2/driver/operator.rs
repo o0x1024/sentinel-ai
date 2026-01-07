@@ -1,4 +1,4 @@
-use crate::engines::vision_explorer_v2::core::{Agent, Event, TaskResult};
+use crate::engines::vision_explorer_v2::core::{Agent, Event, SuggestedAction, TaskResult};
 use crate::engines::vision_explorer_v2::driver::BrowserActions;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 /// OperatorAgent is responsible for complex interactions (The Hand).
-/// It handles multi-step forms, file uploads, and auth flows.
+/// It handles multi-step forms, clicks, typing, and other UI interactions.
 pub struct OperatorAgent {
     id: String,
     driver: Arc<Mutex<dyn BrowserActions>>,
@@ -23,6 +23,62 @@ impl OperatorAgent {
             id,
             driver,
             event_tx,
+        }
+    }
+
+    /// Perform a single suggested action
+    async fn perform_suggested_action(&self, driver: &dyn BrowserActions, action: &SuggestedAction) -> Result<String> {
+        log::info!("OperatorAgent: Performing action: {} ({:?})", action.description, action.action_type);
+
+        match action.action_type.as_str() {
+            "click" => {
+                if let (Some(x), Some(y)) = (action.x, action.y) {
+                    log::debug!("OperatorAgent: Clicking coordinate ({}, {})", x, y);
+                    driver.click_coordinate(x, y).await?;
+                    Ok(format!("Clicked at ({}, {})", x, y))
+                } else if !action.selector.is_empty() {
+                    log::debug!("OperatorAgent: Clicking selector '{}'", action.selector);
+                    driver.click(&action.selector).await?;
+                    Ok(format!("Clicked selector '{}'", action.selector))
+                } else {
+                    Err(anyhow::anyhow!("Click action missing both coordinates and selector"))
+                }
+            }
+            "type" => {
+                let text = action.value.as_deref().unwrap_or("");
+                if !action.selector.is_empty() {
+                    log::debug!("OperatorAgent: Typing '{}' into '{}'", text, action.selector);
+                    driver.type_text(&action.selector, text).await?;
+                    Ok(format!("Typed into '{}'", action.selector))
+                } else if let (Some(x), Some(y)) = (action.x, action.y) {
+                    log::debug!("OperatorAgent: Typing via coordinate click ({}, {})", x, y);
+                    driver.click_coordinate(x, y).await?;
+                    // For pure vision typing, we might need a more advanced strategy
+                    // but for now we just click and type if the driver supports it
+                    // or use a generic press_key if we clicked the focus
+                    driver.press_key(text, None).await?;
+                    Ok(format!("Clicked ({}, {}) and typed text", x, y))
+                } else {
+                    Err(anyhow::anyhow!("Type action missing both coordinates and selector"))
+                }
+            }
+            "scroll" => {
+                // Simplified scroll
+                driver.press_key("PageDown", None).await?;
+                Ok("Scrolled down".to_string())
+            }
+            "hover" => {
+                if let (Some(x), Some(y)) = (action.x, action.y) {
+                    // Hover coordinate not yet in BrowserActions but we can simulate
+                    Ok(format!("Hover at ({}, {}) [simulated]", x, y))
+                } else if !action.selector.is_empty() {
+                    driver.hover(&action.selector).await?;
+                    Ok(format!("Hovered over '{}'", action.selector))
+                } else {
+                    Ok("Hover missing target".to_string())
+                }
+            }
+            _ => Err(anyhow::anyhow!("Unsupported action type: {}", action.action_type)),
         }
     }
 }
@@ -47,8 +103,12 @@ impl Agent for OperatorAgent {
                     let mut message = "No op".to_string();
 
                     if let Some(val) = payload {
-                        // Expecting something like { "operation": "fill_form", "data": {...} }
-                        if let Some(op) = val.get("operation").and_then(|v| v.as_str()) {
+                        // 1. Check if it's a SuggestedAction
+                        if let Ok(action) = serde_json::from_value::<SuggestedAction>(val.clone()) {
+                            message = self.perform_suggested_action(&*driver, &action).await?;
+                        }
+                        // 2. Fallback to legacy operation format
+                        else if let Some(op) = val.get("operation").and_then(|v| v.as_str()) {
                             match op {
                                 "fill_form" => {
                                     if let Some(data) = val.get("data").and_then(|v| v.as_object()) {
@@ -82,7 +142,6 @@ impl Agent for OperatorAgent {
                                     if let Some(selector) = val.get("selector").and_then(|v| v.as_str())
                                     {
                                         if let Some(path) = val.get("path").and_then(|v| v.as_str()) {
-                                            // TODO: Implement proper file upload when available in BrowserDriver
                                             log::info!("Pretending to upload {} to {}", path, selector);
                                             message = format!("File upload simulated: {}", path);
                                         } else {
@@ -97,6 +156,8 @@ impl Agent for OperatorAgent {
                                     message = format!("Unknown operation: {}", op);
                                 }
                             }
+                        } else {
+                            message = "Invalid payload for OperatorAgent".to_string();
                         }
                     }
                     Ok::<_, anyhow::Error>(message)

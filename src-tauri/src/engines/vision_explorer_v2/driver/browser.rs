@@ -277,16 +277,14 @@ impl crate::engines::vision_explorer_v2::driver::BrowserActions for BrowserDrive
                         "BrowserDriver: Screenshot captured successfully ({} bytes)",
                         bytes.len()
                     );
-                    Some(bytes)
+                    bytes
                 }
                 Err(e) => {
-                    log::warn!("BrowserDriver: Failed to decode base64 screenshot: {}", e);
-                    None
+                    return Err(anyhow!("Failed to decode base64 screenshot: {}", e));
                 }
             }
         } else {
-            log::warn!("BrowserDriver: No screenshot base64 data available");
-            None
+            return Err(anyhow!("No screenshot base64 data available from Playwright"));
         };
 
         // 3. DOM Snapshot using playwright_evaluate

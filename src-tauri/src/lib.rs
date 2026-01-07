@@ -374,7 +374,6 @@ pub fn run() {
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
                 handle.manage(commands::vision_explorer_v2::VisionExplorerV2State::default());
-                handle.manage(commands::test_explorer_v1::TestExplorerState::new());
 
                 // Initialize tool execution tracker
                 crate::trackers::init_tracker(db_for_tracker, handle.clone());
@@ -915,16 +914,6 @@ pub fn run() {
             commands::vision_explorer_v2::get_vision_explorer_v2_status,
             commands::vision_explorer_v2::list_vision_explorer_v2_sessions,
 
-            // Test Explorer V1 commands
-            commands::test_explorer_v1::test_explorer_init,
-            commands::test_explorer_v1::test_explorer_execute_direct,
-            commands::test_explorer_v1::test_explorer_execute_planning,
-            commands::test_explorer_v1::test_explorer_execute_streaming,
-            commands::test_explorer_v1::test_explorer_get_apis,
-            commands::test_explorer_v1::test_explorer_get_history,
-            commands::test_explorer_v1::test_explorer_export_har,
-            commands::test_explorer_v1::test_explorer_close,
-            
             // Task Tool Integration commands
             commands::task_tool_commands::get_task_active_tools,
             commands::task_tool_commands::get_task_tool_statistics,

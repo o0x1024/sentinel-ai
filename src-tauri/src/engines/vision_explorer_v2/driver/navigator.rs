@@ -66,11 +66,22 @@ impl Agent for NavigatorAgent {
 
                             match action.action_type.as_str() {
                                 "click" => {
-                                    driver.click(&action.selector).await?;
+                                    if let (Some(x), Some(y)) = (action.x, action.y) {
+                                        log::info!("NavigatorAgent: Clicking coordinate ({}, {})", x, y);
+                                        driver.click_coordinate(x, y).await?;
+                                    } else {
+                                        driver.click(&action.selector).await?;
+                                    }
                                 }
                                 "type" => {
                                     if let Some(val) = &action.value {
-                                        driver.type_text(&action.selector, val).await?;
+                                        if let (Some(x), Some(y)) = (action.x, action.y) {
+                                            log::info!("NavigatorAgent: Typing via coordinate click ({}, {})", x, y);
+                                            driver.click_coordinate(x, y).await?;
+                                            driver.press_key(val, None).await?;
+                                        } else {
+                                            driver.type_text(&action.selector, val).await?;
+                                        }
                                     }
                                 }
                                 "navigate" => {

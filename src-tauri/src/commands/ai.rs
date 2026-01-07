@@ -390,7 +390,7 @@ async fn stream_chat_with_llm(
     // 这里保持 stream_chat_with_llm 职责单一，仅负责流式输出。
 
     // 流式调用
-    let execution_id = message_id.to_string();
+    let execution_id = conversation_id.to_string();
     let msg_id = message_id.to_string();
     let conv_id = conversation_id.to_string();
     let app = app_handle.clone();
@@ -515,7 +515,7 @@ async fn stream_chat_with_llm(
     if is_final && has_conversation {
         crate::utils::ordered_message::emit_message_chunk_with_arch(
             app_handle,
-            message_id,
+            conversation_id,
             message_id,
             Some(conversation_id),
             ChunkType::Meta,

@@ -44,10 +44,12 @@ Return a JSON object with this exact structure:
     "suggested_actions": [
         {
             "description": "action description",
-            "selector": "CSS selector or element description",
+            "selector": "CSS selector or element description (optional if x/y provided)",
             "action_type": "click|type|scroll|hover",
             "value": "value to type if applicable",
-            "confidence": 0.9
+            "confidence": 0.9,
+            "x": 123, // Estimated X coordinate in pixels
+            "y": 456  // Estimated Y coordinate in pixels
         }
     ],
     "detected_errors": ["error message 1", "error message 2"],
@@ -135,6 +137,8 @@ Title: {title}"#,
                         .get("confidence")
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.5) as f32,
+                    x: item.get("x").and_then(|v| v.as_i64()).map(|v| v as i32),
+                    y: item.get("y").and_then(|v| v.as_i64()).map(|v| v as i32),
                 };
                 actions.push(action);
             }
@@ -147,13 +151,7 @@ Title: {title}"#,
 #[async_trait]
 impl PerceptionEngine for VisualAnalyst {
     async fn analyze(&self, context: &PageContext) -> Result<PerceptionResult> {
-        let screenshot_base64 = if let Some(bytes) = &context.screenshot {
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        } else {
-            return Err(anyhow::anyhow!(
-                "No screenshot available for visual analysis"
-            ));
-        };
+        let screenshot_base64 = base64::engine::general_purpose::STANDARD.encode(&context.screenshot);
 
         let system_prompt = self.build_system_prompt();
         let user_prompt = self.build_user_prompt(context);

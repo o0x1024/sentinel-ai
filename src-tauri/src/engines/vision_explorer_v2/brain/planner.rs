@@ -71,37 +71,15 @@ impl PlannerAgent {
                 graph.get_node(&current_id).map(|node| node.status.clone())
             };
 
-            // A. Node is Unvisited -> Need Perception
+            // A. Node is Unvisited -> Need Perception (Pure Vision)
             if node_status == Some(ExplorationStatus::Unvisited) {
                 let ctx_opt = self.current_context.read().await.clone();
 
                 if let Some(ctx) = ctx_opt {
-                    // === HYBRID STRATEGY: Fast-Pass vs Deep-Dive ===
-                    // Heuristic: Use VisualAnalyst only when:
-                    // 1. DOM is extremely small (< 200 bytes) - likely a canvas/dynamic app
-                    // 2. DOM contains heavy canvas/SVG AND is small (< 2KB)
-                    // Otherwise, default to StructuralAnalyst (Fast) for better performance.
-
-                    let dom_size = ctx.dom_snapshot.len();
-                    let has_canvas = ctx.dom_snapshot.contains("<canvas");
-                    let has_svg = ctx.dom_snapshot.contains("<svg");
-                    
-                    let is_complex_visual = dom_size < 200 
-                        || (dom_size < 2000 && (has_canvas || has_svg));
-
-                    let target_agent = if is_complex_visual {
-                        log::info!(
-                            "Current node {} seems VISUALLY COMPLEX (DOM: {} bytes, Canvas: {}, SVG: {}). Assigning VisualAnalyst.",
-                            current_id, dom_size, has_canvas, has_svg
-                        );
-                        "visual_analyst"
-                    } else {
-                        log::info!(
-                            "Current node {} seems Standard (DOM: {} bytes). Assigning StructuralAnalyst.",
-                            current_id, dom_size
-                        );
-                        "structural_analyst"
-                    };
+                    log::info!(
+                        "Current node {} is Unvisited. Assigning VisualAnalyst for pure vision analysis.",
+                        current_id
+                    );
 
                     // Mark as Visiting to prevent duplicate task assignment
                     {
@@ -112,7 +90,7 @@ impl PlannerAgent {
                     }
 
                     return Ok(Some(Event::TaskAssigned {
-                        agent_id: target_agent.to_string(),
+                        agent_id: "visual_analyst".to_string(),
                         task_id: uuid::Uuid::new_v4().to_string(),
                         target_node_id: current_id,
                         payload: Some(serde_json::to_value(&ctx)?),
@@ -159,9 +137,11 @@ impl PlannerAgent {
                         if action_idx < node.possible_actions.len() {
                             let action = node.possible_actions.remove(action_idx);
                             log::info!(
-                                "Decided to take action: {} on {}",
+                                "Decided to take action: {} (Type: {}, Selector: {}, Coords: {:?})",
+                                action.description,
                                 action.action_type,
-                                action.selector
+                                action.selector,
+                                (action.x, action.y)
                             );
 
                             return Ok(Some(Event::TaskAssigned {

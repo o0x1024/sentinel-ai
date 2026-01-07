@@ -12,7 +12,7 @@ use async_trait::async_trait;
 /// Designed to work with mcp-playwright-security MCP server
 /// which provides `playwright_*` prefixed tools.
 #[async_trait]
-pub trait BrowserActions: Send {
+pub trait BrowserActions: Send + Sync {
     /// Navigate to a URL
     async fn goto(&self, url: &str) -> Result<()>;
 

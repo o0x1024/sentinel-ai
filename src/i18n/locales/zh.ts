@@ -719,7 +719,12 @@ export default {
       totalTokens: '总Token',
       estimatedCost: '预估成本',
       selectModel: '请选择模型',
-      refreshModels: '刷新模型'
+      refreshModels: '刷新模型',
+      workingDirectory: '工作目录',
+      workingDirectoryPlaceholder: '请输入AI助手的工作目录路径',
+      workingDirectoryDescription: 'AI助手在执行文件操作和脚本时将使用此目录作为工作目录',
+      selectDirectory: '选择目录',
+      workingDirectoryHint: '设置AI助手执行文件操作、运行脚本等任务的默认工作目录'
     },
     scheduler: {
       title: '模型配置配置',

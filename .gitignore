@@ -13,7 +13,7 @@ dist-ssr
 *.local
 src-tauri/sentinel-plugins/templates/
 ca
-docs
+
 AppData/
 .trea
 # Editor directories and files

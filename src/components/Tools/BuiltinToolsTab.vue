@@ -84,19 +84,9 @@
                 <i class="fas fa-play mr-1"></i>
                 测试
               </button>
-              <!-- Test Explorer Special Actions -->
-              <button 
-                v-if="tool.name === 'test_explorer'"
-                @click="openTestExplorerModal(tool)"
-                class="btn btn-primary btn-sm"
-                title="测试 Test Explorer"
-              >
-                <i class="fas fa-play mr-1"></i>
-                测试
-              </button>
               <!-- Regular Tools -->
               <button 
-                v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2' && tool.name !== 'test_explorer'"
+                v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
                 @click="openTestModal(tool)"
                 class="btn btn-primary btn-sm"
                 title="测试工具"
@@ -171,18 +161,9 @@
                 >
                   <i class="fas fa-play"></i>
                 </button>
-                <!-- Test Explorer -->
-                <button 
-                  v-if="tool.name === 'test_explorer'"
-                  @click="openTestExplorerModal(tool)"
-                  class="btn btn-primary btn-xs"
-                  title="测试 Test Explorer"
-                >
-                  <i class="fas fa-play"></i>
-                </button>
                 <!-- Regular Tools -->
                 <button 
-                  v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2' && tool.name !== 'test_explorer'"
+                  v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
                   @click="openTestModal(tool)"
                   class="btn btn-primary btn-xs"
                   title="测试工具"
@@ -309,100 +290,6 @@
         </div>
       </div>
     </dialog>
-
-    <!-- Test Explorer 测试模态框 -->
-    <dialog :class="['modal', { 'modal-open': showTestExplorerModal }]">
-      <div class="modal-box w-11/12 max-w-3xl">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="font-bold text-lg">
-            <i class="fas fa-globe text-primary mr-2"></i>
-            Test Explorer 测试
-          </h3>
-          <button @click="closeTestExplorerModal" class="btn btn-sm btn-ghost">✕</button>
-        </div>
-
-        <div class="space-y-4">
-          <div class="alert alert-info">
-            <i class="fas fa-info-circle"></i>
-            <span>Test Explorer 使用纯文本+LLM方式自动探索网站，捕获API请求和页面交互。</span>
-          </div>
-
-          <!-- 目标 URL -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">目标 URL</span></label>
-            <input 
-              v-model="teTargetUrl"
-              type="url"
-              class="input input-bordered"
-              placeholder="https://example.com"
-            />
-          </div>
-
-          <!-- 探索任务 -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">探索任务（可选）</span></label>
-            <textarea 
-              v-model="teTask"
-              class="textarea textarea-bordered"
-              placeholder="例如：找到登录API、探索用户资料区域、查找所有表单提交接口"
-              rows="2"
-            ></textarea>
-          </div>
-
-          <!-- 最大步数 -->
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">最大探索步数</span>
-              <span class="label-text-alt">{{ teMaxSteps }}</span>
-            </label>
-            <input 
-              v-model.number="teMaxSteps"
-              type="range"
-              min="10"
-              max="200"
-              class="range range-primary range-sm"
-            />
-            <div class="w-full flex justify-between text-xs px-2 text-base-content/60">
-              <span>10</span>
-              <span>50</span>
-              <span>100</span>
-              <span>200</span>
-            </div>
-          </div>
-
-          <!-- 使用规划器 -->
-          <div class="form-control">
-            <label class="label cursor-pointer justify-start gap-3">
-              <input 
-                type="checkbox" 
-                v-model="teUsePlanner" 
-                class="checkbox checkbox-primary"
-              />
-              <span class="label-text">使用 LLM 规划器（智能任务分解和执行）</span>
-            </label>
-          </div>
-
-          <!-- 测试结果 -->
-          <div v-if="teResult" class="form-control">
-            <label class="label"><span class="label-text">执行结果</span></label>
-            <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200 overflow-auto">{{ teResult }}</pre>
-          </div>
-        </div>
-
-        <div class="modal-action">
-          <button @click="closeTestExplorerModal" class="btn">关闭</button>
-          <button 
-            @click="startTestExplorer"
-            class="btn btn-primary"
-            :disabled="isTeTesting || !teTargetUrl"
-          >
-            <i v-if="isTeTesting" class="fas fa-spinner fa-spin mr-1"></i>
-            <i v-else class="fas fa-play mr-1"></i>
-            开始探索
-          </button>
-        </div>
-      </div>
-    </dialog>
   </div>
 </template>
 
@@ -432,16 +319,9 @@ const veResult = ref('')
 const isVeTesting = ref(false)
 const veExecutionId = ref('')
 
-// Test Explorer 状态
-const showTestExplorerModal = ref(false)
-const teTargetUrl = ref('https://example.com')
-const teTask = ref('')
-const teMaxSteps = ref(50)
-const teUsePlanner = ref(true)
-const teResult = ref('')
-const isTeTesting = ref(false)
+// methods
 
-// 方法
+// methods
 function getToolIcon(toolName: string) {
   switch (toolName) {
     case 'subdomain_scanner': return 'fas fa-sitemap'
@@ -449,7 +329,6 @@ function getToolIcon(toolName: string) {
     case 'shell': return 'fas fa-terminal'
     case 'vision_explorer': 
     case 'vision_explorer_v2': return 'fas fa-eye'
-    case 'test_explorer': return 'fas fa-globe'
     case 'web_search': return 'fas fa-search'
     default: return 'fas fa-tools'
   }
@@ -621,75 +500,6 @@ async function pollVeStatus(executionId: string) {
     // Session may have ended or not found
     veResult.value = '会话已结束或未找到'
     veStatus.value = null
-  }
-}
-
-// ============================================================================
-// Test Explorer 方法
-// ============================================================================
-
-function openTestExplorerModal(tool: any) {
-  teResult.value = ''
-  showTestExplorerModal.value = true
-}
-
-function closeTestExplorerModal() {
-  showTestExplorerModal.value = false
-}
-
-async function startTestExplorer() {
-  if (!teTargetUrl.value) {
-    dialog.toast.warning('请输入目标 URL')
-    return
-  }
-
-  isTeTesting.value = true
-  teResult.value = '正在启动 Test Explorer...'
-
-  try {
-    // 使用 direct 模式执行（类似 vision_explorer）
-    const sessionId = await invoke<string>('test_explorer_init', {
-      config: {
-        target_url: teTargetUrl.value,
-        max_depth: 5,
-        max_steps: teMaxSteps.value,
-        headless: true,
-        llm_model_id: 'claude-3-haiku',
-        llm_provider: 'anthropic',
-      },
-      usePlanner: teUsePlanner.value
-    })
-
-    teResult.value = `探索已启动\n会话ID: ${sessionId}\n目标: ${teTargetUrl.value}\n任务: ${teTask.value || '自动探索'}\n\nTest Explorer 正在自动探索网站...`
-    dialog.toast.success(`Test Explorer 已启动: ${sessionId.substring(0, 8)}...`)
-
-    // 开始执行探索
-    const mode = teUsePlanner.value ? 'planning' : 'direct'
-    const result = await invoke<string>(
-      mode === 'planning' ? 'test_explorer_execute_planning' : 'test_explorer_execute_direct',
-      {
-        sessionId,
-        goal: teTask.value || `探索网站 ${teTargetUrl.value}，发现所有API接口和交互功能`
-      }
-    )
-
-    teResult.value = `探索完成！\n\n${result}`
-    dialog.toast.success('探索完成')
-
-    // 获取捕获的 API
-    const apis = await invoke<any[]>('test_explorer_get_apis', { sessionId })
-    if (apis && apis.length > 0) {
-      teResult.value += `\n\n捕获的 API 请求 (${apis.length} 个):\n${JSON.stringify(apis.slice(0, 5), null, 2)}`
-    }
-
-    // 关闭会话
-    await invoke('test_explorer_close', { sessionId })
-  } catch (error: any) {
-    console.error('Failed to run Test Explorer:', error)
-    teResult.value = `探索失败: ${error?.message || error}`
-    dialog.toast.error('Test Explorer 执行失败')
-  } finally {
-    isTeTesting.value = false
   }
 }
 
