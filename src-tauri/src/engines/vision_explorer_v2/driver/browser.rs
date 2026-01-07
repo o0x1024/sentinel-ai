@@ -326,6 +326,11 @@ impl crate::engines::vision_explorer_v2::driver::BrowserActions for BrowserDrive
             screenshot,
             dom_snapshot,
             accessibility_tree: None,
+            viewport_size: Some((1920, 1080)), // Default viewport size
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
         })
     }
 

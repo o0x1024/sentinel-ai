@@ -1,10 +1,11 @@
-use crate::engines::vision_explorer_v2::core::{Agent, Event, SuggestedAction};
+use crate::engines::vision_explorer_v2::agent_framework::{Agent, AgentMetadata, AgentMetrics, AgentStatus};
+use crate::engines::vision_explorer_v2::core::{Event, SuggestedAction};
 use anyhow::Result;
 use async_trait::async_trait;
 
 /// Specialized agent for solving complex navigation patterns.
 /// Handles: Hidden Sidebars (Hamburger), Accordions, Nested Menus.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NavigationPatternSolver {
     id: String,
 }
@@ -60,13 +61,27 @@ impl NavigationPatternSolver {
 
 #[async_trait]
 impl Agent for NavigationPatternSolver {
-    fn id(&self) -> String {
-        self.id.clone()
+    fn metadata(&self) -> AgentMetadata {
+        AgentMetadata {
+            id: self.id.clone(),
+            name: "Navigation Pattern Solver".to_string(),
+            description: "Solves complex navigation patterns like sidebars and accordions".to_string(),
+            version: "1.0.0".to_string(),
+            tags: vec!["navigation".to_string(), "patterns".to_string(), "ui".to_string()],
+        }
     }
 
-    async fn handle_event(&self, _event: &Event) -> Result<()> {
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn metrics(&self) -> AgentMetrics {
+        AgentMetrics::default()
+    }
+
+    async fn handle_event(&self, _event: &Event) -> Result<Vec<Event>> {
         // This agent is mostly reactive/called directly by Planner or Analyst
         // but could listen for 'Stuck' events to suggest workarounds.
-        Ok(())
+        Ok(vec![])
     }
 }

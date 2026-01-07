@@ -1,5 +1,5 @@
 use crate::engines::vision_explorer_v2::core::{
-    PageContext, PerceptionEngine, PerceptionResult, SuggestedAction,
+    FormField, PageContext, PerceptionCapabilities, PerceptionEngine, PerceptionResult, SuggestedAction,
 };
 use crate::engines::{LlmClient, LlmConfig};
 use anyhow::Result;
@@ -205,18 +205,51 @@ impl PerceptionEngine for VisualAnalyst {
                 summary
             };
 
+            // Parse perception results from the structured data
+            let page_type = if page_type == "login" {
+                crate::engines::vision_explorer_v2::core::PageType::Login
+            } else if page_type == "dashboard" {
+                crate::engines::vision_explorer_v2::core::PageType::Dashboard
+            } else if page_type == "form" {
+                crate::engines::vision_explorer_v2::core::PageType::Form
+            } else if page_type == "list" {
+                crate::engines::vision_explorer_v2::core::PageType::List
+            } else {
+                crate::engines::vision_explorer_v2::core::PageType::Unknown
+            };
+
+            let auth_status = if has_login {
+                crate::engines::vision_explorer_v2::core::AuthStatus::NotAuthenticated
+            } else {
+                crate::engines::vision_explorer_v2::core::AuthStatus::Unknown
+            };
+
             Ok(PerceptionResult {
-                summary: enhanced_summary,
-                suggested_actions,
+                page_type,
+                auth_status,
+                content_summary: enhanced_summary,
+                elements: vec![], // TODO: Parse elements from LLM response
+                forms: vec![],    // TODO: Parse forms from LLM response
+                api_endpoints: vec![], // TODO: Parse API endpoints from LLM response
+                errors: vec![],
+                metadata: std::collections::HashMap::new(),
+                confidence: 0.7,
             })
         } else {
             log::warn!("VisualAnalyst: Failed to parse JSON from response");
             Ok(PerceptionResult {
-                summary: format!(
+                page_type: crate::engines::vision_explorer_v2::core::PageType::Unknown,
+                auth_status: crate::engines::vision_explorer_v2::core::AuthStatus::Unknown,
+                content_summary: format!(
                     "Visual analysis completed but JSON parsing failed. Raw: {}",
                     &response[..response.len().min(200)]
                 ),
-                suggested_actions: vec![],
+                elements: vec![],
+                forms: vec![],
+                api_endpoints: vec![],
+                errors: vec!["JSON parsing failed".to_string()],
+                metadata: std::collections::HashMap::new(),
+                confidence: 0.3,
             })
         }
     }
@@ -228,5 +261,130 @@ impl PerceptionEngine for VisualAnalyst {
     ) -> Result<serde_json::Value> {
         // Implementation for visual data extraction
         Ok(serde_json::json!({}))
+    }
+
+    async fn detect_login_page(&self, context: &PageContext) -> Result<bool> {
+        // Use visual analysis to detect login pages
+        let screenshot_base64 = base64::engine::general_purpose::STANDARD.encode(&context.screenshot);
+
+        let prompt = format!(
+            "Analyze this screenshot and determine if it shows a login/sign-in page. \
+             Look for: password fields, username/email fields, login buttons, sign-in forms. \
+             Respond with only 'true' if it's a login page, 'false' otherwise."
+        );
+
+        let image = ImageAttachment::new(screenshot_base64, "png".to_string());
+
+        match self
+            .llm_client
+            .completion_with_image(None, &prompt, Some(&image))
+            .await
+        {
+            Ok(response) => {
+                let response_lower = response.to_lowercase().trim().to_string();
+                Ok(response_lower == "true" || response_lower.contains("yes"))
+            }
+            Err(_) => {
+                // Fallback to URL-based detection
+                let url_lower = context.url.to_lowercase();
+                Ok(url_lower.contains("login") || url_lower.contains("signin"))
+            }
+        }
+    }
+
+    async fn extract_login_fields(&self, context: &PageContext) -> Result<Vec<FormField>> {
+        // Use visual analysis to extract login form fields
+        let screenshot_base64 = base64::engine::general_purpose::STANDARD.encode(&context.screenshot);
+
+        let prompt = format!(
+            "Analyze this screenshot and extract login form fields. \
+             For each field, provide: name (username/password/email), type, label, required status. \
+             Respond in JSON format: {{'fields': [{{'name': 'username', 'type': 'text', 'label': 'Username', 'required': true}}]}}"
+        );
+
+        let image = ImageAttachment::new(screenshot_base64, "png".to_string());
+
+        match self
+            .llm_client
+            .completion_with_image(None, &prompt, Some(&image))
+            .await
+        {
+            Ok(response) => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
+                    if let Some(fields) = json.get("fields").and_then(|v| v.as_array()) {
+                        let form_fields: Vec<FormField> = fields
+                            .iter()
+                            .filter_map(|f| {
+                                Some(FormField {
+                                    name: f.get("name")?.as_str()?.to_string(),
+                                    field_type: f.get("type")?.as_str()?.to_string(),
+                                    label: f.get("label").and_then(|l| l.as_str().map(String::from)),
+                                    required: f.get("required")?.as_bool().unwrap_or(true),
+                                    value: None,
+                                    placeholder: f.get("placeholder").and_then(|p| p.as_str().map(String::from)),
+                                })
+                            })
+                            .collect();
+                        return Ok(form_fields);
+                    }
+                }
+                // Fallback to default fields
+                Ok(vec![
+                    FormField {
+                        name: "username".to_string(),
+                        field_type: "text".to_string(),
+                        label: Some("Username".to_string()),
+                        required: true,
+                        value: None,
+                        placeholder: Some("Enter username".to_string()),
+                    },
+                    FormField {
+                        name: "password".to_string(),
+                        field_type: "password".to_string(),
+                        label: Some("Password".to_string()),
+                        required: true,
+                        value: None,
+                        placeholder: Some("Enter password".to_string()),
+                    },
+                ])
+            }
+            Err(_) => {
+                // Return default fields on error
+                Ok(vec![
+                    FormField {
+                        name: "username".to_string(),
+                        field_type: "text".to_string(),
+                        label: Some("Username".to_string()),
+                        required: true,
+                        value: None,
+                        placeholder: Some("Enter username".to_string()),
+                    },
+                    FormField {
+                        name: "password".to_string(),
+                        field_type: "password".to_string(),
+                        label: Some("Password".to_string()),
+                        required: true,
+                        value: None,
+                        placeholder: Some("Enter password".to_string()),
+                    },
+                ])
+            }
+        }
+    }
+
+    fn capabilities(&self) -> PerceptionCapabilities {
+        PerceptionCapabilities {
+            name: "VisualAnalyst".to_string(),
+            version: "1.0.0".to_string(),
+            supported_analysis: vec![
+                "visual_analysis".to_string(),
+                "element_detection".to_string(),
+                "login_detection".to_string(),
+                "form_analysis".to_string(),
+            ],
+            supports_vision: true,
+            supports_dom: false,
+            supports_accessibility: false,
+        }
     }
 }

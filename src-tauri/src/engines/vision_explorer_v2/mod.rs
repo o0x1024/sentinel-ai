@@ -34,7 +34,7 @@ pub use exploration_strategy::{create_strategy, ExplorationStrategy, StrategyCon
 pub use graph::ExplorationGraph;
 pub use login_state_machine::{LoginState, LoginStateMachine};
 pub use perception::VisualAnalyst;
-pub use perception_engine::{PageContext, PerceptionEngine, PerceptionResult};
+pub use core::{PageContext, PerceptionEngine, PerceptionResult};
 pub use persistence::{ExplorationSnapshot, PersistenceManager};
 pub use safety::{SafetyLayer, SafetyPolicy};
 pub use tool::VisionExplorerV2Tool;

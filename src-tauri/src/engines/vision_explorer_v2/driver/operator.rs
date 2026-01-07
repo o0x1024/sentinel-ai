@@ -1,4 +1,5 @@
-use crate::engines::vision_explorer_v2::core::{Agent, Event, SuggestedAction, TaskResult};
+use crate::engines::vision_explorer_v2::agent_framework::{Agent, AgentMetadata, AgentMetrics, AgentStatus};
+use crate::engines::vision_explorer_v2::core::{Event, SuggestedAction, TaskResult};
 use crate::engines::vision_explorer_v2::driver::BrowserActions;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -83,13 +84,37 @@ impl OperatorAgent {
     }
 }
 
+impl std::fmt::Debug for OperatorAgent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperatorAgent")
+            .field("id", &self.id)
+            .field("driver", &"<BrowserActions>")
+            .field("event_tx", &self.event_tx)
+            .finish()
+    }
+}
+
 #[async_trait]
 impl Agent for OperatorAgent {
-    fn id(&self) -> String {
-        self.id.clone()
+    fn metadata(&self) -> AgentMetadata {
+        AgentMetadata {
+            id: self.id.clone(),
+            name: "Operator Agent".to_string(),
+            description: "Handles complex browser interactions and operations".to_string(),
+            version: "1.0.0".to_string(),
+            tags: vec!["operator".to_string(), "interaction".to_string(), "forms".to_string()],
+        }
     }
 
-    async fn handle_event(&self, event: &Event) -> Result<()> {
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn metrics(&self) -> AgentMetrics {
+        AgentMetrics::default()
+    }
+
+    async fn handle_event(&self, event: &Event) -> Result<Vec<Event>> {
         match event {
             Event::TaskAssigned {
                 agent_id,
@@ -176,22 +201,24 @@ impl Agent for OperatorAgent {
                 };
 
                 // Always send TaskCompleted
-                self.event_tx
-                    .send(Event::TaskCompleted {
-                        agent_id: self.id.clone(),
-                        task_id: task_id.clone(),
-                        result: TaskResult {
-                            success,
-                            message,
-                            new_nodes: vec![],
-                            data: None,
-                        },
-                    })
-                    .await?;
+                let task_completed = Event::TaskCompleted {
+                    agent_id: self.id.clone(),
+                    task_id: task_id.clone(),
+                    result: TaskResult {
+                        success,
+                        message,
+                        new_nodes: vec![],
+                        data: None,
+                    },
+                };
 
-                Ok(())
+                if let Err(e) = self.event_tx.send(task_completed.clone()).await {
+                    log::error!("OperatorAgent: Failed to send TaskCompleted: {}", e);
+                }
+
+                Ok(vec![task_completed])
             }
-            _ => Ok(()),
+            _ => Ok(vec![]),
         }
     }
 }

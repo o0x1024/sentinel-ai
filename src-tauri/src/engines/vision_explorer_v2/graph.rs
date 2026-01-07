@@ -65,6 +65,23 @@ impl ExplorationGraph {
     pub fn get_node_index(&self, fingerprint: &str) -> Option<NodeIndex> {
         self.node_map.get(fingerprint).cloned()
     }
+
+    /// Get all outgoing edges from a node by fingerprint
+    pub fn get_outgoing_edges(&self, fingerprint: &str) -> Vec<ActionEdge> {
+        if let Some(&idx) = self.node_map.get(fingerprint) {
+            self.graph
+                .edges(idx)
+                .map(|edge| edge.weight().clone())
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    /// Get all nodes in the graph
+    pub fn get_all_nodes(&self) -> Vec<&PageStateNode> {
+        self.graph.node_weights().collect()
+    }
 }
 
 /// Representative of a unique Page State (Node)
@@ -107,4 +124,6 @@ pub struct ActionEdge {
     pub description: String,
     /// Was this action successful?
     pub success: bool,
+    /// Target node fingerprint (for graph traversal)
+    pub target_node_id: String,
 }

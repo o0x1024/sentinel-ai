@@ -17,7 +17,7 @@ pub trait ExplorationStrategy: Send + Sync {
     fn next_node(&mut self, graph: &ExplorationGraph, current: Option<&str>) -> Option<String>;
 
     /// Check if a node should be visited
-    fn should_visit(&self, node: &GraphNode) -> bool;
+    fn should_visit(&self, node: &PageStateNode) -> bool;
 
     /// Update strategy state after visiting a node
     fn on_node_visited(&mut self, node_id: &str, success: bool);
@@ -76,8 +76,8 @@ impl ExplorationStrategy for BFSStrategy {
         None
     }
 
-    fn should_visit(&self, node: &GraphNode) -> bool {
-        !self.visited.contains(&node.id) && node.depth <= self.max_depth
+    fn should_visit(&self, node: &PageStateNode) -> bool {
+        !self.visited.contains(&node.fingerprint) && node.depth <= self.max_depth
     }
 
     fn on_node_visited(&mut self, node_id: &str, _success: bool) {
@@ -146,8 +146,8 @@ impl ExplorationStrategy for DFSStrategy {
         None
     }
 
-    fn should_visit(&self, node: &GraphNode) -> bool {
-        !self.visited.contains(&node.id) && node.depth <= self.max_depth
+    fn should_visit(&self, node: &PageStateNode) -> bool {
+        !self.visited.contains(&node.fingerprint) && node.depth <= self.max_depth
     }
 
     fn on_node_visited(&mut self, node_id: &str, _success: bool) {
@@ -185,12 +185,12 @@ impl PriorityStrategy {
 }
 
 impl ExplorationStrategy for PriorityStrategy {
-    fn next_node(&mut self, graph: &ExplorationGraph, current: Option<&str>) -> Option<String> {
+    fn next_node(&mut self, graph: &ExplorationGraph, _current: Option<&str>) -> Option<String> {
         // Update priorities for all unvisited nodes
         for node in graph.get_all_nodes() {
-            if !self.visited.contains(&node.id) && self.should_visit(node) {
+            if !self.visited.contains(&node.fingerprint) && self.should_visit(node) {
                 let priority = self.priority_calculator.calculate_priority(node, graph);
-                self.priorities.insert(node.id.clone(), priority);
+                self.priorities.insert(node.fingerprint.clone(), priority);
             }
         }
 
@@ -212,8 +212,8 @@ impl ExplorationStrategy for PriorityStrategy {
         best_node
     }
 
-    fn should_visit(&self, node: &GraphNode) -> bool {
-        !self.visited.contains(&node.id) && node.depth <= self.max_depth
+    fn should_visit(&self, node: &PageStateNode) -> bool {
+        !self.visited.contains(&node.fingerprint) && node.depth <= self.max_depth
     }
 
     fn on_node_visited(&mut self, node_id: &str, success: bool) {
@@ -237,14 +237,14 @@ impl ExplorationStrategy for PriorityStrategy {
 
 /// Priority calculation trait
 pub trait PriorityCalculator: Send + Sync {
-    fn calculate_priority(&self, node: &GraphNode, graph: &ExplorationGraph) -> Priority;
+    fn calculate_priority(&self, node: &PageStateNode, graph: &ExplorationGraph) -> Priority;
 }
 
 /// Default priority calculator based on URL patterns and page types
 pub struct DefaultPriorityCalculator;
 
 impl PriorityCalculator for DefaultPriorityCalculator {
-    fn calculate_priority(&self, node: &GraphNode, _graph: &ExplorationGraph) -> Priority {
+    fn calculate_priority(&self, node: &PageStateNode, _graph: &ExplorationGraph) -> Priority {
         let mut priority = 1.0;
 
         // Higher priority for login/auth pages
@@ -280,8 +280,10 @@ impl PriorityCalculator for DefaultPriorityCalculator {
         // Lower priority for deeper nodes (prefer breadth)
         priority -= node.depth as f32 * 0.5;
 
-        // Higher priority for pages with forms
-        if node.has_forms {
+        // Higher priority for pages with forms (based on possible actions)
+        let has_form_actions = node.possible_actions.iter()
+            .any(|action| action.action_type == "fill_form" || action.action_type == "submit");
+        if has_form_actions {
             priority += 5.0;
         }
 
@@ -327,7 +329,7 @@ impl ExplorationStrategy for AdaptiveStrategy {
         self.current_strategy.next_node(graph, current)
     }
 
-    fn should_visit(&self, node: &GraphNode) -> bool {
+    fn should_visit(&self, node: &PageStateNode) -> bool {
         self.current_strategy.should_visit(node)
     }
 

@@ -84,7 +84,7 @@ pub trait Agent: Send + Sync + Debug {
 
 // ==================== Perception Data Types ====================
 
-/// Context passed to analysts and agents
+/// Context passed to analysts and agents (pub for re-export)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageContext {
     pub url: String,

@@ -1,5 +1,6 @@
+use crate::engines::vision_explorer_v2::agent_framework::{Agent, AgentMetadata, AgentMetrics, AgentStatus};
 use crate::engines::vision_explorer_v2::blackboard::Blackboard;
-use crate::engines::vision_explorer_v2::core::{Agent, Event, TaskResult};
+use crate::engines::vision_explorer_v2::core::{Event, TaskResult};
 use crate::engines::vision_explorer_v2::driver::BrowserActions;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -31,13 +32,38 @@ impl NavigatorAgent {
     }
 }
 
+impl std::fmt::Debug for NavigatorAgent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NavigatorAgent")
+            .field("id", &self.id)
+            .field("driver", &"<BrowserActions>")
+            .field("event_tx", &self.event_tx)
+            .field("blackboard", &self.blackboard)
+            .finish()
+    }
+}
+
 #[async_trait]
 impl Agent for NavigatorAgent {
-    fn id(&self) -> String {
-        self.id.clone()
+    fn metadata(&self) -> AgentMetadata {
+        AgentMetadata {
+            id: self.id.clone(),
+            name: "Navigator Agent".to_string(),
+            description: "Executes navigation actions and browser operations".to_string(),
+            version: "1.0.0".to_string(),
+            tags: vec!["navigation".to_string(), "browser".to_string(), "executor".to_string()],
+        }
     }
 
-    async fn handle_event(&self, event: &Event) -> Result<()> {
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn metrics(&self) -> AgentMetrics {
+        AgentMetrics::default()
+    }
+
+    async fn handle_event(&self, event: &Event) -> Result<Vec<Event>> {
         match event {
             Event::TaskAssigned {
                 agent_id,
@@ -165,18 +191,21 @@ impl Agent for NavigatorAgent {
                     }
                 };
 
-                // Send completion event
-                self.event_tx
-                    .send(Event::TaskCompleted {
-                        agent_id: self.id.clone(),
-                        task_id: task_id.clone(),
-                        result,
-                    })
-                    .await?;
+                // Create completion event
+                let task_completed = Event::TaskCompleted {
+                    agent_id: self.id.clone(),
+                    task_id: task_id.clone(),
+                    result,
+                };
 
-                Ok(())
+                // Send completion event
+                if let Err(e) = self.event_tx.send(task_completed.clone()).await {
+                    log::error!("NavigatorAgent: Failed to send TaskCompleted: {}", e);
+                }
+
+                Ok(vec![task_completed])
             }
-            _ => Ok(()),
+            _ => Ok(vec![]),
         }
     }
 }

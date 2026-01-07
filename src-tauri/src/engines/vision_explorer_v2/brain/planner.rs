@@ -1,8 +1,9 @@
+use crate::engines::vision_explorer_v2::agent_framework::{Agent, AgentMetadata, AgentMetrics, AgentStatus};
 use crate::engines::vision_explorer_v2::blackboard::Blackboard;
 use crate::engines::vision_explorer_v2::brain::auth_agent::AuthAgent;
 use crate::engines::vision_explorer_v2::brain::pattern_solver::NavigationPatternSolver;
 use crate::engines::vision_explorer_v2::core::{
-    Agent, Event, PageContext, PerceptionResult,
+    Event, PageContext, PerceptionResult,
 };
 use crate::engines::vision_explorer_v2::graph::{
     ExplorationGraph, ExplorationStatus, PageStateNode,
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
 /// The Strategist. Manages the exploration frontier and assigns tasks.
+#[derive(Debug)]
 pub struct PlannerAgent {
     id: String,
     graph: Arc<RwLock<ExplorationGraph>>,
@@ -60,7 +62,7 @@ impl PlannerAgent {
     }
 
     /// Decide the next best action based on the graph state
-    pub async fn decide_next_step(&self) -> Result<Option<Event>> {
+    pub async fn decide_next_step(&self) -> Result<Vec<Event>> {
         let current_node_opt = self.current_node_id.read().await.clone();
 
         // 1. If we have a current node, process it
@@ -89,12 +91,12 @@ impl PlannerAgent {
                         }
                     }
 
-                    return Ok(Some(Event::TaskAssigned {
+                    return Ok(vec![Event::TaskAssigned {
                         agent_id: "visual_analyst".to_string(),
                         task_id: uuid::Uuid::new_v4().to_string(),
                         target_node_id: current_id,
                         payload: Some(serde_json::to_value(&ctx)?),
-                    }));
+                    }]);
                 } else {
                     log::warn!("Node {} is Unvisited but no Context available!", current_id);
                 }
@@ -144,12 +146,12 @@ impl PlannerAgent {
                                 (action.x, action.y)
                             );
 
-                            return Ok(Some(Event::TaskAssigned {
+                            return Ok(vec![Event::TaskAssigned {
                                 agent_id: "navigator_1".to_string(),
                                 task_id: uuid::Uuid::new_v4().to_string(),
                                 target_node_id: current_id,
                                 payload: Some(serde_json::to_value(&action)?),
-                            }));
+                            }]);
                         }
                     }
                     
@@ -181,26 +183,89 @@ impl PlannerAgent {
             };
             if let Some(url) = url_opt {
                 // Navigate to it
-                return Ok(Some(Event::TaskAssigned {
+                return Ok(vec![Event::TaskAssigned {
                     agent_id: "navigator_1".to_string(),
                     task_id: uuid::Uuid::new_v4().to_string(),
                     target_node_id: url,
                     payload: None,
-                }));
+                }]);
             }
         }
 
-        Ok(None) // No more tasks
+        Ok(vec![]) // No more tasks
+    }
+
+    /// Generate suggested actions based on perception results
+    fn generate_actions_from_perception(perception: &PerceptionResult) -> Vec<crate::engines::vision_explorer_v2::core::SuggestedAction> {
+        let mut actions = Vec::new();
+
+        // Generate actions based on page elements
+        for element in &perception.elements {
+            if element.is_interactive && element.is_visible {
+                let action_type = if element.element_type.to_lowercase().contains("button")
+                    || element.element_type.to_lowercase().contains("submit") {
+                    "click".to_string()
+                } else if element.element_type.to_lowercase().contains("input")
+                    || element.element_type.to_lowercase().contains("textarea") {
+                    "type".to_string()
+                } else if element.element_type.to_lowercase().contains("a") {
+                    "click".to_string()
+                } else {
+                    "click".to_string()
+                };
+
+                actions.push(crate::engines::vision_explorer_v2::core::SuggestedAction {
+                    description: element.text.clone().unwrap_or_else(|| format!("Interact with {}", element.element_type.clone())),
+                    selector: element.selector.clone(),
+                    action_type: action_type.clone(),
+                    value: None,
+                    confidence: element.confidence,
+                    x: element.coordinates.map(|(x, _)| x),
+                    y: element.coordinates.map(|(_, y)| y),
+                });
+            }
+        }
+
+        // Generate actions based on forms
+        for form in &perception.forms {
+            if form.is_login_form {
+                actions.push(crate::engines::vision_explorer_v2::core::SuggestedAction {
+                    description: "Fill and submit login form".to_string(),
+                    selector: form.selector.clone(),
+                    action_type: "fill_form".to_string(),
+                    value: None,
+                    confidence: 0.9,
+                    x: None,
+                    y: None,
+                });
+            }
+        }
+
+        actions
     }
 }
 
 #[async_trait]
 impl Agent for PlannerAgent {
-    fn id(&self) -> String {
-        self.id.clone()
+    fn metadata(&self) -> AgentMetadata {
+        AgentMetadata {
+            id: self.id.clone(),
+            name: "Planner Agent".to_string(),
+            description: "Manages exploration frontier and assigns tasks to other agents".to_string(),
+            version: "1.0.0".to_string(),
+            tags: vec!["planner".to_string(), "strategy".to_string(), "coordination".to_string()],
+        }
     }
 
-    async fn handle_event(&self, event: &Event) -> Result<()> {
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn metrics(&self) -> AgentMetrics {
+        AgentMetrics::default()
+    }
+
+    async fn handle_event(&self, event: &Event) -> Result<Vec<Event>> {
         match event {
             Event::TaskCompleted {
                 agent_id, result, ..
@@ -218,7 +283,7 @@ impl Agent for PlannerAgent {
                             node.status = ExplorationStatus::Unvisited;
                         }
                     }
-                    return Ok(());
+                    return Ok(vec![]);
                 }
 
                 // If Navigator finished, we have a new Context -> New Node
@@ -294,11 +359,15 @@ impl Agent for PlannerAgent {
                         if let Ok(perception) =
                             serde_json::from_value::<PerceptionResult>(data.clone())
                         {
+                            // === GENERATE ACTIONS FROM PERCEPTION ===
+                            // Now the Planner generates actions based on perception results
+                            let suggested_actions = Self::generate_actions_from_perception(&perception);
+
                             // === INTELLIGENCE AUGMENTATION ===
                             // Use PatternSolver to enhance actions (e.g., detect sidebars)
                             let enhanced_actions = self
                                 .pattern_solver
-                                .detect_patterns(&perception.suggested_actions);
+                                .detect_patterns(&suggested_actions);
 
                             let mut graph = self.graph.write().await;
                             let current_opt = self.current_node_id.read().await.clone();
@@ -311,9 +380,9 @@ impl Agent for PlannerAgent {
                         }
                     }
                 }
-                Ok(())
+                Ok(vec![])
             }
-            _ => Ok(()),
+            _ => Ok(vec![]),
         }
     }
 }

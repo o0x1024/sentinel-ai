@@ -6,8 +6,9 @@
 //! - Detect login success/failure
 //! - Manage session state
 
+use crate::engines::vision_explorer_v2::agent_framework::{Agent, AgentMetadata, AgentMetrics, AgentStatus};
 use crate::engines::vision_explorer_v2::blackboard::Blackboard;
-use crate::engines::vision_explorer_v2::core::{Agent, Event, PageContext, TaskResult};
+use crate::engines::vision_explorer_v2::core::{Event, PageContext, TaskResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -46,6 +47,7 @@ const LOGIN_FAILURE_PATTERNS: &[&str] = &[
     "try again",
 ];
 
+#[derive(Debug)]
 pub struct AuthAgent {
     id: String,
     blackboard: Arc<Blackboard>,
@@ -193,11 +195,25 @@ impl AuthAgent {
 
 #[async_trait]
 impl Agent for AuthAgent {
-    fn id(&self) -> String {
-        self.id.clone()
+    fn metadata(&self) -> AgentMetadata {
+        AgentMetadata {
+            id: self.id.clone(),
+            name: "Authentication Agent".to_string(),
+            description: "Handles authentication detection and login flows".to_string(),
+            version: "1.0.0".to_string(),
+            tags: vec!["auth".to_string(), "login".to_string(), "security".to_string()],
+        }
     }
 
-    async fn handle_event(&self, event: &Event) -> Result<()> {
+    fn status(&self) -> AgentStatus {
+        AgentStatus::Idle
+    }
+
+    fn metrics(&self) -> AgentMetrics {
+        AgentMetrics::default()
+    }
+
+    async fn handle_event(&self, event: &Event) -> Result<Vec<Event>> {
         match event {
             Event::TaskAssigned {
                 agent_id,
@@ -303,26 +319,29 @@ impl Agent for AuthAgent {
                     message = "No payload provided".to_string();
                 }
 
-                // Always send TaskCompleted
-                self.event_tx
-                    .send(Event::TaskCompleted {
-                        agent_id: self.id.clone(),
-                        task_id: task_id.clone(),
-                        result: TaskResult {
-                            success,
-                            message,
-                            new_nodes: vec![],
-                            data: Some(serde_json::json!({
-                                "is_login_page": is_login,
-                                "is_authenticated": self.blackboard.is_authenticated().await,
-                            })),
-                        },
-                    })
-                    .await?;
+                // Create and return TaskCompleted event
+                let task_completed = Event::TaskCompleted {
+                    agent_id: self.id.clone(),
+                    task_id: task_id.clone(),
+                    result: TaskResult {
+                        success,
+                        message,
+                        new_nodes: vec![],
+                        data: Some(serde_json::json!({
+                            "is_login_page": is_login,
+                            "is_authenticated": self.blackboard.is_authenticated().await,
+                        })),
+                    },
+                };
 
-                Ok(())
+                // Send other events and return task completed
+                if let Err(e) = self.event_tx.send(task_completed.clone()).await {
+                    log::error!("AuthAgent: Failed to send TaskCompleted: {}", e);
+                }
+
+                Ok(vec![task_completed])
             }
-            _ => Ok(()),
+            _ => Ok(vec![]),
         }
     }
 }
