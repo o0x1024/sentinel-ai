@@ -1,9 +1,7 @@
-//! V2 Vision Explorer Tool - Rig Tool implementation for V2 Engine
-//!
-//! This tool allows the AI Agent to invoke the V2 Engine for website exploration.
+//! V2 Vision Explorer Tool - Rig Tool implementation for ReAct Engine
 
-use crate::engines::vision_explorer_v2::emitter::V2MessageEmitter;
-use crate::engines::vision_explorer_v2::{V2Engine, VisionExplorerV2Config};
+use super::react_engine::ReActEngine;
+use super::types::VisionExplorerV2Config;
 use crate::engines::LlmConfig;
 use crate::services::mcp::McpService;
 use rig::completion::ToolDefinition;
@@ -12,7 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Deserialize)]
 pub struct VisionExplorerV2Args {
@@ -25,14 +23,11 @@ pub struct VisionExplorerV2Args {
     /// Custom HTTP headers
     #[allow(dead_code)]
     headers: Option<HashMap<String, String>>,
-    /// Allow destructive actions (delete, logout, etc.)
-    allow_destructive: Option<bool>,
 }
 
 /// V2 Vision Explorer Tool for Agent integration
 #[derive(Clone)]
 pub struct VisionExplorerV2Tool {
-    #[allow(dead_code)]
     mcp_service: Arc<McpService>,
     llm_config: LlmConfig,
     app_handle: Option<AppHandle>,
@@ -70,7 +65,7 @@ impl Tool for VisionExplorerV2Tool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "vision_explorer".to_string(),
-            description: "Explore a website using Vision Explorer V2 with event-driven architecture. Discovers APIs, pages, and interactive elements through intelligent navigation.".to_string(),
+            description: "Explore a website using Vision Explorer V2 with ReAct architecture. Systematically discovers pages, APIs, and interactive elements through intelligent reasoning and action.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -90,10 +85,6 @@ impl Tool for VisionExplorerV2Tool {
                         "type": "object",
                         "description": "Custom HTTP headers (e.g. Authorization)",
                         "additionalProperties": { "type": "string" }
-                    },
-                    "allow_destructive": {
-                        "type": "boolean",
-                        "description": "Allow destructive actions like delete/logout (default: false)"
                     }
                 },
                 "required": ["url"]
@@ -160,50 +151,33 @@ impl Tool for VisionExplorerV2Tool {
             target_url: args.url.clone(),
             max_depth: args.max_depth.unwrap_or(5),
             max_steps: args.max_steps.unwrap_or(100),
+            user_agent: None,
+            headless: false,
             ai_config,
-            ..Default::default()
         };
 
-        // Create and start engine
-        let mut engine = V2Engine::new(config);
-        let session_id = engine.session_id().to_string();
+        // Create engine with message callback
         let execution_id = self
             .execution_id
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        // Setup emitter if app_handle is available
-        if let Some(ref app_handle) = self.app_handle {
-            let emitter = V2MessageEmitter::new(
-                Arc::new(app_handle.clone()),
-                execution_id.clone(),
-                session_id.clone(),
-            );
-            engine = engine.with_emitter(emitter);
-        }
+        let app_handle_clone = self.app_handle.clone();
+        let mut engine = ReActEngine::new(config, self.mcp_service.clone())
+            .with_message_callback(move |msg| {
+                if let Some(ref handle) = app_handle_clone {
+                    let event_name = format!("vision-explorer-v2:{}", execution_id);
+                    let _ = handle.emit(&event_name, msg);
+                }
+            });
 
-        // Configure safety based on args
-        if args.allow_destructive.unwrap_or(false) {
-            // Create permissive policy
-            let permissive_policy = crate::engines::vision_explorer_v2::SafetyPolicy {
-                enabled: true,
-                blocked_keywords: vec![], // Allow all keywords
-                blocked_classes: vec![],
-                blocked_ids: vec![],
-                blocked_url_patterns: vec![],
-                allowed_overrides: vec![],
-                max_form_submissions: 100,
-                allow_modal_actions: true,
-            };
-            engine = engine.with_safety_policy(permissive_policy);
-        }
+        let session_id = engine.session_id().to_string();
 
         // Start exploration
         let start_time = std::time::Instant::now();
 
-        match engine.start().await {
-            Ok(_) => {
-                let stats = engine.get_stats().await;
+        match engine.run().await {
+            Ok(result) => {
                 let duration = start_time.elapsed().as_secs();
 
                 Ok(format!(
@@ -215,9 +189,9 @@ impl Tool for VisionExplorerV2Tool {
                      Duration: {}s",
                     args.url,
                     session_id,
-                    stats.pages_visited,
-                    stats.apis_discovered,
-                    stats.actions_performed,
+                    result.pages_visited,
+                    result.apis_discovered,
+                    result.actions_performed,
                     duration
                 ))
             }

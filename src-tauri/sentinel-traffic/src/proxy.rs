@@ -953,10 +953,11 @@ impl TrafficProxyHandler {
     }
 
     /// 解压响应体（支持 gzip 和 brotli）
-    fn decompress_body(body_bytes: &[u8], encoding: Option<&str>) -> Vec<u8> {
+    /// 返回 (解压后的数据, 是否成功解压)
+    fn decompress_body(body_bytes: &[u8], encoding: Option<&str>) -> (Vec<u8>, bool) {
         let encoding = match encoding {
             Some(e) => e.to_lowercase(),
-            None => return body_bytes.to_vec(),
+            None => return (body_bytes.to_vec(), true), // 无压缩，视为成功
         };
 
         match encoding.as_str() {
@@ -971,11 +972,11 @@ impl TrafficProxyHandler {
                             body_bytes.len(),
                             decompressed.len()
                         );
-                        decompressed
+                        (decompressed, true)
                     }
                     Err(e) => {
-                        warn!("Failed to decompress gzip body: {}, returning original", e);
-                        body_bytes.to_vec()
+                        warn!("Failed to decompress gzip body: {}, returning empty", e);
+                        (Vec::new(), false) // 解压失败返回空数据，避免插件处理错误数据
                     }
                 }
             }
@@ -989,14 +990,14 @@ impl TrafficProxyHandler {
                             body_bytes.len(),
                             decompressed.len()
                         );
-                        decompressed
+                        (decompressed, true)
                     }
                     Err(e) => {
                         warn!(
-                            "Failed to decompress brotli body: {}, returning original",
+                            "Failed to decompress brotli body: {}, returning empty",
                             e
                         );
-                        body_bytes.to_vec()
+                        (Vec::new(), false) // 解压失败返回空数据
                     }
                 }
             }
@@ -1012,20 +1013,20 @@ impl TrafficProxyHandler {
                             body_bytes.len(),
                             decompressed.len()
                         );
-                        decompressed
+                        (decompressed, true)
                     }
                     Err(e) => {
                         warn!(
-                            "Failed to decompress deflate body: {}, returning original",
+                            "Failed to decompress deflate body: {}, returning empty",
                             e
                         );
-                        body_bytes.to_vec()
+                        (Vec::new(), false)
                     }
                 }
             }
             _ => {
                 // 不支持的编码或无编码，返回原始数据
-                body_bytes.to_vec()
+                (body_bytes.to_vec(), true)
             }
         }
     }
@@ -1199,15 +1200,23 @@ impl TrafficProxyHandler {
         };
 
         // 解压响应体（如果有压缩）
-        let decompressed_body = if content_encoding.is_some() {
+        let (decompressed_body, decompress_success) = if content_encoding.is_some() {
             debug!(
                 "Detected content encoding: {:?}, attempting decompression for request {}",
                 content_encoding, request_id
             );
             Self::decompress_body(&compressed_body_vec, content_encoding)
         } else {
-            compressed_body_vec.clone()
+            (compressed_body_vec.clone(), true)
         };
+
+        // 如果解压失败，记录警告并跳过此响应的扫描
+        if !decompress_success {
+            warn!(
+                "Failed to decompress response body for request {}, skipping plugin scan",
+                request_id
+            );
+        }
 
         // 再次检查解压后的大小限制
         let body_vec = if decompressed_body.len() > self.config.max_response_body_size {
@@ -1223,9 +1232,10 @@ impl TrafficProxyHandler {
         };
 
         debug!(
-            "Captured response body: compressed={} bytes, decompressed={} bytes, status={} for request {}",
+            "Captured response body: compressed={} bytes, decompressed={} bytes, decompress_success={}, status={} for request {}",
             compressed_body_vec.len(),
             body_vec.len(),
+            decompress_success,
             status,
             request_id
         );

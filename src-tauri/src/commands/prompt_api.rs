@@ -303,6 +303,74 @@ globalThis.scan_transaction = scan_transaction;
 Now generate the Traffic Scan Plugin.
 "#;
 
+// ===== 插件编辑专用 Prompt（仅包含接口说明，用于 AI 辅助编辑） =====
+
+const TRAFFIC_PLUGIN_INTERFACE_DOC: &str = r#"# Traffic Scan Plugin Interface Reference
+
+## Available APIs
+
+- `TextDecoder` / `TextEncoder` - Text encoding/decoding
+- `URL` / `URLSearchParams` - URL parsing
+- `Sentinel.log(level, message)` - Logging
+- `Sentinel.emitFinding(finding)` - Report findings
+
+## Important Notes
+
+- **NEVER** send new requests or block traffic
+- Handle `transaction.response` being potentially null
+- Bodies are `Uint8Array`, use `TextDecoder` to convert to string
+- Be performant (process thousands of requests/sec)
+- **MUST** include `globalThis.scan_transaction = scan_transaction;` at the end
+"#;
+
+const AGENT_PLUGIN_INTERFACE_DOC: &str = r#"# Agent Tool Plugin Interface Reference
+
+
+
+## Available APIs
+
+### HTTP Requests
+```typescript
+const response = await fetch('https://example.com/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'value' }),
+    timeout: 5000,
+});
+const data = await response.json();
+```
+
+### File System
+```typescript
+// Read/Write text files
+const content = await Deno.readTextFile('/path/to/file.txt');
+await Deno.writeTextFile('/path/to/output.txt', 'content');
+
+// Read/Write binary files
+const bytes = await Deno.readFile('/path/to/file.bin');
+await Deno.writeFile('/path/to/file.bin', new Uint8Array([1, 2, 3]));
+
+// Directory operations
+await Deno.mkdir('/path/to/dir', { recursive: true });
+for await (const entry of Deno.readDir('/path/to/dir')) {
+    console.log(entry.name, entry.isFile ? 'file' : 'dir');
+}
+
+// File operations
+const fileInfo = await Deno.stat('/path/to/file.txt');
+await Deno.copyFile('/source.txt', '/dest.txt');
+await Deno.remove('/path/to/file.txt');
+await Deno.remove('/path/to/dir', { recursive: true });
+```
+
+### Logging
+```typescript
+Deno.core.ops.op_plugin_log('info', 'Message');
+Deno.core.ops.op_plugin_log('error', 'Error message');
+```
+
+"#;
+
 const DEFAULT_AGENT_PLUGIN_PROMPT: &str = r#"# Agent Tool Plugin Generation Task
 
 You are a professional security researcher and TypeScript developer. Your task is to generate high-quality Agent tool plugins for an AI-driven security testing system.
@@ -662,6 +730,18 @@ globalThis.analyze = analyze;
 
 Now generate the Agent Tool Plugin.
 "#;
+
+/// Get plugin interface documentation for editing (interface reference only)
+#[tauri::command]
+pub async fn get_plugin_interface_doc_api(
+    plugin_type: String, // "traffic" or "agent"
+) -> Result<String, String> {
+    match plugin_type.as_str() {
+        "traffic" => Ok(TRAFFIC_PLUGIN_INTERFACE_DOC.to_string()),
+        "agent" => Ok(AGENT_PLUGIN_INTERFACE_DOC.to_string()),
+        _ => Err(format!("Unknown plugin type: {}", plugin_type)),
+    }
+}
 
 /// Get combined plugin generation prompt (generation + interface + output format)
 #[tauri::command]

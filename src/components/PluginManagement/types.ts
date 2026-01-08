@@ -180,4 +180,6 @@ export interface AiChatMessage {
   codeBlocks?: string[]
   codeRef?: CodeReference
   testResultRef?: TestResultReference
+  diffApplied?: boolean
+  diffError?: string
 }

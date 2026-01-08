@@ -209,20 +209,25 @@
         <!-- Code Editor Area -->
         <div class="fullscreen-editor-content" :class="{ 'with-ai-panel': showAiPanel }">
           <div v-show="!isPreviewMode" ref="fullscreenCodeEditorContainerRef" class="h-full w-full"></div>
-          <div v-show="isPreviewMode" ref="fullscreenDiffEditorContainerRef" class="h-full w-full">
+          <div v-show="isPreviewMode" class="h-full w-full flex flex-col">
             <!-- Diff View Header -->
-            <div v-if="isPreviewMode" class="diff-header">
+            <div class="diff-header">
               <div class="diff-header-content">
                 <i class="fas fa-code-compare mr-2"></i>
                 <span class="font-semibold">{{ $t('plugins.codeComparison', '代码对比') }}</span>
                 <span class="text-sm opacity-70 ml-2">{{ $t('plugins.leftOriginal', '左侧：当前代码') }} | {{ $t('plugins.rightModified', '右侧：AI修改') }}</span>
               </div>
               <div class="diff-header-actions">
+                <button class="btn btn-sm btn-primary" @click="$emit('confirmMerge')">
+                  <i class="fas fa-check mr-1"></i>{{ $t('plugins.confirmMerge', '确认合并') }}
+                </button>
                 <button class="btn btn-sm btn-ghost" @click="$emit('exitPreviewMode')">
-                  <i class="fas fa-times mr-1"></i>{{ $t('plugins.exitPreview', '退出预览') }}
+                  <i class="fas fa-times mr-1"></i>{{ $t('common.cancel', '取消') }}
                 </button>
               </div>
             </div>
+            <!-- Merge View Container -->
+            <div ref="fullscreenDiffEditorContainerRef" class="flex-1 overflow-auto relative"></div>
           </div>
         </div>
 
@@ -440,6 +445,7 @@ const emit = defineEmits<{
   'applyAiCode': [code: string, context?: CodeReference | null]
   'previewAiCode': [code: string]
   'exitPreviewMode': []
+  'confirmMerge': []
   'addSelectedCode': []
   'addFullCode': []
   'clearCodeRef': []

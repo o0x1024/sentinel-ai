@@ -210,6 +210,24 @@ export default {
         serverCertIssue: 'Target server certificate has issues'
       }
     },
+    errors: {
+      loadFailed: 'Failed to load request history',
+      loadMoreFailed: 'Failed to load more',
+      clearFailed: 'Failed to clear history',
+      wsConnectionFailed: 'Failed to load WebSocket connections',
+      wsMessagesFailed: 'Failed to load WebSocket messages',
+      exportFailed: 'Export failed',
+      networkError: 'Network error',
+      timeout: 'Request timeout',
+      unknown: 'Unknown error'
+    },
+    messages: {
+      historyCleared: 'History cleared',
+      exportSuccess: 'Export successful',
+      copiedToClipboard: 'Copied to clipboard',
+      sentToRepeater: 'Sent to Repeater',
+      sentToAssistant: 'Sent to AI Assistant'
+    },
     filterDialog: {
       title: 'Filter Settings',
       search: 'Search',
@@ -346,11 +364,30 @@ export default {
       exportToFile: 'Export to File',
       exportRequest: 'Export Request',
       exportResponse: 'Export Response',
+      exportHAR: 'Export as HAR',
+      exportAsHAR: 'Export as HAR',
       request: 'request',
       response: 'response',
       noSelection: 'Please select requests to export first',
       success: 'Successfully exported {count} {type}(s) to file',
-      failed: 'Export failed: {error}'
+      harSuccess: 'Successfully exported {count} requests as HAR format',
+      failed: 'Export failed: {error}',
+      saveHistory: 'Save History',
+      loadHistory: 'Load History',
+      historySaved: 'Saved {count} records to database',
+      historyLoaded: 'Loaded {count} records from database',
+      saveFailed: 'Save failed: {error}',
+      loadFailed: 'Load failed: {error}',
+      persistenceConfig: 'Persistence Configuration',
+      enableAutoPersistence: 'Enable Auto Persistence',
+      autoPersistenceThreshold: 'Auto Persistence Threshold',
+      autoPersistenceInterval: 'Auto Persistence Interval (seconds)',
+      thresholdHelp: 'Auto-save to database when cache reaches this count',
+      intervalHelp: 'Periodic auto-save interval',
+      compressionEnabled: 'Response Body Compression',
+      compressionHelp: 'Auto-compress response bodies larger than 1KB to save storage',
+      configSaved: 'Configuration saved',
+      configSaveFailed: 'Failed to save configuration: {error}'
     }
   },
   // Proxy Repeater Component

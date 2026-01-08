@@ -53,6 +53,8 @@ pub struct ScanPipeline {
     exclude_self_traffic: Arc<RwLock<bool>>,
     /// 是否启用流量分析插件扫描
     plugin_scanning_enabled: Arc<RwLock<bool>>,
+    /// 并发控制信号量（限制同时执行的插件数量）
+    plugin_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl ScanPipeline {
@@ -70,6 +72,7 @@ impl ScanPipeline {
             response_filter_rules: Arc::new(RwLock::new(Vec::new())),
             exclude_self_traffic: Arc::new(RwLock::new(true)),
             plugin_scanning_enabled: Arc::new(RwLock::new(true)),
+            plugin_semaphore: Arc::new(tokio::sync::Semaphore::new(20)), // 最多20个并发插件执行
         }
     }
 
@@ -118,6 +121,27 @@ impl ScanPipeline {
     /// 启动扫描流水线（异步循环）
     pub async fn start(mut self) -> Result<()> {
         info!("ScanPipeline started");
+
+        // 启动请求缓存清理任务（每60秒清理一次超过5分钟的请求）
+        let request_cache_clone = self.request_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mut cache = request_cache_clone.write().await;
+                let now = chrono::Utc::now();
+                let original_size = cache.len();
+                
+                cache.retain(|_, ctx| {
+                    (now - ctx.timestamp).num_seconds() < 300 // 保留5分钟内的请求
+                });
+                
+                let cleaned = original_size - cache.len();
+                if cleaned > 0 {
+                    info!("Request cache cleanup: removed {} expired entries, {} remaining", cleaned, cache.len());
+                }
+            }
+        });
 
         while let Some(task) = self.task_rx.recv().await {
             match task {
@@ -223,8 +247,9 @@ impl ScanPipeline {
         // 重新设计：
         // 无论如何，我们需要 spawn 一个 task 来等待结果，不能阻塞 process_request。
 
-        // 克隆 finding_tx 用于 task
+        // 克隆 finding_tx 和 semaphore 用于 task
         let finding_tx = self.finding_tx.clone();
+        let semaphore = self.plugin_semaphore.clone();
 
         tokio::spawn(async move {
             for (plugin_id, executor) in executors {
@@ -232,8 +257,12 @@ impl ScanPipeline {
                 let finding_tx = finding_tx.clone();
                 let plugin_id_clone = plugin_id.clone();
                 let executor_clone = executor.clone();
+                let semaphore_clone = semaphore.clone();
 
                 tokio::spawn(async move {
+                    // 获取信号量许可，限制并发执行
+                    let _permit = semaphore_clone.acquire().await.ok();
+                    
                     // Check if restart is needed before execution
                     if let Ok(stats) = executor.get_stats().await {
                         if stats.current_instance_executions >= executor.max_executions_before_restart() {
@@ -244,10 +273,28 @@ impl ScanPipeline {
                                 executor.max_executions_before_restart()
                             );
                             
-                            if let Err(e) = executor_clone.restart().await {
-                                error!("Failed to auto-restart plugin {}: {}", plugin_id_clone, e);
-                            } else {
-                                info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                            // 重试重启最多3次
+                            let mut restart_success = false;
+                            for retry in 0..3 {
+                                match executor_clone.restart().await {
+                                    Ok(_) => {
+                                        info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                                        restart_success = true;
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to auto-restart plugin {} (attempt {}/3): {}", 
+                                            plugin_id_clone, retry + 1, e);
+                                        if retry < 2 {
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if !restart_success {
+                                error!("Plugin {} failed to restart after 3 attempts, skipping execution", plugin_id_clone);
+                                return;
                             }
                         }
                     }
@@ -271,6 +318,7 @@ impl ScanPipeline {
                             error!("Plugin {} failed to scan request: {:?}", plugin_id, e);
                         }
                     }
+                    // _permit 在此处自动释放
                 });
             }
         });
@@ -348,8 +396,9 @@ impl ScanPipeline {
             response: Some(resp_ctx.clone()),
         };
 
-        // 克隆 finding_tx 用于 task
+        // 克隆 finding_tx 和 semaphore 用于 task
         let finding_tx = self.finding_tx.clone();
+        let semaphore = self.plugin_semaphore.clone();
 
         // 异步调用插件
         tokio::spawn(async move {
@@ -358,8 +407,12 @@ impl ScanPipeline {
                 let finding_tx = finding_tx.clone();
                 let plugin_id_clone = plugin_id.clone();
                 let executor_clone = executor.clone();
+                let semaphore_clone = semaphore.clone();
 
                 tokio::spawn(async move {
+                    // 获取信号量许可，限制并发执行
+                    let _permit = semaphore_clone.acquire().await.ok();
+                    
                     // Check if restart is needed before execution
                     if let Ok(stats) = executor.get_stats().await {
                         if stats.current_instance_executions >= executor.max_executions_before_restart() {
@@ -370,10 +423,28 @@ impl ScanPipeline {
                                 executor.max_executions_before_restart()
                             );
                             
-                            if let Err(e) = executor_clone.restart().await {
-                                error!("Failed to auto-restart plugin {}: {}", plugin_id_clone, e);
-                            } else {
-                                info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                            // 重试重启最多3次
+                            let mut restart_success = false;
+                            for retry in 0..3 {
+                                match executor_clone.restart().await {
+                                    Ok(_) => {
+                                        info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                                        restart_success = true;
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to auto-restart plugin {} (attempt {}/3): {}", 
+                                            plugin_id_clone, retry + 1, e);
+                                        if retry < 2 {
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if !restart_success {
+                                error!("Plugin {} failed to restart after 3 attempts, skipping execution", plugin_id_clone);
+                                return;
                             }
                         }
                     }
@@ -397,6 +468,7 @@ impl ScanPipeline {
                             error!("Plugin {} failed to scan response: {:?}", plugin_id, e);
                         }
                     }
+                    // _permit 在此处自动释放
                 });
             }
         });
@@ -812,9 +884,25 @@ impl ScanPipeline {
         }
     }
 
+    /// 检查请求是否为插件主动扫描测试请求
+    /// 通过检测 X-Sentinel-Test header 标识
+    fn is_plugin_test_request(headers: &std::collections::HashMap<String, String>) -> bool {
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("x-sentinel-test"))
+            .map(|(_, v)| v.as_str() == "true" || v.as_str() == "1")
+            .unwrap_or(false)
+    }
+
     /// 检查请求是否应该被扫描（应用过滤规则）
     /// 返回 true 表示应该扫描，false 表示应该跳过
     async fn should_scan_request(&self, req_ctx: &RequestContext) -> bool {
+        // 首先检查是否为插件测试请求，避免递归扫描
+        if Self::is_plugin_test_request(&req_ctx.headers) {
+            debug!("✓ Skipping plugin scan for test request: url={}", req_ctx.url);
+            return false;
+        }
+
         // 检查是否为本应用流量且配置了排除
         let exclude_self = *self.exclude_self_traffic.read().await;
         let is_self = Self::is_self_traffic(&req_ctx.headers);
@@ -900,11 +988,17 @@ impl ScanPipeline {
     /// 检查响应是否应该被扫描（应用过滤规则）
     /// 返回 true 表示应该扫描，false 表示应该跳过
     async fn should_scan_response(&self, req_ctx: &RequestContext, resp_ctx: &ResponseContext) -> bool {
+        // 首先检查是否为插件测试请求，避免递归扫描
+        if Self::is_plugin_test_request(&req_ctx.headers) {
+            debug!("✓ Skipping plugin scan for test response: url={}", req_ctx.url);
+            return false;
+        }
+
         // 检查是否为本应用流量且配置了排除
         let exclude_self = *self.exclude_self_traffic.read().await;
         let is_self = Self::is_self_traffic(&req_ctx.headers);
         
-        info!(
+        debug!(
             "Checking response scan: url={}, exclude_self_config={}, is_self_traffic={}", 
             req_ctx.url, exclude_self, is_self
         );

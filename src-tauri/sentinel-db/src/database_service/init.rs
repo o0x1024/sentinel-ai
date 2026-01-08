@@ -788,8 +788,36 @@ impl DatabaseService {
                 response_body TEXT,
                 response_size INTEGER NOT NULL DEFAULT 0,
                 response_time INTEGER NOT NULL DEFAULT 0,
-                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                request_body_compressed BOOLEAN NOT NULL DEFAULT 0,
+                response_body_compressed BOOLEAN NOT NULL DEFAULT 0
             )"#
+        ).execute(pool).await?;
+        
+        // 添加压缩标记列（如果表已存在）
+        let _ = sqlx::query(
+            "ALTER TABLE proxy_requests ADD COLUMN request_body_compressed BOOLEAN NOT NULL DEFAULT 0"
+        ).execute(pool).await;
+        
+        let _ = sqlx::query(
+            "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT 0"
+        ).execute(pool).await;
+        
+        // 创建索引以优化查询性能
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)"
+        ).execute(pool).await?;
+        
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)"
+        ).execute(pool).await?;
+        
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_protocol ON proxy_requests(protocol)"
+        ).execute(pool).await?;
+        
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)"
         ).execute(pool).await?;
 
         // Plugin registry table

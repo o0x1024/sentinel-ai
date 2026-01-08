@@ -36,7 +36,7 @@ test.describe('Dashboard Page', () => {
 
     // Return to Dashboard
     await page.click('[data-testid="nav-dashboard"]')
-    await expect(page.url()).toBe('http://127.0.0.1:1420/')
+    await expect(page.url()).toBe('http://127.0.0.1:1499/')
   })
 
   test('should display and interact with stats cards', async ({ page }) => {

@@ -37,6 +37,7 @@
       @apply-ai-code="handleApplyAiCode"
       @preview-ai-code="handlePreviewAiCode"
       @exit-preview-mode="handleExitPreviewMode"
+      @confirm-merge="handleConfirmMerge"
       @test-current-plugin="handleTestPlugin"
       @clear-history="handleClearHistory"
     />
@@ -127,6 +128,7 @@ import DOMPurify from 'dompurify'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
 import { Compartment } from '@codemirror/state'
 import { basicSetup } from 'codemirror'
+import { MergeView } from '@codemirror/merge'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 
@@ -135,6 +137,121 @@ declare module '@vue/runtime-core' {
   interface HTMLElement {
     _clickOutsideHandler?: (event: MouseEvent) => void
   }
+}
+
+// ===== Diff Format Parser and Applicator =====
+
+interface DiffBlock {
+  type: 'search_replace' | 'insert_after' | 'full_code'
+  search?: string
+  replace?: string
+  insertAfter?: string
+  insertContent?: string
+  fullCode?: string
+}
+
+/**
+ * Parse LLM response for diff blocks
+ */
+function parseDiffBlocks(content: string): DiffBlock[] {
+  const blocks: DiffBlock[] = []
+  
+  // Pattern 1: SEARCH/REPLACE blocks
+  const searchReplaceRegex = /```diff\s*\n<<<<<<< SEARCH\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>> REPLACE\s*\n```/g
+  let match
+  
+  while ((match = searchReplaceRegex.exec(content)) !== null) {
+    blocks.push({
+      type: 'search_replace',
+      search: match[1].trim(),
+      replace: match[2].trim()
+    })
+  }
+  
+  // Pattern 2: INSERT blocks
+  const insertRegex = /```diff\s*\n<<<<<<< INSERT_AFTER\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>> INSERT\s*\n```/g
+  
+  while ((match = insertRegex.exec(content)) !== null) {
+    blocks.push({
+      type: 'insert_after',
+      insertAfter: match[1].trim(),
+      insertContent: match[2].trim()
+    })
+  }
+  
+  // Pattern 3: Full code blocks (fallback)
+  if (blocks.length === 0) {
+    const fullCodeRegex = /```(?:typescript|ts|javascript|js)\s*\n([\s\S]*?)```/g
+    while ((match = fullCodeRegex.exec(content)) !== null) {
+      blocks.push({
+        type: 'full_code',
+        fullCode: match[1].trim()
+      })
+    }
+  }
+  
+  return blocks
+}
+
+/**
+ * Apply diff blocks to current code
+ */
+function applyDiffBlocks(currentCode: string, blocks: DiffBlock[]): { success: boolean, code: string, error?: string } {
+  let resultCode = currentCode
+  
+  for (const block of blocks) {
+    if (block.type === 'search_replace') {
+      const searchText = block.search!
+      const replaceText = block.replace!
+      
+      if (!resultCode.includes(searchText)) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Cannot find search text in code:\n${searchText.substring(0, 100)}...`
+        }
+      }
+      
+      const occurrences = resultCode.split(searchText).length - 1
+      if (occurrences > 1) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Search text appears ${occurrences} times. Need more context.`
+        }
+      }
+      
+      resultCode = resultCode.replace(searchText, replaceText)
+      
+    } else if (block.type === 'insert_after') {
+      const anchor = block.insertAfter!
+      const content = block.insertContent!
+      
+      if (!resultCode.includes(anchor)) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Cannot find insertion anchor:\n${anchor.substring(0, 100)}...`
+        }
+      }
+      
+      const occurrences = resultCode.split(anchor).length - 1
+      if (occurrences > 1) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Insertion anchor appears ${occurrences} times. Need more specific anchor.`
+        }
+      }
+      
+      resultCode = resultCode.replace(anchor, `${anchor}\n${content}`)
+      
+    } else if (block.type === 'full_code') {
+      resultCode = block.fullCode!
+    }
+  }
+  
+  return { success: true, code: resultCode }
 }
 
 const store = usePluginEditorStore()
@@ -216,8 +333,7 @@ const validationState = ref<{
 // CodeMirror Instances
 let codeEditorView: EditorView | null = null
 let fullscreenCodeEditorView: EditorView | null = null
-let diffEditorViewA: EditorView | null = null
-let diffEditorViewB: EditorView | null = null
+let diffMergeView: MergeView | null = null
 const codeEditorReadOnly = new Compartment()
 
 // Subcategories logic
@@ -254,7 +370,7 @@ const subCategories = computed<SubCategory[]>(() => {
 
 const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning' = 'success') => {
   const toast = document.createElement('div')
-  toast.className = 'toast toast-top toast-end z-[99999]'
+  toast.className = 'toast toast-top toast-end z-[9999999]'
   toast.style.top = '5rem'
   const alertClass = { success: 'alert-success', error: 'alert-error', info: 'alert-info', warning: 'alert-warning' }[type]
   const icon = { success: 'fa-check-circle', error: 'fa-times-circle', info: 'fa-info-circle', warning: 'fa-exclamation-triangle' }[type]
@@ -410,53 +526,24 @@ const initDiffEditor = () => {
   
   container.innerHTML = ''
   
-  if (diffEditorViewA) { diffEditorViewA.destroy(); diffEditorViewA = null }
-  if (diffEditorViewB) { diffEditorViewB.destroy(); diffEditorViewB = null }
+  if (diffMergeView) { diffMergeView.destroy(); diffMergeView = null }
   
-  // 创建头部标签
-  const header = document.createElement('div')
-  header.style.cssText = 'display: flex; background: oklch(var(--b3)); border-bottom: 1px solid oklch(var(--bc) / 0.2); height: 3rem;'
-  
-  const leftHeader = document.createElement('div')
-  leftHeader.style.cssText = 'flex: 1; display: flex; align-items: center; padding: 0 1rem; gap: 0.5rem; font-weight: 600; color: oklch(var(--bc) / 0.7);'
-  leftHeader.innerHTML = '<i class="fas fa-file-code"></i><span>' + t('plugins.currentCode', '当前代码') + '</span>'
-  
-  const rightHeader = document.createElement('div')
-  rightHeader.style.cssText = 'flex: 1; display: flex; align-items: center; padding: 0 1rem; gap: 0.5rem; font-weight: 600; color: oklch(var(--p)); border-left: 2px solid oklch(var(--bc) / 0.2);'
-  rightHeader.innerHTML = '<i class="fas fa-magic"></i><span>' + t('plugins.aiSuggestion', 'AI 建议') + '</span>'
-  
-  header.appendChild(leftHeader)
-  header.appendChild(rightHeader)
-  container.appendChild(header)
-  
-  const wrapper = document.createElement('div')
-  wrapper.style.cssText = 'display: flex; height: calc(100% - 3rem); width: 100%;'
-  
-  const leftContainer = document.createElement('div')
-  leftContainer.style.cssText = 'flex: 1; border-right: 2px solid oklch(var(--bc) / 0.2); position: relative;'
-  
-  const rightContainer = document.createElement('div')
-  rightContainer.style.cssText = 'flex: 1; position: relative;'
-  
-  wrapper.appendChild(leftContainer)
-  wrapper.appendChild(rightContainer)
-  container.appendChild(wrapper)
-  
-  diffEditorViewA = new EditorView({
-    doc: store.pluginCode,
-    extensions: [basicSetup, javascript(), oneDark, EditorView.lineWrapping, EditorView.editable.of(false)],
-    parent: leftContainer
-  })
-  
-  diffEditorViewB = new EditorView({
-    doc: store.previewCode,
-    extensions: [
-      basicSetup, javascript(), oneDark, EditorView.lineWrapping,
-      EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged) store.previewCode = update.state.doc.toString()
-      })
-    ],
-    parent: rightContainer
+  diffMergeView = new MergeView({
+    a: {
+      doc: store.pluginCode,
+      extensions: [basicSetup, javascript(), oneDark, EditorView.lineWrapping, EditorView.editable.of(false)]
+    },
+    b: {
+      doc: store.previewCode,
+      extensions: [
+        basicSetup, javascript(), oneDark, EditorView.lineWrapping,
+        EditorView.updateListener.of((update: ViewUpdate) => {
+          if (update.docChanged) store.previewCode = update.state.doc.toString()
+        })
+      ]
+    },
+    parent: container,
+    collapseUnchanged: { margin: 3, minSize: 4 } // 折叠未修改的代码，提升聚焦度
   })
 }
 
@@ -483,6 +570,7 @@ const handleInsertTemplate = async () => {
   const isAgentPlugin = store.newPluginMetadata.mainCategory === 'agent'
   try {
     const templateType = isAgentPlugin ? 'agent' : 'traffic'
+    // 使用完整的插件生成 prompt（包含任务说明、示例等）来提取模板代码
     const combinedTemplate = await invoke<string>('get_combined_plugin_prompt_api', {
       pluginType: templateType,
       vulnType: store.newPluginMetadata.category || 'custom',
@@ -755,66 +843,122 @@ const handleSendAiMessage = async (message: string) => {
   const streamId = `plugin_assistant_${Date.now()}`
   
   try {
-    // 增强的系统提示词构建逻辑
+    // 使用插件编辑专用的接口文档（仅包含接口说明，不包含生成任务说明）
+    // 这样 AI 会专注于编辑现有代码，而不是重新生成整个插件
     const isAgentPlugin = store.newPluginMetadata.mainCategory === 'agent'
-    let baseSystemPrompt = await invoke<string>('get_combined_plugin_prompt_api', {
-      pluginType: isAgentPlugin ? 'agent' : 'traffic',
-      vulnType: 'custom',
-      severity: store.newPluginMetadata.default_severity
+    const interfaceDoc = await invoke<string>('get_plugin_interface_doc_api', {
+      pluginType: isAgentPlugin ? 'agent' : 'traffic'
     })
-    
-    // 1. 清理基础提示词中的“生成”倾向，将其转变为“参考文档”
-    baseSystemPrompt = baseSystemPrompt
-      .replace(/Now generate the Traffic Scan Plugin\./gi, '')
-      .replace(/Now generate the Agent Tool Plugin\./gi, '')
-      .replace(/Return ONLY the TypeScript plugin code wrapped in a markdown code block/gi, 'Please use the following interface definitions as a reference for your edits.')
 
     // 2. 构建代码上下文区块
-    const codeContextBlock = codeContext ? `
-### 用户选中的代码片段 (Focus Context)
+    // 如果用户选中了代码片段，只发送选中部分；否则发送全量代码
+    let codeContextBlock = ''
+    let currentCodeBlock = ''
+    
+    if (codeContext) {
+      // the user selected a code fragment, only send the selected part
+      codeContextBlock = `
+### the code fragment selected by the user (Focus Context)
 \`\`\`typescript
 ${codeContext}
 \`\`\`
-` : ''
 
-    const currentCodeBlock = `
-### 当前插件全量代码 (Full Code)
+**Note**：the user only selected the above code fragment, please only modify this part. The returned code should be able to replace the selected part directly.
+`
+    } else {
+      // the user did not select any code, send the full code
+      currentCodeBlock = `
+### the full code of the current plugin (Full Code)
 \`\`\`typescript
 ${latestCode}
 \`\`\`
 `
+    }
 
-    const systemPrompt = `你现在是一名顶级的安全研究员和 TypeScript 专家，正在以【代码编辑助手】的身份协助用户。
-
-### 核心任务
-你的任务是理解用户的意图，并根据提供的上下文（见下方的代码区块）进行回答或代码修改。
+    const systemPrompt = `You are a senior security researcher and TypeScript expert, helping users with code editing tasks.
 
 ${codeContextBlock}
 ${currentCodeBlock}
 
-### 规则与约束
-1. **元数据保护（极其重要）**：
-   - 必须保留代码顶部的 \`/** @plugin ... */\` JSDoc 元数据块。
-   - 除非用户明确要求修改插件 ID、名称、版本或描述，否则**严禁更改**元数据块中的内容。
+## CRITICAL OUTPUT FORMAT
 
-2. **响应策略**：
-   - **咨询/解释**：如果用户只是提问（如“这段代码在干什么？”或“这里是否有漏洞？”），请结合上方的【当前插件全量代码】提供详尽的文字解释，**不要**返回完整代码块。
-   - **修改/优化**：如果用户要求修改代码、修复 Bug 或优化，请先简要说明你的思路，然后返回修改后的**完整且可运行**的 TypeScript 代码。
-   - **局部与全局**：如果提供了【用户选中的代码片段】，表示用户当前正关注这部分内容。在修改时应优先解决该片段的问题，但返回的代码必须是涵盖整个文件的完整代码。
+You MUST use one of these formats for code modifications:
 
-3. **思维链分析**：
-   - 在返回代码块之前，请先用 1-2 句话分析当前代码的不足，并说明你的改进方案。
+### Format 1: SEARCH/REPLACE (Preferred - for modifying existing code)
+\`\`\`diff
+<<<<<<< SEARCH
+[exact code to find - include 3-5 lines before and after for uniqueness]
+=======
+[new code to replace with]
+>>>>>>> REPLACE
+\`\`\`
 
-4. **技术规范**：
-   - 必须使用 \`\`\`typescript 格式包裹代码。
-   - 对于流量插件，确保导出 \`scan_transaction\` 并绑定到 \`globalThis\`。
-   - 对于 Agent 插件，如果修改了参数逻辑，请同步更新 \`get_input_schema\`。
+### Format 2: INSERT (for adding new code)
+\`\`\`diff
+<<<<<<< INSERT_AFTER
+[exact line after which to insert]
+=======
+[new code to insert]
+>>>>>>> INSERT
+\`\`\`
+
+### Format 3: FULL CODE (ONLY if user explicitly requests or needs complete rewrite)
+\`\`\`typescript
+[complete code]
+\`\`\`
+
+## Rules and Constraints
+
+1. **Minimum Modification Principle (CRITICAL)**:
+   - **DEFAULT to SEARCH/REPLACE format** - Never return full code unless absolutely necessary
+   - **Only do what user requires**: Strictly follow user's instructions
+   - **Keep original code as is**: Preserve parts that don't need modification
+   - **No excessive optimization**: Don't refactor code user didn't mention
+
+2. **SEARCH/REPLACE Best Practices**:
+   - Include enough context (3-5 lines) to uniquely identify location
+   - One change per block - use multiple blocks for multiple changes
+   - Verify SEARCH text exists and is unique in the code
+
+3. **Chain of Thought Check**:
+   - Before responding, ask: Did I modify parts user didn't mention?
+   - Clearly state your modification range
+
+4. **Technical Specifications**:
+   - For Agent plugins, update \`get_input_schema\` if modifying parameters
+   - Maintain code style and formatting
+
+## Example
+
+**Good (SEARCH/REPLACE):**
+I'll add ORDER BY payloads to the array:
+
+\`\`\`diff
+<<<<<<< SEARCH
+const sqlPayloads = [
+    "' OR '1'='1",
+    "' UNION SELECT NULL--"
+];
+=======
+const sqlPayloads = [
+    "' OR '1'='1",
+    "' UNION SELECT NULL--",
+    "' ORDER BY 1--",
+    "' ORDER BY 10--"
+];
+>>>>>>> REPLACE
+\`\`\`
+
+**Bad (full code):**
+\`\`\`typescript
+[entire 500 line file]
+\`\`\`
 
 ---
-### 接口参考文档
-${baseSystemPrompt}
+### Interface Reference Document
+${interfaceDoc}
 
-现在，请根据用户的消息和上方提供的代码上下文开始协助。`
+Now, please assist based on the user's message and code context above.`
 
     let generatedContent = ''
     
@@ -868,8 +1012,31 @@ const finishAiChat = (content: string) => {
   store.aiChatStreaming = false
   store.aiChatStreamingContent = ''
   
+  // Parse diff blocks
+  const diffBlocks = parseDiffBlocks(content)
+  
+  // Try to apply diff blocks automatically
+  let appliedCode: string | null = null
+  let applyError: string | null = null
+  
+  if (diffBlocks.length > 0) {
+    const currentCode = store.pluginCode
+    const result = applyDiffBlocks(currentCode, diffBlocks)
+    
+    if (result.success) {
+      appliedCode = result.code
+      // Auto-apply to store
+      store.pluginCode = result.code
+      console.log('✅ Diff applied automatically')
+    } else {
+      applyError = result.error
+      console.warn('⚠️ Could not auto-apply diff:', result.error)
+    }
+  }
+  
+  // Fallback: Extract code blocks
   const codeBlocks: string[] = []
-  const codeBlockRegex = /```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g
+  const codeBlockRegex = /```(?:typescript|ts|javascript|js)\s*\n([\s\S]*?)```/g
   let match
   while ((match = codeBlockRegex.exec(content)) !== null) {
     codeBlocks.push(match[1].trim())
@@ -882,8 +1049,10 @@ const finishAiChat = (content: string) => {
   store.aiChatMessages.push({ 
     role: 'assistant', 
     content: cleanHtml,
-    codeBlock: codeBlocks[0],
-    codeBlocks: codeBlocks
+    codeBlock: appliedCode || codeBlocks[0],
+    codeBlocks: appliedCode ? [appliedCode] : codeBlocks,
+    diffApplied: !!appliedCode,
+    diffError: applyError || undefined
   })
 }
 
@@ -903,8 +1072,51 @@ const handleAiQuickAction = (action: string) => {
 const handleApplyAiCode = async (code: string, context?: CodeReference | null) => {
   if (!code) return
   
-  // 先验证代码
-  const validationResult = await validateCode(code)
+  let finalCode = store.pluginCode
+  let isPartialUpdate = false
+  
+  // 判断是否为局部更新
+  if (context && !context.isFullCode && context.code && store.pluginCode.includes(context.code)) {
+    // 局部替换：用AI返回的代码替换选中的代码片段
+    finalCode = store.pluginCode.replace(context.code, code)
+    isPartialUpdate = true
+  } else if (!code.includes('/**') && !code.includes('export interface') && code.trim().startsWith('export')) {
+    // 智能检测：如果AI返回的代码是单个函数或小片段（没有元数据注释，没有接口定义）
+    // 尝试智能替换
+    const functionMatch = code.match(/export\s+(?:async\s+)?function\s+(\w+)/)
+    if (functionMatch) {
+      const functionName = functionMatch[1]
+      // 查找当前代码中的同名函数
+      const currentFunctionRegex = new RegExp(
+        `export\\s+(?:async\\s+)?function\\s+${functionName}[^{]*\\{[\\s\\S]*?\\n\\}`,
+        'g'
+      )
+      if (currentFunctionRegex.test(store.pluginCode)) {
+        finalCode = store.pluginCode.replace(currentFunctionRegex, code.trim())
+        isPartialUpdate = true
+      } else {
+        // 找不到对应函数，可能是新增，插入到文件末尾（globalThis 绑定之前）
+        const globalThisMatch = store.pluginCode.match(/(globalThis\.\w+\s*=\s*\w+;?\s*)$/)
+        if (globalThisMatch) {
+          finalCode = store.pluginCode.replace(
+            globalThisMatch[1],
+            `\n${code.trim()}\n\n${globalThisMatch[1]}`
+          )
+        } else {
+          finalCode = store.pluginCode + '\n\n' + code.trim()
+        }
+        isPartialUpdate = true
+      }
+    }
+  }
+  
+  // 如果不是局部更新，则作为完整代码替换
+  if (!isPartialUpdate) {
+    finalCode = code
+  }
+  
+  // 验证最终代码
+  const validationResult = await validateCode(finalCode)
   
   if (!validationResult.is_valid) {
     const errorMsg = validationResult.errors.join('\n')
@@ -912,21 +1124,13 @@ const handleApplyAiCode = async (code: string, context?: CodeReference | null) =
       return
     }
   } else if (validationResult.warnings.length > 0) {
-    // 只有警告，显示提示但允许应用
     const warningMsg = validationResult.warnings.join('\n')
     showToast(t('plugins.codeHasWarnings', { warnings: warningMsg }), 'warning')
   }
   
-  let finalCode = store.pluginCode
-  if (context && !context.isFullCode && store.pluginCode.includes(context.code)) {
-    finalCode = store.pluginCode.replace(context.code, code)
-  } else {
-    finalCode = code
-  }
-  store.pluginCode = finalCode
-  updateEditorsContent(finalCode)
-  showToast(t('plugins.codeApplied', '代码已应用'), 'success')
-  if (!store.isEditing) handleEnableEditing()
+  // 以前是直接应用，现在改为进入 Diff 预览模式
+  handlePreviewAiCode(finalCode)
+  showToast(t('plugins.reviewChanges', '请审查代码变更'), 'info')
 }
 
 const validateCode = async (code: string): Promise<any> => {
@@ -954,11 +1158,27 @@ const handlePreviewAiCode = (code: string) => {
   })
 }
 
+const handleConfirmMerge = () => {
+  store.pluginCode = store.previewCode
+  updateEditorsContent(store.pluginCode)
+  
+  store.isPreviewMode = false
+  store.previewCode = ''
+  if (diffMergeView) { diffMergeView.destroy(); diffMergeView = null }
+  
+  nextTick(() => {
+    if (store.isFullscreen) initFullscreenCodeEditor()
+    else initCodeEditor()
+  })
+  
+  showToast(t('plugins.codeMerged', '代码已合并'), 'success')
+  if (!store.isEditing) handleEnableEditing()
+}
+
 const handleExitPreviewMode = () => {
   store.isPreviewMode = false
   store.previewCode = ''
-  if (diffEditorViewA) { diffEditorViewA.destroy(); diffEditorViewA = null }
-  if (diffEditorViewB) { diffEditorViewB.destroy(); diffEditorViewB = null }
+  if (diffMergeView) { diffMergeView.destroy(); diffMergeView = null }
   nextTick(() => {
     if (store.isFullscreen) initFullscreenCodeEditor()
     else initCodeEditor()
@@ -1119,8 +1339,7 @@ watch(() => store.isFullscreen, (isFullscreen) => {
 onUnmounted(() => {
   if (codeEditorView) codeEditorView.destroy()
   if (fullscreenCodeEditorView) fullscreenCodeEditorView.destroy()
-  if (diffEditorViewA) diffEditorViewA.destroy()
-  if (diffEditorViewB) diffEditorViewB.destroy()
+  if (diffMergeView) diffMergeView.destroy()
   document.removeEventListener('keydown', handleKeyDown, true)
 })
 </script>

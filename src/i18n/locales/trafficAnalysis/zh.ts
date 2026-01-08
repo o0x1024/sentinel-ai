@@ -176,11 +176,30 @@ export default {
       exportToFile: '导出到文件',
       exportRequest: '导出请求',
       exportResponse: '导出响应',
+      exportHAR: '导出为 HAR 格式',
+      exportAsHAR: '导出为 HAR',
       request: '请求',
       response: '响应',
       noSelection: '请先选择要导出的请求',
       success: '成功导出 {count} 个{type}到文件',
-      failed: '导出失败：{error}'
+      harSuccess: '成功导出 {count} 个请求为 HAR 格式',
+      failed: '导出失败：{error}',
+      saveHistory: '保存历史',
+      loadHistory: '加载历史',
+      historySaved: '已保存 {count} 条记录到数据库',
+      historyLoaded: '已从数据库加载 {count} 条记录',
+      saveFailed: '保存失败: {error}',
+      loadFailed: '加载失败: {error}',
+      persistenceConfig: '持久化配置',
+      enableAutoPersistence: '启用自动持久化',
+      autoPersistenceThreshold: '自动持久化阈值',
+      autoPersistenceInterval: '自动持久化间隔（秒）',
+      thresholdHelp: '缓存达到此数量时自动保存到数据库',
+      intervalHelp: '定期自动保存的时间间隔',
+      compressionEnabled: '响应体压缩',
+      compressionHelp: '自动压缩超过 1KB 的响应体以节省存储空间',
+      configSaved: '配置已保存',
+      configSaveFailed: '配置保存失败: {error}'
     },
     filterDialog: {
       title: '过滤设置',
@@ -294,6 +313,24 @@ export default {
         caNotTrusted: '根证书未受信任',
         serverCertIssue: '目标服务器证书存在问题'
       }
+    },
+    errors: {
+      loadFailed: '加载请求历史失败',
+      loadMoreFailed: '加载更多失败',
+      clearFailed: '清空历史记录失败',
+      wsConnectionFailed: '加载 WebSocket 连接失败',
+      wsMessagesFailed: '加载 WebSocket 消息失败',
+      exportFailed: '导出失败',
+      networkError: '网络错误',
+      timeout: '请求超时',
+      unknown: '未知错误'
+    },
+    messages: {
+      historyCleared: '历史记录已清空',
+      exportSuccess: '导出成功',
+      copiedToClipboard: '已复制到剪贴板',
+      sentToRepeater: '已发送到重放器',
+      sentToAssistant: '已发送到 AI 助手'
     }
   },
   // Proxy Repeater Component
@@ -355,6 +392,10 @@ export default {
       unknownError: '未知错误',
       hexDisplayLimited: 'Hex 显示已限制到前 {size}',
       invalidUrl: 'URL 格式不正确',
+      invalidPort: '端口号无效（1-65535）',
+      invalidHost: '主机名不能为空',
+      largeResponse: '响应体较大（{size}），渲染可能较慢',
+      tooManyTabs: '标签页数量已达上限（{max}个）',
       confirmCloseTab: '确认关闭标签页？',
       confirmCloseTabMessage: '此标签页有未保存的内容，确认关闭吗？',
       confirmCloseAllTabs: '确认关闭所有标签页？',

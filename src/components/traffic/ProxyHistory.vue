@@ -584,6 +584,12 @@
                   {{ $t('trafficAnalysis.history.export.exportResponse') }}
                 </a>
               </li>
+              <li>
+                <a @click="exportAsHAR" class="flex items-center gap-2">
+                  <i class="fas fa-file-code text-success"></i>
+                  {{ $t('trafficAnalysis.history.export.exportHAR') }}
+                </a>
+              </li>
             </ul>
           </div>
         </template>
@@ -1196,6 +1202,8 @@ const expandedWsConnections = ref<Set<string>>(new Set());
 // WebSocket 连接内部 Tab 状态: connectionId -> 'messages' | 'handshake'
 const activeWsTabs = ref<Map<string, 'messages' | 'handshake'>>(new Map());
 const isLoadingWs = ref(false);
+// WebSocket 消息缓存：connectionId -> messages
+const wsMessagesCache = ref<Map<string, WebSocketMessage[]>>(new Map());
 
 const showDetailsModal = ref(false);
 const showColumnSettings = ref(false);
@@ -1226,14 +1234,16 @@ const resizeStartTopHeight = ref(0);
 const resizeStartLeftWidth = ref(0);
 
 // 分页和性能优化
-const maxRequestsInMemory = 500; // 内存中最多保留 500 条记录
+const maxRequestsInMemory = 1000; // 增加到 1000 条
 const initialLoadLimit = 100; // 初次加载 100 条
-const batchUpdateThreshold = 5; // 批量更新阈值（降低以实现更实时的显示）
+const batchUpdateThreshold = 10; // 批量更新阈值（增加到 10）
 const loadMoreSize = 50; // 每次加载更多的数量
 let pendingUpdates: ProxyRequest[] = []; // 待处理的新请求
 let updateTimer: number | null = null; // 批量更新定时器
 const hasMore = ref(true); // 是否还有更多数据
 const isLoadingMore = ref(false); // 是否正在加载更多
+// 请求 ID 集合（用于快速去重）
+const requestIdSet = ref<Set<number>>(new Set());
 
 // 详情面板的标签页
 const requestTab = ref<'pretty' | 'raw' | 'hex'>('pretty');
@@ -1376,99 +1386,133 @@ const bufferSize = 5;
 // 事件监听器
 let unlistenRequest: (() => void) | null = null;
 
-// 计算属性
-const filteredRequests = computed(() => {
-  let result = requests.value;
-  const config = appliedFilterConfig.value;
+// 过滤器缓存（用于预编译正则和扩展名集合）
+const filterCache = ref<{
+  config: any;
+  searchRegex: RegExp | null;
+  searchTerm: string;
+  showExts: Set<string> | null;
+  hideExts: Set<string> | null;
+}>({
+  config: null,
+  searchRegex: null,
+  searchTerm: '',
+  showExts: null,
+  hideExts: null,
+});
 
-  // Filter by request type
-  if (config.requestType.showOnlyWithParams) {
-    result = result.filter(r => hasParams(r.url));
+// 更新过滤器缓存
+function updateFilterCache(config: any) {
+  // 预编译搜索正则
+  let searchRegex: RegExp | null = null;
+  if (config.search.term && config.search.regex) {
+    try {
+      searchRegex = new RegExp(config.search.term, config.search.caseSensitive ? '' : 'i');
+    } catch {
+      searchRegex = null;
+    }
   }
-  if (config.requestType.hideWithoutResponse) {
-    result = result.filter(r => r.status_code > 0);
-  }
-
-  // Filter by status code
-  result = result.filter(r => {
-    const code = r.status_code;
-    if (code === 0) return true; // 未收到响应的请求
-    if (code >= 200 && code < 300) return config.statusCode.s2xx;
-    if (code >= 300 && code < 400) return config.statusCode.s3xx;
-    if (code >= 400 && code < 500) return config.statusCode.s4xx;
-    if (code >= 500 && code < 600) return config.statusCode.s5xx;
-    return true;
-  });
-
-  // Filter by MIME type
-  result = result.filter(r => {
-    const mime = getMimeTypeCategory(r);
-    if (mime === 'html') return config.mimeType.html;
-    if (mime === 'script') return config.mimeType.script;
-    if (mime === 'xml') return config.mimeType.xml;
-    if (mime === 'css') return config.mimeType.css;
-    if (mime === 'image') return config.mimeType.images;
-    if (mime === 'flash') return config.mimeType.flash;
-    if (mime === 'text') return config.mimeType.otherText;
-    if (mime === 'binary') return config.mimeType.otherBinary;
-    return true; // 未知类型默认显示
-  });
-
-  // Filter by file extension
+  
+  // 预处理扩展名集合
+  let showExts: Set<string> | null = null;
   if (config.extension.showOnlyEnabled && config.extension.showOnly) {
-    const showExts = config.extension.showOnly.toLowerCase().split(',').map(e => e.trim());
-    result = result.filter(r => {
-      const ext = getExtension(r.url).toLowerCase();
-      return !ext || showExts.includes(ext);
-    });
+    showExts = new Set(config.extension.showOnly.toLowerCase().split(',').map((e: string) => e.trim()));
   }
+  
+  let hideExts: Set<string> | null = null;
   if (config.extension.hideEnabled && config.extension.hide) {
-    const hideExts = config.extension.hide.toLowerCase().split(',').map(e => e.trim());
-    result = result.filter(r => {
-      const ext = getExtension(r.url).toLowerCase();
-      return !ext || !hideExts.includes(ext);
-    });
+    hideExts = new Set(config.extension.hide.toLowerCase().split(',').map((e: string) => e.trim()));
   }
+  
+  filterCache.value = {
+    config,
+    searchRegex,
+    searchTerm: config.search.term ? (config.search.caseSensitive ? config.search.term : config.search.term.toLowerCase()) : '',
+    showExts,
+    hideExts,
+  };
+}
 
-  // Filter by search term
-  if (config.search.term) {
-    const term = config.search.term;
-    const caseSensitive = config.search.caseSensitive;
-    const isRegex = config.search.regex;
-    const isNegative = config.search.negative;
-    
-    result = result.filter(r => {
+// 计算属性 - 优化为单次遍历
+const filteredRequests = computed(() => {
+  const config = appliedFilterConfig.value;
+  
+  // 更新缓存（仅在配置变化时）
+  if (filterCache.value.config !== config) {
+    updateFilterCache(config);
+  }
+  
+  const cache = filterCache.value;
+  
+  // 单次遍历完成所有过滤
+  return requests.value.filter(r => {
+    // Filter by request type
+    if (config.requestType.showOnlyWithParams && !hasParams(r.url)) {
+      return false;
+    }
+    if (config.requestType.hideWithoutResponse && r.status_code === 0) {
+      return false;
+    }
+
+    // Filter by status code
+    const code = r.status_code;
+    if (code !== 0) {
+      if (code >= 200 && code < 300 && !config.statusCode.s2xx) return false;
+      if (code >= 300 && code < 400 && !config.statusCode.s3xx) return false;
+      if (code >= 400 && code < 500 && !config.statusCode.s4xx) return false;
+      if (code >= 500 && code < 600 && !config.statusCode.s5xx) return false;
+    }
+
+    // Filter by MIME type
+    const mime = getMimeTypeCategory(r);
+    if (mime === 'html' && !config.mimeType.html) return false;
+    if (mime === 'script' && !config.mimeType.script) return false;
+    if (mime === 'xml' && !config.mimeType.xml) return false;
+    if (mime === 'css' && !config.mimeType.css) return false;
+    if (mime === 'image' && !config.mimeType.images) return false;
+    if (mime === 'flash' && !config.mimeType.flash) return false;
+    if (mime === 'text' && !config.mimeType.otherText) return false;
+    if (mime === 'binary' && !config.mimeType.otherBinary) return false;
+
+    // Filter by file extension
+    const ext = getExtension(r.url).toLowerCase();
+    if (cache.showExts && ext && !cache.showExts.has(ext)) {
+      return false;
+    }
+    if (cache.hideExts && ext && cache.hideExts.has(ext)) {
+      return false;
+    }
+
+    // Filter by search term
+    if (cache.searchTerm) {
       const text = r.url + ' ' + r.host;
       let match = false;
       
-      if (isRegex) {
-        try {
-          const regex = new RegExp(term, caseSensitive ? '' : 'i');
-          match = regex.test(text);
-        } catch {
-          match = false;
-        }
+      if (cache.searchRegex) {
+        match = cache.searchRegex.test(text);
       } else {
-        if (caseSensitive) {
-          match = text.includes(term);
+        if (config.search.caseSensitive) {
+          match = text.includes(cache.searchTerm);
         } else {
-          match = text.toLowerCase().includes(term.toLowerCase());
+          match = text.toLowerCase().includes(cache.searchTerm);
         }
       }
       
-      return isNegative ? !match : match;
-    });
-  }
+      if (config.search.negative ? match : !match) {
+        return false;
+      }
+    }
 
-  // Filter by listener port
-  if (config.listener.port) {
-    result = result.filter(r => {
+    // Filter by listener port
+    if (config.listener.port) {
       const listenerPort = r.listener || '';
-      return listenerPort.includes(config.listener.port);
-    });
-  }
+      if (!listenerPort.includes(config.listener.port)) {
+        return false;
+      }
+    }
 
-  return result;
+    return true;
+  });
 });
 
 // 获取 MIME 类型分类
@@ -1963,11 +2007,16 @@ async function refreshRequests() {
     if (response.success && response.data) {
       requests.value = response.data;
       hasMore.value = response.data.length === initialLoadLimit;
+      
+      // 重建 ID 集合
+      requestIdSet.value.clear();
+      response.data.forEach((req: ProxyRequest) => requestIdSet.value.add(req.id));
+      
       updateStats();
     }
   } catch (error: any) {
     console.error('Failed to refresh requests:', error);
-    dialog.toast.error(`加载请求历史失败: ${error}`);
+    dialog.toast.error(`${t('trafficAnalysis.history.errors.loadFailed')}: ${error}`);
   } finally {
     isLoading.value = false;
   }
@@ -2066,8 +2115,14 @@ function formatWsTime(timestamp: string): string {
   }
 }
 
-// 获取特定连接的消息
+// 获取特定连接的消息（优先使用缓存）
 function getWsMessagesForConnection(connectionId: string): WebSocketMessage[] {
+  // 优先从缓存获取
+  const cached = wsMessagesCache.value.get(connectionId);
+  if (cached) {
+    return cached;
+  }
+  // 回退到过滤全局列表
   return wsMessages.value.filter(msg => msg.connection_id === connectionId);
 }
 
@@ -2100,8 +2155,13 @@ async function loadWsConnections() {
   }
 }
 
-// 加载特定连接的消息
+// 加载特定连接的消息（带缓存）
 async function loadWsMessages(connectionId: string) {
+  // 检查缓存
+  if (wsMessagesCache.value.has(connectionId)) {
+    return;
+  }
+  
   try {
     const response = await invoke<any>('list_websocket_messages', {
       connectionId,
@@ -2110,9 +2170,13 @@ async function loadWsMessages(connectionId: string) {
     });
     
     if (response.success && response.data) {
-      // 合并消息（避免重复）
+      const messages = response.data as WebSocketMessage[];
+      // 缓存消息
+      wsMessagesCache.value.set(connectionId, messages);
+      
+      // 合并到全局消息列表（避免重复）
       const existingIds = new Set(wsMessages.value.map(m => m.id));
-      const newMessages = (response.data as WebSocketMessage[]).filter(m => !existingIds.has(m.id));
+      const newMessages = messages.filter(m => !existingIds.has(m.id));
       wsMessages.value = [...wsMessages.value, ...newMessages];
     }
   } catch (error: any) {
@@ -2138,23 +2202,28 @@ function updateStatsIncremental(newRequest: ProxyRequest) {
 
 
 
-// 批量处理待更新的请求
+// 批量处理待更新的请求（优化去重）
 function processPendingUpdates() {
   if (pendingUpdates.length === 0) return;
   
   console.log(`Processing ${pendingUpdates.length} pending updates`);
   
-  // 去重：根据 ID 过滤掉已存在的请求
-  const existingIds = new Set(requests.value.map(r => r.id));
-  const newRequests = pendingUpdates.filter(req => !existingIds.has(req.id));
+  // 使用 Set 快速去重
+  const newRequests = pendingUpdates.filter(req => !requestIdSet.value.has(req.id));
   
   if (newRequests.length > 0) {
     // 批量添加到列表头部
     requests.value = [...newRequests, ...requests.value];
     
+    // 更新 ID 集合
+    newRequests.forEach(req => requestIdSet.value.add(req.id));
+    
     // 限制最大数量
     if (requests.value.length > maxRequestsInMemory) {
+      const removed = requests.value.slice(maxRequestsInMemory);
       requests.value = requests.value.slice(0, maxRequestsInMemory);
+      // 从 ID 集合中移除被删除的请求
+      removed.forEach(req => requestIdSet.value.delete(req.id));
     }
     
     // 批量更新统计
@@ -2743,7 +2812,7 @@ async function exportSelectedToFile(type: 'request' | 'response') {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const defaultFilename = `${type}-export-${timestamp}.txt`;
     
-    // Open save dialog
+    // Open save dialog with JSON support
     const filePath = await save({
       defaultPath: defaultFilename,
       filters: [{
@@ -2752,6 +2821,9 @@ async function exportSelectedToFile(type: 'request' | 'response') {
       }, {
         name: 'HTTP Files',
         extensions: ['http']
+      }, {
+        name: 'JSON Files',
+        extensions: ['json']
       }, {
         name: 'All Files',
         extensions: ['*']
@@ -2762,32 +2834,54 @@ async function exportSelectedToFile(type: 'request' | 'response') {
       return; // User cancelled
     }
     
-    // Format content
+    // Format content based on file extension
     let content = '';
     
-    for (let i = 0; i < selected.length; i++) {
-      const req = selected[i];
-      
-      if (i > 0) {
-        content += '\n\n' + '='.repeat(80) + '\n\n';
-      }
-      
-      // Add metadata header
-      content += `# ${type.toUpperCase()} ${i + 1}/${selected.length}\n`;
-      content += `# URL: ${req.url}\n`;
-      content += `# Method: ${req.method}\n`;
-      content += `# Status: ${req.status_code || 'N/A'}\n`;
-      content += `# Timestamp: ${req.timestamp}\n`;
-      if (req.was_edited) {
-        content += `# Modified: Yes\n`;
-      }
-      content += '\n';
-      
-      // Add request or response content
-      if (type === 'request') {
-        content += formatRequestRaw(req, 'edited');
-      } else {
-        content += formatResponseRaw(req, 'edited');
+    if (filePath.endsWith('.json')) {
+      // JSON format export
+      const exportData = selected.map(req => ({
+        id: req.id,
+        url: req.url,
+        method: req.method,
+        host: req.host,
+        protocol: req.protocol,
+        status_code: req.status_code,
+        request_headers: req.request_headers,
+        request_body: req.request_body,
+        response_headers: req.response_headers,
+        response_body: req.response_body,
+        response_size: req.response_size,
+        response_time: req.response_time,
+        timestamp: req.timestamp,
+        was_edited: req.was_edited,
+      }));
+      content = JSON.stringify(exportData, null, 2);
+    } else {
+      // Text format export
+      for (let i = 0; i < selected.length; i++) {
+        const req = selected[i];
+        
+        if (i > 0) {
+          content += '\n\n' + '='.repeat(80) + '\n\n';
+        }
+        
+        // Add metadata header
+        content += `# ${type.toUpperCase()} ${i + 1}/${selected.length}\n`;
+        content += `# URL: ${req.url}\n`;
+        content += `# Method: ${req.method}\n`;
+        content += `# Status: ${req.status_code || 'N/A'}\n`;
+        content += `# Timestamp: ${req.timestamp}\n`;
+        if (req.was_edited) {
+          content += `# Modified: Yes\n`;
+        }
+        content += '\n';
+        
+        // Add request or response content
+        if (type === 'request') {
+          content += formatRequestRaw(req, 'edited');
+        } else {
+          content += formatResponseRaw(req, 'edited');
+        }
       }
     }
     
@@ -2812,6 +2906,152 @@ async function exportSelectedToFile(type: 'request' | 'response') {
       error: String(error) 
     }));
   }
+}
+
+// 导出为 HAR 格式
+async function exportAsHAR() {
+  const selected = Array.from(selectedRequests.value).map(id => 
+    requests.value.find(r => r.id === id)
+  ).filter(r => r !== undefined) as ProxyRequest[];
+  
+  if (selected.length === 0) {
+    dialog.toast.warning(t('trafficAnalysis.history.export.noSelection'));
+    return;
+  }
+  
+  try {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const defaultFilename = `traffic-export-${timestamp}.har`;
+    
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{
+        name: 'HAR Files',
+        extensions: ['har']
+      }, {
+        name: 'All Files',
+        extensions: ['*']
+      }]
+    });
+    
+    if (!filePath) {
+      return;
+    }
+    
+    // 构建 HAR 格式
+    const har = {
+      log: {
+        version: '1.2',
+        creator: {
+          name: 'Sentinel AI',
+          version: '1.0.0'
+        },
+        entries: selected.map(req => {
+          // 解析请求头
+          let requestHeaders: Record<string, string> = {};
+          if (req.request_headers) {
+            try {
+              requestHeaders = JSON.parse(req.request_headers);
+            } catch {}
+          }
+          
+          // 解析响应头
+          let responseHeaders: Record<string, string> = {};
+          if (req.response_headers) {
+            try {
+              responseHeaders = JSON.parse(req.response_headers);
+            } catch {}
+          }
+          
+          // 提取查询参数
+          const urlObj = new URL(req.url);
+          const queryString = Array.from(urlObj.searchParams.entries()).map(([name, value]) => ({
+            name,
+            value
+          }));
+          
+          return {
+            startedDateTime: req.timestamp,
+            time: req.response_time || 0,
+            request: {
+              method: req.method,
+              url: req.url,
+              httpVersion: 'HTTP/1.1',
+              headers: Object.entries(requestHeaders).map(([name, value]) => ({
+                name,
+                value
+              })),
+              queryString,
+              cookies: [],
+              headersSize: -1,
+              bodySize: req.request_body ? req.request_body.length : 0,
+              postData: req.request_body ? {
+                mimeType: requestHeaders['content-type'] || 'text/plain',
+                text: req.request_body
+              } : undefined
+            },
+            response: {
+              status: req.status_code || 0,
+              statusText: getHarStatusText(req.status_code),
+              httpVersion: 'HTTP/1.1',
+              headers: Object.entries(responseHeaders).map(([name, value]) => ({
+                name,
+                value
+              })),
+              cookies: [],
+              content: {
+                size: req.response_size || 0,
+                mimeType: responseHeaders['content-type'] || 'text/plain',
+                text: req.response_body || ''
+              },
+              redirectURL: '',
+              headersSize: -1,
+              bodySize: req.response_size || 0
+            },
+            cache: {},
+            timings: {
+              send: 0,
+              wait: req.response_time || 0,
+              receive: 0
+            }
+          };
+        })
+      }
+    };
+    
+    await writeTextFile(filePath, JSON.stringify(har, null, 2));
+    
+    dialog.toast.success(t('trafficAnalysis.history.messages.exportSuccess'));
+    
+    selectedRequests.value.clear();
+    isMultiSelectMode.value = false;
+    
+  } catch (error) {
+    console.error('HAR export failed:', error);
+    dialog.toast.error(t('trafficAnalysis.history.export.failed', { 
+      error: String(error) 
+    }));
+  }
+}
+
+// 获取 HTTP 状态文本（复用上面的函数）
+function getHarStatusText(code: number): string {
+  const statusTexts: Record<number, string> = {
+    200: 'OK',
+    201: 'Created',
+    204: 'No Content',
+    301: 'Moved Permanently',
+    302: 'Found',
+    304: 'Not Modified',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    500: 'Internal Server Error',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable'
+  };
+  return statusTexts[code] || 'Unknown';
 }
 
 function formatRequest(request: ProxyRequest, tab: string, viewMode: 'original' | 'edited' = 'edited'): string {
@@ -3179,7 +3419,10 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  // 清理事件监听器
   if (unlistenRequest) unlistenRequest();
+  
+  // 清理 ResizeObserver
   if (resizeObserver && scrollContainer.value) {
     resizeObserver.unobserve(scrollContainer.value);
     resizeObserver.disconnect();
@@ -3199,6 +3442,23 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopVerticalResize);
   // 清理键盘快捷键监听
   document.removeEventListener('keydown', handleKeydown);
+  
+  // 清理内存 - 防止泄漏
+  selectedRequests.value.clear();
+  requestIdSet.value.clear();
+  wsMessagesCache.value.clear();
+  expandedWsConnections.value.clear();
+  activeWsTabs.value.clear();
+  filterCache.value = {
+    config: null,
+    searchRegex: null,
+    searchTerm: '',
+    showExts: null,
+    hideExts: null,
+  };
+  
+  // 清理待处理更新
+  pendingUpdates = [];
 });
 
 // 监听详情面板的打开/关闭，更新容器高度

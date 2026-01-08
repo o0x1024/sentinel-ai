@@ -11,8 +11,58 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+use flate2::write::GzEncoder;
+use flate2::read::GzDecoder;
+use flate2::Compression;
+use std::io::{Write, Read};
+use base64::{Engine as _, engine::general_purpose};
 
 use super::service::DatabaseService;
+
+/// 压缩阈值（字节）- 超过此大小才压缩
+const COMPRESSION_THRESHOLD: usize = 1024; // 1KB
+
+/// 压缩数据
+fn compress_data(data: &str) -> Result<Vec<u8>> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data.as_bytes())?;
+    Ok(encoder.finish()?)
+}
+
+/// 解压数据
+fn decompress_data(data: &[u8]) -> Result<String> {
+    let mut decoder = GzDecoder::new(data);
+    let mut decompressed = String::new();
+    decoder.read_to_string(&mut decompressed)?;
+    Ok(decompressed)
+}
+
+/// 智能压缩：只压缩超过阈值的数据
+fn smart_compress(data: Option<&String>) -> Result<(Option<String>, bool)> {
+    match data {
+        Some(s) if s.len() > COMPRESSION_THRESHOLD => {
+            let compressed = compress_data(s)?;
+            // 使用 base64 编码以便存储在 TEXT 字段
+            let encoded = general_purpose::STANDARD.encode(&compressed);
+            Ok((Some(encoded), true))
+        }
+        Some(s) => Ok((Some(s.clone()), false)),
+        None => Ok((None, false)),
+    }
+}
+
+/// 智能解压：根据标记决定是否解压
+fn smart_decompress(data: Option<String>, is_compressed: bool) -> Result<Option<String>> {
+    match (data, is_compressed) {
+        (Some(s), true) => {
+            let decoded = general_purpose::STANDARD.decode(&s)?;
+            let decompressed = decompress_data(&decoded)?;
+            Ok(Some(decompressed))
+        }
+        (Some(s), false) => Ok(Some(s)),
+        (None, _) => Ok(None),
+    }
+}
 
 impl DatabaseService {
     /// Migrate old table names
@@ -625,17 +675,22 @@ impl DatabaseService {
     // Proxy Request History Operations
     // ============================================================
 
-    /// Insert proxy request record
+    /// Insert proxy request record (with compression support)
     pub async fn insert_proxy_request(&self, request: &ProxyRequestRecord) -> Result<i64> {
         let pool = self.get_pool()?;
+        
+        // 智能压缩请求体和响应体
+        let (request_body, request_compressed) = smart_compress(request.request_body.as_ref())?;
+        let (response_body, response_compressed) = smart_compress(request.response_body.as_ref())?;
         
         let result = sqlx::query(
             r#"
             INSERT INTO proxy_requests (
                 url, host, protocol, method, status_code,
                 request_headers, request_body, response_headers, response_body,
-                response_size, response_time, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                response_size, response_time, timestamp,
+                request_body_compressed, response_body_compressed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&request.url)
@@ -644,19 +699,21 @@ impl DatabaseService {
         .bind(&request.method)
         .bind(request.status_code)
         .bind(&request.request_headers)
-        .bind(&request.request_body)
+        .bind(&request_body)
         .bind(&request.response_headers)
-        .bind(&request.response_body)
+        .bind(&response_body)
         .bind(request.response_size)
         .bind(request.response_time)
         .bind(request.timestamp)
+        .bind(request_compressed)
+        .bind(response_compressed)
         .execute(pool)
         .await?;
 
         Ok(result.last_insert_rowid())
     }
 
-    /// List proxy requests with filters
+    /// List proxy requests with filters (with decompression support)
     pub async fn list_proxy_requests(
         &self,
         filters: ProxyRequestFilters,
@@ -667,7 +724,8 @@ impl DatabaseService {
             r#"
             SELECT id, url, host, protocol, method, status_code,
                    request_headers, request_body, response_headers, response_body,
-                   response_size, response_time, timestamp
+                   response_size, response_time, timestamp,
+                   request_body_compressed, response_body_compressed
             FROM proxy_requests
             WHERE 1=1
             "#,
@@ -698,9 +756,15 @@ impl DatabaseService {
             query.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let records = sqlx::query_as::<_, ProxyRequestRecord>(&query)
+        let mut records = sqlx::query_as::<_, ProxyRequestRecord>(&query)
             .fetch_all(pool)
             .await?;
+
+        // 解压缩数据
+        for record in &mut records {
+            record.request_body = smart_decompress(record.request_body.take(), record.request_body_compressed)?;
+            record.response_body = smart_decompress(record.response_body.take(), record.response_body_compressed)?;
+        }
 
         Ok(records)
     }
@@ -940,6 +1004,10 @@ pub struct ProxyRequestRecord {
     pub response_size: i64,
     pub response_time: i64,
     pub timestamp: DateTime<Utc>,
+    #[serde(default)]
+    pub request_body_compressed: bool,
+    #[serde(default)]
+    pub response_body_compressed: bool,
 }
 
 /// Proxy request filters

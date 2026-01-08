@@ -438,6 +438,9 @@ const responseEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 // 请求取消控制器映射（每个 tab 一个）
 const abortControllers = new Map<string, { cancelled: boolean }>();
 
+// 历史记录限制
+const MAX_TABS = 50; // 最多保留50个标签页
+
 // 右键菜单状态
 const contextMenu = ref({
   visible: false,
@@ -500,7 +503,15 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
     try {
       const urlObj = new URL(request.url);
       targetHost = urlObj.hostname;
-      targetPort = urlObj.port ? parseInt(urlObj.port) : (urlObj.protocol === 'https:' ? 443 : 80);
+      
+      // 安全的端口解析
+      const parsedPort = urlObj.port ? parseInt(urlObj.port, 10) : null;
+      if (parsedPort !== null && !isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+        targetPort = parsedPort;
+      } else {
+        targetPort = urlObj.protocol === 'https:' ? 443 : 80;
+      }
+      
       useTls = urlObj.protocol === 'https:';
       
       const path = urlObj.pathname + urlObj.search;
@@ -516,8 +527,10 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
       if (request.body) {
         rawRequest += request.body;
       }
-    } catch {
-      // Ignore
+    } catch (error) {
+      console.error('Failed to parse URL:', error);
+      // 使用默认值
+      rawRequest = 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n';
     }
   } else {
     rawRequest = 'GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: Sentinel-AI/1.0\r\nAccept: */*\r\n\r\n';
@@ -542,6 +555,12 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
 }
 
 function addTab() {
+  // 限制标签页数量
+  if (tabs.value.length >= MAX_TABS) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
+    return;
+  }
+  
   const tab = createTab();
   tabs.value.push(tab);
   activeTabIndex.value = tabs.value.length - 1;
@@ -608,6 +627,19 @@ async function sendRequest() {
   }
   
   const tab = currentTab.value;
+  
+  // 验证端口号
+  if (!tab.targetPort || tab.targetPort < 1 || tab.targetPort > 65535) {
+    dialog.toast.error(t('trafficAnalysis.repeater.messages.invalidPort'));
+    return;
+  }
+  
+  // 验证主机名
+  if (!tab.targetHost || tab.targetHost.trim().length === 0) {
+    dialog.toast.error(t('trafficAnalysis.repeater.messages.invalidHost'));
+    return;
+  }
+  
   tab.isSending = true;
   tab.response = null;
   tab.rawResponse = '';
@@ -647,6 +679,15 @@ async function sendRequest() {
     
     if (response.success && response.data) {
       targetTab.rawResponse = response.data.raw_response;
+      
+      // 检查响应体大小
+      const responseSize = response.data.raw_response?.length || 0;
+      const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB
+      if (responseSize > MAX_RESPONSE_SIZE) {
+        dialog.toast.warning(t('trafficAnalysis.repeater.messages.largeResponse', { 
+          size: formatBytes(responseSize) 
+        }));
+      }
       
       // 解析响应
       const parsedResponse = parseRawResponse(response.data.raw_response, response.data.response_time_ms);
@@ -867,7 +908,11 @@ function toHex(str: string): string {
   let ascii = '';
   let lineCount = 0;
   
-  for (let i = 0; i < displayStr.length; i++) {
+  // 限制最大行数（避免渲染过多行导致卡顿）
+  const MAX_LINES = 10000;
+  let totalLines = 0;
+  
+  for (let i = 0; i < displayStr.length && totalLines < MAX_LINES; i++) {
     const charCode = displayStr.charCodeAt(i);
     hex += charCode.toString(16).padStart(2, '0') + ' ';
     ascii += charCode >= 32 && charCode < 127 ? displayStr[i] : '.';
@@ -878,6 +923,7 @@ function toHex(str: string): string {
       hex = '';
       ascii = '';
       lineCount = 0;
+      totalLines++;
     }
   }
   
@@ -885,7 +931,7 @@ function toHex(str: string): string {
     lines.push(hex + '   '.repeat(16 - lineCount) + ' ' + ascii);
   }
   
-  if (limited) {
+  if (limited || totalLines >= MAX_LINES) {
     lines.push('');
     lines.push(t('trafficAnalysis.repeater.messages.hexDisplayLimited', { size: formatBytes(MAX_HEX_LENGTH) }));
   }
@@ -957,6 +1003,12 @@ function contextMenuSend() {
 function contextMenuSendToNewTab() {
   hideContextMenu();
   if (!currentTab.value) return;
+  
+  // 限制标签页数量
+  if (tabs.value.length >= MAX_TABS) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
+    return;
+  }
   
   const newTab = createTab();
   newTab.targetHost = currentTab.value.targetHost;
@@ -1324,6 +1376,20 @@ function stopResize() {
 
 // Expose
 function addRequestFromHistory(request: { method: string; url: string; headers: Record<string, string>; body?: string }) {
+  // 限制标签页数量
+  if (tabs.value.length >= MAX_TABS) {
+    dialog.toast.warning(t('trafficAnalysis.repeater.messages.tooManyTabs', { max: MAX_TABS }));
+    // 删除最旧的标签页
+    if (tabs.value.length > 0) {
+      const oldestTab = tabs.value[0];
+      abortControllers.delete(oldestTab.id);
+      tabs.value.shift();
+      if (activeTabIndex.value > 0) {
+        activeTabIndex.value--;
+      }
+    }
+  }
+  
   const tab = createTab(request);
   tabs.value.push(tab);
   activeTabIndex.value = tabs.value.length - 1;
@@ -1389,7 +1455,7 @@ function handleKeydown(event: KeyboardEvent) {
 // Lifecycle
 onMounted(() => {
   // 尝试从 localStorage 恢复 tabs
-  loadTabs();
+  // loadTabs();
   
   // 如果没有恢复到任何 tab，创建一个新的
   if (tabs.value.length === 0 && !props.initialRequest) {

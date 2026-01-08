@@ -725,6 +725,128 @@ async function savePlugin() {
   }
 }
 
+// ===== Diff Format Parser and Applicator =====
+
+interface DiffBlock {
+  type: 'search_replace' | 'insert_after' | 'full_code'
+  search?: string
+  replace?: string
+  insertAfter?: string
+  insertContent?: string
+  fullCode?: string
+}
+
+/**
+ * Parse LLM response for diff blocks
+ */
+function parseDiffBlocks(content: string): DiffBlock[] {
+  const blocks: DiffBlock[] = []
+  
+  // Pattern 1: SEARCH/REPLACE blocks
+  const searchReplaceRegex = /```diff\s*\n<<<<<<< SEARCH\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>> REPLACE\s*\n```/g
+  let match
+  
+  while ((match = searchReplaceRegex.exec(content)) !== null) {
+    blocks.push({
+      type: 'search_replace',
+      search: match[1].trim(),
+      replace: match[2].trim()
+    })
+  }
+  
+  // Pattern 2: INSERT blocks
+  const insertRegex = /```diff\s*\n<<<<<<< INSERT_AFTER\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>> INSERT\s*\n```/g
+  
+  while ((match = insertRegex.exec(content)) !== null) {
+    blocks.push({
+      type: 'insert_after',
+      insertAfter: match[1].trim(),
+      insertContent: match[2].trim()
+    })
+  }
+  
+  // Pattern 3: Full code blocks (fallback)
+  if (blocks.length === 0) {
+    const fullCodeRegex = /```(?:typescript|ts|javascript|js)\s*\n([\s\S]*?)```/g
+    while ((match = fullCodeRegex.exec(content)) !== null) {
+      blocks.push({
+        type: 'full_code',
+        fullCode: match[1].trim()
+      })
+    }
+  }
+  
+  return blocks
+}
+
+/**
+ * Apply diff blocks to current code
+ */
+function applyDiffBlocks(currentCode: string, blocks: DiffBlock[]): { success: boolean, code: string, error?: string } {
+  let resultCode = currentCode
+  
+  for (const block of blocks) {
+    if (block.type === 'search_replace') {
+      const searchText = block.search!
+      const replaceText = block.replace!
+      
+      // Check if search text exists
+      if (!resultCode.includes(searchText)) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Cannot find search text in code:\n${searchText.substring(0, 100)}...`
+        }
+      }
+      
+      // Check if search text is unique
+      const occurrences = resultCode.split(searchText).length - 1
+      if (occurrences > 1) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Search text appears ${occurrences} times in code. Need more context to uniquely identify location.`
+        }
+      }
+      
+      // Apply replacement
+      resultCode = resultCode.replace(searchText, replaceText)
+      
+    } else if (block.type === 'insert_after') {
+      const anchor = block.insertAfter!
+      const content = block.insertContent!
+      
+      // Check if anchor exists
+      if (!resultCode.includes(anchor)) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Cannot find insertion anchor in code:\n${anchor.substring(0, 100)}...`
+        }
+      }
+      
+      // Check if anchor is unique
+      const occurrences = resultCode.split(anchor).length - 1
+      if (occurrences > 1) {
+        return {
+          success: false,
+          code: currentCode,
+          error: `Insertion anchor appears ${occurrences} times in code. Need more specific anchor.`
+        }
+      }
+      
+      // Insert after anchor
+      resultCode = resultCode.replace(anchor, `${anchor}\n${content}`)
+      
+    } else if (block.type === 'full_code') {
+      // Full code replacement
+      resultCode = block.fullCode!
+    }
+  }
+  
+  return { success: true, code: resultCode }
+}
+
 // AI related methods
 async function handleAiQuickAction(action: string) {
   const actions: Record<string, string> = {
@@ -785,17 +907,69 @@ async function sendAiChatMessage(message: string) {
     })
     
     const agentInstructions = `
-you are a senior code editor Agent, writing a plugin for the "Sentinel AI" security testing platform.
-you are goal is to modify the TypeScript code directly and efficiently according to the user's needs.
+You are a senior code editor Agent for the "Sentinel AI" security testing platform.
+Your goal is to make PRECISE, MINIMAL code modifications.
 
-[Behavior Guidelines]:
-1. **Direct Modification**: If the user requires modifying the code, please provide the modified code block directly.
-2. **Partial vs Full**:
-   - If the user only wants to modify a specific function or add a small logic, you can only return the relevant code block (wrapped in \`\`\`typescript).
-   - If the user requires global structure adjustments or explicitly requests, please return the complete code.
-3. **Keep the Context**: When modifying, please refer to the user's [full code context] to ensure that the new code is compatible with the existing logic and type definitions.
-4. **Security First**: As a security plugin, the code must be robust and avoid injection risks and performance bottlenecks.
-5. **Simple Communication**: No need to add too many开场白, directly state what you have modified and then provide the code.
+## CRITICAL OUTPUT FORMAT
+
+You MUST use one of these formats:
+
+### Format 1: SEARCH/REPLACE (for modifying existing code)
+\`\`\`diff
+<<<<<<< SEARCH
+[exact code to find - must be unique, include 3-5 lines before and after]
+=======
+[new code to replace with]
+>>>>>>> REPLACE
+\`\`\`
+
+### Format 2: INSERT (for adding new code)
+\`\`\`diff
+<<<<<<< INSERT_AFTER
+[exact line after which to insert]
+=======
+[new code to insert]
+>>>>>>> INSERT
+\`\`\`
+
+### Format 3: FULL CODE (ONLY if user explicitly requests or needs complete rewrite)
+\`\`\`typescript
+[complete code]
+\`\`\`
+
+## Rules
+1. **DEFAULT to SEARCH/REPLACE** - Never return full code unless absolutely necessary
+2. **Be Precise** - Include enough context (3-5 lines) in SEARCH block to uniquely identify location
+3. **One Change Per Block** - If multiple changes needed, use multiple SEARCH/REPLACE blocks
+4. **Explain First** - Briefly describe what you're changing, then provide the diff block
+5. **Security First** - Ensure modifications don't introduce vulnerabilities
+
+## Examples
+
+**Good Example (Adding payload):**
+I'll add the ORDER BY payloads to the existing array:
+
+\`\`\`diff
+<<<<<<< SEARCH
+const sqlPayloads = [
+    "' OR '1'='1",
+    "' UNION SELECT NULL--"
+];
+=======
+const sqlPayloads = [
+    "' OR '1'='1",
+    "' UNION SELECT NULL--",
+    "' ORDER BY 1--",
+    "' ORDER BY 10--",
+    "' ORDER BY 100--"
+];
+>>>>>>> REPLACE
+\`\`\`
+
+**Bad Example (returning full file):**
+\`\`\`typescript
+// [entire 500 line file]
+\`\`\`
 `
     const systemPrompt = `${baseSystemPrompt}\n\n${agentInstructions}`
     
@@ -841,9 +1015,35 @@ you are goal is to modify the TypeScript code directly and efficiently according
         aiChatStreaming.value = false
         aiChatStreamingContent.value = ''
         
-        // Simple markdown extraction
+        // Parse diff blocks
+        const diffBlocks = parseDiffBlocks(generatedContent)
+        
+        // Try to apply diff blocks automatically
+        let appliedCode: string | null = null
+        let applyError: string | null = null
+        
+        if (diffBlocks.length > 0) {
+          const currentCode = editorView ? editorView.state.doc.toString() : pluginCode.value
+          const result = applyDiffBlocks(currentCode, diffBlocks)
+          
+          if (result.success) {
+            appliedCode = result.code
+            // Auto-apply to editor
+            if (editorView) {
+              editorView.dispatch({
+                changes: { from: 0, to: editorView.state.doc.length, insert: result.code }
+              })
+            } else {
+              pluginCode.value = result.code
+            }
+          } else {
+            applyError = result.error
+          }
+        }
+        
+        // Fallback: Simple markdown extraction for full code blocks
         const codeBlocks: string[] = []
-        const codeBlockRegex = /```(?:typescript|ts|javascript|js)?\n?([\s\S]*?)```/g
+        const codeBlockRegex = /```(?:typescript|ts|javascript|js)\s*\n([\s\S]*?)```/g
         let match
         while ((match = codeBlockRegex.exec(generatedContent)) !== null) {
           codeBlocks.push(match[1].trim())
@@ -852,9 +1052,18 @@ you are goal is to modify the TypeScript code directly and efficiently according
         aiChatMessages.value.push({ 
           role: 'assistant', 
           content: generatedContent,
-          codeBlock: codeBlocks[0],
-          codeBlocks: codeBlocks
+          codeBlock: appliedCode || codeBlocks[0],
+          codeBlocks: appliedCode ? [appliedCode] : codeBlocks,
+          diffApplied: !!appliedCode,
+          diffError: applyError || undefined
         })
+        
+        // Show notification if diff was applied
+        if (appliedCode) {
+          dialog.success('✅ Code changes applied automatically')
+        } else if (applyError) {
+          dialog.error(`⚠️ Could not auto-apply changes: ${applyError}`)
+        }
       }
     })
     

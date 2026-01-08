@@ -718,6 +718,7 @@ pub fn run() {
             commands::prompt_api::evaluate_prompt_api,
             commands::prompt_api::get_plugin_generation_prompt_api,
             commands::prompt_api::get_combined_plugin_prompt_api,
+            commands::prompt_api::get_plugin_interface_doc_api,
             commands::prompt_api::get_default_prompt_content,
             // RAG commands
             rag_commands::rag_ingest_source,
@@ -903,17 +904,18 @@ pub fn run() {
             tool_commands::get_tool_metadata,
             tool_commands::get_tool_usage_stats,
             tool_commands::clear_tool_usage_stats,
-            tool_commands::vision_explorer_receive_credentials,
-            tool_commands::vision_explorer_send_user_message,
-            tool_commands::vision_explorer_skip_login,
-            tool_commands::vision_explorer_manual_login_complete,
-            // Vision Explorer V2 commands
-            commands::vision_explorer_v2::start_vision_explorer_v2,
-            commands::vision_explorer_v2::stop_vision_explorer_v2,
-            commands::vision_explorer_v2::vision_explorer_v2_receive_credentials,
-            commands::vision_explorer_v2::vision_explorer_v2_skip_login,
-            commands::vision_explorer_v2::get_vision_explorer_v2_status,
-            commands::vision_explorer_v2::list_vision_explorer_v2_sessions,
+            // Vision Explorer V2 commands - disabled after ReAct refactoring
+            // Now accessed through Rig Tool interface
+            // tool_commands::vision_explorer_receive_credentials,
+            // tool_commands::vision_explorer_send_user_message,
+            // tool_commands::vision_explorer_skip_login,
+            // tool_commands::vision_explorer_manual_login_complete,
+            // commands::vision_explorer_v2::start_vision_explorer_v2,
+            // commands::vision_explorer_v2::stop_vision_explorer_v2,
+            // commands::vision_explorer_v2::vision_explorer_v2_receive_credentials,
+            // commands::vision_explorer_v2::vision_explorer_v2_skip_login,
+            // commands::vision_explorer_v2::get_vision_explorer_v2_status,
+            // commands::vision_explorer_v2::list_vision_explorer_v2_sessions,
 
             // Task Tool Integration commands
             commands::task_tool_commands::get_task_active_tools,

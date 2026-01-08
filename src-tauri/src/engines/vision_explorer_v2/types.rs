@@ -1,5 +1,10 @@
+//! Data types for Vision Explorer V2 ReAct Architecture
+
 use crate::engines::LlmConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+
+// ==================== Configuration ====================
 
 /// Configuration for Vision Explorer V2
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,27 +24,16 @@ pub struct VisionExplorerV2Config {
     /// Headless mode
     pub headless: bool,
 
-    /// Login timeout in seconds.
-    /// When a login page is detected, the system will wait for this duration
-    /// for user to manually login. After timeout, LLM will attempt auto-login.
-    /// Default: 120 seconds (2 minutes)
-    #[serde(default = "default_login_timeout_seconds")]
-    pub login_timeout_seconds: u64,
-
     /// AI Configuration
     pub ai_config: AIConfig,
 }
 
-fn default_login_timeout_seconds() -> u64 {
-    120
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIConfig {
-    /// Fast LLM for Scout Agents (e.g., Haiku, 4o-mini)
+    /// Fast LLM for text reasoning
     pub fast_model_id: String,
 
-    /// Smart VLM for Specialist Agents (e.g., Sonnet 3.5, GPT-4o)
+    /// Vision LLM for page analysis
     pub vision_model_id: String,
 
     /// Base provider for the fast model
@@ -48,25 +42,25 @@ pub struct AIConfig {
     /// Base provider for the vision model
     pub vision_provider: String,
 
-    /// API Key for fast model (optional, can use env var)
+    /// API Key for fast model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fast_api_key: Option<String>,
 
-    /// API Key for vision model (optional, can use env var)  
+    /// API Key for vision model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vision_api_key: Option<String>,
 
-    /// Base URL for fast model (optional)
+    /// Base URL for fast model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fast_base_url: Option<String>,
 
-    /// Base URL for vision model (optional)
+    /// Base URL for vision model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vision_base_url: Option<String>,
 }
 
 impl AIConfig {
-    /// Create LlmConfig for fast model (used by PlannerAgent, Navigator, etc.)
+    /// Create LlmConfig for fast model
     pub fn fast_llm_config(&self) -> LlmConfig {
         let mut config = LlmConfig::new(&self.fast_provider, &self.fast_model_id);
         if let Some(ref key) = self.fast_api_key {
@@ -78,7 +72,7 @@ impl AIConfig {
         config
     }
 
-    /// Create LlmConfig for vision model (used by VisualAnalyst)
+    /// Create LlmConfig for vision model
     pub fn vision_llm_config(&self) -> LlmConfig {
         let mut config = LlmConfig::new(&self.vision_provider, &self.vision_model_id);
         if let Some(ref key) = self.vision_api_key {
@@ -91,7 +85,6 @@ impl AIConfig {
     }
 }
 
-/// Default implementation
 impl Default for VisionExplorerV2Config {
     fn default() -> Self {
         Self {
@@ -100,7 +93,6 @@ impl Default for VisionExplorerV2Config {
             max_steps: 100,
             user_agent: None,
             headless: false,
-            login_timeout_seconds: 120, // 2 minutes
             ai_config: AIConfig {
                 fast_model_id: "claude-3-haiku".to_string(),
                 vision_model_id: "claude-3-sonnet".to_string(),
@@ -113,4 +105,364 @@ impl Default for VisionExplorerV2Config {
             },
         }
     }
+}
+
+// ==================== Page Context ====================
+
+/// Current page context (input for perception)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageContext {
+    pub url: String,
+    pub title: String,
+    pub screenshot: Vec<u8>,
+    pub html: String,
+    pub viewport_width: u32,
+    pub viewport_height: u32,
+    pub timestamp: u64,
+}
+
+impl PageContext {
+    /// Generate a fingerprint for this page state
+    pub fn fingerprint(&self) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        let url_base = self.url.split('?').next().unwrap_or(&self.url);
+        url_base.hash(&mut hasher);
+        self.title.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+}
+
+// ==================== Observation (Perception Output) ====================
+
+/// Observation from perception engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Observation {
+    /// Type of the current page
+    pub page_type: PageType,
+
+    /// Natural language description of the page
+    pub description: String,
+
+    /// Authentication status
+    pub auth_status: AuthStatus,
+
+    /// Interactive elements found on the page
+    pub elements: Vec<Element>,
+
+    /// Forms detected
+    pub forms: Vec<FormInfo>,
+
+    /// Links discovered
+    pub links: Vec<String>,
+
+    /// API endpoints discovered (from network requests)
+    pub api_endpoints: Vec<String>,
+
+    /// Confidence score (0.0 to 1.0)
+    pub confidence: f32,
+
+    /// Additional metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Type of page
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PageType {
+    Login,
+    Dashboard,
+    Form,
+    List,
+    Detail,
+    Api,
+    Error,
+    Static,
+    Unknown,
+}
+
+/// Authentication status
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthStatus {
+    Authenticated { username: Option<String> },
+    NotAuthenticated,
+    Unknown,
+}
+
+/// Interactive element on the page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Element {
+    pub element_id: String,
+    pub element_type: String, // button, link, input, etc.
+    pub selector: String,
+    pub text: Option<String>,
+    pub href: Option<String>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub is_visible: bool,
+}
+
+/// Form information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormInfo {
+    pub selector: String,
+    pub action: Option<String>,
+    pub method: String,
+    pub fields: Vec<FormField>,
+}
+
+/// Form field
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormField {
+    pub name: String,
+    pub field_type: String,
+    pub label: Option<String>,
+    pub required: bool,
+    pub value: Option<String>,
+    pub placeholder: Option<String>,
+}
+
+// ==================== Action (What to execute) ====================
+
+/// Action to be executed by the action executor
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Action {
+    /// Navigate to a URL
+    Navigate { url: String },
+    
+    /// Click an element
+    Click { 
+        selector: Option<String>,
+        x: Option<i32>,
+        y: Option<i32>,
+    },
+    
+    /// Fill a form field
+    Fill { 
+        selector: String, 
+        value: String 
+    },
+    
+    /// Submit a form
+    Submit { selector: String },
+    
+    /// Scroll the page
+    Scroll { 
+        direction: ScrollDirection,
+        amount: u32,
+    },
+    
+    /// Wait for a duration
+    Wait { duration_ms: u64 },
+    
+    /// Take a snapshot of current state
+    TakeSnapshot,
+    
+    /// Go back in browser history
+    GoBack,
+    
+    /// Stop exploration
+    Stop { reason: String },
+}
+
+/// Scroll direction
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+// ==================== Action Result ====================
+
+/// Result of executing an action
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionResult {
+    /// Whether the action succeeded
+    pub success: bool,
+    
+    /// New URL after action (if changed)
+    pub new_url: Option<String>,
+    
+    /// Error message if failed
+    pub error: Option<String>,
+    
+    /// New observation after action
+    pub observation: Option<Observation>,
+}
+
+// ==================== Exploration State ====================
+
+/// State of the exploration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplorationState {
+    /// Current URL
+    pub current_url: String,
+    
+    /// Current depth in exploration tree
+    pub current_depth: u32,
+    
+    /// Maximum allowed depth
+    pub max_depth: u32,
+    
+    /// Number of steps taken
+    pub steps_taken: u32,
+    
+    /// Maximum allowed steps
+    pub max_steps: u32,
+    
+    /// URLs that have been visited
+    pub visited_urls: HashSet<String>,
+    
+    /// API endpoints discovered
+    pub discovered_apis: Vec<String>,
+    
+    /// History of steps
+    pub history: Vec<Step>,
+    
+    /// Whether exploration is complete
+    pub is_complete: bool,
+    
+    /// Reason for completion (if complete)
+    pub completion_reason: Option<String>,
+}
+
+impl ExplorationState {
+    pub fn new(start_url: String, max_depth: u32, max_steps: u32) -> Self {
+        Self {
+            current_url: start_url.clone(),
+            current_depth: 0,
+            max_depth,
+            steps_taken: 0,
+            max_steps,
+            visited_urls: HashSet::from([start_url]),
+            discovered_apis: Vec::new(),
+            history: Vec::new(),
+            is_complete: false,
+            completion_reason: None,
+        }
+    }
+
+    /// Check if should continue exploration
+    pub fn should_continue(&self) -> bool {
+        !self.is_complete 
+            && self.steps_taken < self.max_steps 
+            && self.current_depth <= self.max_depth
+    }
+
+    /// Record a step
+    pub fn record_step(&mut self, step: Step) {
+        self.steps_taken += 1;
+        self.history.push(step);
+    }
+
+    /// Mark URL as visited
+    pub fn mark_visited(&mut self, url: String) {
+        self.visited_urls.insert(url);
+    }
+
+    /// Check if URL has been visited
+    pub fn is_visited(&self, url: &str) -> bool {
+        self.visited_urls.contains(url)
+    }
+
+    /// Add discovered API
+    pub fn add_api(&mut self, api_url: String) {
+        if !self.discovered_apis.contains(&api_url) {
+            self.discovered_apis.push(api_url);
+        }
+    }
+
+    /// Complete exploration
+    pub fn complete(&mut self, reason: String) {
+        self.is_complete = true;
+        self.completion_reason = Some(reason);
+    }
+}
+
+// ==================== Step (History Entry) ====================
+
+/// A single step in the exploration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Step {
+    pub step_number: u32,
+    pub observation: Observation,
+    pub thought: String,
+    pub action: Action,
+    pub result: ActionResult,
+    pub timestamp: u64,
+}
+
+// ==================== ReAct Decision (LLM Output) ====================
+
+/// Decision made by the ReAct LLM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReActDecision {
+    /// Thought process
+    pub thought: String,
+    
+    /// Chosen action
+    pub action: Action,
+    
+    /// Reasoning for the action
+    pub reason: String,
+}
+
+// ==================== Exploration Result ====================
+
+/// Final result of exploration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplorationResult {
+    pub success: bool,
+    pub pages_visited: u32,
+    pub apis_discovered: u32,
+    pub actions_performed: u32,
+    pub duration_seconds: u64,
+    pub error: Option<String>,
+    pub graph: serde_json::Value, // Simplified graph for export
+}
+
+// ==================== Message Types (for UI updates) ====================
+
+/// Message types sent to the UI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum VisionMessage {
+    Started {
+        session_id: String,
+        target_url: String,
+    },
+    Step {
+        step_number: u32,
+        thought: String,
+        action: String,
+        current_url: String,
+    },
+    Observation {
+        step_number: u32,
+        page_type: PageType,
+        description: String,
+        elements_count: usize,
+    },
+    Progress {
+        steps_taken: u32,
+        max_steps: u32,
+        pages_visited: u32,
+        apis_discovered: u32,
+    },
+    ApiDiscovered {
+        url: String,
+        method: String,
+    },
+    Completed {
+        success: bool,
+        result: ExplorationResult,
+    },
+    Error {
+        message: String,
+    },
 }

@@ -809,6 +809,61 @@ pub async fn start_traffic_analysis_internal(
             }
         }
     });
+    
+    // 启动自动持久化任务（每30秒检查一次）
+    let cache_for_persist = history_cache.clone();
+    let db_for_persist = db_service.clone();
+    let is_running_for_persist = state.is_running.clone();
+    
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            
+            let is_running = *is_running_for_persist.read().await;
+            if !is_running {
+                break;
+            }
+            
+            // 检查是否需要持久化
+            if cache_for_persist.should_auto_persist().await {
+                let unpersisted = cache_for_persist.get_unpersisted_records().await;
+                let count = unpersisted.len();
+                
+                if count > 0 {
+                    tracing::info!("Auto-persisting {} records to database", count);
+                    
+                    let mut saved = 0;
+                    for record in unpersisted {
+                        let db_record = sentinel_db::ProxyRequestRecord {
+                            id: None,
+                            url: record.url,
+                            host: record.host,
+                            protocol: record.protocol,
+                            method: record.method,
+                            status_code: record.status_code as i32,
+                            request_headers: record.request_headers,
+                            request_body: record.request_body,
+                            response_headers: record.response_headers,
+                            response_body: record.response_body,
+                            response_size: record.response_size,
+                            response_time: record.response_time,
+                            timestamp: record.timestamp,
+                            request_body_compressed: false,
+                            response_body_compressed: false,
+                        };
+                        
+                        if db_for_persist.insert_proxy_request(&db_record).await.is_ok() {
+                            saved += 1;
+                        }
+                    }
+                    
+                    cache_for_persist.mark_persisted(saved).await;
+                    tracing::info!("Auto-persisted {}/{} records successfully", saved, count);
+                }
+            }
+        }
+    });
 
     // 保存服务实例
     *state.proxy_service.write().await = Some(proxy);
@@ -2001,7 +2056,129 @@ pub async fn clear_proxy_requests(
     let count = cache.count_http_requests().await as u64;
     cache.clear_http_requests().await;
 
+    tracing::info!("Cleared {} HTTP requests from cache", count);
     Ok(CommandResponse::ok(count))
+}
+
+/// 保存历史记录到数据库
+#[tauri::command]
+pub async fn save_history_to_database(
+    state: State<'_, TrafficAnalysisState>,
+    limit: Option<usize>,
+) -> Result<CommandResponse<usize>, String> {
+    let cache = state.get_history_cache();
+    let db = state.get_db_service();
+    
+    // 获取要保存的请求
+    let filters = sentinel_traffic::HttpRequestFilters {
+        protocol: None,
+        method: None,
+        host: None,
+        status_code_min: None,
+        status_code_max: None,
+        search: None,
+        limit,
+        offset: None,
+    };
+    
+    let requests = cache.list_http_requests(filters).await;
+    let total = requests.len();
+    let mut saved = 0;
+    let mut failed = 0;
+    
+    tracing::info!("Saving {} HTTP requests to database", total);
+    
+    // 批量保存到数据库
+    for request in requests {
+        // 转换为数据库记录格式
+        let record = sentinel_db::ProxyRequestRecord {
+            id: None, // 数据库自动生成
+            url: request.url,
+            host: request.host,
+            protocol: request.protocol,
+            method: request.method,
+            status_code: request.status_code,
+            request_headers: request.request_headers,
+            request_body: request.request_body,
+            response_headers: request.response_headers,
+            response_body: request.response_body,
+            response_size: request.response_size,
+            response_time: request.response_time,
+            timestamp: request.timestamp,
+            request_body_compressed: false,
+            response_body_compressed: false,
+        };
+        
+        match db.insert_proxy_request(&record).await {
+            Ok(_) => saved += 1,
+            Err(e) => {
+                tracing::warn!("Failed to save request {}: {}", request.id, e);
+                failed += 1;
+            }
+        }
+    }
+    
+    tracing::info!("Saved {} requests to database ({} failed)", saved, failed);
+    Ok(CommandResponse::ok(saved))
+}
+
+/// 从数据库加载历史记录
+#[tauri::command]
+pub async fn load_history_from_database(
+    state: State<'_, TrafficAnalysisState>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<CommandResponse<Vec<sentinel_traffic::HttpRequestRecord>>, String> {
+    let db = state.get_db_service();
+    
+    tracing::info!("Loading history from database (limit: {:?}, offset: {:?})", limit, offset);
+    
+    // 从数据库加载请求
+    let filters = sentinel_db::ProxyRequestFilters {
+        protocol: None,
+        method: None,
+        host: None,
+        status_code_min: None,
+        status_code_max: None,
+        limit: limit.map(|l| l as i64),
+        offset: offset.map(|o| o as i64),
+    };
+    
+    let db_records = db.list_proxy_requests(filters)
+        .await
+        .map_err(|e| format!("Failed to load from database: {}", e))?;
+    
+    // 转换为缓存记录格式
+    let mut records = Vec::new();
+    for db_record in db_records {
+        let record = sentinel_traffic::HttpRequestRecord {
+            id: db_record.id.unwrap_or(0),
+            url: db_record.url,
+            host: db_record.host,
+            protocol: db_record.protocol,
+            method: db_record.method,
+            status_code: db_record.status_code,
+            request_headers: db_record.request_headers,
+            request_body: db_record.request_body,
+            response_headers: db_record.response_headers,
+            response_body: db_record.response_body,
+            response_size: db_record.response_size,
+            response_time: db_record.response_time,
+            timestamp: db_record.timestamp,
+            was_edited: false,
+            edited_method: None,
+            edited_url: None,
+            edited_request_headers: None,
+            edited_request_body: None,
+            edited_response_headers: None,
+            edited_response_body: None,
+            edited_status_code: None,
+        };
+        records.push(record);
+    }
+    
+    tracing::info!("Loaded {} requests from database", records.len());
+    Ok(CommandResponse::ok(records))
 }
 
 /// 统计代理请求数量（从内存缓存）
@@ -3517,6 +3694,69 @@ pub async fn get_traffic_analysis_plugin_enabled(
 }
 
 // ============================================================
+// 历史记录持久化配置命令
+// ============================================================
+
+/// 历史记录持久化配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryPersistenceConfig {
+    /// 是否启用自动持久化
+    pub enable_auto_persistence: bool,
+    /// 自动持久化阈值（缓存达到此数量时触发）
+    pub auto_persistence_threshold: usize,
+    /// 自动持久化间隔（秒）
+    pub auto_persistence_interval: u64,
+}
+
+impl Default for HistoryPersistenceConfig {
+    fn default() -> Self {
+        Self {
+            enable_auto_persistence: true,
+            auto_persistence_threshold: 1000,
+            auto_persistence_interval: 300,
+        }
+    }
+}
+
+/// 设置历史记录持久化配置
+#[tauri::command]
+pub async fn set_history_persistence_config(
+    state: State<'_, TrafficAnalysisState>,
+    config: HistoryPersistenceConfig,
+) -> Result<CommandResponse<()>, String> {
+    tracing::info!("Setting history persistence config: {:?}", config);
+    
+    let db = state.get_db_service();
+    let json = serde_json::to_string(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    
+    db.save_proxy_config("history_persistence_config", &json)
+        .await
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    
+    tracing::info!("History persistence config saved successfully");
+    Ok(CommandResponse::ok(()))
+}
+
+/// 获取历史记录持久化配置
+#[tauri::command]
+pub async fn get_history_persistence_config(
+    state: State<'_, TrafficAnalysisState>,
+) -> Result<CommandResponse<HistoryPersistenceConfig>, String> {
+    let db = state.get_db_service();
+    
+    let config = match db.load_proxy_config("history_persistence_config").await {
+        Ok(Some(json)) => {
+            serde_json::from_str::<HistoryPersistenceConfig>(&json)
+                .unwrap_or_default()
+        }
+        _ => HistoryPersistenceConfig::default(),
+    };
+    
+    Ok(CommandResponse::ok(config))
+}
+
+// ============================================================
 // 请求拦截相关命令
 // ============================================================
 
@@ -3937,7 +4177,10 @@ fn decode_http_response(response_buf: &[u8]) -> String {
 }
 
 /// 智能读取 HTTP 响应（根据 Content-Length 或 chunked 编码判断响应结束）
-async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(
+    stream: &mut S,
+    total_timeout: std::time::Duration,
+) -> Result<Vec<u8>, String> {
     use tokio::io::AsyncReadExt;
 
     let mut response_buf = Vec::new();
@@ -3947,10 +4190,30 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> 
     let mut is_chunked = false;
     let mut header_end_pos: Option<usize> = None;
 
+    // 响应体大小限制（10MB）
+    const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+
     // 短超时用于检测响应结束（500ms 没有新数据就认为响应完成）
     let read_timeout = std::time::Duration::from_millis(500);
+    
+    // 总超时计时器
+    let start_time = std::time::Instant::now();
 
     loop {
+        // 检查总超时
+        if start_time.elapsed() >= total_timeout {
+            return Err("Total timeout exceeded".to_string());
+        }
+
+        // 检查响应大小
+        if response_buf.len() > MAX_RESPONSE_SIZE {
+            return Err(format!(
+                "Response too large: {} bytes (max: {} bytes)",
+                response_buf.len(),
+                MAX_RESPONSE_SIZE
+            ));
+        }
+
         match tokio::time::timeout(read_timeout, stream.read(&mut buf)).await {
             Ok(Ok(0)) => break, // EOF
             Ok(Ok(n)) => {
@@ -3968,7 +4231,17 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> 
                             let lower = line.to_lowercase();
                             if lower.starts_with("content-length:") {
                                 if let Some(len_str) = line.split(':').nth(1) {
-                                    content_length = len_str.trim().parse().ok();
+                                    if let Ok(len) = len_str.trim().parse::<usize>() {
+                                        // 验证 Content-Length 合理性
+                                        if len > MAX_RESPONSE_SIZE {
+                                            return Err(format!(
+                                                "Content-Length too large: {} bytes (max: {} bytes)",
+                                                len,
+                                                MAX_RESPONSE_SIZE
+                                            ));
+                                        }
+                                        content_length = Some(len);
+                                    }
                                 }
                             } else if lower.starts_with("transfer-encoding:")
                                 && lower.contains("chunked")
@@ -4003,16 +4276,15 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> 
             }
             Ok(Err(e)) => {
                 tracing::warn!("Read error: {}", e);
-                break;
+                return Err(format!("Read error: {}", e));
             }
             Err(_) => {
                 // 读取超时 - 如果已经有响应头，可能响应已完成
                 if headers_parsed {
                     break;
                 }
-                // 如果还没收到响应头，继续等待（但使用更长的总超时）
-                if response_buf.is_empty() {
-                    // 没有收到任何数据，再等一会
+                // 如果还没收到响应头且总超时未到，继续等待
+                if response_buf.is_empty() && start_time.elapsed() < total_timeout {
                     continue;
                 }
                 break;
@@ -4020,7 +4292,7 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> 
         }
     }
 
-    response_buf
+    Ok(response_buf)
 }
 
 /// Raw 请求重放结果
@@ -4084,8 +4356,10 @@ pub async fn replay_raw_request(
             .await
             .map_err(|e| format!("Failed to flush: {}", e))?;
 
-        // 智能读取响应
-        read_http_response(&mut tls_stream).await
+        // 智能读取响应（使用剩余超时时间）
+        let elapsed = start.elapsed();
+        let remaining_timeout = timeout.saturating_sub(elapsed);
+        read_http_response(&mut tls_stream, remaining_timeout).await?
     } else {
         // 普通 TCP 连接
         let mut stream = stream;
@@ -4100,8 +4374,10 @@ pub async fn replay_raw_request(
             .await
             .map_err(|e| format!("Failed to flush: {}", e))?;
 
-        // 智能读取响应
-        read_http_response(&mut stream).await
+        // 智能读取响应（使用剩余超时时间）
+        let elapsed = start.elapsed();
+        let remaining_timeout = timeout.saturating_sub(elapsed);
+        read_http_response(&mut stream, remaining_timeout).await?
     };
 
     // 处理响应：检查是否需要解压 gzip

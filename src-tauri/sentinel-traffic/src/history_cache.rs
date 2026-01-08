@@ -190,14 +190,29 @@ pub struct HistoryCacheConfig {
     pub max_ws_connections: usize,
     /// 每个 WebSocket 连接最大消息数量
     pub max_messages_per_connection: usize,
+    /// 是否启用自动清理（清理超过最大容量的旧数据）
+    pub enable_auto_cleanup: bool,
+    /// 数据保留时间（秒），0 表示不限制
+    pub retention_seconds: u64,
+    /// 是否启用自动持久化
+    pub enable_auto_persistence: bool,
+    /// 自动持久化阈值（缓存达到此数量时触发）
+    pub auto_persistence_threshold: usize,
+    /// 自动持久化间隔（秒）
+    pub auto_persistence_interval: u64,
 }
 
 impl Default for HistoryCacheConfig {
     fn default() -> Self {
         Self {
-            max_http_requests: 2000,
-            max_ws_connections: 200,
-            max_messages_per_connection: 1000,
+            max_http_requests: 5000, // 增加到 5000
+            max_ws_connections: 500,  // 增加到 500
+            max_messages_per_connection: 2000, // 增加到 2000
+            enable_auto_cleanup: true,
+            retention_seconds: 3600, // 默认保留 1 小时
+            enable_auto_persistence: true, // 默认启用自动持久化
+            auto_persistence_threshold: 1000, // 缓存达到 1000 条时触发
+            auto_persistence_interval: 300, // 每 5 分钟自动保存一次
         }
     }
 }
@@ -210,6 +225,8 @@ pub struct ProxyHistoryCache {
     http_requests: Arc<RwLock<VecDeque<HttpRequestRecord>>>,
     /// HTTP ID 计数器
     http_id_counter: AtomicI64,
+    /// HTTP 请求索引（ID -> 位置），用于快速查找
+    http_index: Arc<RwLock<HashMap<i64, usize>>>,
 
     /// WebSocket 连接缓存 (connection_id -> record)
     ws_connections: Arc<RwLock<HashMap<String, WebSocketConnectionRecord>>>,
@@ -220,30 +237,76 @@ pub struct ProxyHistoryCache {
     ws_messages: Arc<RwLock<HashMap<String, VecDeque<WebSocketMessageRecord>>>>,
     /// WebSocket 消息 ID 计数器
     ws_message_id_counter: AtomicI64,
+    
+    /// 统计信息缓存（避免频繁计算）
+    cached_stats: Arc<RwLock<Option<(HistoryCacheStats, std::time::Instant)>>>,
+    
+    /// 上次持久化时间
+    last_persistence_time: Arc<RwLock<std::time::Instant>>,
+    /// 持久化计数器（用于跟踪已持久化的记录数）
+    persisted_count: Arc<RwLock<usize>>,
 }
 
 impl ProxyHistoryCache {
     /// 创建新的缓存实例
     pub fn new(config: HistoryCacheConfig) -> Self {
         info!(
-            "Creating ProxyHistoryCache with max_http={}, max_ws_conn={}, max_msg_per_conn={}",
-            config.max_http_requests, config.max_ws_connections, config.max_messages_per_connection
+            "Creating ProxyHistoryCache with max_http={}, max_ws_conn={}, max_msg_per_conn={}, retention={}s, auto_persist={}",
+            config.max_http_requests, config.max_ws_connections, 
+            config.max_messages_per_connection, config.retention_seconds,
+            config.enable_auto_persistence
         );
 
         Self {
             config,
             http_requests: Arc::new(RwLock::new(VecDeque::new())),
             http_id_counter: AtomicI64::new(1),
+            http_index: Arc::new(RwLock::new(HashMap::new())),
             ws_connections: Arc::new(RwLock::new(HashMap::new())),
             ws_connection_order: Arc::new(RwLock::new(VecDeque::new())),
             ws_messages: Arc::new(RwLock::new(HashMap::new())),
             ws_message_id_counter: AtomicI64::new(1),
+            cached_stats: Arc::new(RwLock::new(None)),
+            last_persistence_time: Arc::new(RwLock::new(std::time::Instant::now())),
+            persisted_count: Arc::new(RwLock::new(0)),
         }
     }
 
     /// 使用默认配置创建
     pub fn with_defaults() -> Self {
         Self::new(HistoryCacheConfig::default())
+    }
+    
+    /// 清理过期数据
+    async fn cleanup_expired(&self) {
+        if self.config.retention_seconds == 0 {
+            return;
+        }
+        
+        let now = Utc::now();
+        let retention_duration = chrono::Duration::seconds(self.config.retention_seconds as i64);
+        let cutoff_time = now - retention_duration;
+        
+        // 清理 HTTP 请求
+        let mut requests = self.http_requests.write().await;
+        let mut index = self.http_index.write().await;
+        let original_len = requests.len();
+        
+        // 从后往前删除过期数据
+        while let Some(record) = requests.back() {
+            if record.timestamp < cutoff_time {
+                if let Some(removed) = requests.pop_back() {
+                    index.remove(&removed.id);
+                }
+            } else {
+                break;
+            }
+        }
+        
+        let removed = original_len - requests.len();
+        if removed > 0 {
+            debug!("Cleaned up {} expired HTTP requests", removed);
+        }
     }
 
     // ============================================================
@@ -252,18 +315,36 @@ impl ProxyHistoryCache {
 
     /// 添加 HTTP 请求记录
     pub async fn add_http_request(&self, mut record: HttpRequestRecord) -> i64 {
+        // 先清理过期数据
+        if self.config.enable_auto_cleanup {
+            self.cleanup_expired().await;
+        }
+        
         let id = self.http_id_counter.fetch_add(1, Ordering::SeqCst);
         record.id = id;
 
         let mut requests = self.http_requests.write().await;
+        let mut index = self.http_index.write().await;
 
         // 添加到队列前端（最新的）
         requests.push_front(record);
+        index.insert(id, 0);
+        
+        // 更新索引位置
+        for (pos, req) in requests.iter().enumerate().skip(1) {
+            index.insert(req.id, pos);
+        }
 
         // 超出容量时移除最旧的
         while requests.len() > self.config.max_http_requests {
-            requests.pop_back();
+            if let Some(removed) = requests.pop_back() {
+                index.remove(&removed.id);
+            }
         }
+        
+        // 使统计缓存失效
+        let mut stats_cache = self.cached_stats.write().await;
+        *stats_cache = None;
 
         debug!("Added HTTP request #{}, total: {}", id, requests.len());
         id
@@ -329,10 +410,13 @@ impl ProxyHistoryCache {
         results
     }
 
-    /// 根据 ID 获取 HTTP 请求
+    /// 根据 ID 获取 HTTP 请求（优化：使用索引）
     pub async fn get_http_request_by_id(&self, id: i64) -> Option<HttpRequestRecord> {
+        let index = self.http_index.read().await;
+        let pos = index.get(&id)?;
+        
         let requests = self.http_requests.read().await;
-        requests.iter().find(|r| r.id == id).cloned()
+        requests.get(*pos).cloned()
     }
 
     /// 统计 HTTP 请求数量
@@ -343,8 +427,15 @@ impl ProxyHistoryCache {
     /// 清空 HTTP 请求
     pub async fn clear_http_requests(&self) {
         let mut requests = self.http_requests.write().await;
+        let mut index = self.http_index.write().await;
         let count = requests.len();
         requests.clear();
+        index.clear();
+        
+        // 使统计缓存失效
+        let mut stats_cache = self.cached_stats.write().await;
+        *stats_cache = None;
+        
         info!("Cleared {} HTTP requests", count);
     }
 
@@ -640,9 +731,71 @@ impl ProxyHistoryCache {
         self.clear_ws_data().await;
     }
 
-    /// 获取缓存统计信息
+    /// 检查是否需要自动持久化
+    pub async fn should_auto_persist(&self) -> bool {
+        if !self.config.enable_auto_persistence {
+            return false;
+        }
+        
+        let requests = self.http_requests.read().await;
+        let current_count = requests.len();
+        let persisted = *self.persisted_count.read().await;
+        let unpersisted = current_count.saturating_sub(persisted);
+        
+        // 检查阈值
+        if unpersisted >= self.config.auto_persistence_threshold {
+            return true;
+        }
+        
+        // 检查时间间隔
+        let last_time = *self.last_persistence_time.read().await;
+        let elapsed = last_time.elapsed().as_secs();
+        if elapsed >= self.config.auto_persistence_interval && unpersisted > 0 {
+            return true;
+        }
+        
+        false
+    }
+    
+    /// 获取未持久化的记录（用于批量保存）
+    pub async fn get_unpersisted_records(&self) -> Vec<HttpRequestRecord> {
+        let requests = self.http_requests.read().await;
+        let persisted = *self.persisted_count.read().await;
+        
+        // 获取未持久化的记录
+        requests.iter()
+            .skip(persisted)
+            .cloned()
+            .collect()
+    }
+    
+    /// 标记记录已持久化
+    pub async fn mark_persisted(&self, count: usize) {
+        let mut persisted = self.persisted_count.write().await;
+        *persisted += count;
+        
+        let mut last_time = self.last_persistence_time.write().await;
+        *last_time = std::time::Instant::now();
+        
+        info!("Marked {} records as persisted, total persisted: {}", count, *persisted);
+    }
+    
+    /// 获取缓存统计信息（带缓存，5秒有效期）
     pub async fn stats(&self) -> HistoryCacheStats {
-        HistoryCacheStats {
+        const CACHE_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
+        
+        // 检查缓存
+        {
+            let cache = self.cached_stats.read().await;
+            if let Some((stats, timestamp)) = cache.as_ref() {
+                if timestamp.elapsed() < CACHE_DURATION {
+                    return stats.clone();
+                }
+            }
+        }
+        
+        // 重新计算
+        let stats = HistoryCacheStats {
             http_count: self.count_http_requests().await,
             ws_connection_count: self.count_ws_connections().await,
             ws_message_count: {
@@ -651,7 +804,13 @@ impl ProxyHistoryCache {
             },
             max_http_requests: self.config.max_http_requests,
             max_ws_connections: self.config.max_ws_connections,
-        }
+        };
+        
+        // 更新缓存
+        let mut cache = self.cached_stats.write().await;
+        *cache = Some((stats.clone(), std::time::Instant::now()));
+        
+        stats
     }
 }
 

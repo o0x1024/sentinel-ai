@@ -1,41 +1,37 @@
-pub mod agent_framework;
-pub mod blackboard;
-pub mod brain;
-pub mod core;
-pub mod driver;
-pub mod emitter;
-pub mod engine;
-pub mod error_recovery;
-pub mod event_bus;
-pub mod exploration_strategy;
+//! Vision Explorer V2 - ReAct Architecture
+//!
+//! A simplified web exploration engine using the ReAct (Reasoning + Acting) pattern.
+//! 
+//! ## Architecture
+//! 
+//! The engine follows a simple loop:
+//! 1. **Observe**: Analyze the current page using Vision LLM
+//! 2. **Think**: Use LLM to reason about what action to take next
+//! 3. **Act**: Execute the chosen action via MCP Playwright
+//! 4. **Update**: Record results and update exploration state
+//! 
+//! ## Modules
+//! 
+//! - `types`: Core data structures
+//! - `graph`: Simple exploration graph for tracking visited pages
+//! - `perception`: Page analysis using Vision LLM
+//! - `action_executor`: Browser action execution via MCP
+//! - `react_engine`: Main ReAct loop implementation
+//! - `tool`: Rig tool interface for agent integration
+
+pub mod action_executor;
 pub mod graph;
-pub mod login_state_machine;
 pub mod perception;
-pub mod perception_engine;
-pub mod persistence;
-pub mod safety;
+pub mod react_engine;
 pub mod tool;
 pub mod types;
 
-#[cfg(test)]
-mod tests;
-
 // Re-export key items
-pub use agent_framework::{Agent, AgentLifecycleManager, AgentMetadata, AgentStatus};
-pub use blackboard::Blackboard;
-pub use brain::{AuthAgent, NavigationPatternSolver, PlannerAgent};
-pub use core::{Event, LoginField};
-pub use driver::{BrowserDriver, NavigatorAgent};
-pub use emitter::V2MessageEmitter;
-pub use engine::V2Engine;
-pub use error_recovery::{ErrorRecoveryContext, ErrorRecoveryPolicy, FallbackStrategy};
-pub use event_bus::EventBus;
-pub use exploration_strategy::{create_strategy, ExplorationStrategy, StrategyConfig};
-pub use graph::ExplorationGraph;
-pub use login_state_machine::{LoginState, LoginStateMachine};
-pub use perception::VisualAnalyst;
-pub use core::{PageContext, PerceptionEngine, PerceptionResult};
-pub use persistence::{ExplorationSnapshot, PersistenceManager};
-pub use safety::{SafetyLayer, SafetyPolicy};
+pub use graph::{ExplorationGraph, GraphEdge, GraphNode};
+pub use react_engine::ReActEngine;
 pub use tool::VisionExplorerV2Tool;
-pub use types::VisionExplorerV2Config;
+pub use types::{
+    Action, ActionResult, AIConfig, AuthStatus, Element, ExplorationResult, ExplorationState,
+    FormField, FormInfo, Observation, PageContext, PageType, ReActDecision, ScrollDirection,
+    Step, VisionExplorerV2Config, VisionMessage,
+};

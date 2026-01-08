@@ -1091,7 +1091,9 @@ pub use tool_server::{
 // Vision Explorer Credential Commands (V2 Compatible)
 // ============================================================================
 
-mod vision_bridge;
+// Note: vision_bridge is disabled after ReAct refactoring
+// The new ReAct architecture doesn't require these bridge commands
+// mod vision_bridge;
 
 mod shell_permissions;
 pub use shell_permissions::PendingPermissionRequest;
@@ -1100,52 +1102,6 @@ mod agent_config;
 pub use agent_config::AgentConfig;
 
 mod ability_groups;
-
-// ============================================================================
-// Command wrappers (registered in src/lib.rs)
-// ============================================================================
-
-#[tauri::command]
-pub async fn vision_explorer_receive_credentials(
-    app: tauri::AppHandle,
-    execution_id: String,
-    username: String,
-    password: String,
-    verification_code: Option<String>,
-    extra_fields: Option<HashMap<String, String>>,
-) -> Result<(), String> {
-    vision_bridge::vision_explorer_receive_credentials(
-        app,
-        execution_id,
-        username,
-        password,
-        verification_code,
-        extra_fields,
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn vision_explorer_send_user_message(
-    app: tauri::AppHandle,
-    execution_id: String,
-    message: String,
-) -> Result<(), String> {
-    vision_bridge::vision_explorer_send_user_message(app, execution_id, message).await
-}
-
-#[tauri::command]
-pub async fn vision_explorer_skip_login(app: tauri::AppHandle, execution_id: String) -> Result<(), String> {
-    vision_bridge::vision_explorer_skip_login(app, execution_id).await
-}
-
-#[tauri::command]
-pub async fn vision_explorer_manual_login_complete(
-    app: tauri::AppHandle,
-    execution_id: String,
-) -> Result<(), String> {
-    vision_bridge::vision_explorer_manual_login_complete(app, execution_id).await
-}
 
 #[tauri::command]
 pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), String> {
