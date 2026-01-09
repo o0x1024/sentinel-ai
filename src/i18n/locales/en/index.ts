@@ -12,7 +12,6 @@ import assetManagement from '../assetManagement/en'
 import assetTypes from '../assetTypes/en'
 import riskLevels from '../riskLevels/en'
 import assetStatuses from '../assetStatuses/en'
-import promptMgmt from '../promptMgmt/en'
 import aiChat from '../aiChat/en'
 import positions from '../positions/en'
 import language from '../language/en'
@@ -49,7 +48,6 @@ export default {
   assetTypes,
   riskLevels,
   assetStatuses,
-  promptMgmt,
   aiChat,
   positions,
   language,
@@ -315,6 +313,12 @@ export default {
     avgPerRun: 'Avg/Run (ms)',
     runDetails: 'Run Details',
     unique: 'Unique',
+    runOutput: 'Run',
+    executionResult: 'Execution Result',
+    failed: 'Failed',
+    success: 'Success',
+    agentToolResult: 'Agent Tool Execution Result',
+    noOutputData: 'No output data',
     logicScore: 'Logic Score',
     loadReviewError: 'Failed to load review plugins',
     testing: 'Testing...',

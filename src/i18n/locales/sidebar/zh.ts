@@ -17,7 +17,6 @@ export default {
   aiAssistant: 'AI助手',
   ragManagement: '知识库管理',
   Tools: '应用工具',
-  promptManagement: 'Prompt管理',
   performance: '性能监控',
 
   // Settings submenu

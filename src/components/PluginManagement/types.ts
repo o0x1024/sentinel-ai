@@ -67,6 +67,7 @@ export interface AdvancedRunStat {
   duration_ms: number
   findings: number
   error?: string | null
+  output?: any  // Complete output from the plugin execution
 }
 
 export interface BatchToggleResult {

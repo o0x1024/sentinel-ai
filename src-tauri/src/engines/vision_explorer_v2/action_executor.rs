@@ -15,14 +15,16 @@ use tracing::{debug, info};
 pub struct ActionExecutor {
     mcp_service: Arc<McpService>,
     perception_engine: Arc<PerceptionEngine>,
+    mcp_server_name: String,
 }
 
 impl ActionExecutor {
     /// Create a new action executor
-    pub fn new(mcp_service: Arc<McpService>, perception_engine: Arc<PerceptionEngine>) -> Self {
+    pub fn new(mcp_service: Arc<McpService>, perception_engine: Arc<PerceptionEngine>, mcp_server_name: String) -> Self {
         Self {
             mcp_service,
             perception_engine,
+            mcp_server_name,
         }
     }
 
@@ -55,10 +57,11 @@ impl ActionExecutor {
         let result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
-                "browser_navigate",
+                &self.mcp_server_name,
+                "playwright_navigate",
                 json!({
                     "url": url,
+                    "waitUntil": "networkidle",
                 }),
             )
             .await;
@@ -101,8 +104,8 @@ impl ActionExecutor {
             // Click by selector
             self.mcp_service
                 .execute_client_tool(
-                    "mcp-playwright-security",
-                    "browser_click",
+                    &self.mcp_server_name,
+                    "playwright_click",
                     json!({
                         "selector": sel,
                     }),
@@ -112,8 +115,8 @@ impl ActionExecutor {
             // Click by coordinates (pure vision mode)
             self.mcp_service
                 .execute_client_tool(
-                    "mcp-playwright-security",
-                    "browser_click_at_coordinates",
+                    &self.mcp_server_name,
+                    "playwright_click",
                     json!({
                         "x": x_coord,
                         "y": y_coord,
@@ -156,8 +159,8 @@ impl ActionExecutor {
         let result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
-                "browser_fill",
+                &self.mcp_server_name,
+                "playwright_fill",
                 json!({
                     "selector": selector,
                     "value": value,
@@ -189,7 +192,7 @@ impl ActionExecutor {
         let result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
+                &self.mcp_server_name,
                 "browser_press_key",
                 json!({
                     "selector": selector,
@@ -232,7 +235,7 @@ impl ActionExecutor {
         let result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
+                &self.mcp_server_name,
                 "browser_evaluate",
                 json!({
                     "script": format!("window.scrollBy({}, {})", x, y),
@@ -291,8 +294,8 @@ impl ActionExecutor {
         let result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
-                "browser_go_back",
+                &self.mcp_server_name,
+                "playwright_go_back",
                 json!({}),
             )
             .await;
@@ -325,72 +328,127 @@ impl ActionExecutor {
 
     /// Capture current page context (screenshot + HTML)
     pub async fn capture_page_context(&self) -> Result<PageContext> {
-        // Get screenshot
+        // Get screenshot using playwright_screenshot
         let screenshot_result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
-                "browser_screenshot",
-                json!({}),
+                &self.mcp_server_name,
+                "playwright_screenshot",
+                json!({
+                    "name": "vision_explorer",
+                    "storeBase64": true,
+                    "fullPage": false,
+                }),
             )
             .await
             .context("Failed to capture screenshot")?;
 
+        // Parse screenshot from MCP response
+        // The response format is: { "content": [{"type": "text", "text": "..."}, {"type": "text", "text": "{\"screenshot_base64\":\"...\"}"}, {"type": "image", "data": "...", "mimeType": "..."}], "is_error": false }
         let screenshot_base64 = screenshot_result
-            .get("screenshot")
-            .and_then(|v| v.as_str())
+            .get("content")
+            .and_then(|content| content.as_array())
+            .and_then(|arr| {
+                // Find the text content with screenshot_base64
+                arr.iter().find_map(|item| {
+                    if item.get("type")?.as_str()? == "text" {
+                        let text = item.get("text")?.as_str()?;
+                        if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(text) {
+                            return json_obj.get("screenshot_base64")?.as_str().map(|s| s.to_string());
+                        }
+                    }
+                    None
+                })
+            })
+            .or_else(|| {
+                // Fallback: try to get from image type directly
+                screenshot_result
+                    .get("content")
+                    .and_then(|content| content.as_array())
+                    .and_then(|arr| {
+                        arr.iter().find_map(|item| {
+                            if item.get("type")?.as_str()? == "image" {
+                                return item.get("data")?.as_str().map(|s| s.to_string());
+                            }
+                            None
+                        })
+                    })
+            })
             .context("Screenshot not found in response")?;
 
         let screenshot = BASE64_STANDARD.decode(screenshot_base64)
             .context("Failed to decode screenshot")?;
 
-        // Get page HTML
+        // Get page HTML using playwright_get_visible_html
         let html_result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
-                "browser_get_content",
-                json!({}),
+                &self.mcp_server_name,
+                "playwright_get_visible_html",
+                json!({
+                    "cleanHtml": true,
+                    "maxLength": 50000,
+                }),
             )
             .await
             .context("Failed to get HTML content")?;
 
+        // Parse HTML from response
         let html = html_result
             .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .and_then(|content| content.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|text| text.as_str())
+            .map(|s| {
+                // Remove the "HTML content:\n" prefix if present
+                s.strip_prefix("HTML content:\n").unwrap_or(s).to_string()
+            })
+            .unwrap_or_default();
 
-        // Get page info
+        // Get page URL and title using playwright_evaluate
         let info_result = self
             .mcp_service
             .execute_client_tool(
-                "mcp-playwright-security",
-                "browser_get_page_info",
-                json!({}),
+                &self.mcp_server_name,
+                "playwright_evaluate",
+                json!({
+                    "script": "JSON.stringify({ url: window.location.href, title: document.title, width: window.innerWidth, height: window.innerHeight })",
+                }),
             )
             .await
             .context("Failed to get page info")?;
 
-        let url = info_result
+        // Parse page info from evaluate result
+        let page_info_str = info_result
+            .get("content")
+            .and_then(|content| content.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|text| text.as_str())
+            .unwrap_or("{}");
+
+        let page_info: serde_json::Value = serde_json::from_str(page_info_str).unwrap_or_default();
+
+        let url = page_info
             .get("url")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let title = info_result
+        let title = page_info
             .get("title")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let viewport_width = info_result
-            .get("viewport_width")
+        let viewport_width = page_info
+            .get("width")
             .and_then(|v| v.as_u64())
             .unwrap_or(1280) as u32;
 
-        let viewport_height = info_result
-            .get("viewport_height")
+        let viewport_height = page_info
+            .get("height")
             .and_then(|v| v.as_u64())
             .unwrap_or(720) as u32;
 

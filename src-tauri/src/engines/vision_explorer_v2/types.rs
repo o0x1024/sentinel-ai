@@ -442,6 +442,35 @@ pub enum VisionMessage {
         action: String,
         current_url: String,
     },
+    /// Screenshot captured
+    Screenshot {
+        step_number: u32,
+        screenshot_base64: String,
+        url: String,
+        title: String,
+    },
+    /// Page analysis result
+    Analysis {
+        step_number: u32,
+        page_type: PageType,
+        description: String,
+        elements_count: usize,
+        forms_count: usize,
+        links_count: usize,
+    },
+    /// Action being executed
+    ActionExecuting {
+        step_number: u32,
+        action_type: String,
+        action_details: serde_json::Value,
+    },
+    /// Action execution result
+    ActionResult {
+        step_number: u32,
+        success: bool,
+        error: Option<String>,
+        new_url: Option<String>,
+    },
     Observation {
         step_number: u32,
         page_type: PageType,

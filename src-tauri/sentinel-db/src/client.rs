@@ -3,10 +3,6 @@ use sqlx::sqlite::SqlitePool;
 
 use crate::database_service::traits::Database;
 use crate::database_service::service::DatabaseService;
-use sentinel_core::models::prompt::{
-    PromptTemplate,
-    PromptCategory, TemplateType,
-};
 use sentinel_core::models::database::MemoryExecution;
 use chrono::{DateTime, Utc};
 
@@ -24,11 +20,6 @@ impl DatabaseClient {
 
     pub fn pool(&self) -> &SqlitePool {
         self.service.get_pool().expect("数据库未初始化")
-    }
-
-    // Prompt templates
-    pub async fn insert_default_templates(&self) -> Result<()> {
-        self.service.insert_default_templates().await
     }
 
     // Config
@@ -335,34 +326,6 @@ impl DatabaseClient {
         self.service.create_tool_execution(exec).await
     }
 
-    // Prompt templates
-    pub async fn list_templates(&self) -> Result<Vec<sentinel_core::models::prompt::PromptTemplate>> {
-        self.service.list_prompt_templates().await
-    }
-    pub async fn get_template(&self, id: i64) -> Result<Option<sentinel_core::models::prompt::PromptTemplate>> {
-        self.service.get_prompt_template(id).await
-    }
-    pub async fn create_template(&self, t: &PromptTemplate) -> Result<i64> {
-        self.service.create_prompt_template(t).await
-    }
-    pub async fn update_template(&self, id: i64, t: &PromptTemplate) -> Result<()> {
-        self.service.update_prompt_template(id, t).await
-    }
-    pub async fn delete_template(&self, id: i64) -> Result<()> {
-        self.service.delete_prompt_template(id).await
-    }
-
-    pub async fn list_templates_filtered(
-        &self,
-        category: Option<PromptCategory>,
-        template_type: Option<TemplateType>,
-        is_system: Option<bool>,
-    ) -> Result<Vec<PromptTemplate>> {
-        self.service.list_prompt_templates_filtered(category, template_type, is_system).await
-    }
-    pub async fn duplicate_template(&self, id: i64, new_name: Option<String>) -> Result<i64> {
-        self.service.duplicate_prompt_template(id, new_name).await
-    }
     pub async fn update_tool_execution_status(
         &self,
         id: &str,

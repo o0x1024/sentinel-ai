@@ -220,8 +220,8 @@ const key = params.get('key');
 
 **4. 日志**:
 ```typescript
-Deno.core.ops.op_plugin_log('info', '工具开始执行...');
-Deno.core.ops.op_plugin_log('error', '发生错误');
+console.log('工具开始执行...');
+console.error('发生错误');
 ```
 
 ---

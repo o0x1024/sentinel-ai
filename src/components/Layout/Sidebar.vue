@@ -232,13 +232,6 @@ const toolMenuItems = computed(() => [
     icon: 'fas fa-puzzle-piece',
     badge: pendingPlugins.value > 0 ? pendingPlugins.value.toString() : null,
     badgeClass: pendingPlugins.value > 0 ? 'badge-warning' : ''
-  },
-  {
-    path: '/prompts',
-    name: t('sidebar.promptManagement', 'Prompt管理'),
-    icon: 'fas fa-align-left',
-    badge: null,
-    badgeClass: ''
   }
 ])
 

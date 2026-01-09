@@ -70,7 +70,6 @@ const McpTools = () => import('./views/Tools.vue');
 const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
 const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
-const PromptManagement = () => import('./views/PromptManagement.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue');
@@ -85,12 +84,6 @@ const routes = [
   {
     path: '/',
     redirect: '/dashboard'
-  },
-  {
-    path: '/prompts',
-    name: 'PromptManagement',
-    component: PromptManagement,
-    meta: { title: 'Prompt管理' }
   },
   {
     path: '/dashboard',

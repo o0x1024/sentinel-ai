@@ -30,7 +30,7 @@ use commands::{
     ai, aisettings, asset, config, database as db_commands, dictionary,
     get_cache, set_cache, delete_cache, cleanup_expired_cache, get_all_cache_keys,
     traffic_analysis_commands::{self, TrafficAnalysisState},
-    performance, prompt_commands,
+    performance,
     proxifier_commands::{self, ProxifierState},
     rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
     packet_capture_commands::{self, PacketCaptureState},
@@ -384,11 +384,6 @@ pub fn run() {
                     tracing::error!("Failed to init shell permission handler: {}", e);
                 }
 
-
-                let prompt_service_state: commands::prompt_commands::PromptServiceState =
-                    Arc::new(tokio::sync::RwLock::new(None));
-                handle.manage(prompt_service_state);
-
                 tracing::info!("Workflow engine and scheduler initialized");
 
                 // Auto-start proxy listener if enabled in config
@@ -564,6 +559,8 @@ pub fn run() {
             ai::cancel_plugin_assistant_chat,
             commands::get_active_rag_collections,
             commands::set_rag_collection_active,
+            // Plugin generation commands
+            commands::get_combined_plugin_prompt_api,
             // Database commands
             db_commands::execute_query,
             db_commands::get_query_history,
@@ -692,34 +689,6 @@ pub fn run() {
             window::get_window_info,
             window::set_window_position,
             window::set_window_size,
-            // Prompt commands
-            prompt_commands::init_prompt_service,
-            prompt_commands::get_prompt_service_status,
-            prompt_commands::create_prompt_session,
-            prompt_commands::get_prompt_session,
-            prompt_commands::close_prompt_session,
-            prompt_commands::build_prompt,
-            prompt_commands::optimize_prompt_config,
-            prompt_commands::get_prompt_optimization_suggestions,
-            prompt_commands::create_ab_test,
-            prompt_commands::record_performance_data,
-            prompt_commands::list_prompt_configs,
-            prompt_commands::save_prompt_config,
-            prompt_commands::list_prompt_templates,
-            prompt_commands::save_prompt_template,
-            commands::prompt_api::list_prompt_templates_api,
-            commands::prompt_api::get_prompt_template_api,
-            commands::prompt_api::create_prompt_template_api,
-            commands::prompt_api::update_prompt_template_api,
-            commands::prompt_api::delete_prompt_template_api,
-            commands::prompt_api::preview_resolved_prompt_api,
-            commands::prompt_api::list_prompt_templates_filtered_api,
-            commands::prompt_api::duplicate_prompt_template_api,
-            commands::prompt_api::evaluate_prompt_api,
-            commands::prompt_api::get_plugin_generation_prompt_api,
-            commands::prompt_api::get_combined_plugin_prompt_api,
-            commands::prompt_api::get_plugin_interface_doc_api,
-            commands::prompt_api::get_default_prompt_content,
             // RAG commands
             rag_commands::rag_ingest_source,
             rag_commands::rag_ingest_text,

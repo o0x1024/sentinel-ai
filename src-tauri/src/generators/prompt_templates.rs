@@ -2,48 +2,28 @@
 
 use super::few_shot_examples::FewShotExample;
 use crate::analyzers::WebsiteAnalysis;
-use crate::services::DatabaseService;
-use sentinel_db::Database;
 use anyhow::Result;
-use sentinel_core::models::prompt::TemplateType;
-use std::sync::Arc;
+
+/// Template type enum
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemplateType {
+    PluginGeneration,
+    AgentPluginGeneration,
+    PluginFix,
+    AgentPluginFix,
+}
 
 /// Prompt template builder
-pub struct PromptTemplateBuilder {
-    db: Option<Arc<DatabaseService>>,
-}
+pub struct PromptTemplateBuilder;
 
 impl PromptTemplateBuilder {
     pub fn new() -> Self {
-        Self { db: None }
+        Self
     }
 
-    pub fn with_database(db: Arc<DatabaseService>) -> Self {
-        Self { db: Some(db) }
-    }
-
-    /// Get template from database or fallback to built-in
+    /// Get built-in template content
     async fn get_template_content(&self, template_type: TemplateType) -> Result<String> {
-        if let Some(db) = &self.db {
-            // Try to get from database
-            let templates = db
-                .list_prompt_templates_filtered(
-                    None,
-                    Some(template_type.clone()),
-                    None,
-                )
-                .await?;
-
-            if let Some(template) = templates
-                .into_iter()
-                .filter(|t| t.is_active)
-                .max_by_key(|t| (t.is_default, t.priority, t.updated_at.clone()))
-            {
-                return Ok(template.content);
-            }
-        }
-
-        // Fallback to built-in templates (合并后的完整模板)
+        // Return built-in templates
         match template_type {
             TemplateType::PluginGeneration => {
                 // 流量分析插件生成 - 使用合并后的完整模板
@@ -57,10 +37,6 @@ impl PromptTemplateBuilder {
             TemplateType::AgentPluginFix => {
                 Ok("".to_string())
             }
-            _ => Err(anyhow::anyhow!(
-                "Unsupported template type: {:?}",
-                template_type
-            )),
         }
     }
 
@@ -190,7 +166,7 @@ impl PromptTemplateBuilder {
             vuln_type
         ));
         prompt.push_str("4. **Use proper TypeScript syntax** - no syntax errors\n");
-        prompt.push_str("5. **Emit findings** using `Sentinel.emitFinding()` or `Deno.core.ops.op_emit_finding()`\n");
+        prompt.push_str("5. **Emit findings** using `Sentinel.emitFinding()`\n");
         prompt.push_str("6. **Include error handling** - use try-catch blocks\n");
         prompt.push_str("7. **Be executable** - the code must run without errors\n\n");
 
@@ -199,7 +175,7 @@ impl PromptTemplateBuilder {
         prompt.push_str("- Missing or incorrect function signatures\n");
         prompt.push_str("- Undefined variables or functions\n");
         prompt.push_str(
-            "- Incorrect API usage (Sentinel.emitFinding vs Deno.core.ops.op_emit_finding)\n",
+            "- Incorrect API usage (use Sentinel.emitFinding() not Deno APIs)\n",
         );
         prompt.push_str("- Syntax errors (missing brackets, semicolons, etc.)\n");
         prompt.push_str("- Type errors in TypeScript\n");
@@ -329,7 +305,7 @@ The plugin should:
 2. Detect specific vulnerability types based on HTTP traffic analysis
 3. Follow the provided plugin interface
 4. Include proper error handling and validation
-5. Emit findings using the `Deno.core.ops.op_emit_finding()` API
+5. Emit findings using the `Sentinel.emitFinding()` API
 
 **IMPORTANT**: Generate GENERIC detection logic that can work across different websites, not just the analyzed target. Use the website analysis as reference for common patterns, but make the detection rules broadly applicable."#.to_string()
     }
@@ -809,7 +785,8 @@ export function scan_transaction(ctx: HttpTransaction): void {
 globalThis.scan_transaction = scan_transaction;
 
 // Emit finding when vulnerability is detected
-Deno.core.ops.op_emit_finding({
+Sentinel.emitFinding({
+    title: "SQL Injection Detected",
     vuln_type: "sqli",
     severity: "critical",
     confidence: "high",
@@ -853,40 +830,58 @@ interface CombinedContext {
 
 **Available APIs**:
 
-Plugins have access to the following built-in APIs:
+**Runtime Environment**: Node.js-compatible JavaScript runtime. You can use standard Node.js APIs.
 
-1. **Fetch API** - Make HTTP requests:
+**IMPORTANT**: Use `require()` for modules, NOT ES6 `import`:
 ```typescript
-// Make HTTP requests to external services
-const response = await fetch('https://example.com/api', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ key: 'value' }),
-    timeout: 5000, // optional, default 30000ms
+// ✅ CORRECT
+const fs = require('fs').promises;
+
+// ❌ WRONG
+import * as fs from 'fs/promises';  // Will fail!
+```
+
+1. **Custom Sentinel API** - Report findings:
+```typescript
+Sentinel.emitFinding({
+    title: 'Finding title',
+    severity: 'high', // 'critical', 'high', 'medium', 'low', 'info'
+    confidence: 'high', // 'high', 'medium', 'low'
+    vuln_type: 'sqli',
+    evidence: 'Proof of vulnerability',
 });
+```
 
+2. **Standard Node.js APIs**:
+```typescript
+// File operations
+const fs = require('fs').promises;
+const content = await fs.readFile('/path/to/file.txt', 'utf8');
+
+// HTTP requests (or use fetch())
+const response = await fetch('https://example.com/api');
 const data = await response.json();
-// or: const text = await response.text();
+
+// Buffer for binary data
+const bodyText = Buffer.from(ctx.request.body).toString('utf8');
+
+// Crypto
+const crypto = require('crypto');
+const hash = crypto.createHash('sha256').update('data').digest('hex');
 ```
 
-2. **TextDecoder/TextEncoder** - Decode/encode bytes:
+3. **Web Standard APIs**:
 ```typescript
-const decoder = new TextDecoder();
-const bodyText = decoder.decode(new Uint8Array(ctx.request.body));
-```
-
-3. **URL/URLSearchParams** - Parse URLs:
-```typescript
+// URL parsing
 const url = new URL(ctx.request.url);
 const params = new URLSearchParams(url.search);
-const userId = params.get('user_id');
-```
 
-4. **Logging** - Debug output:
-```typescript
-Deno.core.ops.op_plugin_log('info', 'Processing request...');
+// Text encoding
+const decoder = new TextDecoder();
+const bodyText = decoder.decode(new Uint8Array(ctx.request.body));
+
+// Logging
+console.log('Processing request...');
 ```"#.to_string()
     }
 

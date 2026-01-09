@@ -15,7 +15,6 @@ pub mod workflow;
 pub mod asset;
 pub mod proxifier;
 pub mod ability;
-pub mod prompt;
 pub mod scan_session;
 pub mod traffic;
 pub mod repeater;
@@ -50,8 +49,6 @@ pub use asset::*;
 pub use proxifier::*;
 #[allow(unused_imports)]
 pub use ability::*;
-#[allow(unused_imports)]
-pub use prompt::*;
 #[allow(unused_imports)]
 pub use scan_session::*;
 #[allow(unused_imports)]

@@ -766,4 +766,712 @@ globalThis.SecurityUtils = {
   
 }
 
+// ============================================================
+// Node.js Compatibility Layer
+// ============================================================
+// This allows plugins to use Node.js-style APIs directly,
+// reducing prompt token usage and LLM hallucinations.
+
+// process object (Node.js global)
+globalThis.process = {
+  env: {},
+  pid: Deno.pid,
+  platform: Deno.build.os,
+  arch: Deno.build.arch,
+  version: 'v18.0.0',
+  versions: {
+    node: '18.0.0',
+    v8: Deno.version.v8,
+  },
+  cwd: () => '/',
+  exit: (code) => {
+    throw new Error(`process.exit(${code}) called`)
+  },
+  nextTick: (callback, ...args) => {
+    queueMicrotask(() => callback(...args))
+  },
+}
+
+// require() function (simplified CommonJS module loader)
+globalThis.require = function(moduleName) {
+  // fs module (file system)
+  if (moduleName === 'fs' || moduleName === 'node:fs') {
+    return {
+      readFile: (path, options, callback) => {
+        if (typeof options === 'function') {
+          callback = options
+          options = {}
+        }
+        const encoding = typeof options === 'string' ? options : options?.encoding
+        Deno.readFile(path).then(data => {
+          if (encoding === 'utf8' || encoding === 'utf-8') {
+            callback(null, new TextDecoder().decode(data))
+          } else {
+            callback(null, Buffer.from(data))
+          }
+        }).catch(err => callback(err))
+      },
+      
+      writeFile: (path, data, options, callback) => {
+        if (typeof options === 'function') {
+          callback = options
+          options = {}
+        }
+        const content = typeof data === 'string' ? new TextEncoder().encode(data) : data
+        Deno.writeFile(path, content).then(() => callback(null)).catch(err => callback(err))
+      },
+      
+      readFileSync: (path, options) => {
+        throw new Error('Synchronous file operations not supported. Use fs.promises or async callbacks.')
+      },
+      
+      writeFileSync: (path, data, options) => {
+        throw new Error('Synchronous file operations not supported. Use fs.promises or async callbacks.')
+      },
+      
+      mkdir: (path, options, callback) => {
+        if (typeof options === 'function') {
+          callback = options
+          options = {}
+        }
+        Deno.mkdir(path, { recursive: options?.recursive || false })
+          .then(() => callback(null))
+          .catch(err => callback(err))
+      },
+      
+      readdir: (path, options, callback) => {
+        if (typeof options === 'function') {
+          callback = options
+          options = {}
+        }
+        Deno.core.ops.op_read_dir(path)
+          .then(entries => callback(null, entries.map(e => e.name)))
+          .catch(err => callback(err))
+      },
+      
+      stat: (path, callback) => {
+        Deno.stat(path)
+          .then(info => callback(null, {
+            isFile: () => info.isFile,
+            isDirectory: () => info.isDirectory,
+            isSymbolicLink: () => info.isSymlink,
+            size: info.size,
+            mtime: info.mtime ? new Date(info.mtime) : null,
+          }))
+          .catch(err => callback(err))
+      },
+      
+      unlink: (path, callback) => {
+        Deno.remove(path).then(() => callback(null)).catch(err => callback(err))
+      },
+      
+      rmdir: (path, options, callback) => {
+        if (typeof options === 'function') {
+          callback = options
+          options = {}
+        }
+        Deno.remove(path, { recursive: options?.recursive || false })
+          .then(() => callback(null))
+          .catch(err => callback(err))
+      },
+      
+      copyFile: (src, dest, callback) => {
+        Deno.copyFile(src, dest).then(() => callback(null)).catch(err => callback(err))
+      },
+      
+      // fs.promises API (modern async/await style)
+      promises: {
+        readFile: async (path, options) => {
+          const encoding = typeof options === 'string' ? options : options?.encoding
+          const data = await Deno.readFile(path)
+          if (encoding === 'utf8' || encoding === 'utf-8') {
+            return new TextDecoder().decode(data)
+          }
+          return Buffer.from(data)
+        },
+        
+        writeFile: async (path, data, options) => {
+          const content = typeof data === 'string' ? new TextEncoder().encode(data) : data
+          await Deno.writeFile(path, content)
+        },
+        
+        mkdir: async (path, options) => {
+          await Deno.mkdir(path, { recursive: options?.recursive || false })
+        },
+        
+        readdir: async (path, options) => {
+          const entries = await Deno.core.ops.op_read_dir(path)
+          return entries.map(e => e.name)
+        },
+        
+        stat: async (path) => {
+          const info = await Deno.stat(path)
+          return {
+            isFile: () => info.isFile,
+            isDirectory: () => info.isDirectory,
+            isSymbolicLink: () => info.isSymlink,
+            size: info.size,
+            mtime: info.mtime ? new Date(info.mtime) : null,
+          }
+        },
+        
+        unlink: async (path) => {
+          await Deno.remove(path)
+        },
+        
+        rmdir: async (path, options) => {
+          await Deno.remove(path, { recursive: options?.recursive || false })
+        },
+        
+        copyFile: async (src, dest) => {
+          await Deno.copyFile(src, dest)
+        },
+      },
+    }
+  }
+  
+  // path module
+  if (moduleName === 'path' || moduleName === 'node:path') {
+    return {
+      join: (...paths) => paths.join('/').replace(/\/+/g, '/'),
+      resolve: (...paths) => '/' + paths.join('/').replace(/^\/+/, '').replace(/\/+/g, '/'),
+      dirname: (path) => path.substring(0, path.lastIndexOf('/')) || '/',
+      basename: (path, ext) => {
+        const base = path.substring(path.lastIndexOf('/') + 1)
+        return ext && base.endsWith(ext) ? base.slice(0, -ext.length) : base
+      },
+      extname: (path) => {
+        const base = path.substring(path.lastIndexOf('/') + 1)
+        const dotIndex = base.lastIndexOf('.')
+        return dotIndex > 0 ? base.substring(dotIndex) : ''
+      },
+      sep: '/',
+      delimiter: ':',
+    }
+  }
+  
+  // crypto module
+  if (moduleName === 'crypto' || moduleName === 'node:crypto') {
+    return {
+      randomBytes: (size) => {
+        const bytes = new Uint8Array(size)
+        crypto.getRandomValues(bytes)
+        return Buffer.from(bytes)
+      },
+      
+      createHash: (algorithm) => {
+        let data = new Uint8Array(0)
+        const hashObj = {
+          update: function(chunk) {
+            const newData = new Uint8Array(data.length + chunk.length)
+            newData.set(data)
+            newData.set(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk, data.length)
+            data = newData
+            return hashObj
+          },
+          digest: async function(encoding) {
+            const algoMap = {
+              'md5': 'MD5',
+              'sha1': 'SHA-1',
+              'sha256': 'SHA-256',
+              'sha512': 'SHA-512',
+            }
+            const algo = algoMap[algorithm.toLowerCase()]
+            if (!algo) throw new Error(`Unsupported hash algorithm: ${algorithm}`)
+            
+            // MD5 is not supported by Web Crypto API, throw error
+            if (algorithm.toLowerCase() === 'md5') {
+              throw new Error('MD5 is not supported. Use sha256 or sha512 instead.')
+            }
+            
+            const hashBuffer = await crypto.subtle.digest(algo, data)
+            const hashArray = new Uint8Array(hashBuffer)
+            
+            if (encoding === 'hex') {
+              return Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('')
+            } else if (encoding === 'base64') {
+              return btoa(String.fromCharCode(...hashArray))
+            }
+            return Buffer.from(hashArray)
+          },
+        }
+        return hashObj
+      },
+      
+      randomUUID: () => crypto.randomUUID(),
+    }
+  }
+  
+  // http/https modules (simplified, use fetch instead)
+  if (moduleName === 'http' || moduleName === 'https' || moduleName === 'node:http' || moduleName === 'node:https') {
+    const httpModule = {
+      request: (urlOrOptions, optionsOrCallback, callbackOrUndefined) => {
+        let url, options, callback
+        
+        // Parse arguments (Node.js http.request has multiple signatures)
+        if (typeof urlOrOptions === 'string') {
+          url = urlOrOptions
+          if (typeof optionsOrCallback === 'function') {
+            callback = optionsOrCallback
+            options = {}
+          } else {
+            options = optionsOrCallback || {}
+            callback = callbackOrUndefined
+          }
+        } else {
+          options = urlOrOptions || {}
+          callback = optionsOrCallback
+          // Construct URL from options
+          const protocol = options.protocol || 'http:'
+          const hostname = options.hostname || options.host || 'localhost'
+          const port = options.port || (protocol === 'https:' ? 443 : 80)
+          const path = options.path || '/'
+          url = `${protocol}//${hostname}${port !== 80 && port !== 443 ? ':' + port : ''}${path}`
+        }
+        
+        const eventHandlers = {
+          error: [],
+          timeout: [],
+        }
+        
+        let bodyData = null
+        let isEnded = false
+        let timeoutId = null
+        
+        const req = {
+          write: (data) => {
+            if (isEnded) {
+              throw new Error('Cannot write to request after end() is called')
+            }
+            if (bodyData === null) {
+              bodyData = data
+            } else {
+              bodyData = bodyData + data
+            }
+            return true
+          },
+          
+          end: async (data) => {
+            if (isEnded) return
+            isEnded = true
+            
+            if (data) {
+              if (bodyData === null) {
+                bodyData = data
+              } else {
+                bodyData = bodyData + data
+              }
+            }
+            
+            // Set up timeout
+            if (options.timeout) {
+              timeoutId = setTimeout(() => {
+                eventHandlers.timeout.forEach(handler => handler())
+              }, options.timeout)
+            }
+            
+            try {
+              const response = await fetch(url, {
+                method: options.method || 'GET',
+                headers: options.headers || {},
+                body: bodyData,
+                timeout: options.timeout,
+              })
+              
+              // Clear timeout on success
+              if (timeoutId) clearTimeout(timeoutId)
+              
+              let responseBody = ''
+              const resEventHandlers = {
+                data: [],
+                end: [],
+              }
+              
+              const res = {
+                statusCode: response.status,
+                statusMessage: response.statusText,
+                headers: Object.fromEntries(response.headers.entries()),
+                
+                setEncoding: (encoding) => {
+                  // Encoding is handled automatically
+                },
+                
+                on: (event, handler) => {
+                  if (event === 'data' || event === 'end') {
+                    resEventHandlers[event].push(handler)
+                  }
+                  return res
+                },
+              }
+              
+              // Fetch response body
+              responseBody = await response.text()
+              
+              // Call callback first to allow event listeners to be registered
+              if (callback) callback(res)
+              
+              // Use nextTick/queueMicrotask to emit events after callback returns
+              // This ensures event listeners are registered before events fire
+              queueMicrotask(() => {
+                // Emit 'data' event
+                resEventHandlers.data.forEach(handler => handler(responseBody))
+                
+                // Emit 'end' event
+                resEventHandlers.end.forEach(handler => handler())
+              })
+            } catch (err) {
+              // Clear timeout on error
+              if (timeoutId) clearTimeout(timeoutId)
+              
+              // Emit 'error' event
+              eventHandlers.error.forEach(handler => handler(err))
+            }
+          },
+          
+          on: (event, handler) => {
+            if (event === 'error' || event === 'timeout') {
+              eventHandlers[event].push(handler)
+            }
+            return req
+          },
+          
+          destroy: () => {
+            if (timeoutId) clearTimeout(timeoutId)
+            isEnded = true
+          },
+          
+          setTimeout: (timeout, callback) => {
+            options.timeout = timeout
+            if (callback) {
+              eventHandlers.timeout.push(callback)
+            }
+            return req
+          },
+        }
+        
+        return req
+      },
+      
+      get: (url, options, callback) => {
+        if (typeof options === 'function') {
+          callback = options
+          options = {}
+        }
+        const req = httpModule.request(url, { ...options, method: 'GET' }, callback)
+        req.end()
+        return req
+      },
+    }
+    
+    return httpModule
+  }
+  
+  // util module
+  if (moduleName === 'util' || moduleName === 'node:util') {
+    return {
+      promisify: globalThis.promisify,
+      inspect: Deno.inspect,
+    }
+  }
+  
+  // os module
+  if (moduleName === 'os' || moduleName === 'node:os') {
+    return {
+      platform: () => Deno.build.os,
+      arch: () => Deno.build.arch,
+      hostname: Deno.hostname,
+      tmpdir: () => '/tmp',
+      homedir: () => '/home',
+      EOL: '\n',
+    }
+  }
+  
+  // url module
+  if (moduleName === 'url' || moduleName === 'node:url') {
+    return {
+      URL: globalThis.URL,
+      URLSearchParams: globalThis.URLSearchParams,
+      parse: (urlString) => {
+        const url = new URL(urlString)
+        return {
+          protocol: url.protocol,
+          hostname: url.hostname,
+          port: url.port,
+          pathname: url.pathname,
+          search: url.search,
+          hash: url.hash,
+          href: url.href,
+        }
+      },
+    }
+  }
+  
+  // querystring module
+  if (moduleName === 'querystring' || moduleName === 'node:querystring') {
+    return {
+      parse: (str) => Object.fromEntries(new URLSearchParams(str)),
+      stringify: (obj) => new URLSearchParams(obj).toString(),
+    }
+  }
+  
+  // buffer module
+  if (moduleName === 'buffer' || moduleName === 'node:buffer') {
+    return {
+      Buffer: globalThis.Buffer,
+    }
+  }
+  
+  throw new Error(`Module not found: ${moduleName}. Supported modules: fs, path, crypto, http, https, util, os, url, querystring, buffer`)
+}
+
+// Buffer class (Node.js buffer API)
+globalThis.Buffer = class Buffer extends Uint8Array {
+  static from(data, encoding) {
+    if (typeof data === 'string') {
+      if (encoding === 'base64') {
+        const binary = atob(data)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i)
+        }
+        return new Buffer(bytes)
+      } else if (encoding === 'hex') {
+        const bytes = new Uint8Array(data.length / 2)
+        for (let i = 0; i < data.length; i += 2) {
+          bytes[i / 2] = parseInt(data.substr(i, 2), 16)
+        }
+        return new Buffer(bytes)
+      } else {
+        return new Buffer(new TextEncoder().encode(data))
+      }
+    } else if (data instanceof ArrayBuffer || data instanceof Uint8Array) {
+      return new Buffer(data)
+    } else if (Array.isArray(data)) {
+      return new Buffer(new Uint8Array(data))
+    }
+    throw new Error('Unsupported data type for Buffer.from()')
+  }
+  
+  static alloc(size, fill) {
+    const buf = new Buffer(size)
+    if (fill !== undefined) {
+      buf.fill(fill)
+    }
+    return buf
+  }
+  
+  static concat(list, totalLength) {
+    if (totalLength === undefined) {
+      totalLength = list.reduce((acc, buf) => acc + buf.length, 0)
+    }
+    const result = new Buffer(totalLength)
+    let offset = 0
+    for (const buf of list) {
+      result.set(buf, offset)
+      offset += buf.length
+    }
+    return result
+  }
+  
+  toString(encoding) {
+    if (encoding === 'base64') {
+      return btoa(String.fromCharCode(...this))
+    } else if (encoding === 'hex') {
+      return Array.from(this).map(b => b.toString(16).padStart(2, '0')).join('')
+    } else {
+      return new TextDecoder().decode(this)
+    }
+  }
+  
+  toJSON() {
+    return { type: 'Buffer', data: Array.from(this) }
+  }
+}
+
+// __dirname and __filename (not available in ESM, but provide stubs)
+globalThis.__dirname = '/plugin'
+globalThis.__filename = '/plugin/index.js'
+
+// module.exports and exports (CommonJS compatibility)
+globalThis.module = { exports: {} }
+globalThis.exports = globalThis.module.exports
+
+// ============================================================
+// Node.js Compatible Console API
+// ============================================================
+// Override deno_web console with 100% Node.js compatible implementation
+// This ensures plugins can use console.log/error/warn/info/debug naturally
+
+// Store original console from deno_web (if needed for debugging)
+const _denoConsole = globalThis.console
+
+// Format function to handle multiple arguments like Node.js
+const formatArgs = (...args) => {
+  return args.map(arg => {
+    if (typeof arg === 'string') return arg
+    if (arg === null) return 'null'
+    if (arg === undefined) return 'undefined'
+    if (typeof arg === 'function') return `[Function: ${arg.name || 'anonymous'}]`
+    if (typeof arg === 'symbol') return arg.toString()
+    if (typeof arg === 'bigint') return arg.toString() + 'n'
+    if (arg instanceof Error) return arg.stack || arg.toString()
+    if (arg instanceof Date) return arg.toISOString()
+    if (arg instanceof RegExp) return arg.toString()
+    if (typeof arg === 'object') {
+      try {
+        return JSON.stringify(arg, (key, value) => {
+          // Handle circular references
+          if (typeof value === 'function') return `[Function: ${value.name || 'anonymous'}]`
+          if (typeof value === 'symbol') return value.toString()
+          if (typeof value === 'bigint') return value.toString() + 'n'
+          if (value instanceof Error) return value.toString()
+          return value
+        }, 2)
+      } catch (e) {
+        // Circular reference or other serialization error
+        return '[Object (circular or non-serializable)]'
+      }
+    }
+    return String(arg)
+  }).join(' ')
+}
+
+// Node.js compatible console implementation
+globalThis.console = {
+  // Standard logging methods (Node.js compatible)
+  log: (...args) => {
+    const message = formatArgs(...args)
+    Deno.core.ops.op_plugin_log('info', message)
+  },
+  
+  info: (...args) => {
+    const message = formatArgs(...args)
+    Deno.core.ops.op_plugin_log('info', message)
+  },
+  
+  warn: (...args) => {
+    const message = formatArgs(...args)
+    Deno.core.ops.op_plugin_log('warn', message)
+  },
+  
+  error: (...args) => {
+    const message = formatArgs(...args)
+    Deno.core.ops.op_plugin_log('error', message)
+  },
+  
+  debug: (...args) => {
+    const message = formatArgs(...args)
+    Deno.core.ops.op_plugin_log('debug', message)
+  },
+  
+  // Timing methods (Node.js compatible)
+  time: (label = 'default') => {
+    if (!globalThis.console._timers) globalThis.console._timers = new Map()
+    globalThis.console._timers.set(label, Date.now())
+  },
+  
+  timeEnd: (label = 'default') => {
+    if (!globalThis.console._timers) globalThis.console._timers = new Map()
+    const start = globalThis.console._timers.get(label)
+    if (start !== undefined) {
+      const duration = Date.now() - start
+      Deno.core.ops.op_plugin_log('info', `${label}: ${duration}ms`)
+      globalThis.console._timers.delete(label)
+    } else {
+      Deno.core.ops.op_plugin_log('warn', `Timer '${label}' does not exist`)
+    }
+  },
+  
+  timeLog: (label = 'default', ...args) => {
+    if (!globalThis.console._timers) globalThis.console._timers = new Map()
+    const start = globalThis.console._timers.get(label)
+    if (start !== undefined) {
+      const duration = Date.now() - start
+      const message = args.length > 0 ? `${label}: ${duration}ms ${formatArgs(...args)}` : `${label}: ${duration}ms`
+      Deno.core.ops.op_plugin_log('info', message)
+    } else {
+      Deno.core.ops.op_plugin_log('warn', `Timer '${label}' does not exist`)
+    }
+  },
+  
+  // Assertion (Node.js compatible)
+  assert: (condition, ...args) => {
+    if (!condition) {
+      const message = args.length > 0 ? formatArgs(...args) : 'Assertion failed'
+      Deno.core.ops.op_plugin_log('error', `Assertion failed: ${message}`)
+      throw new Error(`Assertion failed: ${message}`)
+    }
+  },
+  
+  // Counting (Node.js compatible)
+  count: (label = 'default') => {
+    if (!globalThis.console._counters) globalThis.console._counters = new Map()
+    const current = (globalThis.console._counters.get(label) || 0) + 1
+    globalThis.console._counters.set(label, current)
+    Deno.core.ops.op_plugin_log('info', `${label}: ${current}`)
+  },
+  
+  countReset: (label = 'default') => {
+    if (!globalThis.console._counters) globalThis.console._counters = new Map()
+    globalThis.console._counters.delete(label)
+  },
+  
+  // Grouping (Node.js compatible - simplified)
+  group: (...args) => {
+    const message = args.length > 0 ? formatArgs(...args) : 'Group'
+    Deno.core.ops.op_plugin_log('info', `[Group] ${message}`)
+  },
+  
+  groupCollapsed: (...args) => {
+    const message = args.length > 0 ? formatArgs(...args) : 'Group'
+    Deno.core.ops.op_plugin_log('info', `[Group Collapsed] ${message}`)
+  },
+  
+  groupEnd: () => {
+    // No-op in our simplified implementation
+  },
+  
+  // Table (Node.js compatible - simplified)
+  table: (data, columns) => {
+    try {
+      const formatted = JSON.stringify(data, null, 2)
+      Deno.core.ops.op_plugin_log('info', `Table:\n${formatted}`)
+    } catch (e) {
+      Deno.core.ops.op_plugin_log('info', `[Table data not serializable]`)
+    }
+  },
+  
+  // Trace (Node.js compatible)
+  trace: (...args) => {
+    const message = args.length > 0 ? formatArgs(...args) : 'Trace'
+    const stack = new Error().stack || ''
+    Deno.core.ops.op_plugin_log('debug', `Trace: ${message}\n${stack}`)
+  },
+  
+  // Clear (no-op in backend)
+  clear: () => {
+    // No-op - can't clear terminal in plugin context
+  },
+  
+  // Dir (Node.js compatible - similar to log with object inspection)
+  dir: (obj, options = {}) => {
+    const depth = options.depth || 2
+    try {
+      const formatted = JSON.stringify(obj, null, 2)
+      Deno.core.ops.op_plugin_log('info', formatted)
+    } catch (e) {
+      Deno.core.ops.op_plugin_log('info', '[Object not serializable]')
+    }
+  },
+  
+  // DirXml (alias to dir)
+  dirxml: (...args) => {
+    globalThis.console.dir(...args)
+  },
+  
+  // Internal storage for timers and counters
+  _timers: new Map(),
+  _counters: new Map(),
+}
+
 

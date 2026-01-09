@@ -15,8 +15,6 @@ use crate::core::models::asset::*;
 use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
 use crate::database_service::ability::{AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
-use crate::core::models::prompt::PromptTemplate;
-use crate::core::models::prompt::{PromptCategory, TemplateType};
 use crate::core::models::scan_session::{
     ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
     ScanSessionStatus,
@@ -267,19 +265,6 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn update_rule(&self, id: &str, name: &str, enabled: bool, applications: &str, target_hosts: &str, target_ports: &str, action: &str, proxy_id: Option<&str>) -> Result<()>;
     async fn delete_rule(&self, id: &str) -> Result<()>;
     async fn save_all_rules(&self, rules: &[ProxifierRuleRecord]) -> Result<()>;
-
-    // Prompt模板相关方法
-    async fn list_prompt_templates(&self) -> Result<Vec<PromptTemplate>>;
-    async fn get_prompt_template(&self, id: i64) -> Result<Option<PromptTemplate>>;
-    async fn create_prompt_template(&self, t: &PromptTemplate) -> Result<i64>;
-    async fn update_prompt_template(&self, id: i64, t: &PromptTemplate) -> Result<()>;
-    async fn delete_prompt_template(&self, id: i64) -> Result<()>;
-    async fn list_prompt_templates_filtered(&self, category: Option<PromptCategory>, template_type: Option<TemplateType>, is_system: Option<bool>) -> Result<Vec<PromptTemplate>>;
-    async fn duplicate_prompt_template(&self, id: i64, new_name: Option<String>) -> Result<i64>;
-    async fn evaluate_prompt(&self, id: i64, context: serde_json::Value) -> Result<String>;
-    async fn evaluate_prompt_content(&self, content: &str, context: serde_json::Value) -> Result<String>;
-    async fn get_active_prompt_template_by_type(&self, template_type: TemplateType) -> Result<Option<PromptTemplate>>;
-    async fn insert_default_templates(&self) -> Result<()>;
 
     // Plan-and-Execute
     async fn save_execution_plan(&self, id: &str, name: &str, description: &str, estimated_duration: u64, metadata: &serde_json::Value) -> Result<()>;

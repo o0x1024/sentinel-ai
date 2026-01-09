@@ -7,7 +7,6 @@ pub mod mcp;
 pub mod scan;
 pub mod scan_session;
 pub mod vulnerability;
-pub mod prompt;
 pub mod security_testing;
 pub mod workflow_graph;
 

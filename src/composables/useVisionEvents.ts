@@ -179,11 +179,118 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     const data = payload.data
 
     switch (payload.type) {
+      case 'started': {
+        resetstate()
+        isVisionActive.value = true
+        currentExecutionId.value = payload.execution_id
+        if (data?.target_url) currentUrl.value = data.target_url
+        return
+      }
+
       case 'start': {
         resetstate()
         isVisionActive.value = true
         currentExecutionId.value = payload.execution_id
         if (data?.target_url) currentUrl.value = data.target_url
+        return
+      }
+
+      case 'screenshot': {
+        // Create or update current step with screenshot
+        const stepNumber = data?.step_number || steps.value.length + 1
+        let step = steps.value.find(s => s.iteration === stepNumber)
+        if (!step) {
+          step = {
+            iteration: stepNumber,
+            phase: 'screenshot',
+            status: 'running',
+            url: data?.url,
+            title: data?.title,
+            screenshot: data?.screenshot_base64
+          }
+          steps.value.push(step)
+        } else {
+          step.screenshot = data?.screenshot_base64
+          step.url = data?.url
+          step.title = data?.title
+        }
+        if (data?.url) currentUrl.value = data.url
+        return
+      }
+
+      case 'analysis': {
+        // Update current step with analysis
+        const stepNumber = data?.step_number || steps.value.length
+        let step = steps.value.find(s => s.iteration === stepNumber)
+        if (!step) {
+          step = {
+            iteration: stepNumber,
+            phase: 'analyze',
+            status: 'running'
+          }
+          steps.value.push(step)
+        }
+        step.phase = 'analyze'
+        step.analysis = {
+          page_analysis: data?.description || '',
+          estimated_apis: [],
+          exploration_progress: 0
+        }
+        return
+      }
+
+      case 'action_executing': {
+        // Update current step with action being executed
+        const stepNumber = data?.step_number || steps.value.length
+        let step = steps.value.find(s => s.iteration === stepNumber)
+        if (!step) {
+          step = {
+            iteration: stepNumber,
+            phase: 'action',
+            status: 'running'
+          }
+          steps.value.push(step)
+        }
+        step.phase = 'action'
+        step.action = {
+          action_type: data?.action_type || 'unknown',
+          element_index: data?.action_details?.element_index,
+          value: data?.action_details?.value,
+          reason: data?.action_details?.reason || '',
+          success: false
+        }
+        return
+      }
+
+      case 'action_result': {
+        // Update current step with action result
+        const stepNumber = data?.step_number || steps.value.length
+        const step = steps.value.find(s => s.iteration === stepNumber)
+        if (step && step.action) {
+          step.action.success = data?.success || false
+          step.status = data?.success ? 'completed' : 'failed'
+          if (data?.error) {
+            step.error = data.error
+          }
+          if (data?.new_url) {
+            currentUrl.value = data.new_url
+          }
+        }
+        return
+      }
+
+      case 'step': {
+        // Legacy step message or thought update
+        const stepNumber = data?.step_number || steps.value.length
+        const step = steps.value.find(s => s.iteration === stepNumber)
+        if (step) {
+          // Update existing step with thought
+          if (data?.thought) {
+            step.analysis = step.analysis || { page_analysis: '', estimated_apis: [], exploration_progress: 0 }
+            step.analysis.page_analysis = data.thought
+          }
+        }
+        if (data?.current_url) currentUrl.value = data.current_url
         return
       }
 
@@ -193,6 +300,25 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
           steps.value.push(step)
           if (step.url) currentUrl.value = step.url
         }
+        return
+      }
+
+      case 'progress': {
+        // Update progress
+        currentProgress.value = {
+          phase: 'exploration',
+          iteration: data?.steps_taken || 0,
+          max_iterations: data?.max_steps || 100,
+          pages_visited: data?.pages_visited || 0,
+          apis_discovered: data?.apis_discovered || 0,
+          elements_interacted: 0
+        }
+        return
+      }
+
+      case 'completed': {
+        isVisionActive.value = false
+        pushActivity({ type: 'complete', ts: now, status: data?.result?.success ? 'completed' : 'failed' })
         return
       }
 

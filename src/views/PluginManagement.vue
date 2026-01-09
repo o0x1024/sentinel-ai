@@ -1101,12 +1101,14 @@ const runAdvancedTest = async () => {
         inputs = JSON.parse(advancedForm.value.agent_inputs_text || '{}')
       } catch (e) {
         advancedError.value = 'JSON格式错误'
+        advancedTesting.value = false
         return
       }
 
       const startTime = Date.now()
       const runs = []
       let totalFindings = 0
+      const allOutputs = []
 
       for (let i = 0; i < advancedForm.value.runs; i++) {
         const runStart = Date.now()
@@ -1120,11 +1122,21 @@ const runAdvancedTest = async () => {
             run_index: i + 1,
             duration_ms: Date.now() - runStart,
             findings: result?.output?.findings?.length || 0,
-            error: result?.error || null
+            error: result?.error || null,
+            output: result
           })
+          allOutputs.push(result)
           totalFindings += result?.output?.findings?.length || 0
         } catch (e: any) {
-          runs.push({ run_index: i + 1, duration_ms: Date.now() - runStart, findings: 0, error: e?.message || 'Error' })
+          const errorOutput = { error: e?.message || 'Error', success: false }
+          runs.push({ 
+            run_index: i + 1, 
+            duration_ms: Date.now() - runStart, 
+            findings: 0, 
+            error: e?.message || 'Error',
+            output: errorOutput
+          })
+          allOutputs.push(errorOutput)
         }
       }
 
@@ -1138,14 +1150,17 @@ const runAdvancedTest = async () => {
         total_findings: totalFindings,
         unique_findings: totalFindings,
         findings: [],
-        runs
+        runs,
+        outputs: allOutputs
       }
+      advancedTesting.value = false
     } else {
       let headers: Record<string, string> = {}
       try {
         headers = JSON.parse(advancedForm.value.headersText || '{}')
       } catch (e) {
         advancedError.value = '请求头JSON格式错误'
+        advancedTesting.value = false
         return
       }
 
@@ -1164,13 +1179,13 @@ const runAdvancedTest = async () => {
       } else {
         advancedError.value = response.error || '高级测试失败'
       }
+      advancedTesting.value = false
     }
   } catch (error) {
     advancedError.value = error instanceof Error ? error.message : '高级测试失败'
-  } finally {
     advancedTesting.value = false
   }
-}
+} 
 
 // Event listeners
 const setupEventListeners = async () => {

@@ -7,7 +7,6 @@ pub mod database {
     pub use sentinel_db::Database;
 }
 pub mod vulnerability;
-pub mod prompt_service;
 pub mod mcp;
 
 // Re-export from sentinel-services
@@ -40,13 +39,6 @@ pub use sentinel_services::performance::{
 };
 pub use sentinel_services::message_emitter::TauriMessageEmitter;
 pub use sentinel_services::dictionary::DictionaryService;
-
-pub use prompt_service::{
-    PromptService, PromptServiceConfig, PromptSession, ExecutionRecord,
-    SessionPerformanceStats, PromptBuildRequest, PromptBuildType,
-    PromptBuildResponse, OptimizationRequest, ValidationSettings,
-    ServiceStats, HealthStatus,
-};
 
 pub use vulnerability::VulnerabilityService;
 

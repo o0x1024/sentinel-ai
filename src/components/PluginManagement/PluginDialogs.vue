@@ -382,6 +382,31 @@
             </div>
           </div>
         </div>
+        
+        <!-- Detailed execution outputs -->
+        <div v-if="sortedRuns.length > 0" class="space-y-3">
+          <div v-for="run in sortedRuns" :key="run.run_index" class="collapse collapse-arrow bg-base-200">
+            <input type="checkbox" :id="`run-output-${run.run_index}`" />
+            <label :for="`run-output-${run.run_index}`" class="collapse-title font-medium flex items-center gap-2">
+              <span>{{ $t('plugins.runOutput', '运行') }} #{{ run.run_index }} {{ $t('plugins.executionResult', '执行结果') }}</span>
+              <span class="badge badge-sm" :class="run.error ? 'badge-error' : 'badge-success'">
+                {{ run.error ? $t('plugins.failed', '失败') : $t('plugins.success', '成功') }}
+              </span>
+            </label>
+            <div class="collapse-content">
+              <div v-if="run.output" class="card bg-base-100">
+                <div class="card-body p-4">
+                  <h5 class="font-semibold text-sm mb-2">{{ $t('plugins.agentToolResult', 'Agent工具执行结果') }}</h5>
+                  <pre class="text-xs overflow-x-auto whitespace-pre-wrap break-all bg-base-200 p-3 rounded">{{ JSON.stringify(run.output, null, 2) }}</pre>
+                </div>
+              </div>
+              <div v-else class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span>{{ $t('plugins.noOutputData', '无输出数据') }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="modal-action">
         <button class="btn" @click="closeAdvancedDialog">{{ $t('common.close', '关闭') }}</button>

@@ -42,6 +42,67 @@
       @clear-history="handleClearHistory"
     />
 
+    <!-- Test Result Dialog -->
+    <dialog ref="testResultDialogRef" class="modal">
+      <div class="modal-box w-11/12 max-w-3xl">
+        <h3 class="font-bold text-base mb-4">
+          <i class="fas fa-vial mr-2"></i>{{ $t('plugins.testResult', '插件测试结果') }}
+        </h3>
+        <div v-if="store.pluginTesting" class="alert alert-info">
+          <span class="loading loading-spinner"></span>
+          <span>{{ $t('plugins.testing', '正在测试插件...') }}</span>
+        </div>
+        <div v-else-if="testResult" class="space-y-4">
+          <!-- Status Alert -->
+          <div class="alert" :class="{ 'alert-success': testResult.success, 'alert-error': !testResult.success }">
+            <i :class="testResult.success ? 'fas fa-check-circle' : 'fas fa-times-circle'"></i>
+            <span>{{ testResult.success ? $t('plugins.testPassed', '测试通过') : $t('plugins.testFailed', '测试失败') }}</span>
+          </div>
+          
+          <!-- Failed: Show error message only -->
+          <div v-if="!testResult.success" class="card bg-base-200">
+            <div class="card-body">
+              <h4 class="font-semibold mb-2 text-error">{{ $t('plugins.errorInfo', '错误信息') }}</h4>
+              <pre class="text-sm whitespace-pre-wrap break-all text-error/80">{{ testResult.error || testResult.message || $t('plugins.unknownError', '未知错误') }}</pre>
+            </div>
+          </div>
+          
+          <!-- Success: Show message and findings -->
+          <template v-else>
+            <div v-if="testResult.message" class="card bg-base-200">
+              <div class="card-body">
+                <h4 class="font-semibold mb-2">{{ $t('plugins.testMessage', '测试消息') }}</h4>
+                <pre class="text-sm whitespace-pre-wrap">{{ testResult.message }}</pre>
+              </div>
+            </div>
+            <div v-if="testResult.findings && testResult.findings.length > 0" class="card bg-base-200">
+              <div class="card-body">
+                <h4 class="font-semibold mb-2">{{ $t('plugins.findings', '发现') }} ({{ testResult.findings.length }})</h4>
+                <div class="space-y-2">
+                  <div v-for="(finding, idx) in testResult.findings" :key="idx" class="card bg-base-100">
+                    <div class="card-body p-3">
+                      <div class="flex justify-between items-start">
+                        <span class="font-medium">{{ finding.title }}</span>
+                        <span class="badge" :class="getSeverityBadgeClass(finding.severity)">{{ finding.severity }}</span>
+                      </div>
+                      <p class="text-sm text-base-content/70 mt-1 whitespace-pre-wrap break-all">{{ finding.description }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="modal-action">
+          <button class="btn btn-primary" @click="handleReferTestResultToAi" :disabled="!testResult">
+            <i class="fas fa-robot mr-2"></i>{{ $t('plugins.referToAi', '引用到AI助手') }}
+          </button>
+          <button class="btn" @click="closeTestResultDialog">{{ $t('common.close', '关闭') }}</button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button @click="closeTestResultDialog">close</button></form>
+    </dialog>
+
     <!-- Custom Context Menu for Editor - Teleport to body to escape stacking context -->
     <Teleport to="body">
       <div v-if="contextMenu.show" 
@@ -257,6 +318,10 @@ function applyDiffBlocks(currentCode: string, blocks: DiffBlock[]): { success: b
 const store = usePluginEditorStore()
 const { t } = useI18n()
 const dialogRef = ref<InstanceType<typeof PluginCodeEditorDialog>>()
+const testResultDialogRef = ref<HTMLDialogElement>()
+
+// 测试结果状态
+const testResult = ref<TestResult | null>(null)
 
 // 右键菜单状态
 const contextMenu = ref({
@@ -1187,22 +1252,55 @@ const handleExitPreviewMode = () => {
 
 const handleTestPlugin = async () => {
   if (!store.editingPlugin) return
+  
+  // 打开测试结果对话框
+  testResult.value = null
+  testResultDialogRef.value?.showModal()
+  
   store.pluginTesting = true
   try {
     const isAgentPlugin = store.editingPlugin.metadata.main_category === 'agent'
     const command = isAgentPlugin ? 'test_agent_plugin' : 'test_plugin'
-    const resp = await invoke<CommandResponse<TestResult>>(command, { 
+    const resp = await invoke<CommandResponse<any>>(command, { 
       pluginId: store.editingPlugin.metadata.id,
       inputs: isAgentPlugin ? {} : undefined
     })
     
     if (resp.success && resp.data) {
+      // 处理 Agent 插件测试结果
+      if (isAgentPlugin) {
+        testResult.value = {
+          success: resp.data.success,
+          message: resp.data.message || (resp.data.success ? `插件执行完成 (${resp.data.execution_time_ms}ms)` : '测试失败'),
+          findings: [{
+            title: 'Agent工具执行结果',
+            description: JSON.stringify(resp.data.output ?? { error: resp.data.error }, null, 2),
+            severity: resp.data.success ? 'info' : 'error'
+          }],
+          error: resp.data.error
+        }
+      } else {
+        // 流量分析插件测试结果
+        testResult.value = resp.data
+      }
+      
       showToast(resp.data.success ? t('plugins.testSuccess', '测试成功') : t('plugins.testFailed', '测试失败'), resp.data.success ? 'success' : 'error')
     } else {
+      testResult.value = {
+        success: false,
+        message: resp.error || t('plugins.testError', '测试错误'),
+        error: resp.error
+      }
       showToast(resp.error || t('plugins.testError', '测试错误'), 'error')
     }
   } catch (e) {
-    showToast(t('plugins.testError', '测试异常'), 'error')
+    const errorMsg = e instanceof Error ? e.message : t('plugins.testError', '测试异常')
+    testResult.value = {
+      success: false,
+      message: errorMsg,
+      error: errorMsg
+    }
+    showToast(errorMsg, 'error')
   } finally {
     store.pluginTesting = false
   }
@@ -1219,6 +1317,37 @@ const handleClearHistory = () => {
     store.clearChatHistory(pluginId)
     showToast(t('plugins.historyCleared', '对话历史已清除'), 'success')
   
+}
+
+const closeTestResultDialog = () => {
+  testResultDialogRef.value?.close()
+}
+
+const handleReferTestResultToAi = () => {
+  if (!testResult.value) return
+  
+  // 构建测试结果引用
+  const resultText = `Test Result:\n${JSON.stringify(testResult.value, null, 2)}`
+  store.selectedTestResultRef = {
+    result: testResult.value,
+    preview: testResult.value.message?.substring(0, 100) || 'Test Result'
+  }
+  
+  store.showAiPanel = true
+  closeTestResultDialog()
+  showToast(t('plugins.addedToContext', '已添加到上下文'), 'success')
+}
+
+const getSeverityBadgeClass = (severity: string): string => {
+  const map: Record<string, string> = {
+    'critical': 'badge-error',
+    'high': 'badge-warning',
+    'medium': 'badge-info',
+    'low': 'badge-success',
+    'info': 'badge-ghost',
+    'error': 'badge-error'
+  }
+  return map[severity.toLowerCase()] || 'badge-ghost'
 }
 
 // Watch for minimized state to handle visibility

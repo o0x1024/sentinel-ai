@@ -12,7 +12,6 @@ import assetManagement from '../assetManagement/zh'
 import assetTypes from '../assetTypes/zh'
 import riskLevels from '../riskLevels/zh'
 import assetStatuses from '../assetStatuses/zh'
-import promptMgmt from '../promptMgmt/zh'
 import aiChat from '../aiChat/zh'
 import positions from '../positions/zh'
 import language from '../language/zh'
@@ -49,7 +48,6 @@ export default {
   assetTypes,
   riskLevels,
   assetStatuses,
-  promptMgmt,
   aiChat,
   positions,
   language,
@@ -319,6 +317,12 @@ export default {
     runDetails: '运行详情',
     duration: '耗时(ms)',
     agentInputs: '插件入参 (JSON)',
+    runOutput: '运行',
+    executionResult: '执行结果',
+    failed: '失败',
+    success: '成功',
+    agentToolResult: 'Agent工具执行结果',
+    noOutputData: '无输出数据',
     codeEditor: '插件代码编辑器',
     readonly: '只读',
     cancelEdit: '取消编辑',

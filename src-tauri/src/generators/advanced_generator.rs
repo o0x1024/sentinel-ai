@@ -11,10 +11,8 @@ use super::few_shot_examples::FewShotRepository;
 use super::prompt_templates::PromptTemplateBuilder;
 use super::validator::{ExecutionTestResult, PluginValidator, ValidationResult};
 use crate::analyzers::WebsiteAnalysis;
-use crate::models::prompt::TemplateType;
 use crate::services::ai::AiServiceManager;
 use crate::services::DatabaseService;
-use sentinel_db::Database;
 
 /// Maximum number of fix attempts for a failed plugin
 const MAX_FIX_ATTEMPTS: u32 = 3;
@@ -134,7 +132,7 @@ impl AdvancedPluginGenerator {
             ai_manager,
             db: Some(db.clone()),
             validator: PluginValidator::new(),
-            prompt_builder: PromptTemplateBuilder::with_database(db),
+            prompt_builder: PromptTemplateBuilder::new(),
             few_shot_repo: FewShotRepository::new(),
             auto_approval_engine: PluginAutoApprovalEngine::new(auto_approval_config),
         }
@@ -142,7 +140,7 @@ impl AdvancedPluginGenerator {
 
     pub fn set_db(&mut self, db: Arc<DatabaseService>) {
         self.db = Some(db.clone());
-        self.prompt_builder = PromptTemplateBuilder::with_database(db);
+        self.prompt_builder = PromptTemplateBuilder::new();
     }
 
     /// Generate plugin using AI
@@ -514,40 +512,8 @@ impl AdvancedPluginGenerator {
         );
 
         // Build complete prompt with system message
-        // 优先使用动态配置的 prompt 模板，回退到硬编码
-        let full_prompt = if let Some(ref db) = self.db {
-            // 尝试从数据库获取激活的插件生成模板
-            match db
-                .get_active_prompt_template_by_type(TemplateType::PluginGeneration)
-                .await
-            {
-                Ok(Some(template)) => {
-                    log::info!(
-                        "Using dynamic plugin generation template: {}",
-                        template.name
-                    );
-                    // 模板内容已经包含完整的 prompt，直接使用
-                    format!("{}\n\n{}", template.content, prompt)
-                }
-                Ok(None) => {
-                    log::warn!("No active plugin generation template found, using fallback");
-                    format!(
-                        "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
-                        prompt
-                    )
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to load plugin generation template: {}, using fallback",
-                        e
-                    );
-                    format!(
-                        "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",
-                        prompt
-                    )
-                }
-            }
-        } else {
+        // Use built-in template
+        let full_prompt = {
             log::debug!("No database configured for prompts, using fallback prompt");
             format!(
                 "You are an expert security researcher and TypeScript developer. Generate high-quality security testing plugins based on website analysis.\n\n{}",

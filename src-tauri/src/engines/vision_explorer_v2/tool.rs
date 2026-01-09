@@ -1,7 +1,7 @@
 //! V2 Vision Explorer Tool - Rig Tool implementation for ReAct Engine
 
 use super::react_engine::ReActEngine;
-use super::types::VisionExplorerV2Config;
+use super::types::{VisionExplorerV2Config, VisionMessage};
 use crate::engines::LlmConfig;
 use crate::services::mcp::McpService;
 use rig::completion::ToolDefinition;
@@ -11,6 +11,87 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+
+/// Get message type name for frontend
+fn msg_type_name(msg: &VisionMessage) -> String {
+    match msg {
+        VisionMessage::Started { .. } => "started",
+        VisionMessage::Step { .. } => "step",
+        VisionMessage::Screenshot { .. } => "screenshot",
+        VisionMessage::Analysis { .. } => "analysis",
+        VisionMessage::ActionExecuting { .. } => "action_executing",
+        VisionMessage::ActionResult { .. } => "action_result",
+        VisionMessage::Observation { .. } => "observation",
+        VisionMessage::Progress { .. } => "progress",
+        VisionMessage::ApiDiscovered { .. } => "api_discovered",
+        VisionMessage::Completed { .. } => "completed",
+        VisionMessage::Error { .. } => "error",
+    }.to_string()
+}
+
+/// Convert message to data object for frontend
+fn msg_to_data(msg: &VisionMessage) -> serde_json::Value {
+    match msg {
+        VisionMessage::Started { session_id, target_url } => json!({
+            "session_id": session_id,
+            "target_url": target_url
+        }),
+        VisionMessage::Step { step_number, thought, action, current_url } => json!({
+            "step_number": step_number,
+            "thought": thought,
+            "action": action,
+            "current_url": current_url
+        }),
+        VisionMessage::Screenshot { step_number, screenshot_base64, url, title } => json!({
+            "step_number": step_number,
+            "screenshot_base64": screenshot_base64,
+            "url": url,
+            "title": title
+        }),
+        VisionMessage::Analysis { step_number, page_type, description, elements_count, forms_count, links_count } => json!({
+            "step_number": step_number,
+            "page_type": format!("{:?}", page_type),
+            "description": description,
+            "elements_count": elements_count,
+            "forms_count": forms_count,
+            "links_count": links_count
+        }),
+        VisionMessage::ActionExecuting { step_number, action_type, action_details } => json!({
+            "step_number": step_number,
+            "action_type": action_type,
+            "action_details": action_details
+        }),
+        VisionMessage::ActionResult { step_number, success, error, new_url } => json!({
+            "step_number": step_number,
+            "success": success,
+            "error": error,
+            "new_url": new_url
+        }),
+        VisionMessage::Observation { step_number, page_type, description, elements_count } => json!({
+            "step_number": step_number,
+            "page_type": format!("{:?}", page_type),
+            "description": description,
+            "elements_count": elements_count
+        }),
+        VisionMessage::Progress { steps_taken, max_steps, pages_visited, apis_discovered } => json!({
+            "steps_taken": steps_taken,
+            "max_steps": max_steps,
+            "pages_visited": pages_visited,
+            "apis_discovered": apis_discovered
+        }),
+        VisionMessage::ApiDiscovered { url, method } => json!({
+            "url": url,
+            "method": method
+        }),
+        VisionMessage::Completed { success, result } => json!({
+            "success": success,
+            "result": result
+        }),
+        VisionMessage::Error { message } => json!({
+            "message": message
+        }),
+    }
+}
 
 #[derive(Deserialize)]
 pub struct VisionExplorerV2Args {
@@ -93,20 +174,23 @@ impl Tool for VisionExplorerV2Tool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        // Check if Playwright MCP is connected
+        // Check if Playwright MCP is connected and get the server name
         let connections = self.mcp_service.get_connection_info().await.map_err(|e| {
             ToolError::ToolCallError(format!("Failed to check MCP connections: {}", e).into())
         })?;
 
-        let playwright_connected = connections.iter().any(|c| {
+        let playwright_server = connections.iter().find(|c| {
             c.name.to_lowercase().contains("playwright") && c.status.to_lowercase() == "connected"
         });
 
-        if !playwright_connected {
-            return Err(ToolError::ToolCallError(
-                "Playwright MCP server not connected. Please connect the server to use Vision Explorer.".into(),
-            ));
-        }
+        let mcp_server_name = match playwright_server {
+            Some(server) => server.name.clone(),
+            None => {
+                return Err(ToolError::ToolCallError(
+                    "Playwright MCP server not connected. Please connect the server to use Vision Explorer.".into(),
+                ));
+            }
+        };
 
         // Build V2 config
         let mut ai_config = crate::engines::vision_explorer_v2::types::AIConfig {
@@ -163,11 +247,18 @@ impl Tool for VisionExplorerV2Tool {
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let app_handle_clone = self.app_handle.clone();
-        let mut engine = ReActEngine::new(config, self.mcp_service.clone())
+        let execution_id_clone = execution_id.clone();
+        let mut engine = ReActEngine::new(config, self.mcp_service.clone(), mcp_server_name)
             .with_message_callback(move |msg| {
                 if let Some(ref handle) = app_handle_clone {
-                    let event_name = format!("vision-explorer-v2:{}", execution_id);
-                    let _ = handle.emit(&event_name, msg);
+                    // Wrap message in envelope format expected by frontend
+                    let envelope = serde_json::json!({
+                        "execution_id": execution_id_clone,
+                        "type": msg_type_name(&msg),
+                        "ts": chrono::Utc::now().timestamp_millis(),
+                        "data": msg_to_data(&msg)
+                    });
+                    let _ = handle.emit("vision:v2", envelope);
                 }
             });
 

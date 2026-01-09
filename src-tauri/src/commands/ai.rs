@@ -5,7 +5,6 @@ use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
 use crate::utils::ordered_message::ChunkType;
-use crate::utils::prompt_resolver::{AgentPromptConfig, CanonicalStage, PromptResolver};
 use anyhow::Result;
 use chrono::Utc;
 use sentinel_llm::{
@@ -2112,25 +2111,6 @@ pub async fn agent_execute(
                 }
             }
         }
-
-        // 解析系统提示
-        // 只有当 system_prompt 是 None 时才自动加载默认模板
-        // 如果是 Some("")（空字符串），说明用户明确不想使用系统提示
-            if let Some(db) =
-                app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
-            {
-                let resolver = PromptResolver::new(db.inner().clone());
-                let cfg = AgentPromptConfig::default();
-                match resolver
-                    .resolve_prompt(&cfg, CanonicalStage::System, None)
-                    .await
-                {
-                    Ok(content) if !content.trim().is_empty() => {
-                        base_system_prompt = Some(content);
-                    }
-                    _ => {}
-                }
-            }
 
         // 合并角色提示和系统提示
         if !role_prompt.is_empty() {

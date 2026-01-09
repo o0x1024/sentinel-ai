@@ -2639,14 +2639,7 @@ pub async fn test_plugin(
                 error: Some("WrongTestEndpoint".to_string()),
             }));
         }
-        if !enabled {
-            return Ok(CommandResponse::ok(TestPluginResult {
-                success: false,
-                message: Some(format!("插件 '{}' 当前未启用。请先启用插件。", name)),
-                findings: None,
-                error: Some("Plugin is not enabled".to_string()),
-            }));
-        }
+        // 移除启用状态检查，允许测试未启用的插件
 
         // 获取插件管理器（确保内存中已注册插件，否则主动加载）
         let plugin_manager = state.get_plugin_manager();
@@ -2840,17 +2833,16 @@ pub async fn test_plugin_advanced(
     let runs = runs.unwrap_or(1).max(1);
     let concurrency = concurrency.unwrap_or(1).max(1);
     let db = state.get_db_service();
-    // 复用 test_plugin 的加载逻辑：确保插件已注册
-    let _ = test_plugin(state.clone(), plugin_id.clone()).await; // 忽略结果，只用于触发注册（若未启用会返回提示）
-
-    // 再次确认是否启用
-    let enabled: Option<bool> =
-        sqlx::query_scalar("SELECT enabled FROM plugin_registry WHERE id = ?")
+    
+    // 确保插件存在并加载到内存中
+    let plugin_exists: Option<bool> =
+        sqlx::query_scalar("SELECT 1 FROM plugin_registry WHERE id = ?")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
             .await
-            .map_err(|e| format!("Failed to query plugin enabled: {}", e))?;
-    if enabled != Some(true) {
+            .map_err(|e| format!("Failed to query plugin: {}", e))?;
+    
+    if plugin_exists.is_none() {
         return Ok(CommandResponse::ok(AdvancedTestResult {
             plugin_id,
             success: false,
@@ -2862,10 +2854,72 @@ pub async fn test_plugin_advanced(
             unique_findings: 0,
             findings: vec![],
             runs: vec![],
-            message: Some("插件未启用或不存在".to_string()),
-            error: Some("PluginDisabled".to_string()),
+            message: Some("Plugin not found".to_string()),
+            error: Some("PluginNotFound".to_string()),
             outputs: None,
         }));
+    }
+    
+    // 确保插件已加载到内存中（不检查启用状态）
+    let plugin_manager = state.get_plugin_manager();
+    if plugin_manager.get_plugin(&plugin_id).await.is_none() {
+        // 加载插件代码和元数据
+        let code_opt = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT plugin_code FROM plugin_registry WHERE id = ?",
+        )
+        .bind(&plugin_id)
+        .fetch_optional(db.pool())
+        .await
+        .map_err(|e| format!("Failed to load plugin code: {}", e))?;
+        
+        if let Some(code) = code_opt.flatten() {
+            let (name, version, author, main_category, category, description, default_severity, enabled) = sqlx::query_as::<_, (String,String,Option<String>,String,String,Option<String>,String,bool)>(
+                "SELECT name, version, author, main_category, category, description, default_severity, enabled FROM plugin_registry WHERE id = ?"
+            )
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin metadata: {}", e))?
+            .ok_or_else(|| format!("Plugin metadata not found for id {}", plugin_id))?;
+            
+            let tags_json: Option<String> =
+                sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = ?")
+                    .bind(&plugin_id)
+                    .fetch_optional(db.pool())
+                    .await
+                    .map_err(|e| format!("Failed to query plugin tags: {}", e))?;
+            let tags: Vec<String> = tags_json
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or_default();
+            
+            let severity = match default_severity.to_lowercase().as_str() {
+                "critical" => sentinel_traffic::types::Severity::Critical,
+                "high" => sentinel_traffic::types::Severity::High,
+                "medium" => sentinel_traffic::types::Severity::Medium,
+                "low" => sentinel_traffic::types::Severity::Low,
+                "info" => sentinel_traffic::types::Severity::Info,
+                _ => sentinel_traffic::types::Severity::Medium,
+            };
+            
+            let metadata = PluginMetadata {
+                id: plugin_id.clone(),
+                name,
+                version,
+                author,
+                main_category,
+                category,
+                description,
+                default_severity: severity,
+                tags,
+            };
+            
+            let _ = plugin_manager
+                .register_plugin(plugin_id.clone(), metadata, enabled)
+                .await;
+            let _ = plugin_manager
+                .set_plugin_code(plugin_id.clone(), code)
+                .await;
+        }
     }
 
     use sentinel_traffic::RequestContext;
@@ -3030,7 +3084,7 @@ pub async fn test_agent_plugin(
             .await
             .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
-    let (_id, main_category, enabled) = match row {
+    let (_id, main_category, _enabled) = match row {
         Some(r) => r,
         None => {
             return Ok(CommandResponse::ok(AgentTestResult {
@@ -3053,15 +3107,7 @@ pub async fn test_agent_plugin(
         }));
     }
 
-    if !enabled {
-        return Ok(CommandResponse::ok(AgentTestResult {
-            success: false,
-            message: Some(format!("插件 '{}' 未启用，请先启用", plugin_id)),
-            output: None,
-            execution_time_ms: 0,
-            error: Some("PluginDisabled".to_string()),
-        }));
-    }
+    // 移除启用状态检查，允许测试未启用的插件
 
     // 获取插件代码
     let code: Option<String> =

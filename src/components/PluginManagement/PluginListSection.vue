@@ -173,16 +173,14 @@
                 <!-- Test Plugin -->
                 <div class="tooltip"
                   :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试流量分析 (scan_request/scan_response)'">
-                  <button class="btn btn-sm btn-outline" @click="$emit('testPlugin', plugin)"
-                    :disabled="plugin.status !== 'Enabled'">
+                  <button class="btn btn-sm btn-outline" @click="$emit('testPlugin', plugin)">
                     <i class="fas fa-vial mr-1"></i>
                   </button>
                 </div>
 
                 <!-- Advanced Test -->
                 <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '流量分析高级测试'">
-                  <button class="btn btn-sm btn-outline" @click="$emit('advancedTest', plugin)"
-                    :disabled="plugin.status !== 'Enabled'">
+                  <button class="btn btn-sm btn-outline" @click="$emit('advancedTest', plugin)">
                     <i class="fas fa-gauge-high mr-1"></i>
                   </button>
                 </div>

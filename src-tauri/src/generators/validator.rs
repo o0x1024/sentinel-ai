@@ -280,7 +280,7 @@ mod tests {
 
         let valid_code = r#"
 export async function scan_transaction(transaction) {
-    Deno.core.ops.op_emit_finding({});
+    Sentinel.emitFinding({});
 }
         "#;
 

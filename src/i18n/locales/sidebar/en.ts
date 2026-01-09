@@ -1,6 +1,5 @@
 export default {
   agentManager: 'Agent Manager',
-  promptManagement: 'Prompt Management',
   dashboard: 'Dashboard',
   securityCenter: 'Security Center',
   scanTasks: 'Scan Tasks',

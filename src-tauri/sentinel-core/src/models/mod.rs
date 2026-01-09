@@ -6,7 +6,6 @@ pub mod mcp;
 pub mod scan_session;
 pub mod scan;
 pub mod vulnerability;
-pub mod prompt;
 pub mod agent;
 pub mod rag;
 pub mod workflow;

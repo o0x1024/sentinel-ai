@@ -15,8 +15,6 @@ use crate::core::models::asset::*;
 use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
 use crate::database_service::ability::{AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
-use crate::core::models::prompt::PromptTemplate;
-use crate::core::models::prompt::{PromptCategory, TemplateType};
 use crate::core::models::scan_session::{
     ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
     ScanSessionStatus,
@@ -591,41 +589,6 @@ impl Database for DatabaseService {
     }
     async fn save_all_rules(&self, rules: &[ProxifierRuleRecord]) -> Result<()> {
         Self::save_all_rules_internal(self, rules).await
-    }
-
-    // Prompt
-    async fn list_prompt_templates(&self) -> Result<Vec<PromptTemplate>> {
-        Self::list_prompt_templates_internal(self).await
-    }
-    async fn get_prompt_template(&self, id: i64) -> Result<Option<PromptTemplate>> {
-        Self::get_prompt_template_internal(self, id).await
-    }
-    async fn create_prompt_template(&self, t: &PromptTemplate) -> Result<i64> {
-        Self::create_prompt_template_internal(self, t).await
-    }
-    async fn update_prompt_template(&self, id: i64, t: &PromptTemplate) -> Result<()> {
-        Self::update_prompt_template_internal(self, id, t).await
-    }
-    async fn delete_prompt_template(&self, id: i64) -> Result<()> {
-        Self::delete_prompt_template_internal(self, id).await
-    }
-    async fn list_prompt_templates_filtered(&self, category: Option<PromptCategory>, template_type: Option<TemplateType>, is_system: Option<bool>) -> Result<Vec<PromptTemplate>> {
-        Self::list_prompt_templates_filtered_internal(self, category, template_type, is_system).await
-    }
-    async fn duplicate_prompt_template(&self, id: i64, new_name: Option<String>) -> Result<i64> {
-        Self::duplicate_prompt_template_internal(self, id, new_name).await
-    }
-    async fn evaluate_prompt(&self, id: i64, context: serde_json::Value) -> Result<String> {
-        Self::evaluate_prompt_internal(self, id, context).await
-    }
-    async fn evaluate_prompt_content(&self, content: &str, context: serde_json::Value) -> Result<String> {
-        Self::evaluate_prompt_content_internal(self, content, context).await
-    }
-    async fn get_active_prompt_template_by_type(&self, template_type: TemplateType) -> Result<Option<PromptTemplate>> {
-        Self::get_active_prompt_template_by_type_internal(self, template_type).await
-    }
-    async fn insert_default_templates(&self) -> Result<()> {
-        Self::insert_default_templates_internal(self).await
     }
 
     // Stats

@@ -33,6 +33,7 @@ impl ReActEngine {
     pub fn new(
         config: VisionExplorerV2Config,
         mcp_service: Arc<McpService>,
+        mcp_server_name: String,
     ) -> Self {
         let perception_engine = Arc::new(PerceptionEngine::new(
             config.ai_config.vision_llm_config(),
@@ -41,6 +42,7 @@ impl ReActEngine {
         let action_executor = Arc::new(ActionExecutor::new(
             mcp_service.clone(),
             perception_engine.clone(),
+            mcp_server_name,
         ));
 
         let reasoning_llm = LlmClient::new(config.ai_config.fast_llm_config());
@@ -187,11 +189,14 @@ impl ReActEngine {
         // 1. OBSERVE: Analyze current page
         let observation = self.observe().await?;
         
-        self.send_message(VisionMessage::Observation {
+        // Send analysis result to UI
+        self.send_message(VisionMessage::Analysis {
             step_number,
             page_type: observation.page_type.clone(),
             description: observation.description.clone(),
             elements_count: observation.elements.len(),
+            forms_count: observation.forms.len(),
+            links_count: observation.links.len(),
         });
 
         // 2. THINK: Decide next action using LLM
@@ -213,7 +218,22 @@ impl ReActEngine {
         }
 
         // 3. ACT: Execute the action
+        // Send action executing message
+        self.send_message(VisionMessage::ActionExecuting {
+            step_number,
+            action_type: self.action_type_name(&decision.action),
+            action_details: self.action_to_json(&decision.action),
+        });
+
         let action_result = self.action_executor.execute(decision.action.clone()).await?;
+
+        // Send action result
+        self.send_message(VisionMessage::ActionResult {
+            step_number,
+            success: action_result.success,
+            error: action_result.error.clone(),
+            new_url: action_result.new_url.clone(),
+        });
 
         // 4. UPDATE: Record results
         self.update_state(&observation, &decision, &action_result).await?;
@@ -222,11 +242,23 @@ impl ReActEngine {
     }
 
     /// Observe: Analyze current page state
-    async fn observe(&self) -> Result<Observation> {
+    async fn observe(&mut self) -> Result<Observation> {
         debug!("Observing current page");
+        
+        let step_number = self.state.steps_taken + 1;
         
         // Capture page context
         let context = self.action_executor.capture_page_context().await?;
+        
+        // Send screenshot to UI
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+        let screenshot_base64 = BASE64.encode(&context.screenshot);
+        self.send_message(VisionMessage::Screenshot {
+            step_number,
+            screenshot_base64,
+            url: context.url.clone(),
+            title: context.title.clone(),
+        });
         
         // Analyze with perception engine
         let observation = self.perception_engine.analyze(&context).await?;
@@ -580,6 +612,54 @@ Decide what to do next."#,
     fn send_message(&self, message: VisionMessage) {
         if let Some(ref callback) = self.message_callback {
             callback(message);
+        }
+    }
+
+    /// Get action type name
+    fn action_type_name(&self, action: &Action) -> String {
+        match action {
+            Action::Navigate { .. } => "navigate".to_string(),
+            Action::Click { .. } => "click".to_string(),
+            Action::Fill { .. } => "fill".to_string(),
+            Action::Submit { .. } => "submit".to_string(),
+            Action::Scroll { .. } => "scroll".to_string(),
+            Action::Wait { .. } => "wait".to_string(),
+            Action::TakeSnapshot => "snapshot".to_string(),
+            Action::GoBack => "go_back".to_string(),
+            Action::Stop { .. } => "stop".to_string(),
+        }
+    }
+
+    /// Convert action to JSON for UI
+    fn action_to_json(&self, action: &Action) -> serde_json::Value {
+        match action {
+            Action::Navigate { url } => serde_json::json!({
+                "url": url
+            }),
+            Action::Click { selector, x, y } => serde_json::json!({
+                "selector": selector,
+                "x": x,
+                "y": y
+            }),
+            Action::Fill { selector, value } => serde_json::json!({
+                "selector": selector,
+                "value": value
+            }),
+            Action::Submit { selector } => serde_json::json!({
+                "selector": selector
+            }),
+            Action::Scroll { direction, amount } => serde_json::json!({
+                "direction": format!("{:?}", direction).to_lowercase(),
+                "amount": amount
+            }),
+            Action::Wait { duration_ms } => serde_json::json!({
+                "duration_ms": duration_ms
+            }),
+            Action::TakeSnapshot => serde_json::json!({}),
+            Action::GoBack => serde_json::json!({}),
+            Action::Stop { reason } => serde_json::json!({
+                "reason": reason
+            }),
         }
     }
 }
