@@ -87,7 +87,7 @@ export function scan_transaction(transaction) {
         }
     }
 
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "heap_pressure",
         title: "Heap Memory Pressure Test",
         description: "Allocated ~" + Math.floor(totalBytes / 1024 / 1024) + "MB without fatal OOM",
@@ -95,7 +95,7 @@ export function scan_transaction(transaction) {
         location: "heap",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -154,7 +154,7 @@ export function scan_transaction(transaction) {
         // 尝试触发栈溢出
         const result = recursiveFunction(50);
         
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "stack_test",
             title: "Stack Test Completed",
             description: "Recursion depth: " + depth + ", result: " + result,
@@ -162,9 +162,9 @@ export function scan_transaction(transaction) {
             location: "stack",
             severity: "info",
             confidence: "high"
-        });
+        }];
     } catch (e) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "stack_overflow",
             title: "Stack Overflow Detected",
             description: "Recursion depth: " + depth,
@@ -172,7 +172,7 @@ export function scan_transaction(transaction) {
             location: "stack",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#;
@@ -232,7 +232,7 @@ export function scan_transaction(transaction) {
         }
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "loop_test",
         title: "Loop Test Completed",
         description: "Completed " + iterations + " iterations",
@@ -240,7 +240,7 @@ export function scan_transaction(transaction) {
         location: "loop",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -335,7 +335,7 @@ export function scan_transaction(transaction) {
     
     const successful = results.filter(r => r.success).length;
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "large_object_test",
         title: "Large Object Allocation Test",
         description: "Successfully allocated " + successful + "/" + sizes.length + " objects",
@@ -343,7 +343,7 @@ export function scan_transaction(transaction) {
         location: "heap",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -434,7 +434,7 @@ export function scan_transaction(transaction) {
     const successful = results.filter(r => r.success).length;
     const maxLength = results.filter(r => r.success).reduce((max, r) => Math.max(max, r.length), 0);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "string_length_test",
         title: "String Length Test",
         description: "Max string length: " + maxLength + " (" + successful + "/" + lengths.length + " succeeded)",
@@ -442,7 +442,7 @@ export function scan_transaction(transaction) {
         location: "heap",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -527,7 +527,7 @@ export function scan_transaction(transaction) {
     const successful = results.filter(r => r.success).length;
     const maxProps = results.filter(r => r.success).reduce((max, r) => Math.max(max, r.actualCount), 0);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "object_props_test",
         title: "Object Properties Test",
         description: "Max properties: " + maxProps + " (" + successful + "/" + counts.length + " succeeded)",
@@ -535,7 +535,7 @@ export function scan_transaction(transaction) {
         location: "heap",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -589,7 +589,7 @@ if (typeof globalCounter === 'undefined') {
 export function scan_transaction(transaction) {
     globalThis.globalCounter++;
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "isolation_test",
         title: "Engine Isolation Test",
         description: "Global counter: " + globalThis.globalCounter,
@@ -597,7 +597,7 @@ export function scan_transaction(transaction) {
         location: "global",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 

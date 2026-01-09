@@ -66,9 +66,6 @@ import { crypto, Crypto, SubtleCrypto } from 'ext:deno_crypto/00_crypto.js'
 
 // Sentinel plugin API
 globalThis.Sentinel = {
-  emitFinding: (finding) => {
-    Deno.core.ops.op_emit_finding(finding)
-  },
   log: (level, message) => {
     Deno.core.ops.op_plugin_log(level, message)
   },
@@ -879,6 +876,23 @@ globalThis.require = function(moduleName) {
         Deno.copyFile(src, dest).then(() => callback(null)).catch(err => callback(err))
       },
       
+      access: (path, modeOrCallback, callback) => {
+        if (typeof modeOrCallback === 'function') {
+          callback = modeOrCallback
+        }
+        Deno.stat(path)
+          .then(() => callback(null))
+          .catch(err => {
+            const error = Object.assign(new Error(`ENOENT: no such file or directory, access '${path}'`), {
+              code: 'ENOENT',
+              errno: -2,
+              syscall: 'access',
+              path: path
+            })
+            callback(error)
+          })
+      },
+      
       // fs.promises API (modern async/await style)
       promises: {
         readFile: async (path, options) => {
@@ -925,6 +939,19 @@ globalThis.require = function(moduleName) {
         
         copyFile: async (src, dest) => {
           await Deno.copyFile(src, dest)
+        },
+        
+        access: async (path, mode) => {
+          try {
+            await Deno.stat(path)
+          } catch (err) {
+            throw Object.assign(new Error(`ENOENT: no such file or directory, access '${path}'`), {
+              code: 'ENOENT',
+              errno: -2,
+              syscall: 'access',
+              path: path
+            })
+          }
         },
       },
     }

@@ -165,6 +165,16 @@ impl ScanPipeline {
                         warn!("Cannot reload plugin {} - no database service", plugin_id);
                     }
                 }
+                ScanTask::RemovePlugin(plugin_id) => {
+                    match self.remove_plugin(&plugin_id).await {
+                        Ok(_) => {
+                            info!("Successfully removed plugin: {}", plugin_id);
+                        }
+                        Err(e) => {
+                            error!("Failed to remove plugin {}: {}", plugin_id, e);
+                        }
+                    }
+                }
                 ScanTask::FailedConnection(failed_conn) => {
                     self.process_failed_connection(failed_conn).await;
                 }

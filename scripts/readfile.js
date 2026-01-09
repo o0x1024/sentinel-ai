@@ -1,6 +1,6 @@
 /**
  * @plugin _etc_passwd_
- * @name 
+ * @name 生成一个读取本地/etc/passwd文件的脚本
  * @version 1.0.0
  * @author AI Generated
  * @category 
@@ -9,117 +9,116 @@
  * @description 生成一个读取本地/etc/passwd文件的脚本
  */
 
+/**
+ * Tool Plugin
+ * @plugin read_etc_passwd
+ * @name Read /etc/passwd File
+ * @version 1.0.0
+ * @author Security Researcher
+ * @category System Enumeration
+ * @default_severity informational
+ * @tags local, system, enumeration, linux
+ * @description Reads and parses the /etc/passwd file to enumerate local system users.
+ */
 
+const fs = require('fs').promises;
+
+/**
+ * Tool input interface
+ */
 interface ToolInput {
-    path?: string; // Path to the file, defaults to /etc/passwd
+    parse?: boolean;
 }
 
-interface UserEntry {
-    username: string;
-    passwordIndicator: string;
-    uid: number;
-    gid: number;
-    comment: string;
-    home: string;
-    shell: string;
-}
-
+/**
+ * Tool output interface
+ */
 interface ToolOutput {
     success: boolean;
     data?: {
-        path: string;
-        raw_content: string;
-        parsed_users: UserEntry[];
-        total_users: number;
-        sensitive_shells: string[]; // List of users with interactive shells
+        content?: string;
+        users?: Array<{
+            username: string;
+            passwordPlaceholder: string;
+            uid: string;
+            gid: string;
+            comment: string;
+            home: string;
+            shell: string;
+        }>;
     };
     error?: string;
 }
 
 /**
  * Export parameter schema function (Required)
- * Defines the input structure for the plugin engine.
  */
 export function get_input_schema() {
     return {
         type: "object",
         properties: {
-            path: {
-                type: "string",
-                default: "/etc/passwd",
-                description: "The absolute path to the password file to read (standard is /etc/passwd)"
+            parse: {
+                type: "boolean",
+                default: true,
+                description: "Whether to parse the file into a structured JSON object"
             }
         }
     };
 }
 
 /**
- * Main tool function to read and parse system user information.
+ * Main tool function to read and analyze /etc/passwd
  */
 export async function analyze(input: ToolInput): Promise<ToolOutput> {
-    const filePath = input.path || "/etc/passwd";
-
     try {
-        // Log the start of the operation
-        Deno.core.ops.op_plugin_log('info', `Attempting to read system file: ${filePath}`);
-
-        // Check if file exists and get info
-        const fileInfo = await Deno.stat(filePath);
-        if (!fileInfo.isFile) {
+        const filePath = '/Users/a1024/code/mcheck/Cargo.toml';
+        
+        // Check if file exists and is accessible
+        try {
+            await fs.access(filePath);
+        } catch (e) {
             return {
                 success: false,
-                error: `Target path ${filePath} is not a regular file.`
+                error: `Cannot access ${filePath}. File may not exist or permission denied.${e}`
             };
         }
 
-        // Read the file content
-        const content = await Deno.readTextFile(filePath);
-        
-        // Parse the /etc/passwd format
-        // Format: name:password:UID:GID:comment:home:shell
-        const lines = content.split('\n');
-        const users: UserEntry[] = [];
-        const interactiveShells = ['/bin/bash', '/bin/sh', '/bin/zsh', '/usr/bin/bash', '/usr/bin/zsh', '/bin/dash'];
-        const sensitiveShells: string[] = [];
+        // Read file content
+        const content = await fs.readFile(filePath, 'utf-8');
 
-        for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (!trimmedLine || trimmedLine.startsWith('#')) continue;
-
-            const parts = trimmedLine.split(':');
-            if (parts.length >= 7) {
-                const user: UserEntry = {
-                    username: parts[0],
-                    passwordIndicator: parts[1],
-                    uid: parseInt(parts[2], 10),
-                    gid: parseInt(parts[3], 10),
-                    comment: parts[4],
-                    home: parts[5],
-                    shell: parts[6]
-                };
-                
-                users.push(user);
-
-                // Identify users with potentially interactive shells (auditing purpose)
-                if (interactiveShells.some(s => user.shell.includes(s))) {
-                    sensitiveShells.push(user.username);
-                }
-            }
+        if (input.parse === false) {
+            return {
+                success: true,
+                data: { content }
+            };
         }
+
+        // Parse the /etc/passwd format: username:password:UID:GID:comment:home:shell
+        const lines = content.split('\n');
+        const users = lines
+            .filter(line => line.trim() !== '' && !line.startsWith('#'))
+            .map(line => {
+                const parts = line.split(':');
+                return {
+                    username: parts[0] || '',
+                    passwordPlaceholder: parts[1] || '',
+                    uid: parts[2] || '',
+                    gid: parts[3] || '',
+                    comment: parts[4] || '',
+                    home: parts[5] || '',
+                    shell: parts[6] || ''
+                };
+            });
 
         return {
             success: true,
             data: {
-                path: filePath,
-                raw_content: content,
-                parsed_users: users,
-                total_users: users.length,
-                sensitive_shells: sensitiveShells
+                content: content,
+                users: users
             }
         };
 
     } catch (error) {
-        Deno.core.ops.op_plugin_log('error', `Failed to read ${filePath}: ${String(error)}`);
         return {
             success: false,
             error: error instanceof Error ? error.message : String(error)
@@ -127,6 +126,6 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
     }
 }
 
-// **CRITICAL**: Export functions to globalThis for the plugin engine
+// **CRITICAL**: Export functions to globalThis
 globalThis.get_input_schema = get_input_schema;
 globalThis.analyze = analyze;

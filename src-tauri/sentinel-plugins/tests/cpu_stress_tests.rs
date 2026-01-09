@@ -138,7 +138,7 @@ export function scan_transaction(transaction) {
         }
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "regex_test",
         title: "Regex Backtracking Test",
         description: "Tested " + dangerousPatterns.length + " patterns, " + matchCount + " matches",
@@ -146,7 +146,7 @@ export function scan_transaction(transaction) {
         location: "body",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -215,7 +215,7 @@ export function scan_transaction(transaction) {
         return acc;
     }, {});
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "sort_test",
         title: "Large Data Sorting Test",
         description: "Processed " + dataSize + " items, " + Object.keys(grouped).length + " groups",
@@ -223,7 +223,7 @@ export function scan_transaction(transaction) {
         location: "computation",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -299,7 +299,7 @@ export function scan_transaction(transaction) {
         results.push(fibonacci(i));
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "recursive_test",
         title: "Recursive Algorithms Test",
         description: "fib(20)=" + fib20 + ", fact(10)=" + fact10 + ", ack(3,4)=" + ack,
@@ -307,7 +307,7 @@ export function scan_transaction(transaction) {
         location: "computation",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -400,7 +400,7 @@ export function scan_transaction(transaction) {
         trigSum += Math.sin(i) * Math.cos(i) + Math.tan(i / 100);
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "math_test",
         title: "Intensive Math Test",
         description: "Found " + primes.length + " primes, matrix " + size + "x" + size,
@@ -408,7 +408,7 @@ export function scan_transaction(transaction) {
         location: "computation",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -484,7 +484,7 @@ export function scan_transaction(transaction) {
         jsonStr = JSON.stringify(parsed);
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "string_test",
         title: "String Processing Test",
         description: "Processed string operations",
@@ -492,7 +492,7 @@ export function scan_transaction(transaction) {
         location: "computation",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -552,7 +552,7 @@ export function scan_transaction(transaction) {
         .map(item => ({ ...item, squared: item.value * item.value }))
         .filter(item => item.squared < 900000);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "concurrent_cpu_test",
         title: "Concurrent CPU Test",
         description: "Processed " + data.length + " items",
@@ -560,7 +560,7 @@ export function scan_transaction(transaction) {
         location: "computation",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 

@@ -1118,6 +1118,31 @@ pub async fn enable_plugin(
                 .flatten()
                 .unwrap_or_else(|| plugin_id.clone());
 
+                // 检查插件类型，只有traffic插件才需要更新流量扫描器缓存
+                let main_category = sqlx::query_scalar::<_, String>(
+                    "SELECT main_category FROM plugin_registry WHERE id = ?",
+                )
+                .bind(&plugin_id)
+                .fetch_optional(db.pool())
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "traffic".to_string());
+
+                // 如果是流量分析插件，重新加载到扫描管道
+                if main_category == "traffic" {
+                    let scan_tx = state.scan_tx.read().await;
+                    if let Some(ref tx) = *scan_tx {
+                        if let Err(e) = tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone())) {
+                            tracing::warn!("Failed to send reload plugin task for {}: {}", plugin_id, e);
+                        } else {
+                            tracing::info!("Sent reload plugin task for {}", plugin_id);
+                        }
+                    } else {
+                        tracing::warn!("Scan pipeline not running, cannot reload plugin {}", plugin_id);
+                    }
+                }
+
                 emit_plugin_changed(
                     &app,
                     PluginChangedEvent {
@@ -1180,6 +1205,31 @@ pub async fn disable_plugin(
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| plugin_id.clone());
+
+                // 检查插件类型，只有traffic插件才需要更新流量扫描器缓存
+                let main_category = sqlx::query_scalar::<_, String>(
+                    "SELECT main_category FROM plugin_registry WHERE id = ?",
+                )
+                .bind(&plugin_id)
+                .fetch_optional(db.pool())
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "traffic".to_string());
+
+                // 如果是流量分析插件，从扫描管道移除
+                if main_category == "traffic" {
+                    let scan_tx = state.scan_tx.read().await;
+                    if let Some(ref tx) = *scan_tx {
+                        if let Err(e) = tx.send(sentinel_traffic::ScanTask::RemovePlugin(plugin_id.clone())) {
+                            tracing::warn!("Failed to send remove plugin task for {}: {}", plugin_id, e);
+                        } else {
+                            tracing::info!("Sent remove plugin task for {}", plugin_id);
+                        }
+                    } else {
+                        tracing::warn!("Scan pipeline not running, cannot remove plugin {}", plugin_id);
+                    }
+                }
 
                 emit_plugin_changed(
                     &app,
@@ -2703,6 +2753,13 @@ pub async fn test_plugin(
             }
         }
 
+        // 在测试前，确保插件在内存中是启用状态（测试时允许临时启用未启用的插件）
+        let original_status = plugin_manager.get_plugin(&plugin_id).await.map(|p| p.status);
+        if !enabled {
+            // 临时启用插件以便测试
+            let _ = plugin_manager.enable_plugin(&plugin_id).await;
+        }
+
         // 构造一个最小的 RequestContext，供插件执行。保持与实际流量分析结构一致。
         use sentinel_traffic::RequestContext;
         let mut headers = std::collections::HashMap::new();
@@ -2733,6 +2790,15 @@ pub async fn test_plugin(
         let findings_result = plugin_manager
             .scan_transaction(&plugin_id, &transaction)
             .await;
+
+        // 恢复原始状态（如果测试前是禁用的，测试后恢复禁用）
+        if !enabled {
+            if let Some(status) = original_status {
+                if status == PluginStatus::Disabled {
+                    let _ = plugin_manager.disable_plugin(&plugin_id).await;
+                }
+            }
+        }
 
         match findings_result {
             Ok(foundings) => {

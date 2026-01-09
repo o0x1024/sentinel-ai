@@ -56,7 +56,7 @@ async fn example_basic_performance() {
 export function scan_transaction(transaction) {
     const url = transaction.request.url;
     if (url.includes("test")) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "test",
             title: "Test Finding",
             description: "Found test URL",
@@ -64,7 +64,7 @@ export function scan_transaction(transaction) {
             location: "url",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#;
@@ -132,7 +132,7 @@ export function scan_transaction(transaction) {
     const data = Array.from({ length: 1000 }, (_, i) => i);
     const sum = data.reduce((a, b) => a + b, 0);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Concurrent Test",
         description: "Sum: " + sum,
@@ -140,7 +140,7 @@ export function scan_transaction(transaction) {
         location: "test",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -238,7 +238,7 @@ export function scan_transaction(transaction) {
     // 分配一些内存
     const data = new Array(10000).fill({ value: "test".repeat(10) });
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Memory Test",
         description: "Allocated " + data.length + " items",
@@ -246,7 +246,7 @@ export function scan_transaction(transaction) {
         location: "test",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -325,7 +325,7 @@ export function scan_transaction(transaction) {
     const data = Array.from({ length: 1000 }, (_, i) => i);
     const sum = data.reduce((a, b) => a + b, 0);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Optimal Test",
         description: "Sum: " + sum,
@@ -333,7 +333,7 @@ export function scan_transaction(transaction) {
         location: "test",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 

@@ -139,7 +139,7 @@ export function scan_transaction(transaction) {
     // 简单操作，不应该泄漏
     const url = transaction.request.url;
     if (url.includes("test")) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "test",
             title: "Test",
             description: "Test",
@@ -147,7 +147,7 @@ export function scan_transaction(transaction) {
             location: "url",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#;
@@ -203,7 +203,7 @@ export function scan_transaction(transaction) {
     // 处理数据
     const filtered = largeArray.filter(item => item.id % 2 === 0);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Large Object Test",
         description: "Processed " + filtered.length + " items",
@@ -211,7 +211,7 @@ export function scan_transaction(transaction) {
         location: "memory",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -283,7 +283,7 @@ export function scan_transaction(transaction) {
     const data = Array.from({ length: 1000 }, (_, i) => ({ id: i }));
     const processed = processor(data);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Closure Test",
         description: "Processed " + processed.length + " items",
@@ -291,7 +291,7 @@ export function scan_transaction(transaction) {
         location: "memory",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -349,7 +349,7 @@ export function scan_transaction(transaction) {
         pattern.test(result);
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "String Test",
         description: "Processed string of length " + result.length,
@@ -357,7 +357,7 @@ export function scan_transaction(transaction) {
         location: "string",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -417,7 +417,7 @@ export async function scan_transaction(transaction) {
     
     const results = await Promise.all(promises);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Async Test",
         description: "Processed " + results.length + " async operations",
@@ -425,7 +425,7 @@ export async function scan_transaction(transaction) {
         location: "async",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 
@@ -479,7 +479,7 @@ export function scan_transaction(transaction) {
         timestamp: Date.now()
     });
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Multi Engine Test",
         description: "Global data size: " + globalData.length,
@@ -487,7 +487,7 @@ export function scan_transaction(transaction) {
         location: "global",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#;
 

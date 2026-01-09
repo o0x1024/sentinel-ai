@@ -153,7 +153,7 @@ fn create_simple_plugin() -> (PluginMetadata, String) {
 export function scan_transaction(transaction) {
     const url = transaction.request.url;
     if (url.includes("test")) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "test",
             title: "Test Finding",
             description: "Test description",
@@ -161,7 +161,7 @@ export function scan_transaction(transaction) {
             location: "url",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#.to_string();
@@ -213,7 +213,7 @@ export function scan_transaction(transaction) {
     
     data.sort((a, b) => b.value - a.value);
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "cpu_test",
         title: "CPU Test",
         description: "Processed " + data.length + " items",
@@ -221,7 +221,7 @@ export function scan_transaction(transaction) {
         location: "body",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#.to_string();
 
@@ -256,7 +256,7 @@ export function scan_transaction(transaction) {
         bigString += transaction.request.url + i;
     }
     
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "memory_test",
         title: "Memory Test",
         description: "Allocated " + largeArrays.length + " arrays",
@@ -264,7 +264,7 @@ export function scan_transaction(transaction) {
         location: "memory",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#.to_string();
 

@@ -474,7 +474,7 @@ if (typeof get_metadata === 'function') {
 
     /// 扫描完整 HTTP 事务
     ///
-    /// 仅调用插件的 `scan_transaction`。
+    /// 插件的 `scan_transaction` 应直接返回 Finding 数组。
     pub async fn scan_transaction(
         &mut self,
         transaction: &crate::types::HttpTransaction,
@@ -483,26 +483,47 @@ if (typeof get_metadata === 'function') {
             PluginError::Execution(format!("Failed to serialize transaction: {}", e))
         })?;
 
-        // 仅调用 scan_transaction
+        // 调用 scan_transaction
         let result = self
             .call_plugin_function("scan_transaction", &combined)
             .await;
 
         if let Err(e) = result {
             debug!("Plugin execution failed or function not found: {}", e);
+            return Ok(vec![]);
         }
 
-        let findings = {
+        // 从 op_plugin_return 获取返回值
+        let raw_result = {
             let op_state = self.runtime.op_state();
             let op_state_borrow = op_state.borrow();
             let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
-            plugin_ctx.take_findings()
+            plugin_ctx.take_last_result()
+        };
+
+        // 直接将返回值解析为 Finding 数组
+        let findings: Vec<Finding> = if let Some(val) = raw_result {
+            // 尝试将返回值转换为 JsFinding 数组,然后转换为 Finding 数组
+            if let Ok(js_findings) = serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(val) {
+                js_findings.into_iter().map(Finding::from).collect()
+            } else {
+                debug!("Plugin returned non-array or invalid finding format");
+                vec![]
+            }
+        } else {
+            vec![]
         };
 
         Ok(findings)
     }
 
     /// 执行Agent工具（调用插件的 analyze/run/execute）
+    /// 
+    /// Agent 插件应返回包含以下字段的对象:
+    /// - success: boolean
+    /// - data: 工具执行结果
+    /// - error: 错误信息(可选)
+    /// - findings: Finding 数组(可选)
     pub async fn execute_agent(
         &mut self,
         input: &serde_json::Value,
@@ -520,15 +541,34 @@ if (typeof get_metadata === 'function') {
             }
         }
 
-        // 收集插件通过 Sentinel.emitFinding() 发送的漏洞
-        let (findings, last_result) = {
+        // 从 op_plugin_return 获取返回值
+        let raw_result = {
             let op_state = self.runtime.op_state();
             let op_state_borrow = op_state.borrow();
-            let plugin_ctx = op_state_borrow.borrow::<crate::plugin_ops::PluginContext>();
-            (plugin_ctx.take_findings(), plugin_ctx.take_last_result())
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
+            plugin_ctx.take_last_result()
         };
 
-        Ok((findings, last_result))
+        // 解析返回值: { success, data, error?, findings? }
+        let (findings, tool_result) = if let Some(val) = raw_result {
+            // 提取 findings 字段(如果存在)
+            let findings: Vec<Finding> = if let Some(findings_val) = val.get("findings") {
+                if let Ok(js_findings) = serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(findings_val.clone()) {
+                    js_findings.into_iter().map(Finding::from).collect()
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+            
+            // 工具结果保留完整的返回对象
+            (findings, Some(val))
+        } else {
+            (vec![], None)
+        };
+
+        Ok((findings, tool_result))
     }
 
     /// 获取插件的输入参数 Schema（方案2：运行时调用插件的 get_input_schema 函数）

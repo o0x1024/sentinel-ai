@@ -49,7 +49,7 @@ fn create_simple_plugin() -> (PluginMetadata, String) {
     let code = r#"
 export function scan_transaction(transaction) {
     const url = transaction.request.url;
-    Sentinel.emitFinding({
+    return [{
         vuln_type: "test",
         title: "Test Finding",
         description: "Test",
@@ -57,7 +57,7 @@ export function scan_transaction(transaction) {
         location: "url",
         severity: "info",
         confidence: "high"
-    });
+    }];
 }
 "#
     .to_string();

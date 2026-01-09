@@ -166,7 +166,7 @@ impl PromptTemplateBuilder {
             vuln_type
         ));
         prompt.push_str("4. **Use proper TypeScript syntax** - no syntax errors\n");
-        prompt.push_str("5. **Emit findings** using `Sentinel.emitFinding()`\n");
+        prompt.push_str("5. **Return findings array** from scan_transaction function\n");
         prompt.push_str("6. **Include error handling** - use try-catch blocks\n");
         prompt.push_str("7. **Be executable** - the code must run without errors\n\n");
 
@@ -175,7 +175,7 @@ impl PromptTemplateBuilder {
         prompt.push_str("- Missing or incorrect function signatures\n");
         prompt.push_str("- Undefined variables or functions\n");
         prompt.push_str(
-            "- Incorrect API usage (use Sentinel.emitFinding() not Deno APIs)\n",
+            "- Incorrect API usage (return findings array, not using Deno APIs)\n",
         );
         prompt.push_str("- Syntax errors (missing brackets, semicolons, etc.)\n");
         prompt.push_str("- Type errors in TypeScript\n");
@@ -305,7 +305,7 @@ The plugin should:
 2. Detect specific vulnerability types based on HTTP traffic analysis
 3. Follow the provided plugin interface
 4. Include proper error handling and validation
-5. Emit findings using the `Sentinel.emitFinding()` API
+5. Return findings as an array from the scan_transaction function
 
 **IMPORTANT**: Generate GENERIC detection logic that can work across different websites, not just the analyzed target. Use the website analysis as reference for common patterns, but make the detection rules broadly applicable."#.to_string()
     }
@@ -784,22 +784,29 @@ export function scan_transaction(ctx: HttpTransaction): void {
 // Use direct assignment without type casting to ensure proper execution
 globalThis.scan_transaction = scan_transaction;
 
-// Emit finding when vulnerability is detected
-Sentinel.emitFinding({
-    title: "SQL Injection Detected",
-    vuln_type: "sqli",
-    severity: "critical",
-    confidence: "high",
-    url: ctx.url,
-    method: ctx.method,
-    param_name: "paramName",
-    param_value: "paramValue",
-    evidence: "Evidence text",
-    description: "Vulnerability description",
-    cwe: "CWE-89",
-    owasp: "A03:2021",
-    remediation: "Fix suggestion",
-});
+// Return findings array example
+export async function scan_transaction(transaction) {
+    const findings = [];
+    
+    // When vulnerability is detected, add to findings array
+    findings.push({
+        title: "SQL Injection Detected",
+        vuln_type: "sqli",
+        severity: "critical",
+        confidence: "high",
+        url: transaction.request.url,
+        method: transaction.request.method,
+        param_name: "paramName",
+        param_value: "paramValue",
+        evidence: "Evidence text",
+        description: "Vulnerability description",
+        cwe: "CWE-89",
+        owasp: "A03:2021",
+        remediation: "Fix suggestion",
+    });
+    
+    return findings;
+}
 ```
 
 **Context Objects**:
@@ -841,15 +848,22 @@ const fs = require('fs').promises;
 import * as fs from 'fs/promises';  // Will fail!
 ```
 
-1. **Custom Sentinel API** - Report findings:
+1. **Reporting Findings** - Return findings in output:
 ```typescript
-Sentinel.emitFinding({
-    title: 'Finding title',
-    severity: 'high', // 'critical', 'high', 'medium', 'low', 'info'
-    confidence: 'high', // 'high', 'medium', 'low'
-    vuln_type: 'sqli',
-    evidence: 'Proof of vulnerability',
-});
+// For agent tools, include findings in return value
+return {
+    success: true,
+    data: { /* tool results */ },
+    findings: [
+        {
+            title: 'Finding title',
+            severity: 'high', // 'critical', 'high', 'medium', 'low', 'info'
+            confidence: 'high', // 'high', 'medium', 'low'
+            vuln_type: 'sqli',
+            evidence: 'Proof of vulnerability',
+        }
+    ]
+};
 ```
 
 2. **Standard Node.js APIs**:

@@ -216,7 +216,6 @@ fn parse_confidence(s: &str) -> Confidence {
 extension!(
     sentinel_plugin_ext,
     ops = [
-        op_emit_finding,
         op_plugin_log,
         op_plugin_return,
         op_fetch,
@@ -244,18 +243,6 @@ extension!(
 // Operations
 // ============================================================
 
-/// Op: 发送漏洞发现
-#[op2]
-fn op_emit_finding(state: &mut OpState, #[serde] finding: JsFinding) -> bool {
-    let ctx = state.borrow::<PluginContext>().clone();
-    let rust_finding = Finding::from(finding.clone());
-
-    debug!("Plugin emitted finding: {:?}", rust_finding);
-
-    ctx.findings.lock().unwrap().push(rust_finding);
-
-    true
-}
 
 /// Op: 插件日志输出
 #[op2(fast)]

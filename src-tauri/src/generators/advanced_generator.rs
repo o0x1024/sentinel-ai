@@ -609,7 +609,7 @@ impl AdvancedPluginGenerator {
         let checks = [
             ("get_metadata", 20.0),
             ("scan_transaction", 50.0),
-            ("Sentinel.emitFinding", 20.0),
+            ("return", 20.0),
             ("vuln_type:", 10.0),
         ];
 

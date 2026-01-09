@@ -28,7 +28,7 @@ Traffic scan plugins should:
 2. Analyze HTTP traffic (requests and responses) without modifying it.
 3. Detect specific vulnerabilities or collect information.
 4. Export required scanning functions.
-5. Use `Sentinel.emitFinding()` to report findings.
+5. Return an array of findings.
 
 ## Key Principles
 
@@ -55,18 +55,31 @@ The Traffic Scan plugin you generate **MUST** include the following structure:
 
 ### 1. Main Scan Function
 
-You **MUST** export `scan_transaction` to analyze traffic.
+You **MUST** export `scan_transaction` to analyze traffic and **return an array of findings**.
 
 ```typescript
 /**
  * Scans an HTTP transaction (request + response)
  * @param {HttpTransaction} transaction
+ * @returns {Array} Array of findings
  */
 export async function scan_transaction(transaction) {
     const req = transaction.request;
     const resp = transaction.response; // Note: Can be null/undefined if only request was captured
+    const findings = [];
     
-    // Logic goes here...
+    // Detection logic...
+    // When vulnerability found:
+    findings.push({
+        title: "Vulnerability Title",
+        severity: "high",
+        description: "Detailed description",
+        evidence: "Evidence string",
+        confidence: "high",
+        vuln_type: "xss"
+    });
+    
+    return findings;
 }
 ```
 
@@ -79,27 +92,25 @@ export async function scan_transaction(transaction) {
 **Note on Body Handling**:
 Bodies are `Uint8Array`. Use `Buffer` or `TextDecoder` to convert to string if needed.
 
-### 2. Reporting Findings
+### 2. Finding Object Structure
 
-Use the global `Sentinel` object to report results.
+Each finding object should have:
 
 ```typescript
-Sentinel.emitFinding({
-    title: "Vulnerability Title",
-    severity: "high",
-    description: "Detailed description...",
-    evidence: "The matched string or header value",
-    confidence: "high", // "high", "medium", "low"
-    location: "Header: X-Powered-By" // or URL, Body line, etc.
-});
+{
+    title: string;           // Short vulnerability title
+    severity: string;        // "critical", "high", "medium", "low", "info"
+    description: string;     // Detailed description
+    evidence: string;        // The matched string or header value
+    confidence: string;      // "high", "medium", "low"
+    vuln_type: string;       // e.g., "xss", "sqli", "ssrf"
+    location?: string;       // Optional: "Header: X-Powered-By" or URL, Body line, etc.
+}
 ```
 
 ### Available APIs
 
 **Runtime**: Node.js-compatible JavaScript. Standard Node.js APIs are supported (require, Buffer, etc.).
-
-**Custom API**:
-*   `Sentinel.emitFinding(finding)` - Report vulnerabilities
 
 ---
 
@@ -109,21 +120,25 @@ Return ONLY the TypeScript plugin code wrapped in a markdown code block:
 
 ```typescript
 export async function scan_transaction(transaction) {
+  const findings = [];
   const resp = transaction.response;
-  if (!resp) return;
+  if (!resp) return findings;
 
   // Example: Check for a specific header
   const headerValue = resp.headers["x-vulnerable-header"];
   if (headerValue) {
-      Sentinel.emitFinding({
+      findings.push({
           title: "Vulnerable Header Detected",
           severity: "medium",
           description: "The server exposes a vulnerable header.",
           evidence: `x-vulnerable-header: ${headerValue}`,
           confidence: "high",
+          vuln_type: "security_misconfiguration",
           location: "Response Header"
       });
   }
+  
+  return findings;
 }
   
 globalThis.scan_transaction = scan_transaction;
@@ -131,8 +146,8 @@ globalThis.scan_transaction = scan_transaction;
 
 **Requirements**:
 1. **MUST export `scan_transaction`**.
-2. **Handle `transaction.response` being potentially null**.
-3. **Use `Sentinel.emitFinding`** for reporting.
+2. **MUST return an array of findings** (empty array if no issues found).
+3. **Handle `transaction.response` being potentially null**.
 4. **No network calls** (fetch, etc.) are allowed in traffic plugins.
 5. **MUST include the `globalThis` export at the end** - Without this, the plugin will fail with "Function not found" error.
 
@@ -242,11 +257,13 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
         
         // Implement your tool logic here
         
+
+        
         return {
             success: true,
             data: {
                 // Your tool results
-            }
+            },
         };
     } catch (error) {
         return {
@@ -273,22 +290,6 @@ const crypto = require('crypto');
 
 // ❌ WRONG - Do NOT use import
 import * as fs from 'fs/promises';  // This will fail!
-```
-
-**Custom Sentinel API** - Report findings:
-```typescript
-// Report a vulnerability or finding
-Sentinel.emitFinding({
-    title: 'Finding title',
-    description: 'Detailed description',
-    severity: 'high', // 'critical', 'high', 'medium', 'low', 'info'
-    confidence: 'high', // 'high', 'medium', 'low'
-    vuln_type: 'xss',
-    evidence: 'Proof of vulnerability',
-    url: 'https://target.com/path',
-    method: 'GET',
-});
-```
 
 
 ---

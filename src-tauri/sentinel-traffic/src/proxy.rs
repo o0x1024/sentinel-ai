@@ -549,6 +549,7 @@ pub enum ScanTask {
     Request(RequestContext),
     Response(ResponseContext),
     ReloadPlugin(String),
+    RemovePlugin(String), // 移除/禁用插件
     FailedConnection(FailedConnection), // TLS 握手失败的连接
     WebSocketConnection(WebSocketConnectionContext), // WebSocket 连接建立
     WebSocketMessage(WebSocketMessageContext), // WebSocket 消息

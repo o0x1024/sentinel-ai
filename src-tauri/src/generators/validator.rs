@@ -280,7 +280,7 @@ mod tests {
 
         let valid_code = r#"
 export async function scan_transaction(transaction) {
-    Sentinel.emitFinding({});
+    return [];
 }
         "#;
 

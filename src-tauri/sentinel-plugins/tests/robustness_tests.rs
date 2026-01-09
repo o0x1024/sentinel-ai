@@ -75,7 +75,7 @@ export function scan_transaction(transaction) {
   let parsedOk = false;
   try { new URL(url); parsedOk = true; } catch (_e) { parsedOk = false; }
 
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_edge_inputs",
     title: "Edge Inputs",
     description: "parsedOk=" + parsedOk + ", method=" + method + ", headers=" + headerCount + ", body=" + bodyLen,
@@ -83,7 +83,7 @@ export function scan_transaction(transaction) {
     location: "input",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -158,7 +158,7 @@ export function scan_transaction(_transaction) {
   while (Date.now() - start < 200) {
     // busy loop (bounded 200ms)
   }
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_slow",
     title: "Slow Plugin",
     description: "finished",
@@ -166,7 +166,7 @@ export function scan_transaction(_transaction) {
     location: "timing",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -211,7 +211,7 @@ async fn test_executor_backpressure_under_load() {
   let code = r#"
 export function scan_transaction(transaction) {
   const len = (transaction.request.body || []).length;
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_backpressure",
     title: "Backpressure",
     description: "len=" + len,
@@ -219,7 +219,7 @@ export function scan_transaction(transaction) {
     location: "queue",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -275,7 +275,7 @@ if (typeof globalCounter === 'undefined') {
 }
 export function scan_transaction(_transaction) {
   globalThis.globalCounter++;
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_restart",
     title: "Restart Stats",
     description: "counter=" + globalThis.globalCounter,
@@ -283,7 +283,7 @@ export function scan_transaction(_transaction) {
     location: "stats",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -322,7 +322,7 @@ async fn test_plugin_manager_hot_update() {
 
   let code_v1 = r#"
 export function scan_transaction(_transaction) {
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_hot_update",
     title: "Hot Update",
     description: "version=v1",
@@ -330,7 +330,7 @@ export function scan_transaction(_transaction) {
     location: "update",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
   manager
@@ -346,7 +346,7 @@ export function scan_transaction(_transaction) {
 
   let code_v2 = r#"
 export function scan_transaction(_transaction) {
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_hot_update",
     title: "Hot Update",
     description: "version=v2",
@@ -354,7 +354,7 @@ export function scan_transaction(_transaction) {
     location: "update",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
   manager
@@ -379,7 +379,7 @@ export function scan_transaction(transaction) {
   const method = String(transaction.request.method || "");
   let ok = true;
   try { new URL(url); } catch (_e) { ok = false; }
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_cross_platform",
     title: "Cross Platform Inputs",
     description: "ok=" + ok + ", method=" + method,
@@ -387,7 +387,7 @@ export function scan_transaction(transaction) {
     location: "input",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -431,7 +431,7 @@ export function scan_transaction(_transaction) {
     denoEnv = "error:" + String(e && e.message ? e.message : e);
   }
 
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_sandbox",
     title: "Sandbox Negative Attempts",
     description: "checks=" + JSON.stringify(checks) + ", denoEnv=" + denoEnv,
@@ -439,7 +439,7 @@ export function scan_transaction(_transaction) {
     location: "sandbox",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -463,7 +463,7 @@ export function scan_transaction(_transaction) {
   for (let i = 0; i < 200; i++) {
     console.log("log_flood_line=" + i);
   }
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_log_flood",
     title: "Log Flood",
     description: "printed 200 lines",
@@ -471,7 +471,7 @@ export function scan_transaction(_transaction) {
     location: "logging",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -500,7 +500,7 @@ export function scan_transaction(transaction) {
     // synchronous infinite loop (no await)
     while (true) {}
   }
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_terminate",
     title: "TerminateExecution",
     description: "ok",
@@ -508,7 +508,7 @@ export function scan_transaction(transaction) {
     location: "terminate",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 
@@ -566,7 +566,7 @@ export function scan_transaction(_transaction) {
   for (let i = 0; i < 1e8; i++) {
     sum += i;
   }
-  Sentinel.emitFinding({
+  return [{
     vuln_type: "robust_slow",
     title: "Slow Execution",
     description: "sum=" + sum,
@@ -574,7 +574,7 @@ export function scan_transaction(_transaction) {
     location: "timeout",
     severity: "info",
     confidence: "high"
-  });
+  }];
 }
 "#;
 

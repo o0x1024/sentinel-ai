@@ -68,7 +68,7 @@ export async function scan_transaction(transaction) {
         
         const data = await response.json();
         
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "network_test",
             title: "Network Request Test",
             description: "Request completed: " + response.status,
@@ -76,9 +76,9 @@ export async function scan_transaction(transaction) {
             location: "network",
             severity: "info",
             confidence: "high"
-        });
+        }];
     } catch (e) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "network_error",
             title: "Network Request Failed",
             description: "Error: " + e.message,
@@ -86,7 +86,7 @@ export async function scan_transaction(transaction) {
             location: "network",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#.to_string();
@@ -126,7 +126,7 @@ export async function scan_transaction(transaction) {
         const results = await Promise.all(promises);
         const successCount = results.filter(r => !r.error).length;
         
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "concurrent_http_test",
             title: "Concurrent HTTP Test",
             description: "Completed " + successCount + "/" + urls.length + " requests",
@@ -134,9 +134,9 @@ export async function scan_transaction(transaction) {
             location: "network",
             severity: "info",
             confidence: "high"
-        });
+        }];
     } catch (e) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "concurrent_http_error",
             title: "Concurrent HTTP Failed",
             description: "Error: " + e.message,
@@ -144,7 +144,7 @@ export async function scan_transaction(transaction) {
             location: "network",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#.to_string();
@@ -179,7 +179,7 @@ export async function scan_transaction(transaction) {
         
         clearTimeout(timeoutId);
         
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "timeout_test",
             title: "Timeout Test",
             description: "Request completed: " + response.status,
@@ -187,9 +187,9 @@ export async function scan_transaction(transaction) {
             location: "network",
             severity: "info",
             confidence: "high"
-        });
+        }];
     } catch (e) {
-        Sentinel.emitFinding({
+        return [{
             vuln_type: "timeout_error",
             title: "Timeout Error",
             description: "Error: " + e.message,
@@ -197,7 +197,7 @@ export async function scan_transaction(transaction) {
             location: "network",
             severity: "info",
             confidence: "high"
-        });
+        }];
     }
 }
 "#.to_string();

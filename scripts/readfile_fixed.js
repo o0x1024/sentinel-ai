@@ -75,25 +75,23 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
         // but it provides context for further user-based testing.
         const content = await fs.readFile(targetPath, encoding);
 
-        // Report finding to the Sentinel system
-        // Accessing sensitive system files is often recorded as a discovery finding
-        Sentinel.emitFinding({
-            title: 'Local System File Read Successful',
-            description: `Successfully read the contents of ${targetPath}. This demonstrates the agent's ability to access local system configuration files.`,
-            severity: 'info',
-            confidence: 'high',
-            vuln_type: 'information_disclosure',
-            evidence: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
-            url: `file://${targetPath}`,
-            method: 'FS_READ'
-        });
-
+        // Return result with findings
         return {
             success: true,
             data: {
                 path: targetPath,
                 content: content
-            }
+            },
+            findings: [{
+                title: 'Local System File Read Successful',
+                description: `Successfully read the contents of ${targetPath}. This demonstrates the agent's ability to access local system configuration files.`,
+                severity: 'info',
+                confidence: 'high',
+                vuln_type: 'information_disclosure',
+                evidence: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+                url: `file://${targetPath}`,
+                method: 'FS_READ'
+            }]
         };
 
     } catch (error: any) {
