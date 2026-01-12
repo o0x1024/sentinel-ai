@@ -133,3 +133,27 @@ pub struct TerminalServerStatus {
     pub running: bool,
     pub session_count: usize,
 }
+
+/// Clean up unused containers
+#[tauri::command]
+pub async fn cleanup_terminal_containers() -> Result<Vec<String>, String> {
+    let server_guard = TERMINAL_SERVER.read().await;
+
+    if let Some(server) = server_guard.as_ref() {
+        server.manager().cleanup_containers().await
+    } else {
+        Err("Terminal server not running".to_string())
+    }
+}
+
+/// Get container info for all sessions
+#[tauri::command]
+pub async fn get_terminal_container_info() -> Result<Vec<sentinel_tools::terminal::ContainerInfo>, String> {
+    let server_guard = TERMINAL_SERVER.read().await;
+
+    if let Some(server) = server_guard.as_ref() {
+        Ok(server.manager().get_container_info().await)
+    } else {
+        Err("Terminal server not running".to_string())
+    }
+}

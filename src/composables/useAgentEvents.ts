@@ -1048,31 +1048,6 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       })
     })
     unlisteners.push(unlistenTenthManIntervention)
-
-    // 监听 agent:tenth_man_critique 事件（最终审查，兼容旧格式）
-    const unlistenTenthManCritique = await listen<{
-      execution_id: string
-      critique: string
-      message_id: string
-    }>('agent:tenth_man_critique', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
-
-      console.log('[useAgentEvents] Tenth Man critique (final):', payload)
-
-      // 添加第十人最终审查消息
-      messages.value.push({
-        id: payload.message_id || crypto.randomUUID(),
-        type: 'system',
-        content: payload.critique,
-        timestamp: Date.now(),
-        metadata: {
-          kind: 'tenth_man_critique',
-          trigger: 'final_response',
-        }
-      })
-    })
-    unlisteners.push(unlistenTenthManCritique)
   }
 
   const stopListening = () => {

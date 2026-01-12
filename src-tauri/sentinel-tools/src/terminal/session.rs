@@ -24,6 +24,10 @@ pub struct TerminalSessionConfig {
     pub shell: String,
     /// Optional command to execute immediately after session starts
     pub initial_command: Option<String>,
+    /// Reuse existing container if available
+    pub reuse_container: bool,
+    /// Container name for reuse identification
+    pub container_name: Option<String>,
 }
 
 impl Default for TerminalSessionConfig {
@@ -35,6 +39,8 @@ impl Default for TerminalSessionConfig {
             env_vars: std::collections::HashMap::new(),
             shell: "bash".to_string(),
             initial_command: None,
+            reuse_container: true,
+            container_name: Some("sentinel-sandbox-main".to_string()),
         }
     }
 }
@@ -135,8 +141,8 @@ impl TerminalSession {
     async fn start_docker_session(
         &mut self,
     ) -> Result<(), String> {
-        // Create container
-        let container_id = self.create_container().await?;
+        // Get or create container
+        let container_id = self.get_or_create_container().await?;
         self.container_id = Some(container_id.clone());
 
         // Create PTY pair
@@ -354,20 +360,116 @@ impl TerminalSession {
         Ok(())
     }
 
+    /// Get or create Docker container (reuse if available)
+    async fn get_or_create_container(&self) -> Result<String, String> {
+        // Try to reuse existing container if configured
+        if self.config.reuse_container {
+            if let Some(container_id) = self.find_reusable_container().await? {
+                info!("Reusing existing container: {}", container_id);
+                
+                // Make sure container is running
+                self.ensure_container_running(&container_id).await?;
+                
+                return Ok(container_id);
+            }
+        }
+        
+        // No reusable container found, create new one
+        self.create_container().await
+    }
+
+    /// Find reusable container
+    async fn find_reusable_container(&self) -> Result<Option<String>, String> {
+        let container_name = match &self.config.container_name {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+
+        info!("Looking for reusable container: {}", container_name);
+
+        // List containers with the specified name
+        let output = Command::new("docker")
+            .args(&[
+                "ps",
+                "-a",
+                "--filter",
+                &format!("name=^{}$", container_name),
+                "--format",
+                "{{.ID}}",
+            ])
+            .output()
+            .await
+            .map_err(|e| format!("Failed to list containers: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Docker ps failed: {}", stderr));
+        }
+
+        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        
+        if container_id.is_empty() {
+            info!("No reusable container found");
+            Ok(None)
+        } else {
+            info!("Found reusable container: {}", container_id);
+            Ok(Some(container_id))
+        }
+    }
+
+    /// Ensure container is running
+    async fn ensure_container_running(&self, container_id: &str) -> Result<(), String> {
+        // Check container state
+        let output = Command::new("docker")
+            .args(&["inspect", "-f", "{{.State.Running}}", container_id])
+            .output()
+            .await
+            .map_err(|e| format!("Failed to inspect container: {}", e))?;
+
+        let is_running = String::from_utf8_lossy(&output.stdout).trim() == "true";
+
+        if !is_running {
+            info!("Container {} is not running, starting it", container_id);
+            let output = Command::new("docker")
+                .args(&["start", container_id])
+                .output()
+                .await
+                .map_err(|e| format!("Failed to start container: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Failed to start container: {}", stderr));
+            }
+
+            info!("Container started successfully");
+        } else {
+            info!("Container is already running");
+        }
+
+        Ok(())
+    }
+
     /// Create Docker container
     async fn create_container(&self) -> Result<String, String> {
         info!("Creating Docker container with image: {}", self.config.docker_image);
 
         // Check if we should use a non-root user
-        // For Kali Linux images, we need to create a sandbox user first
         let use_sandbox_user = self.config.docker_image.contains("kali");
         
         let mut args = vec![
             "run",
             "-d",
-            "--rm",
             "-i",
         ];
+
+        // Add container name if specified (for reuse)
+        if let Some(ref name) = self.config.container_name {
+            args.push("--name");
+            args.push(name);
+        } else {
+            // If not reusing, use --rm
+            args.push("--rm");
+        }
         
         // Add working directory mount if specified
         if let Some(ref wd) = self.config.working_dir {
@@ -389,12 +491,45 @@ impl TerminalSession {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            
+            // If container name already exists, try to remove it and retry
+            if stderr.contains("already in use") {
+                warn!("Container name already in use, removing old container");
+                if let Some(ref name) = self.config.container_name {
+                    let _ = Command::new("docker")
+                        .args(&["rm", "-f", name])
+                        .output()
+                        .await;
+                    
+                    // Retry creation
+                    let retry_output = Command::new("docker")
+                        .args(&args)
+                        .output()
+                        .await
+                        .map_err(|e| format!("Failed to create container (retry): {}", e))?;
+                    
+                    if !retry_output.status.success() {
+                        let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+                        return Err(format!("Docker run failed (retry): {}", retry_stderr));
+                    }
+                    
+                    let container_id = String::from_utf8_lossy(&retry_output.stdout).trim().to_string();
+                    info!("Container created (after retry): {}", container_id);
+                    return self.setup_container(&container_id, use_sandbox_user).await;
+                }
+            }
+            
             return Err(format!("Docker run failed: {}", stderr));
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         info!("Container created: {}", container_id);
         
+        self.setup_container(&container_id, use_sandbox_user).await
+    }
+
+    /// Setup container (create user, directories, etc.)
+    async fn setup_container(&self, container_id: &str, use_sandbox_user: bool) -> Result<String, String> {
         // For Kali images, create sandbox user if it doesn't exist
         if use_sandbox_user {
             info!("Setting up sandbox user in container");
@@ -409,7 +544,7 @@ impl TerminalSession {
             
             for cmd in setup_commands {
                 let result = Command::new("docker")
-                    .args(&["exec", &container_id, "bash", "-c", cmd])
+                    .args(&["exec", container_id, "bash", "-c", cmd])
                     .output()
                     .await;
                 
@@ -421,7 +556,7 @@ impl TerminalSession {
             info!("Sandbox user setup completed");
         }
         
-        Ok(container_id)
+        Ok(container_id.to_string())
     }
 
     /// Write data to terminal
@@ -456,6 +591,29 @@ impl TerminalSession {
         *self.last_activity.read().await
     }
 
+    /// Get container ID
+    pub fn container_id(&self) -> Option<String> {
+        self.container_id.clone()
+    }
+
+    /// Check if container is healthy
+    pub async fn is_container_healthy(&self) -> bool {
+        if let Some(ref container_id) = self.container_id {
+            let output = Command::new("docker")
+                .args(&["inspect", "-f", "{{.State.Running}}", container_id])
+                .output()
+                .await;
+
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let is_running = String::from_utf8_lossy(&output.stdout).trim() == "true";
+                    return is_running;
+                }
+            }
+        }
+        false
+    }
+
     /// Stop the terminal session
     pub async fn stop(&mut self) -> Result<(), String> {
         info!("Stopping terminal session: {}", self.id);
@@ -467,12 +625,17 @@ impl TerminalSession {
             let _ = process.kill().await;
         }
 
-        // Remove container
-        if let Some(ref container_id) = self.container_id {
-            let _ = Command::new("docker")
-                .args(&["rm", "-f", container_id])
-                .output()
-                .await;
+        // Only remove container if not configured for reuse
+        if !self.config.reuse_container {
+            if let Some(ref container_id) = self.container_id {
+                info!("Removing container (not configured for reuse): {}", container_id);
+                let _ = Command::new("docker")
+                    .args(&["rm", "-f", container_id])
+                    .output()
+                    .await;
+            }
+        } else {
+            info!("Keeping container for reuse: {:?}", self.container_id);
         }
 
         Ok(())

@@ -620,11 +620,13 @@ impl ToolServer {
                     // 2. Create a new persistent session if none exists
                     let config = TerminalSessionConfig {
                         use_docker,
-                        docker_image,
+                        docker_image: docker_image.clone(),
                         working_dir: Some("/workspace".to_string()),
                         env_vars: std::collections::HashMap::new(),
                         shell: "bash".to_string(),
                         initial_command: None,
+                        reuse_container: true,
+                        container_name: Some("sentinel-sandbox-main".to_string()),
                     };
                     
                     let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;

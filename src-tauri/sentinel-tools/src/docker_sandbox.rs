@@ -28,6 +28,10 @@ pub struct DockerSandboxConfig {
     pub volumes: HashMap<String, String>,
     /// Environment variables
     pub env_vars: HashMap<String, String>,
+    /// Reuse container across restarts
+    pub reuse_container: bool,
+    /// Container name for persistent reuse
+    pub container_name: Option<String>,
 }
 
 impl Default for DockerSandboxConfig {
@@ -40,6 +44,8 @@ impl Default for DockerSandboxConfig {
             read_only_rootfs: false,
             volumes: HashMap::new(),
             env_vars: HashMap::new(),
+            reuse_container: true,
+            container_name: Some("sentinel-sandbox-main".to_string()),
         }
     }
 }
@@ -47,7 +53,6 @@ impl Default for DockerSandboxConfig {
 /// Docker container pool entry
 #[derive(Debug, Clone)]
 struct ContainerInfo {
-    created_at: std::time::Instant,
     last_used: std::time::Instant,
     use_count: usize,
 }
@@ -55,7 +60,6 @@ struct ContainerInfo {
 /// Docker container pool
 struct ContainerPool {
     containers: HashMap<String, ContainerInfo>,
-    max_containers: usize,
     max_reuse_count: usize,
     max_idle_duration: Duration,
 }
@@ -64,7 +68,6 @@ impl ContainerPool {
     fn new() -> Self {
         Self {
             containers: HashMap::new(),
-            max_containers: 5,
             max_reuse_count: 10,
             max_idle_duration: Duration::from_secs(300), // 5 minutes
         }
@@ -72,51 +75,60 @@ impl ContainerPool {
 
     /// Get or create a container
     async fn get_container(&mut self, config: &DockerSandboxConfig) -> Result<String, DockerError> {
-        // Clean up stale containers
-        self.cleanup_stale_containers().await;
-
-        // Try to reuse existing container
-        if let Some((id, _)) = self.find_reusable_container() {
-            let id = id.clone();
-            info!("Reusing container: {}", id);
-            if let Some(info) = self.containers.get_mut(&id) {
-                info.last_used = std::time::Instant::now();
-                info.use_count += 1;
+        // If reuse is enabled and container name is specified, try persistent reuse
+        if config.reuse_container {
+            if let Some(container_id) = Self::find_persistent_container(config).await? {
+                info!("Reusing persistent container: {}", container_id);
+                Self::ensure_container_running(&container_id).await?;
+                
+                // Update tracking info
+                if let Some(info) = self.containers.get_mut(&container_id) {
+                    info.last_used = std::time::Instant::now();
+                    info.use_count += 1;
+                } else {
+                    // Add to tracking if not already tracked
+                    self.containers.insert(
+                        container_id.clone(),
+                        ContainerInfo {
+                            last_used: std::time::Instant::now(),
+                            use_count: 1,
+                        },
+                    );
+                }
+                
+                return Ok(container_id);
             }
-            return Ok(id);
         }
 
-        // Create new container if pool not full
-        if self.containers.len() < self.max_containers {
-            let container_id = Self::create_container(config).await?;
-            info!("Created new container: {}", container_id);
-            self.containers.insert(
-                container_id.clone(),
-                ContainerInfo {
-                    created_at: std::time::Instant::now(),
-                    last_used: std::time::Instant::now(),
-                    use_count: 1,
-                },
-            );
-            return Ok(container_id);
+        // Clean up stale containers (only for pool-based containers)
+        if !config.reuse_container {
+            self.cleanup_stale_containers().await;
         }
 
-        // Pool is full, remove oldest and create new
-        if let Some(oldest_id) = self.find_oldest_container() {
-            info!("Pool full, removing oldest container: {}", oldest_id);
-            Self::remove_container(&oldest_id).await?;
-            self.containers.remove(&oldest_id);
+        // Try to reuse existing container from pool
+        if !config.reuse_container {
+            if let Some((id, _)) = self.find_reusable_container() {
+                let id = id.clone();
+                info!("Reusing pooled container: {}", id);
+                if let Some(info) = self.containers.get_mut(&id) {
+                    info.last_used = std::time::Instant::now();
+                    info.use_count += 1;
+                }
+                return Ok(id);
+            }
         }
 
+        // Create new container
         let container_id = Self::create_container(config).await?;
+        info!("Created new container: {}", container_id);
         self.containers.insert(
             container_id.clone(),
             ContainerInfo {
-                created_at: std::time::Instant::now(),
                 last_used: std::time::Instant::now(),
                 use_count: 1,
             },
         );
+        
         Ok(container_id)
     }
 
@@ -127,12 +139,80 @@ impl ContainerPool {
             .find(|(_, info)| info.use_count < self.max_reuse_count)
     }
 
-    /// Find oldest container
-    fn find_oldest_container(&self) -> Option<String> {
-        self.containers
-            .iter()
-            .min_by_key(|(_, info)| info.created_at)
-            .map(|(id, _)| id.clone())
+
+    /// Find persistent container by name
+    async fn find_persistent_container(config: &DockerSandboxConfig) -> Result<Option<String>, DockerError> {
+        let container_name = match &config.container_name {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+
+        info!("Looking for persistent container: {}", container_name);
+
+        let output = Command::new("docker")
+            .args(&[
+                "ps",
+                "-a",
+                "--filter",
+                &format!("name=^{}$", container_name),
+                "--format",
+                "{{.ID}}",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DockerError::CommandFailed(format!("Failed to list containers: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DockerError::CommandFailed(format!("Docker ps failed: {}", stderr)));
+        }
+
+        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        
+        if container_id.is_empty() {
+            info!("No persistent container found");
+            Ok(None)
+        } else {
+            info!("Found persistent container: {}", container_id);
+            Ok(Some(container_id))
+        }
+    }
+
+    /// Ensure container is running
+    async fn ensure_container_running(container_id: &str) -> Result<(), DockerError> {
+        let output = Command::new("docker")
+            .args(&["inspect", "-f", "{{.State.Running}}", container_id])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DockerError::CommandFailed(format!("Failed to inspect container: {}", e)))?;
+
+        let is_running = String::from_utf8_lossy(&output.stdout).trim() == "true";
+
+        if !is_running {
+            info!("Container {} is not running, starting it", container_id);
+            let output = Command::new("docker")
+                .args(&["start", container_id])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| DockerError::CommandFailed(format!("Failed to start container: {}", e)))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(DockerError::CommandFailed(format!("Failed to start container: {}", stderr)));
+            }
+
+            info!("Container started successfully");
+        } else {
+            info!("Container is already running");
+        }
+
+        Ok(())
     }
 
     /// Clean up stale containers
@@ -162,14 +242,29 @@ impl ContainerPool {
         let mut args = vec![
             "run",
             "-d",
-            "--rm",
+        ];
+
+        // Add container name if persistent reuse is enabled
+        let name_str;
+        if config.reuse_container {
+            if let Some(ref name) = config.container_name {
+                args.push("--name");
+                name_str = name.clone();
+                args.push(&name_str);
+            }
+        } else {
+            // Use --rm for temporary containers
+            args.push("--rm");
+        }
+
+        args.extend_from_slice(&[
             "--memory",
             &config.memory_limit,
             "--cpus",
             &config.cpu_limit,
             "--network",
             &config.network_mode,
-        ];
+        ]);
 
         if config.read_only_rootfs {
             args.push("--read-only");
@@ -207,6 +302,36 @@ impl ContainerPool {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            
+            // If container name already exists, try to remove and retry
+            if stderr.contains("already in use") && config.reuse_container {
+                if let Some(ref name) = config.container_name {
+                    warn!("Container name already in use, removing old container: {}", name);
+                    let _ = Command::new("docker")
+                        .args(&["rm", "-f", name])
+                        .output()
+                        .await;
+                    
+                    // Retry creation
+                    let retry_output = Command::new("docker")
+                        .args(&args)
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .output()
+                        .await
+                        .map_err(|e| DockerError::CommandFailed(format!("Failed to create container (retry): {}", e)))?;
+                    
+                    if !retry_output.status.success() {
+                        let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+                        return Err(DockerError::CommandFailed(format!("Docker run failed (retry): {}", retry_stderr)));
+                    }
+                    
+                    let container_id = String::from_utf8_lossy(&retry_output.stdout).trim().to_string();
+                    info!("Container created (after retry): {}", container_id);
+                    return Ok(container_id);
+                }
+            }
+            
             return Err(DockerError::CommandFailed(format!(
                 "Docker run failed: {}",
                 stderr
@@ -367,10 +492,39 @@ impl DockerSandbox {
         }
     }
 
-    /// Cleanup all containers
+    /// Cleanup all containers in pool
     pub async fn cleanup_all() {
         let mut pool = CONTAINER_POOL.write().await;
         pool.cleanup_all().await;
+    }
+
+    /// Cleanup persistent shell container
+    pub async fn cleanup_persistent_shell_container() -> Result<(), DockerError> {
+        let config = DockerSandboxConfig::default();
+        if let Some(container_name) = &config.container_name {
+            info!("Cleaning up persistent shell container: {}", container_name);
+            let output = Command::new("docker")
+                .args(&["rm", "-f", container_name])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| DockerError::CommandFailed(format!("Failed to remove container: {}", e)))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!("Failed to remove persistent shell container: {}", stderr);
+            } else {
+                info!("Persistent shell container removed successfully");
+            }
+        }
+        Ok(())
+    }
+
+    /// Get persistent shell container info
+    pub async fn get_persistent_shell_container_info() -> Result<Option<String>, DockerError> {
+        let config = DockerSandboxConfig::default();
+        ContainerPool::find_persistent_container(&config).await
     }
 }
 

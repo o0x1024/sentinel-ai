@@ -22,11 +22,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Development
     python3 \
     python3-pip \
+    gcc \
+    gdb \
     # Text processing
     jq \
     # Archive tools
     unzip \
     zip \
+    # CTF basic tools
+    file \
+    strings \
+    xxd \
+    binwalk \
+    steghide \
+    exiftool \
+    # Crypto
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install essential Python CTF libraries
+RUN pip3 install --no-cache-dir --break-system-packages \
+    requests \
+    pwntools \
+    pycryptodome \
+    || pip3 install --no-cache-dir \
+    requests \
+    pwntools \
+    pycryptodome
+
+# Install PHP for web CTF challenges
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    php \
+    php-cli \
+    php-curl \
+    php-json \
+    php-mbstring \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for execution

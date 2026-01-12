@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kali-tools-exploitation \
     && rm -rf /var/lib/apt/lists/*
 
-# Install additional development tools
+# Install additional development and CTF tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
@@ -36,6 +36,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     build-essential \
     golang-go \
+    gcc \
+    g++ \
+    gdb \
+    gdb-multiarch \
+    gdbserver \
+    # CTF essential tools
+    netcat-traditional \
+    socat \
+    binwalk \
+    foremost \
+    exiftool \
+    steghide \
+    stegseek \
+    zsteg \
+    file \
+    strings \
+    xxd \
+    hexedit \
+    radare2 \
+    hashcat \
+    john \
+    hydra \
+    aircrack-ng \
+    # Network analysis
+    wireshark \
+    tshark \
+    tcpdump \
+    # Reverse engineering
+    ltrace \
+    strace \
+    objdump \
+    valgrind \
+    # Forensics
+    volatility3 \
+    autopsy \
+    sleuthkit \
+    # Crypto tools
+    openssl \
+    # Additional utilities
+    qemu-user \
+    qemu-user-static \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (from NodeSource)
@@ -43,7 +84,27 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install additional Python security tools
+# Install PHP and extensions for CTF
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    php \
+    php-cli \
+    php-curl \
+    php-gd \
+    php-json \
+    php-mbstring \
+    php-xml \
+    php-zip \
+    php-mysql \
+    php-pgsql \
+    php-sqlite3 \
+    php-bcmath \
+    php-gmp \
+    php-soap \
+    php-xdebug \
+    composer \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install additional Python security and CTF tools
 RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     beautifulsoup4 \
@@ -51,28 +112,84 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pwntools \
     scapy \
     impacket \
+    pycryptodome \
+    pycrypto \
+    gmpy2 \
+    z3-solver \
+    ropgadget \
+    ropper \
+    angr \
+    capstone \
+    keystone-engine \
+    unicorn \
+    r2pipe \
+    pillow \
+    numpy \
+    scipy \
+    sympy \
+    sage \
+    yara-python \
+    volatility3 \
+    frida \
+    frida-tools \
     || pip3 install --no-cache-dir \
     requests \
     beautifulsoup4 \
     paramiko \
-    pwntools
+    pwntools \
+    scapy \
+    pycryptodome \
+    gmpy2 \
+    z3-solver \
+    ropgadget \
+    ropper \
+    pillow \
+    numpy
 
-# Install Node.js security tools
+# Install Node.js security and CTF tools
 RUN npm install -g \
     retire \
     eslint \
     snyk \
     jwt-cracker \
+    jwt-cli \
+    crypto-js \
+    node-forge \
+    stegcloak \
     || true
 
-# Install additional Go tools
+# Install PHP security and CTF tools via Composer
+RUN composer global require \
+    phpunit/phpunit \
+    squizlabs/php_codesniffer \
+    vimeo/psalm \
+    phpstan/phpstan \
+    friendsofphp/php-cs-fixer \
+    || true && \
+    echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> /home/sandbox/.bashrc
+
+# Install additional Go tools for security and CTF
 RUN export GOPATH=/tmp/go && \
     go install github.com/ffuf/ffuf/v2@latest && \
     go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
     go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
     go install github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install github.com/projectdiscovery/katana/cmd/katana@latest && \
+    go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest && \
+    go install github.com/tomnomnom/waybackurls@latest && \
+    go install github.com/tomnomnom/gf@latest && \
+    go install github.com/tomnomnom/httprobe@latest && \
+    go install github.com/lc/gau/v2/cmd/gau@latest && \
     mv /tmp/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
     rm -rf /tmp/go
+
+# Install additional CTF tools and frameworks from GitHub
+RUN git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwntools-tutorial 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/secdev/scapy /opt/scapy 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/pwntester/ysoserial.net /opt/ysoserial 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/payloadbox/sql-injection-payload-list /opt/payloads/sqli 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/payloadbox/xss-payload-list /opt/payloads/xss 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/danielmiessler/SecLists /opt/SecLists 2>/dev/null || true
 
 # Create non-root user for execution
 RUN useradd -m -s /bin/bash sandbox && \

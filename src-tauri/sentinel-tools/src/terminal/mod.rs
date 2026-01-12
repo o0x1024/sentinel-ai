@@ -8,7 +8,7 @@ pub mod manager;
 
 pub use server::TerminalServer;
 pub use session::{TerminalSession, TerminalSessionConfig, SessionState};
-pub use manager::{TerminalSessionManager, SessionInfo};
+pub use manager::{TerminalSessionManager, SessionInfo, ContainerInfo};
 
 use std::sync::Arc;
 use once_cell::sync::Lazy;

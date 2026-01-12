@@ -913,6 +913,8 @@ pub fn run() {
             commands::check_docker_availability,
             commands::build_docker_sandbox_image,
             commands::cleanup_docker_containers,
+            commands::cleanup_shell_container,
+            commands::get_shell_container_info,
             // Terminal WebSocket commands
             commands::start_terminal_server,
             commands::stop_terminal_server,
@@ -920,6 +922,8 @@ pub fn run() {
             commands::list_terminal_sessions,
             commands::stop_terminal_session,
             commands::get_terminal_websocket_url,
+            commands::cleanup_terminal_containers,
+            commands::get_terminal_container_info,
             // Agent config commands
             tool_commands::get_agent_config,
             tool_commands::save_agent_config,

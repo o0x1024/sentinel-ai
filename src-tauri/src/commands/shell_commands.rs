@@ -79,9 +79,26 @@ pub async fn build_docker_sandbox_image() -> Result<String, String> {
     Ok("Docker image built successfully".to_string())
 }
 
-/// Cleanup all Docker containers
+/// Cleanup all Docker containers in pool
 #[tauri::command]
 pub async fn cleanup_docker_containers() -> Result<String, String> {
     DockerSandbox::cleanup_all().await;
     Ok("All Docker containers cleaned up".to_string())
+}
+
+/// Cleanup persistent shell container
+#[tauri::command]
+pub async fn cleanup_shell_container() -> Result<String, String> {
+    DockerSandbox::cleanup_persistent_shell_container()
+        .await
+        .map_err(|e| format!("Failed to cleanup shell container: {}", e))?;
+    Ok("Shell container cleaned up".to_string())
+}
+
+/// Get shell container info
+#[tauri::command]
+pub async fn get_shell_container_info() -> Result<Option<String>, String> {
+    DockerSandbox::get_persistent_shell_container_info()
+        .await
+        .map_err(|e| format!("Failed to get shell container info: {}", e))
 }

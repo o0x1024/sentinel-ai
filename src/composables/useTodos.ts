@@ -35,6 +35,7 @@ export interface UseTodosReturn {
   clearTodos: () => void
   open: () => void
   close: () => void
+  toggle: () => void
   
   // 生命周期
   startListening: () => Promise<void>
@@ -108,6 +109,13 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     isTodosPanelActive.value = false
   }
 
+  // 切换面板
+  const toggle = (): void => {
+    if (hasHistory.value) {
+      isTodosPanelActive.value = !isTodosPanelActive.value
+    }
+  }
+
   // 开始监听事件
   const startListening = async (): Promise<void> => {
     if (unlisten) return // 已在监听
@@ -159,6 +167,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     clearTodos,
     open,
     close,
+    toggle,
     startListening,
     stopListening,
   }

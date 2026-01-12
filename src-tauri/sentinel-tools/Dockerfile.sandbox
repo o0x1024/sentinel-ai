@@ -27,6 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-dev \
     build-essential \
+    gcc \
+    g++ \
+    gdb \
     # Archive and text processing
     unzip \
     zip \
@@ -35,6 +38,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gobuster \
     ffuf \
     wfuzz \
+    # CTF essential tools
+    netcat-traditional \
+    socat \
+    binwalk \
+    foremost \
+    exiftool \
+    steghide \
+    stegseek \
+    zsteg \
+    file \
+    strings \
+    xxd \
+    hexedit \
+    radare2 \
+    hashcat \
+    john \
+    hydra \
+    # Network analysis
+    wireshark-common \
+    tshark \
+    tcpdump \
+    # Reverse engineering
+    ltrace \
+    strace \
+    objdump \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (from NodeSource)
@@ -42,24 +70,76 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python security tools (Kali already has many)
+# Install PHP and common extensions for CTF
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    php \
+    php-cli \
+    php-curl \
+    php-gd \
+    php-json \
+    php-mbstring \
+    php-xml \
+    php-zip \
+    php-mysql \
+    php-pgsql \
+    php-sqlite3 \
+    composer \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python security and CTF tools (Kali already has many)
 RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     beautifulsoup4 \
     paramiko \
     pwntools \
+    pycryptodome \
+    gmpy2 \
+    z3-solver \
+    ropgadget \
+    ropper \
+    angr \
+    capstone \
+    keystone-engine \
+    unicorn \
+    pillow \
+    numpy \
+    scipy \
+    sympy \
+    sage \
     || pip3 install --no-cache-dir \
     requests \
     beautifulsoup4 \
     paramiko \
-    pwntools
+    pwntools \
+    pycryptodome \
+    gmpy2 \
+    z3-solver \
+    ropgadget \
+    ropper \
+    pillow \
+    numpy
 
-# Install Node.js security tools
+# Install Node.js security and CTF tools
 RUN npm install -g \
     retire \
     eslint \
     snyk \
+    jwt-cli \
+    crypto-js \
+    node-forge \
     || true
+
+# Install PHP security and CTF tools via Composer
+RUN composer global require \
+    phpunit/phpunit \
+    squizlabs/php_codesniffer \
+    vimeo/psalm \
+    || true && \
+    echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> /home/sandbox/.bashrc
+
+# Install additional CTF tools from GitHub
+RUN git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwntools-tutorial 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/secdev/scapy /opt/scapy 2>/dev/null || true
 
 # Create non-root user for execution
 RUN useradd -m -s /bin/bash sandbox && \

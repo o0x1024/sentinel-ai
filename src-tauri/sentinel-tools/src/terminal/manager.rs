@@ -146,6 +146,99 @@ impl TerminalSessionManager {
     pub async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
     }
+
+    /// Clean up unused containers (manually invoked)
+    pub async fn cleanup_containers(&self) -> Result<Vec<String>, String> {
+        use tokio::process::Command;
+        
+        info!("Cleaning up unused sentinel-sandbox containers");
+        
+        // Get all sentinel-sandbox containers
+        let output = Command::new("docker")
+            .args(&[
+                "ps",
+                "-a",
+                "--filter",
+                "name=^sentinel-sandbox",
+                "--format",
+                "{{.ID}}",
+            ])
+            .output()
+            .await
+            .map_err(|e| format!("Failed to list containers: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Docker ps failed: {}", stderr));
+        }
+
+        let container_ids: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let mut removed = Vec::new();
+
+        // Check which containers are in use by active sessions
+        let sessions = self.sessions.read().await;
+        let active_containers: Vec<String> = {
+            let mut containers = Vec::new();
+            for session in sessions.values() {
+                let session_guard = session.read().await;
+                if let Some(cid) = session_guard.container_id() {
+                    containers.push(cid);
+                }
+            }
+            containers
+        };
+
+        // Remove containers not in use
+        for container_id in container_ids {
+            if !active_containers.contains(&container_id) {
+                info!("Removing unused container: {}", container_id);
+                let result = Command::new("docker")
+                    .args(&["rm", "-f", &container_id])
+                    .output()
+                    .await;
+
+                if result.is_ok() {
+                    removed.push(container_id);
+                }
+            }
+        }
+
+        info!("Cleaned up {} unused containers", removed.len());
+        Ok(removed)
+    }
+
+    /// Get container info for all sessions
+    pub async fn get_container_info(&self) -> Vec<ContainerInfo> {
+        let sessions = self.sessions.read().await;
+        let mut infos = Vec::new();
+
+        for (id, session) in sessions.iter() {
+            let session_guard = session.read().await;
+            if let Some(container_id) = session_guard.container_id() {
+                let is_healthy = session_guard.is_container_healthy().await;
+                infos.push(ContainerInfo {
+                    session_id: id.clone(),
+                    container_id,
+                    is_healthy,
+                });
+            }
+        }
+
+        infos
+    }
+}
+
+/// Container information
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ContainerInfo {
+    pub session_id: String,
+    pub container_id: String,
+    pub is_healthy: bool,
 }
 
 impl Default for TerminalSessionManager {

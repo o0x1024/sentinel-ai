@@ -74,7 +74,7 @@
           <!-- Vision History Button - shows when there's exploration history -->
           <button 
             v-if="visionEvents.hasHistory.value"
-            @click="visionEvents.open()"
+            @click="handleToggleVision()"
             class="btn btn-sm gap-1"
             :class="isVisionActive ? 'btn-primary' : 'btn-ghost text-primary'"
             :title="isVisionActive ? t('agent.visionPanelOpen') : t('agent.viewVisionHistory')"
@@ -86,7 +86,7 @@
           <!-- Todos Button - shows when there's todos history -->
           <button 
             v-if="todosComposable.hasHistory.value"
-            @click="todosComposable.open()"
+            @click="handleToggleTodos()"
             class="btn btn-sm gap-1"
             :class="isTodosPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
             :title="isTodosPanelActive ? t('agent.todosPanelOpen') : t('agent.viewTodos')"
@@ -97,7 +97,7 @@
           </button>
           <!-- Terminal Button - always visible -->
           <button 
-            @click="terminalComposable.toggleTerminal()"
+            @click="handleToggleTerminal()"
             class="btn btn-sm gap-1"
             :class="isTerminalActive ? 'btn-primary' : 'btn-ghost text-primary'"
             :title="isTerminalActive ? t('agent.terminalPanelOpen') : t('agent.viewTerminal')"
@@ -322,6 +322,40 @@ const hasTerminalHistory = computed(() => terminalComposable.hasHistory.value)
 // Handle close terminal panel
 const handleCloseTerminal = () => {
   terminalComposable.closeTerminal()
+}
+
+// Handle toggle panel functions - ensure only one panel is active at a time
+const handleToggleVision = () => {
+  if (isVisionActive.value) {
+    visionEvents.close()
+  } else {
+    // Close other panels
+    todosComposable.close()
+    terminalComposable.closeTerminal()
+    visionEvents.open()
+  }
+}
+
+const handleToggleTodos = () => {
+  if (isTodosPanelActive.value) {
+    todosComposable.close()
+  } else {
+    // Close other panels
+    visionEvents.close()
+    terminalComposable.closeTerminal()
+    todosComposable.open()
+  }
+}
+
+const handleToggleTerminal = () => {
+  if (isTerminalActive.value) {
+    terminalComposable.closeTerminal()
+  } else {
+    // Close other panels
+    visionEvents.close()
+    todosComposable.close()
+    terminalComposable.openTerminal()
+  }
 }
 
 // Sidebar resize

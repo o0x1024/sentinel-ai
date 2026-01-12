@@ -44,6 +44,11 @@ export interface MessageMetadata {
   saved_tokens?: number  // 历史摘要：节省的token数
   saved_percentage?: number  // 历史摘要：节省百分比
   summary_preview?: string  // 历史摘要：摘要预览
+  summary_content?: string  // 历史摘要：完整摘要内容
+  total_tokens?: number  // 历史摘要：总token数
+  trigger?: string  // 第十人原则触发原因
+  retry_count?: number  // 第十人原则重试次数
+  requires_confirmation?: boolean  // 第十人原则是否需要确认
 }
 
 // Agent 消息
