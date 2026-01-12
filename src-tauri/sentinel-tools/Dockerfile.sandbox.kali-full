@@ -1,0 +1,89 @@
+# Sentinel AI Security Sandbox (Kali Full Version)
+# Complete Kali Linux security testing environment
+FROM kalilinux/kali-rolling
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+# Update and install Kali metapackages
+# This includes a comprehensive set of security tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Top 10 most popular tools
+    kali-tools-top10 \
+    # Web application testing
+    kali-tools-web \
+    # Information gathering
+    kali-tools-information-gathering \
+    # Vulnerability analysis
+    kali-tools-vulnerability \
+    # Password attacks
+    kali-tools-passwords \
+    # Wireless attacks
+    kali-tools-wireless \
+    # Exploitation tools
+    kali-tools-exploitation \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install additional development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    vim \
+    nano \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    golang-go \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js (from NodeSource)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install additional Python security tools
+RUN pip3 install --no-cache-dir --break-system-packages \
+    requests \
+    beautifulsoup4 \
+    paramiko \
+    pwntools \
+    scapy \
+    impacket \
+    || pip3 install --no-cache-dir \
+    requests \
+    beautifulsoup4 \
+    paramiko \
+    pwntools
+
+# Install Node.js security tools
+RUN npm install -g \
+    retire \
+    eslint \
+    snyk \
+    jwt-cracker \
+    || true
+
+# Install additional Go tools
+RUN export GOPATH=/tmp/go && \
+    go install github.com/ffuf/ffuf/v2@latest && \
+    go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
+    go install github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    mv /tmp/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
+    rm -rf /tmp/go
+
+# Create non-root user for execution
+RUN useradd -m -s /bin/bash sandbox && \
+    mkdir -p /workspace && \
+    chown sandbox:sandbox /workspace
+
+# Set working directory
+WORKDIR /workspace
+
+# Switch to non-root user
+USER sandbox
+
+# Default command
+CMD ["/bin/bash"]

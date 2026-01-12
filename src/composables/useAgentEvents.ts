@@ -884,6 +884,90 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       // })
     })
     unlisteners.push(unlistenCancelled)
+
+    // 监听 agent:tenth_man_warning 事件（工具调用前的警告）
+    const unlistenTenthManWarning = await listen<{
+      execution_id: string
+      trigger: string
+      tool_name: string
+      critique: string
+      requires_confirmation: boolean
+    }>('agent:tenth_man_warning', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] Tenth Man warning:', payload)
+
+      // 显示警告通知
+      // TODO: 如果 requires_confirmation 为 true，显示确认对话框
+      // 目前先以消息形式展示
+      const msgId = crypto.randomUUID()
+      messages.value.push({
+        id: msgId,
+        type: 'system',
+        content: `⚠️ **第十人警告** (${payload.tool_name})\n\n${payload.critique}`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'tenth_man_warning',
+          trigger: payload.trigger,
+          tool_name: payload.tool_name,
+          requires_confirmation: payload.requires_confirmation,
+        }
+      })
+    })
+    unlisteners.push(unlistenTenthManWarning)
+
+    // 监听 agent:tenth_man_intervention 事件（结论检测时的干预）
+    const unlistenTenthManIntervention = await listen<{
+      execution_id: string
+      trigger: string
+      critique: string
+      timestamp: number
+    }>('agent:tenth_man_intervention', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] Tenth Man intervention:', payload)
+
+      // 添加第十人干预消息（使用特殊类型以便前端渲染）
+      const msgId = crypto.randomUUID()
+      messages.value.push({
+        id: msgId,
+        type: 'system',
+        content: payload.critique,
+        timestamp: payload.timestamp || Date.now(),
+        metadata: {
+          kind: 'tenth_man_intervention',
+          trigger: payload.trigger,
+        }
+      })
+    })
+    unlisteners.push(unlistenTenthManIntervention)
+
+    // 监听 agent:tenth_man_critique 事件（最终审查，兼容旧格式）
+    const unlistenTenthManCritique = await listen<{
+      execution_id: string
+      critique: string
+      message_id: string
+    }>('agent:tenth_man_critique', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      console.log('[useAgentEvents] Tenth Man critique (final):', payload)
+
+      // 添加第十人最终审查消息
+      messages.value.push({
+        id: payload.message_id || crypto.randomUUID(),
+        type: 'system',
+        content: payload.critique,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'tenth_man_critique',
+          trigger: 'final_response',
+        }
+      })
+    })
+    unlisteners.push(unlistenTenthManCritique)
   }
 
   const stopListening = () => {

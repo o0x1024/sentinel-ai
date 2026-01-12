@@ -1,0 +1,44 @@
+# Sentinel AI Security Sandbox (Minimal Version)
+# Lightweight version with essential tools only
+# Based on Kali Linux
+FROM kalilinux/kali-rolling
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+# Install essential tools in one layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Basic utilities
+    curl \
+    wget \
+    git \
+    ca-certificates \
+    # Network tools (most already in Kali)
+    netcat-traditional \
+    nmap \
+    dnsutils \
+    iputils-ping \
+    # Development
+    python3 \
+    python3-pip \
+    # Text processing
+    jq \
+    # Archive tools
+    unzip \
+    zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for execution
+RUN useradd -m -s /bin/bash sandbox && \
+    mkdir -p /workspace && \
+    chown sandbox:sandbox /workspace
+
+# Set working directory
+WORKDIR /workspace
+
+# Switch to non-root user
+USER sandbox
+
+# Default command
+CMD ["/bin/bash"]

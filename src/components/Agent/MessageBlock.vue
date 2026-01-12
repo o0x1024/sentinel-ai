@@ -397,7 +397,9 @@ const isHistorySummarized = computed(() => {
 // Check if this is a Tenth Man Critique message
 const isTenthManCritique = computed(() => {
   return props.message.type === 'system' && 
-         props.message.metadata?.kind === 'tenth_man_critique'
+         (props.message.metadata?.kind === 'tenth_man_critique' ||
+          props.message.metadata?.kind === 'tenth_man_intervention' ||
+          props.message.metadata?.kind === 'tenth_man_warning')
 })
 
 // History summary metadata

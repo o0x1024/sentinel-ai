@@ -9,6 +9,8 @@
 //! - `mcp_adapter`: MCP tool adapter
 //! - `plugin_adapter`: Plugin tool adapter
 //! - `workflow_adapter`: Workflow tool adapter
+//! - `docker_sandbox`: Docker sandbox for secure shell execution
+//! - `terminal`: Interactive terminal with WebSocket support
 
 pub mod buildin_tools;
 pub mod batch_progress_manager;
@@ -19,6 +21,8 @@ pub mod tool_server;
 pub mod mcp_adapter;
 pub mod plugin_adapter;
 pub mod workflow_adapter;
+pub mod docker_sandbox;
+pub mod terminal;
 
 pub use buildin_tools::*;
 pub use batch_progress_manager::*;
@@ -29,6 +33,8 @@ pub use tool_server::*;
 pub use mcp_adapter::*;
 pub use plugin_adapter::*;
 pub use workflow_adapter::*;
+pub use docker_sandbox::*;
+pub use terminal::*;
 
 use std::sync::RwLock;
 use once_cell::sync::Lazy;

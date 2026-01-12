@@ -24,6 +24,8 @@ pub mod rag_commands;
 pub mod role;
 pub mod scan_session_commands;
 pub mod scan_task_commands;
+pub mod shell_commands;
+pub mod terminal_commands;
 pub mod test_proxy;
 pub mod tool_commands;
 pub mod vision_explorer_v2;
@@ -55,6 +57,8 @@ pub use rag_commands::*;
 pub use role::*;
 pub use scan_session_commands::*;
 pub use scan_task_commands::*;
+pub use shell_commands::*;
+pub use terminal_commands::*;
 pub use tool_commands::*;
 pub use window::*;
 

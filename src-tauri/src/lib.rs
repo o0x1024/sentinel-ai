@@ -906,6 +906,20 @@ pub fn run() {
             tool_commands::set_shell_tool_config,
             tool_commands::respond_shell_permission,
             tool_commands::get_pending_shell_permissions,
+            // Shell Docker Sandbox commands
+            commands::get_shell_configuration,
+            commands::update_shell_configuration,
+            commands::initialize_docker_sandbox,
+            commands::check_docker_availability,
+            commands::build_docker_sandbox_image,
+            commands::cleanup_docker_containers,
+            // Terminal WebSocket commands
+            commands::start_terminal_server,
+            commands::stop_terminal_server,
+            commands::get_terminal_server_status,
+            commands::list_terminal_sessions,
+            commands::stop_terminal_session,
+            commands::get_terminal_websocket_url,
             // Agent config commands
             tool_commands::get_agent_config,
             tool_commands::save_agent_config,

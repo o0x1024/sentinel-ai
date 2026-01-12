@@ -51,3 +51,6 @@ rsubdomain = "1.2.6"
 jsonschema = "0.17.1"
 oar-ocr = "0.5.0"
 image = "0.25"
+
+# WebSocket for interactive terminal
+tokio-tungstenite = "0.24"

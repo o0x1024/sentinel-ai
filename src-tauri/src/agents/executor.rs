@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::tool_router::{ToolConfig, ToolRouter};
-use super::tenth_man::TenthMan;
+use super::tenth_man::{TenthMan, TenthManConfig, InterventionContext, TriggerReason};
 use super::sliding_window::{SlidingWindowManager, SlidingWindowConfig};
 
 /// Agent 执行配置
@@ -29,6 +29,7 @@ pub struct AgentExecuteParams {
     pub timeout_secs: u64,
     pub tool_config: Option<ToolConfig>,
     pub enable_tenth_man_rule: bool,
+    pub tenth_man_config: Option<TenthManConfig>,
 }
 
 /// 执行 agent 任务
@@ -556,17 +557,19 @@ async fn execute_agent_with_tools(
 
     // 用于收集工具调用信息
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
     let tool_calls_collector: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     let pending_calls: Arc<Mutex<std::collections::HashMap<String, (String, String, i64, u32)>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     let tool_seq: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+    let tool_call_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let reasoning_content_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     
     let collector = tool_calls_collector.clone();
     let pending = pending_calls.clone();
     let seq_counter = tool_seq.clone();
+    let tool_counter = tool_call_counter.clone();
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
 
@@ -613,9 +616,62 @@ async fn execute_agent_with_tools(
                     match content {
                         StreamContent::Text(text) => {
                             // Accumulate assistant text into a segment buffer.
-                            if let Ok(mut buf) = segment_buf.lock() {
+                            let full_content = if let Ok(mut buf) = segment_buf.lock() {
                                 buf.push_str(&text);
+                                buf.clone()
+                            } else {
+                                String::new()
+                            };
+                            
+                            // Tenth Man Intervention Point 2: Conclusion Detection
+                            if params.enable_tenth_man_rule && !full_content.is_empty() {
+                                if let Some(ref _tm_config) = params.tenth_man_config {
+                                    // Check if content contains conclusion markers
+                                    if TenthMan::contains_conclusion_markers(&full_content) {
+                                        let tenth_man = TenthMan::new(&params);
+                                        let current_count = tool_counter.load(Ordering::SeqCst) as usize;
+                                        
+                                        let context = InterventionContext {
+                                            execution_id: execution_id.clone(),
+                                            task: params.task.clone(),
+                                            tool_call_count: current_count,
+                                            current_content: Some(full_content.clone()),
+                                            trigger_reason: TriggerReason::ConclusionDetected,
+                                        };
+                                        
+                                        if tenth_man.should_trigger(&context) {
+                                            let app_clone = app.clone();
+                                            let exec_id = execution_id.clone();
+                                            let task_clone = params.task.clone();
+                                            
+                                            tauri::async_runtime::spawn(async move {
+                                                match tenth_man.review(
+                                                    &task_clone,
+                                                    "Conclusion detected in assistant response",
+                                                    &full_content
+                                                ).await {
+                                                    Ok(critique) => {
+                                                        tracing::info!("Tenth Man intervention on conclusion detection");
+                                                        let _ = app_clone.emit(
+                                                            "agent:tenth_man_intervention",
+                                                            &json!({
+                                                                "execution_id": exec_id,
+                                                                "trigger": "conclusion_detected",
+                                                                "critique": critique,
+                                                                "timestamp": chrono::Utc::now().timestamp_millis(),
+                                                            })
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!("Tenth Man review failed: {}", e);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
                             }
+                            
                             let _ = app.emit(
                                 "agent:chunk",
                                 &json!({
@@ -641,6 +697,57 @@ async fn execute_agent_with_tools(
                         }
                         StreamContent::ToolCallStart { id, name } => {
                             tracing::debug!("Tool call started via rig-core: {} ({})", name, id);
+                            
+                            // Increment tool call counter
+                            tool_counter.fetch_add(1, Ordering::SeqCst);
+                            
+                            // Tenth Man Intervention Point 1: Before Tool Execution
+                            if params.enable_tenth_man_rule {
+                                if let Some(ref tm_config) = params.tenth_man_config {
+                                    let tenth_man = TenthMan::new(&params);
+                                    let current_count = tool_counter.load(Ordering::SeqCst) as usize;
+                                    
+                                    let context = InterventionContext {
+                                        execution_id: execution_id.clone(),
+                                        task: params.task.clone(),
+                                        tool_call_count: current_count,
+                                        current_content: Some(format!("Preparing to call tool: {}", name)),
+                                        trigger_reason: TriggerReason::ToolCallThreshold,
+                                    };
+                                    
+                                    if tenth_man.should_trigger(&context) {
+                                        let app_clone = app.clone();
+                                        let exec_id = execution_id.clone();
+                                        let tool_name = name.clone();
+                                        let require_confirmation = tm_config.require_user_confirmation;
+                                        
+                                        tauri::async_runtime::spawn(async move {
+                                            match tenth_man.quick_review(&context).await {
+                                                Ok(Some(critique)) => {
+                                                    tracing::info!("Tenth Man warning before tool call: {}", tool_name);
+                                                    let _ = app_clone.emit(
+                                                        "agent:tenth_man_warning",
+                                                        &json!({
+                                                            "execution_id": exec_id,
+                                                            "trigger": "before_tool_call",
+                                                            "tool_name": tool_name,
+                                                            "critique": critique,
+                                                            "requires_confirmation": require_confirmation,
+                                                        })
+                                                    );
+                                                }
+                                                Ok(None) => {
+                                                    tracing::debug!("Tenth Man: No significant risk detected");
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Tenth Man quick review failed: {}", e);
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                            
                             let _ = app.emit(
                                 "agent:tool_call_start",
                                 &json!({

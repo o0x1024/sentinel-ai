@@ -1884,6 +1884,8 @@ pub struct AgentExecuteConfig {
     pub force_todos: Option<bool>,
     #[serde(default)]
     pub enable_tenth_man_rule: Option<bool>,
+    #[serde(default)]
+    pub tenth_man_config: Option<crate::agents::tenth_man::TenthManConfig>,
 }
 
 /// Agent执行请求
@@ -1919,6 +1921,7 @@ pub async fn agent_execute(
         timeout_secs: None,
         force_todos: None,
         enable_tenth_man_rule: None,
+        tenth_man_config: None,
     });
 
     let conversation_id = config
@@ -2207,6 +2210,7 @@ pub async fn agent_execute(
                     timeout_secs: config.timeout_secs.unwrap_or(300),
                     tool_config: effective_tool_config.clone(),
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
+                    tenth_man_config: config.tenth_man_config.clone(),
                 };
 
                 // 调用工具支持的代理执行器

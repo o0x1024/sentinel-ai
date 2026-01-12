@@ -10,6 +10,22 @@ use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
 use once_cell::sync::Lazy;
+use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
+
+/// Shell execution mode
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub enum ShellExecutionMode {
+    /// Execute on host machine (less secure)
+    Host,
+    /// Execute in Docker container (more secure)
+    Docker,
+}
+
+impl Default for ShellExecutionMode {
+    fn default() -> Self {
+        Self::Docker
+    }
+}
 
 /// Shell command arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -22,6 +38,9 @@ pub struct ShellArgs {
     /// Command timeout in seconds
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    /// Execution mode (host or docker)
+    #[serde(default)]
+    pub execution_mode: Option<ShellExecutionMode>,
 }
 
 fn default_timeout() -> u64 { 180 }
@@ -48,6 +67,8 @@ pub enum ShellError {
     InvalidCommand(String),
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
+    #[error("Docker error: {0}")]
+    DockerError(String),
 }
 
 /// Shell default policy
@@ -73,6 +94,12 @@ pub struct ShellConfig {
     /// Commands that are always denied (prefix match, takes precedence)
     #[serde(default)]
     pub denied_commands: Vec<String>,
+    /// Default execution mode
+    #[serde(default)]
+    pub default_execution_mode: ShellExecutionMode,
+    /// Docker sandbox configuration
+    #[serde(default)]
+    pub docker_config: Option<DockerSandboxConfig>,
 }
 
 impl Default for ShellConfig {
@@ -86,6 +113,8 @@ impl Default for ShellConfig {
                 "mkfs".to_string(),
                 "dd".to_string(),
             ],
+            default_execution_mode: ShellExecutionMode::Docker,
+            docker_config: Some(DockerSandboxConfig::default()),
         }
     }
 }
@@ -206,7 +235,67 @@ impl ShellTool {
     }
 
     pub const NAME: &'static str = "shell";
-    pub const DESCRIPTION: &'static str = "Execute shell commands. Use with caution - commands are subject to security policies.";
+    pub const DESCRIPTION: &'static str = "Execute shell commands in isolated Docker sandbox or on host. Commands are subject to security policies.";
+
+    /// Execute command in Docker sandbox
+    async fn execute_in_docker(
+        &self,
+        cmd: &str,
+        timeout_secs: u64,
+    ) -> Result<(String, String, i32), ShellError> {
+        let config = SHELL_CONFIG.read().await;
+        let docker_config = config
+            .docker_config
+            .clone()
+            .unwrap_or_default();
+        drop(config);
+
+        let sandbox = DockerSandbox::new(docker_config);
+        sandbox
+            .execute(cmd, timeout_secs)
+            .await
+            .map_err(|e| ShellError::DockerError(e.to_string()))
+    }
+
+    /// Execute command on host machine
+    async fn execute_on_host(
+        &self,
+        cmd: &str,
+        cwd: Option<&str>,
+        timeout_secs: u64,
+    ) -> Result<(String, String, i32), ShellError> {
+        // Determine shell
+        #[cfg(target_os = "windows")]
+        let (shell, shell_arg) = ("cmd", "/C");
+        #[cfg(not(target_os = "windows"))]
+        let (shell, shell_arg) = ("bash", "-c");
+
+        // Build command
+        let mut command = Command::new(shell);
+        command.arg(shell_arg);
+        command.arg(cmd);
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+
+        // Execute with timeout
+        let timeout_duration = Duration::from_secs(timeout_secs);
+        let result = timeout(timeout_duration, command.output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let exit_code = output.status.code().unwrap_or(-1);
+                Ok((stdout, stderr, exit_code))
+            }
+            Ok(Err(e)) => Err(ShellError::ExecutionFailed(e.to_string())),
+            Err(_) => Err(ShellError::Timeout(timeout_secs)),
+        }
+    }
 
     /// Validate command permissions
     async fn check_permission(&self, cmd: &str) -> Result<(), ShellError> {
@@ -266,61 +355,54 @@ impl Tool for ShellTool {
         // Validate command permission
         self.check_permission(&args.command).await?;
 
-        // Determine shell
-        #[cfg(target_os = "windows")]
-        let (shell, shell_arg) = ("cmd", "/C");
-        #[cfg(not(target_os = "windows"))]
-        let (shell, shell_arg) = ("bash", "-c");
+        // Determine execution mode
+        let config = SHELL_CONFIG.read().await;
+        let execution_mode = args
+            .execution_mode
+            .clone()
+            .unwrap_or_else(|| config.default_execution_mode.clone());
+        drop(config);
 
-        // Build command
-        let mut cmd = Command::new(shell);
-        cmd.arg(shell_arg);
-        cmd.arg(&args.command);
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        if let Some(cwd) = &args.cwd {
-            cmd.current_dir(cwd);
-        }
-
-        // Execute with timeout
-        let timeout_duration = Duration::from_secs(args.timeout_secs);
-        let result = timeout(timeout_duration, cmd.output()).await;
-
-        match result {
-            Ok(Ok(output)) => {
-                let max_chars = crate::get_tool_execution_config().max_output_chars;
-
-                let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                if stdout.len() > max_chars {
-                    let original_len = stdout.len();
-                    stdout = stdout.chars().take(max_chars).collect();
-                    stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", stdout.len(), original_len));
-                }
-
-                let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                 if stderr.len() > max_chars {
-                    let original_len = stderr.len();
-                    stderr = stderr.chars().take(max_chars).collect();
-                    stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", stderr.len(), original_len));
-                }
-
-                let exit_code = output.status.code();
-                let success = output.status.success();
-                let execution_time_ms = start_time.elapsed().as_millis() as u64;
-
-                Ok(ShellOutput {
-                    command: args.command,
-                    stdout,
-                    stderr,
-                    exit_code,
-                    success,
-                    execution_time_ms,
-                })
+        // Execute command based on mode
+        let (stdout, stderr, exit_code) = match execution_mode {
+            ShellExecutionMode::Docker => {
+                tracing::info!("Executing command in Docker sandbox: {}", args.command);
+                self.execute_in_docker(&args.command, args.timeout_secs).await?
             }
-            Ok(Err(e)) => Err(ShellError::ExecutionFailed(e.to_string())),
-            Err(_) => Err(ShellError::Timeout(args.timeout_secs)),
+            ShellExecutionMode::Host => {
+                tracing::warn!("Executing command on host machine: {}", args.command);
+                self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?
+            }
+        };
+
+        // Truncate output if needed
+        let max_chars = crate::get_tool_execution_config().max_output_chars;
+
+        let mut stdout = stdout;
+        if stdout.len() > max_chars {
+            let original_len = stdout.len();
+            stdout = stdout.chars().take(max_chars).collect();
+            stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", stdout.len(), original_len));
         }
+
+        let mut stderr = stderr;
+        if stderr.len() > max_chars {
+            let original_len = stderr.len();
+            stderr = stderr.chars().take(max_chars).collect();
+            stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", stderr.len(), original_len));
+        }
+
+        let success = exit_code == 0;
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+        Ok(ShellOutput {
+            command: args.command,
+            stdout,
+            stderr,
+            exit_code: Some(exit_code),
+            success,
+            execution_time_ms,
+        })
     }
 }
 
