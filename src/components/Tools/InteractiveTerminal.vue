@@ -1,67 +1,82 @@
 <template>
-  <div class="interactive-terminal">
-    <div class="terminal-header">
-      <div class="terminal-title">
-        <span class="terminal-icon">⚡</span>
-        <span>{{ $t('tools.interactiveTerminal') }}</span>
-        <span v-if="sessionId" class="session-id">Session: {{ sessionId.substring(0, 8) }}</span>
+  <div class="interactive-terminal-panel h-full flex flex-col bg-base-100 overflow-hidden">
+    <!-- Panel Header -->
+    <div class="terminal-panel-header flex items-center justify-between px-4 py-3 bg-base-200 border-b border-base-300">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-terminal text-primary text-sm"></i>
+        </div>
+        <div>
+          <div class="font-semibold text-sm">{{ $t('agent.interactiveTerminal') }}</div>
+          <div v-if="sessionId" class="text-xs text-base-content/60">
+            Session: {{ sessionId.substring(0, 8) }}
+          </div>
+        </div>
       </div>
-      <div class="terminal-actions">
+      <div class="flex items-center gap-2">
         <button
           @click="reconnect"
           :disabled="isConnected"
-          class="btn-action"
-          :title="$t('tools.reconnect')"
+          class="btn btn-xs btn-ghost"
+          :title="$t('agent.reconnect')"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
+          <i class="fas fa-sync-alt"></i>
         </button>
         <button
           @click="clearTerminal"
-          class="btn-action"
-          :title="$t('tools.clear')"
+          class="btn btn-xs btn-ghost"
+          :title="$t('agent.clear')"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
+          <i class="fas fa-eraser"></i>
         </button>
         <button
           @click="disconnect"
           :disabled="!isConnected"
-          class="btn-action btn-danger"
-          :title="$t('tools.disconnect')"
+          class="btn btn-xs btn-ghost text-error"
+          :title="$t('agent.disconnect')"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <i class="fas fa-times"></i>
+        </button>
+        <button
+          @click="$emit('close')"
+          class="btn btn-xs btn-ghost"
+          :title="$t('agent.close')"
+        >
+          <i class="fas fa-times-circle"></i>
         </button>
       </div>
     </div>
 
-    <div class="terminal-status" :class="statusClass">
-      <span class="status-dot"></span>
-      <span>{{ statusText }}</span>
+    <!-- Status Bar -->
+    <div class="terminal-status-bar flex items-center gap-2 px-4 py-2 bg-base-100 border-b border-base-300 text-xs">
+      <span class="status-indicator flex items-center gap-2">
+        <span class="status-dot w-2 h-2 rounded-full" :class="statusDotClass"></span>
+        <span>{{ statusText }}</span>
+      </span>
+      <span v-if="isConnected && sessionId" class="text-base-content/60">
+        | Session: {{ sessionId.substring(0, 8) }}
+      </span>
     </div>
 
-    <div ref="terminalContainer" class="terminal-container"></div>
+    <!-- Terminal Container -->
+    <div ref="terminalContainer" class="terminal-container flex-1 overflow-hidden bg-[#1e1e1e]"></div>
 
-    <div class="terminal-footer">
-      <span class="footer-info">{{ $t('tools.terminalInfo') }}</span>
-      <span v-if="isConnected" class="footer-stats">
-        {{ $t('tools.connected') }} | {{ $t('tools.session') }}: {{ sessionId?.substring(0, 8) }}
-      </span>
+    <!-- Error Message -->
+    <div v-if="error" class="error-bar px-4 py-2 bg-error/10 border-t border-error text-error text-xs">
+      <i class="fas fa-exclamation-triangle mr-2"></i>
+      {{ error }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import TerminalAPI from '@/api/terminal'
+import { useTerminal } from '@/composables/useTerminal'
 
 // Props
 interface Props {
@@ -86,18 +101,23 @@ const isConnected = ref(false)
 const isConnecting = ref(false)
 const error = ref<string>('')
 
+// Emits
+const emit = defineEmits<{
+  (e: 'close'): void
+}>()
+
 // Computed
-const statusClass = computed(() => {
-  if (isConnected.value) return 'status-connected'
-  if (isConnecting.value) return 'status-connecting'
-  if (error.value) return 'status-error'
-  return 'status-disconnected'
+const statusDotClass = computed(() => {
+  if (isConnected.value) return 'bg-success animate-pulse'
+  if (isConnecting.value) return 'bg-warning animate-pulse'
+  if (error.value) return 'bg-error'
+  return 'bg-base-content/30'
 })
 
 const statusText = computed(() => {
   if (isConnected.value) return 'Connected'
   if (isConnecting.value) return 'Connecting...'
-  if (error.value) return `Error: ${error.value}`
+  if (error.value) return 'Error'
   return 'Disconnected'
 })
 
@@ -105,10 +125,25 @@ const statusText = computed(() => {
 const initTerminal = () => {
   if (!terminalContainer.value) return
 
+  // 从系统设置中读取字体大小
+  let terminalFontSize = 14 // 默认值
+  try {
+    const savedSettings = localStorage.getItem('sentinel-settings')
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings)
+      // 系统字体大小范围通常是 12-20，终端使用相同或稍小一点
+      if (settings.general?.fontSize) {
+        terminalFontSize = settings.general.fontSize
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load font size from settings:', error)
+  }
+
   // Create terminal
   terminal.value = new Terminal({
     cursorBlink: true,
-    fontSize: 14,
+    fontSize: terminalFontSize,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
       background: '#1e1e1e',
@@ -143,6 +178,7 @@ const initTerminal = () => {
   // Open terminal
   terminal.value.open(terminalContainer.value)
   fitAddon.value.fit()
+  terminal.value.focus()
 
   // Handle resize
   window.addEventListener('resize', handleResize)
@@ -165,15 +201,15 @@ const connect = async () => {
     error.value = ''
 
     // Start terminal server if not running
-    const status = await invoke<{ running: boolean }>('get_terminal_server_status')
+    const status = await TerminalAPI.getStatus()
     if (!status.running) {
-      await invoke('start_terminal_server')
+      await TerminalAPI.startServer()
       // Wait a bit for server to start
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
     // Get WebSocket URL
-    const wsUrl = await invoke<string>('get_terminal_websocket_url')
+    const wsUrl = await TerminalAPI.getWebSocketUrl()
 
     // Create WebSocket connection
     ws.value = new WebSocket(wsUrl)
@@ -181,7 +217,16 @@ const connect = async () => {
     ws.value.onopen = () => {
       console.log('WebSocket connected')
       
-      // Send configuration
+      // If we have a sessionId from the composable, use it to reconnect
+      if (terminalComposable.currentSessionId.value) {
+        console.log('Connecting to existing session:', terminalComposable.currentSessionId.value)
+        ws.value?.send(`session:${terminalComposable.currentSessionId.value}`)
+        return
+      }
+
+      // No session ID yet - send default config to create a new session
+      // This happens when user opens terminal before any interactive_shell call
+      console.log('[Terminal] No session ID, creating new session with default config')
       const config = {
         use_docker: props.useDocker,
         docker_image: props.dockerImage,
@@ -196,12 +241,20 @@ const connect = async () => {
       if (typeof event.data === 'string') {
         // Check if it's session ID
         if (event.data.startsWith('session:')) {
-          sessionId.value = event.data.substring(8)
+          const newSessionId = event.data.substring(8)
+          sessionId.value = newSessionId
           isConnected.value = true
           isConnecting.value = false
+          
+          // Sync to global state so backend tools can find this session
+          terminalComposable.setSessionId(newSessionId)
+          console.log('[Terminal] ✓ Session established and synced to global state:', newSessionId)
+          
           terminal.value?.writeln('\x1b[1;32m✓ Connected!\x1b[0m')
           terminal.value?.writeln('')
         } else {
+          // Regular output - write to terminal
+          console.log('[Terminal] Received output, length:', event.data.length)
           terminal.value?.write(event.data)
         }
       } else if (event.data instanceof Blob) {
@@ -255,139 +308,132 @@ const disconnect = async () => {
 
 const reconnect = async () => {
   await disconnect()
-  await connect()
+  // Only reconnect if we have a session ID
+  if (terminalComposable.currentSessionId.value) {
+    await connect()
+  } else {
+    error.value = 'No session available. Please create a session first by using interactive_shell tool.'
+    terminal.value?.writeln('\r\n\x1b[1;33m⚠ No session available\x1b[0m')
+  }
 }
 
 const clearTerminal = () => {
   terminal.value?.clear()
 }
 
+// Terminal composable
+const terminalComposable = useTerminal()
+let unregisterWriteCallback: (() => void) | null = null
+
 // Lifecycle
-onMounted(async () => {
+onMounted(() => {
+  // 1. Initialize terminal UI immediately
   initTerminal()
-  await connect()
+  
+  // 2. Register write callback immediately so we can receive buffered messages
+  // Even if not connected to backend, we can display messages
+  unregisterWriteCallback = terminalComposable.onTerminalWrite((content: string) => {
+    if (terminal.value) {
+      terminal.value.write(content)
+    }
+  })
+
+  // 3. Watch for session ID changes (in case it's set after connection)
+  const stopWatch = watch(
+    () => terminalComposable.currentSessionId.value,
+    async (newSessionId, oldSessionId) => {
+      if (newSessionId && newSessionId !== oldSessionId && !isConnected.value) {
+        console.log('[Terminal] Session ID changed, reconnecting:', newSessionId)
+        await connect()
+      }
+    }
+  )
+
+  // 4. Watch for system font size changes
+  let currentFontSizeInterval: any = null
+  currentFontSizeInterval = setInterval(() => {
+    try {
+      const savedSettings = localStorage.getItem('sentinel-settings')
+      if (savedSettings && terminal.value) {
+        const settings = JSON.parse(savedSettings)
+        const newFontSize = settings.general?.fontSize || 14
+        const currentFontSize = terminal.value.options.fontSize
+        
+        if (newFontSize !== currentFontSize) {
+          console.log('[Terminal] Font size changed:', currentFontSize, '→', newFontSize)
+          terminal.value.options.fontSize = newFontSize
+          // 重新计算终端尺寸
+          if (fitAddon.value) {
+            fitAddon.value.fit()
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore errors
+    }
+  }, 1000) // 每秒检查一次
+
+  // 5. Connect to backend
+  // Note: We don't await here to avoid breaking component instance context
+  console.log('[Terminal] Initial connection attempt, session ID:', terminalComposable.currentSessionId.value)
+  connect()
+
+  // 6. Cleanup function (returned from setup or registered via onUnmounted)
+  // Store reference for clean-up
+  const cleanup = () => {
+    if (currentFontSizeInterval) clearInterval(currentFontSizeInterval)
+    if (stopWatch) stopWatch()
+  }
+  
+  // Vue 3 will handle this correctly since it's registered before any async delay
+  onBeforeUnmount(async () => {
+    cleanup()
+    window.removeEventListener('resize', handleResize)
+    await disconnect()
+    terminal.value?.dispose()
+    
+    // Unregister write callback
+    if (unregisterWriteCallback) {
+      unregisterWriteCallback()
+    }
+  })
 })
 
 onBeforeUnmount(async () => {
   window.removeEventListener('resize', handleResize)
   await disconnect()
   terminal.value?.dispose()
+  
+  // Unregister write callback
+  if (unregisterWriteCallback) {
+    unregisterWriteCallback()
+  }
 })
 </script>
 
 <style scoped>
-.interactive-terminal {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: #1e1e1e;
-  border-radius: 8px;
-  overflow: hidden;
+.interactive-terminal-panel {
+  /* Panel takes full height */
 }
 
-.terminal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #3e3e3e;
+.terminal-panel-header {
+  flex-shrink: 0;
 }
 
-.terminal-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #d4d4d4;
-  font-weight: 500;
-}
-
-.terminal-icon {
-  font-size: 20px;
-}
-
-.session-id {
-  font-size: 12px;
-  color: #858585;
-  font-family: monospace;
-}
-
-.terminal-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.btn-action {
-  padding: 6px 8px;
-  background: #3e3e3e;
-  border: none;
-  border-radius: 4px;
-  color: #d4d4d4;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-action:hover:not(:disabled) {
-  background: #4e4e4e;
-}
-
-.btn-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: #c92a2a;
-}
-
-.terminal-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  font-size: 12px;
-  background: #252525;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  animation: pulse 2s infinite;
-}
-
-.status-connected .status-dot {
-  background: #0dbc79;
-}
-
-.status-connecting .status-dot {
-  background: #e5e510;
-}
-
-.status-error .status-dot {
-  background: #cd3131;
-}
-
-.status-disconnected .status-dot {
-  background: #666666;
+.terminal-status-bar {
+  flex-shrink: 0;
 }
 
 .terminal-container {
-  flex: 1;
+  /* Terminal takes remaining space */
   padding: 8px;
-  overflow: hidden;
 }
 
-.terminal-footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 16px;
-  background: #252525;
-  border-top: 1px solid #3e3e3e;
-  font-size: 11px;
-  color: #858585;
+.error-bar {
+  flex-shrink: 0;
 }
 
+/* Status dot animation */
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
@@ -395,5 +441,9 @@ onBeforeUnmount(async () => {
   50% {
     opacity: 0.5;
   }
+}
+
+.animate-pulse {
+  animation: pulse 2s infinite;
 }
 </style>

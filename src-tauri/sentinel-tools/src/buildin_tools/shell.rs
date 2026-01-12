@@ -376,33 +376,33 @@ impl Tool for ShellTool {
         };
 
         // Truncate output if needed
-        let max_chars = crate::get_tool_execution_config().max_output_chars;
+                let max_chars = crate::get_tool_execution_config().max_output_chars;
 
         let mut stdout = stdout;
-        if stdout.len() > max_chars {
-            let original_len = stdout.len();
-            stdout = stdout.chars().take(max_chars).collect();
-            stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", stdout.len(), original_len));
-        }
+                if stdout.len() > max_chars {
+                    let original_len = stdout.len();
+                    stdout = stdout.chars().take(max_chars).collect();
+                    stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", stdout.len(), original_len));
+                }
 
         let mut stderr = stderr;
-        if stderr.len() > max_chars {
-            let original_len = stderr.len();
-            stderr = stderr.chars().take(max_chars).collect();
-            stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", stderr.len(), original_len));
-        }
+                 if stderr.len() > max_chars {
+                    let original_len = stderr.len();
+                    stderr = stderr.chars().take(max_chars).collect();
+                    stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", stderr.len(), original_len));
+                }
 
         let success = exit_code == 0;
-        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
-        Ok(ShellOutput {
-            command: args.command,
-            stdout,
-            stderr,
+                Ok(ShellOutput {
+                    command: args.command,
+                    stdout,
+                    stderr,
             exit_code: Some(exit_code),
-            success,
-            execution_time_ms,
-        })
+                    success,
+                    execution_time_ms,
+                })
     }
 }
 

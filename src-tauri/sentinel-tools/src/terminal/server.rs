@@ -9,6 +9,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
+use bytes::Bytes;
 
 /// WebSocket terminal server
 pub struct TerminalServer {
@@ -21,7 +22,7 @@ impl TerminalServer {
     /// Create a new terminal server
     pub fn new(addr: SocketAddr) -> Self {
         Self {
-            manager: Arc::new(TerminalSessionManager::new()),
+            manager: super::TERMINAL_MANAGER.clone(),
             addr,
             running: Arc::new(RwLock::new(false)),
         }
@@ -88,11 +89,17 @@ impl TerminalServer {
                     let session_id = text.strip_prefix("session:").unwrap().to_string();
                     
                     // Check if session exists
-                    if self.manager.get_session(&session_id).await.is_some() {
+                    if let Some(session_lock) = self.manager.get_session(&session_id).await {
                         info!("Reconnecting to existing session: {}", session_id);
-                        // For reconnection, we need to create a new output channel
-                        // This is a limitation - we'll create a new session for now
-                        return Err("Session reconnection not yet implemented".to_string());
+                        
+                        // Create a new output channel for this WebSocket subscriber
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                        {
+                            let session = session_lock.read().await;
+                            session.add_subscriber(tx).await;
+                        }
+                        
+                        (session_id, rx)
                     } else {
                         return Err(format!("Session not found: {}", session_id));
                     }
@@ -114,20 +121,26 @@ impl TerminalServer {
 
         // Send session ID to client
         ws_sender
-            .send(Message::Text(format!("session:{}", session_id)))
+            .send(Message::Text(format!("session:{}", session_id).into()))
             .await
             .map_err(|e| format!("Failed to send session ID: {}", e))?;
 
         // Spawn task to forward output to WebSocket
         let session_id_clone = session_id.clone();
         let output_task = tokio::spawn(async move {
+            info!("[WS Session {}] Output forwarding task started", session_id_clone);
+            let mut chunk_count = 0;
             while let Some(data) = output_rx.recv().await {
-                if let Err(e) = ws_sender.send(Message::Binary(data)).await {
-                    error!("Failed to send output: {}", e);
+                chunk_count += 1;
+                info!("[WS Session {}] Forwarding chunk #{}: {} bytes", session_id_clone, chunk_count, data.len());
+                // Convert Vec<u8> to Bytes
+                let bytes_data = Bytes::from(data);
+                if let Err(e) = ws_sender.send(Message::Binary(bytes_data)).await {
+                    error!("[WS Session {}] Failed to send output: {}", session_id_clone, e);
                     break;
                 }
             }
-            debug!("Output task ended for session: {}", session_id_clone);
+            info!("[WS Session {}] Output task ended, total chunks sent: {}", session_id_clone, chunk_count);
         });
 
         // Handle input from WebSocket
@@ -136,13 +149,16 @@ impl TerminalServer {
         while let Some(msg) = ws_receiver.next().await {
             match msg {
                 Ok(Message::Binary(data)) => {
-                    if let Err(e) = manager.write_to_session(&session_id_clone, data).await {
+                    // Convert Bytes to Vec<u8>
+                    let vec_data = data.to_vec();
+                    if let Err(e) = manager.write_to_session(&session_id_clone, vec_data).await {
                         warn!("Failed to write to session: {}", e);
                         break;
                     }
                 }
                 Ok(Message::Text(text)) => {
-                    let data = text.into_bytes();
+                    // Convert Utf8Bytes to Vec<u8>
+                    let data = text.as_bytes().to_vec();
                     if let Err(e) = manager.write_to_session(&session_id_clone, data).await {
                         warn!("Failed to write to session: {}", e);
                         break;
@@ -173,7 +189,8 @@ impl TerminalServer {
 
         // Cleanup
         output_task.abort();
-        let _ = manager.stop_session(&session_id).await;
+        // Do not stop session here, let the manager handle it (persistent sessions)
+        info!("WebSocket connection ended for session: {}", session_id);
 
         Ok(())
     }

@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use once_cell::sync::Lazy;
 
 /// Global terminal server
-static TERMINAL_SERVER: Lazy<Arc<RwLock<Option<Arc<TerminalServer>>>>> =
+pub static TERMINAL_SERVER: Lazy<Arc<RwLock<Option<Arc<TerminalServer>>>>> =
     Lazy::new(|| Arc::new(RwLock::new(None)));
 
 /// Terminal server configuration
@@ -90,7 +90,7 @@ pub async fn get_terminal_server_status() -> Result<TerminalServerStatus, String
 
 /// List terminal sessions
 #[tauri::command]
-pub async fn list_terminal_sessions() -> Result<Vec<sentinel_tools::terminal::manager::SessionInfo>, String> {
+pub async fn list_terminal_sessions() -> Result<Vec<sentinel_tools::terminal::SessionInfo>, String> {
     let server_guard = TERMINAL_SERVER.read().await;
 
     if let Some(server) = server_guard.as_ref() {

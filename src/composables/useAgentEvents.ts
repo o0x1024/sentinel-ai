@@ -377,6 +377,12 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           tool_args: payload.tool_input,
         }
       })
+
+      // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
+      // 检测 interactive_shell 工具调用
+      if (payload.tool_name === 'interactive_shell') {
+        console.log('[Agent] Detected interactive_shell call, will open terminal when result arrives')
+      }
     })
     unlisteners.push(unlistenToolCall)
 
@@ -421,6 +427,12 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           execution_id: payload.execution_id,
         }
       })
+
+      // ❌ 不要在这里打开终端，等待 tool_result 事件中的 session_id
+      // 检测 interactive_shell 工具调用
+      if (payload.tool_name === 'interactive_shell') {
+        console.log('[Agent] Detected interactive_shell call (complete), will open terminal when result arrives')
+      }
     })
     unlisteners.push(unlistenToolCallComplete)
 
@@ -452,6 +464,60 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
             existingMsg.metadata.tool_result = resultContent
             existingMsg.metadata.success = !resultContent.toLowerCase().includes('error')
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
+            
+            // 如果是 interactive_shell 工具，自动打开终端面板
+            if (callInfo.tool_name === 'interactive_shell') {
+              import('@/composables/useTerminal').then(({ useTerminal }) => {
+                const terminal = useTerminal()
+                
+                // 深度解析函数：自动挖掘嵌套的 JSON 字符串或数组
+                const deepParse = (input: any, depth = 0): any => {
+                  // 如果输入是字符串，尝试解析
+                  if (typeof input === 'string') {
+                    try {
+                      const parsed = JSON.parse(input)
+                      return deepParse(parsed, depth)
+                    } catch (e) {
+                      return input
+                    }
+                  }
+                  
+                  // 如果输入是数组，取第一个元素继续解析
+                  if (Array.isArray(input) && input.length > 0) {
+                    return deepParse(input[0], depth + 1)
+                  }
+                  
+                  // 如果输入是对象，尝试解析内部的 text 字段
+                  if (typeof input === 'object' && input !== null) {
+                    if (input.text && typeof input.text === 'string') {
+                      try {
+                        const inner = deepParse(input.text, depth + 1)
+                        if (typeof inner === 'object' && inner !== null && !Array.isArray(inner)) {
+                          return { ...inner, type: input.type }
+                        }
+                        return inner
+                      } catch (e) {
+                        // 解析失败，返回原对象
+                      }
+                    }
+                    return input
+                  }
+                  
+                  return input
+                }
+                
+                try {
+                  const parsed = deepParse(resultContent)
+                  if (parsed.session_id) {
+                    terminal.openTerminal(parsed.session_id)
+                  } else {
+                    terminal.openTerminal()
+                  }
+                } catch (e) {
+                  terminal.openTerminal()
+                }
+              })
+            }
           }
         }
 
@@ -470,6 +536,45 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           matchingToolCall.metadata.tool_result = payload.tool_result
           matchingToolCall.metadata.success = !payload.tool_result.startsWith('Error:')
           matchingToolCall.content = `工具调用完成: ${payload.tool_name}`
+          
+          // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板
+          if (payload.tool_name === 'interactive_shell') {
+            import('@/composables/useTerminal').then(({ useTerminal }) => {
+              const terminal = useTerminal()
+              
+              const deepParse = (input: any): any => {
+                if (typeof input !== 'string') {
+                  if (Array.isArray(input) && input.length > 0) return deepParse(input[0])
+                  return input
+                }
+                try {
+                  const parsed = JSON.parse(input)
+                  if (typeof parsed === 'object' && parsed !== null) {
+                    if (parsed.text && typeof parsed.text === 'string') {
+                      const inner = deepParse(parsed.text)
+                      return { ...inner, ...parsed, text: parsed.text }
+                    }
+                    if (Array.isArray(parsed) && parsed.length > 0) return deepParse(parsed[0])
+                    return parsed
+                  }
+                  return parsed
+                } catch (e) {
+                  return input
+                }
+              }
+
+              try {
+                const parsed = deepParse(payload.tool_result)
+                if (parsed.session_id) {
+                  terminal.openTerminal(parsed.session_id)
+                } else {
+                  terminal.openTerminal()
+                }
+              } catch (e) {
+                terminal.openTerminal()
+              }
+            })
+          }
         } else {
           // 找不到匹配的 tool_call，创建独立消息（兜底）
           messages.value.push({

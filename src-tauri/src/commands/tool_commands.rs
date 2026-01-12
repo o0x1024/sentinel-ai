@@ -47,6 +47,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(), true);
     map.insert(sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(), true);
     map.insert(OcrTool::NAME.to_string(), true);
+    map.insert("interactive_shell".to_string(), true);
     RwLock::new(map)
 });
 
@@ -342,6 +343,35 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                 }
             },
             "required": ["url"]
+        })),
+    });
+
+    // Add interactive_shell
+    tools.push(BuiltinToolInfo {
+        id: "interactive_shell".to_string(),
+        name: "interactive_shell".to_string(),
+        description: "Create an interactive terminal session for persistent command execution (e.g., msfconsole, sqlmap, database clients). Returns a session ID for continuous interaction.".to_string(),
+        category: "system".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("interactive_shell").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "use_docker": {
+                    "type": "boolean",
+                    "description": "Whether to run in Docker container (recommended for security)",
+                    "default": true
+                },
+                "docker_image": {
+                    "type": "string",
+                    "description": "Docker image to use (default: sentinel-sandbox:latest)",
+                    "default": "sentinel-sandbox:latest"
+                },
+                "initial_command": {
+                    "type": "string",
+                    "description": "Optional initial command to run (e.g., 'msfconsole', 'sqlmap')"
+                }
+            }
         })),
     });
 

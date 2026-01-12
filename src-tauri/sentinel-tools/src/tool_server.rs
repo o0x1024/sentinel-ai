@@ -23,6 +23,14 @@ static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::ne
 /// Global Tavily API key storage
 static TAVILY_API_KEY: Lazy<Arc<RwLock<Option<String>>>> = Lazy::new(|| Arc::new(RwLock::new(None)));
 
+/// Strip ANSI escape sequences from text
+fn strip_ansi_codes(text: &str) -> String {
+    // Simple regex-based stripping of ANSI codes
+    // Matches ESC [ ... m and other common ANSI sequences
+    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[^\x07]*\x07|\x1b[=>]|\x1b\][0-9];[^\x07]*\x07").unwrap();
+    re.replace_all(text, "").to_string()
+}
+
 /// Get the global tool server instance
 pub fn get_tool_server() -> Arc<ToolServer> {
     TOOL_SERVER.clone()
@@ -523,6 +531,162 @@ impl ToolServer {
             .expect("Failed to build ocr tool");
 
         self.registry.register(ocr_def).await;
+
+        // Register interactive_shell tool
+        let interactive_shell_def = DynamicToolBuilder::new("interactive_shell")
+            .description("Create an interactive terminal session for persistent command execution (e.g., msfconsole, sqlmap, database clients). Returns a session ID and WebSocket URL for continuous interaction.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "use_docker": {
+                        "type": "boolean",
+                        "description": "Whether to run in Docker container (recommended for security)",
+                        "default": true
+                    },
+                    "docker_image": {
+                        "type": "string",
+                        "description": "Docker image to use (default: sentinel-sandbox:latest)",
+                        "default": "sentinel-sandbox:latest"
+                    },
+                    "initial_command": {
+                        "type": "string",
+                        "description": "Optional initial command to run (e.g., 'msfconsole', 'sqlmap')"
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig};
+                use tokio::sync::mpsc;
+                use tokio::time::{timeout, Duration};
+                use tracing::info;
+                
+                // Parse arguments
+                let use_docker = args.get("use_docker")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                
+                let docker_image = args.get("docker_image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("sentinel-sandbox:latest")
+                    .to_string();
+                
+                let initial_command = args.get("initial_command")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                
+                // 1. Try to find an existing active and healthy session
+                let sessions = TERMINAL_MANAGER.list_sessions().await;
+                let active_session = if !sessions.is_empty() {
+                    let session_opt = TERMINAL_MANAGER.get_session(&sessions[0].id).await;
+                    // Check if session is healthy
+                    if let Some(ref session_lock) = session_opt {
+                        let session = session_lock.read().await;
+                        if session.is_healthy() {
+                            info!("Found healthy session: {}", session.id);
+                            drop(session); // Release read lock
+                            session_opt
+                        } else {
+                            let unhealthy_id = session.id.clone();
+                            drop(session); // Release read lock before stopping
+                            info!("Session {} is not healthy (stdin closed), stopping it", unhealthy_id);
+                            let _ = TERMINAL_MANAGER.stop_session(&unhealthy_id).await;
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let (session_id, mut output_rx) = if let Some(session_lock) = active_session {
+                    let id = {
+                        let session = session_lock.read().await;
+                        session.id.clone()
+                    };
+                    info!("Using existing terminal session: {}", id);
+                    
+                    // Create a new subscriber to capture output for LLM
+                    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                    {
+                        let session = session_lock.read().await;
+                        session.add_subscriber(tx).await;
+                    }
+                    
+                    (id, rx)
+                } else {
+                    // 2. Create a new persistent session if none exists
+                    let config = TerminalSessionConfig {
+                        use_docker,
+                        docker_image,
+                        working_dir: Some("/workspace".to_string()),
+                        env_vars: std::collections::HashMap::new(),
+                        shell: "bash".to_string(),
+                        initial_command: None,
+                    };
+                    
+                    let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;
+                    info!("Created new persistent terminal session: {}", id);
+                    (id, rx)
+                };
+
+                // If no initial_command, just return session info
+                let Some(cmd) = initial_command else {
+                    return Ok(serde_json::json!({
+                        "success": true,
+                        "session_id": session_id,
+                        "message": "Connected to terminal session",
+                        "instructions": "Use the Terminal panel to interact"
+                    }));
+                };
+
+                // 3. Execute the command in the session
+                // Execute the command directly (no visual prompt needed, TTY will handle it)
+                let cmd_with_newline = format!("{}\n", cmd);
+                if let Err(e) = TERMINAL_MANAGER.write_to_session(&session_id, cmd_with_newline.into_bytes()).await {
+                    return Err(format!("Failed to execute command: {}", e));
+                }
+                
+                // 4. Collect output for LLM
+                let mut output = Vec::new();
+                let collect_timeout = Duration::from_secs(10);
+                let start = tokio::time::Instant::now();
+                
+                while start.elapsed() < collect_timeout {
+                    match timeout(Duration::from_millis(500), output_rx.recv()).await {
+                        Ok(Some(data)) => {
+                            output.extend_from_slice(&data);
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            if !output.is_empty() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                let output_str = String::from_utf8_lossy(&output).to_string();
+                
+                // Strip ANSI escape sequences for LLM (keep raw output for terminal display)
+                let clean_output = strip_ansi_codes(&output_str);
+                
+                let result = serde_json::json!({
+                    "success": true,
+                    "session_id": session_id,
+                    "command": cmd,
+                    "output": clean_output,
+                    "note": "Output is visible in the terminal panel."
+                });
+                
+                Ok(result)
+            })
+            .build()
+            .expect("Failed to build interactive_shell tool");
+
+        self.registry.register(interactive_shell_def).await;
 
         *initialized = true;
         tracing::info!("Builtin tools initialized");

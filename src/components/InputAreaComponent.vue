@@ -1,5 +1,5 @@
 <template>
-  <div class="border-t border-base-300/50 bg-base-100 flex-shrink-0">
+  <div class="input-area-container border-t border-base-300/50 bg-base-100 flex-shrink-0 relative z-0">
     
 
     <!-- Input area (refactored) -->
@@ -530,13 +530,58 @@ defineExpose({
 </script>
 
 <style scoped>
-.chat-input { position: relative; }
-.icon-btn { width:1.75rem; height:1.75rem; display:flex; align-items:center; justify-content:center; border-radius:0.375rem; font-size:calc(var(--font-size-base, 14px) * 0.75); transition:background-color .15s,color .15s; }
-.icon-btn:hover { background-color: hsl(var(--b3)/0.7); }
-.icon-btn.active { background: hsl(var(--p)); color: hsl(var(--pc)); box-shadow:0 2px 4px rgba(0,0,0,.15); }
-.send-btn { width:2rem; height:2rem; border-radius:9999px; background: hsl(var(--b3)); color: hsl(var(--bc)); display:flex; align-items:center; justify-content:center; transition: background-color .15s,color .15s; }
-.send-btn:hover { background: hsl(var(--p)); color: hsl(var(--pc)); }
-.send-btn:disabled { opacity:.4; cursor:not-allowed; }
+.input-area-container {
+  /* Ensure input area doesn't overlap sidebar */
+  width: 100%;
+  max-width: 100%;
+}
+
+.chat-input { 
+  position: relative; 
+}
+
+.icon-btn { 
+  width:1.75rem; 
+  height:1.75rem; 
+  display:flex; 
+  align-items:center; 
+  justify-content:center; 
+  border-radius:0.375rem; 
+  font-size:calc(var(--font-size-base, 14px) * 0.75); 
+  transition:background-color .15s,color .15s; 
+}
+
+.icon-btn:hover { 
+  background-color: hsl(var(--b3)/0.7); 
+}
+
+.icon-btn.active { 
+  background: hsl(var(--p)); 
+  color: hsl(var(--pc)); 
+  box-shadow:0 2px 4px rgba(0,0,0,.15); 
+}
+
+.send-btn { 
+  width:2rem; 
+  height:2rem; 
+  border-radius:9999px; 
+  background: hsl(var(--b3)); 
+  color: hsl(var(--bc)); 
+  display:flex; 
+  align-items:center; 
+  justify-content:center; 
+  transition: background-color .15s,color .15s; 
+}
+
+.send-btn:hover { 
+  background: hsl(var(--p)); 
+  color: hsl(var(--pc)); 
+}
+
+.send-btn:disabled { 
+  opacity:.4; 
+  cursor:not-allowed; 
+}
 
 /* Search popover positioned above the toolbar */
 .search-popover {
@@ -545,9 +590,12 @@ defineExpose({
   left: 0;
   width: 24rem;
   max-width: 90vw;
+  z-index: 50;
 }
 
 @media (max-width: 640px) {
-  .search-popover { width: 18rem; }
+  .search-popover { 
+    width: 18rem; 
+  }
 }
 </style>

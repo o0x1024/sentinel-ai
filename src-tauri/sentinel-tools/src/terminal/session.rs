@@ -6,7 +6,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 /// Terminal session configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,8 @@ pub struct TerminalSessionConfig {
     pub env_vars: std::collections::HashMap<String, String>,
     /// Shell to use (bash, sh, zsh, etc.)
     pub shell: String,
+    /// Optional command to execute immediately after session starts
+    pub initial_command: Option<String>,
 }
 
 impl Default for TerminalSessionConfig {
@@ -31,6 +34,7 @@ impl Default for TerminalSessionConfig {
             working_dir: Some("/workspace".to_string()),
             env_vars: std::collections::HashMap::new(),
             shell: "bash".to_string(),
+            initial_command: None,
         }
     }
 }
@@ -52,6 +56,8 @@ pub struct TerminalSession {
     container_id: Option<String>,
     process: Option<Child>,
     stdin_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    output_txs: Arc<RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>>,
+    output_history: Arc<RwLock<Vec<Vec<u8>>>>,
     last_activity: Arc<RwLock<std::time::Instant>>,
 }
 
@@ -65,8 +71,49 @@ impl TerminalSession {
             container_id: None,
             process: None,
             stdin_tx: None,
+            output_txs: Arc::new(RwLock::new(Vec::new())),
+            output_history: Arc::new(RwLock::new(Vec::new())),
             last_activity: Arc::new(RwLock::new(std::time::Instant::now())),
         })
+    }
+
+    /// Add an output subscriber
+    pub async fn add_subscriber(&self, tx: mpsc::UnboundedSender<Vec<u8>>) {
+        // Send history to new subscriber
+        let history = self.output_history.read().await;
+        info!("[Terminal Session {}] Adding subscriber, history chunks: {}", self.id, history.len());
+        
+        for (i, data) in history.iter().enumerate() {
+            info!("[Terminal Session {}] Sending history chunk {}: {} bytes", self.id, i, data.len());
+            if let Err(e) = tx.send(data.clone()) {
+                error!("[Terminal Session {}] Failed to send history chunk {}: {}", self.id, i, e);
+            }
+        }
+        
+        self.output_txs.write().await.push(tx);
+        info!("[Terminal Session {}] Subscriber added, total subscribers: {}", 
+            self.id, self.output_txs.read().await.len());
+    }
+
+    /// Broadcast output to all subscribers
+    async fn broadcast_output(
+        output_txs: Arc<RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>>, 
+        output_history: Arc<RwLock<Vec<Vec<u8>>>>,
+        data: Vec<u8>
+    ) {
+        // Add to history (keep last 1000 chunks)
+        {
+            let mut history = output_history.write().await;
+            history.push(data.clone());
+            if history.len() > 1000 {
+                history.remove(0);
+            }
+        }
+
+        let mut txs = output_txs.write().await;
+        txs.retain(|tx| {
+            tx.send(data.clone()).is_ok()
+        });
     }
 
     /// Start the terminal session
@@ -75,122 +122,147 @@ impl TerminalSession {
         output_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<(), String> {
         info!("Starting terminal session: {}", self.id);
+        self.add_subscriber(output_tx).await;
 
         if self.config.use_docker {
-            self.start_docker_session(output_tx).await
+            self.start_docker_session().await
         } else {
-            self.start_host_session(output_tx).await
+            self.start_host_session().await
         }
     }
 
-    /// Start Docker-based session
+    /// Start Docker-based session with PTY support
     async fn start_docker_session(
         &mut self,
-        output_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<(), String> {
         // Create container
         let container_id = self.create_container().await?;
         self.container_id = Some(container_id.clone());
 
-        // Start interactive shell in container
-        let mut cmd = Command::new("docker");
-        cmd.args(&["exec", "-i", &container_id, &self.config.shell]);
+        // Create PTY pair
+        let pty_system = native_pty_system();
+        let pty_pair = pty_system
+            .openpty(PtySize {
+                rows: 30,
+                cols: 120,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("Failed to create PTY: {}", e))?;
 
-        if let Some(ref wd) = self.config.working_dir {
-            cmd.args(&["-w", wd]);
+        // Build docker exec command with PTY support
+        let mut cmd_builder = CommandBuilder::new("docker");
+        cmd_builder.arg("exec");
+        cmd_builder.arg("-it");  // ✅ Now we can use -it with PTY!
+        
+        // For Kali images, use sandbox user
+        if self.config.docker_image.contains("kali") {
+            cmd_builder.arg("-u");
+            cmd_builder.arg("sandbox");
         }
+        
+        // Add working directory
+        if let Some(ref wd) = self.config.working_dir {
+            cmd_builder.arg("-w");
+            cmd_builder.arg(wd);
+        }
+        
+        // Add container_id and shell
+        cmd_builder.arg(&container_id);
+        cmd_builder.arg(&self.config.shell);
 
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        // Spawn command through PTY
+        let _child = pty_pair.slave.spawn_command(cmd_builder)
+            .map_err(|e| format!("Failed to spawn docker exec with PTY: {}", e))?;
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to start shell: {}", e))?;
+        // Get PTY master for reading/writing
+        let mut pty_reader = pty_pair.master.try_clone_reader()
+            .map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
+        let mut pty_writer = pty_pair.master.take_writer()
+            .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
 
-        // Setup stdin channel
-        let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
+        // Setup stdin channel for writing to PTY
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        self.stdin_tx = Some(stdin_tx);
+        self.stdin_tx = Some(stdin_tx.clone());
 
-        // Stdin writer task
-        tokio::spawn(async move {
-            let mut stdin = stdin;
-            while let Some(data) = stdin_rx.recv().await {
-                if let Err(e) = stdin.write_all(&data).await {
-                    error!("Failed to write to stdin: {}", e);
+        // Stdin writer task (write to PTY master)
+        tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            while let Some(data) = stdin_rx.blocking_recv() {
+                if let Err(e) = pty_writer.write_all(&data) {
+                    error!("Failed to write to PTY: {}", e);
                     break;
                 }
-                if let Err(e) = stdin.flush().await {
-                    error!("Failed to flush stdin: {}", e);
+                if let Err(e) = pty_writer.flush() {
+                    error!("Failed to flush PTY: {}", e);
                     break;
                 }
             }
         });
 
-        // Setup stdout/stderr readers
-        let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to get stderr")?;
-
-        let output_tx_clone = output_tx.clone();
+        // PTY reader task (read from PTY master)
+        let output_txs_clone = self.output_txs.clone();
+        let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
-
-        // Stdout reader task
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout);
-            let mut buffer = Vec::new();
+        
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut buffer = [0u8; 8192];
             loop {
-                buffer.clear();
-                match reader.read_until(b'\n', &mut buffer).await {
-                    Ok(0) => break, // EOF
-                    Ok(_) => {
-                        *last_activity.write().await = std::time::Instant::now();
-                        if output_tx_clone.send(buffer.clone()).is_err() {
-                            break;
-                        }
+                match pty_reader.read(&mut buffer) {
+                    Ok(0) => {
+                        info!("PTY reader reached EOF");
+                        break;
+                    }
+                    Ok(n) => {
+                        let data = buffer[..n].to_vec();
+                        // Broadcast must be done in async context
+                        tokio::runtime::Handle::current().block_on(async {
+                            *last_activity.write().await = std::time::Instant::now();
+                            Self::broadcast_output(
+                                output_txs_clone.clone(),
+                                output_history_clone.clone(),
+                                data,
+                            )
+                            .await;
+                        });
                     }
                     Err(e) => {
-                        error!("Failed to read stdout: {}", e);
+                        error!("Failed to read from PTY: {}", e);
                         break;
                     }
                 }
             }
+            info!("PTY reader task ended");
         });
 
-        // Stderr reader task
-        let last_activity = self.last_activity.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr);
-            let mut buffer = Vec::new();
-            loop {
-                buffer.clear();
-                match reader.read_until(b'\n', &mut buffer).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        *last_activity.write().await = std::time::Instant::now();
-                        if output_tx.send(buffer.clone()).is_err() {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to read stderr: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
-
-        self.process = Some(child);
+        // Note: We don't store the child process for PTY mode
+        // The PTY system manages the process lifecycle
         *self.state.write().await = SessionState::Running;
 
-        info!("Terminal session started: {}", self.id);
+        info!("Terminal session started with PTY: {}", self.id);
+        
+        // Execute initial_command if provided
+        if let Some(ref initial_cmd) = self.config.initial_command {
+            if !initial_cmd.is_empty() {
+                info!("Executing initial command: {}", initial_cmd);
+                // Wait a bit for shell to be ready
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                
+                // Send the command with newline
+                let cmd_with_newline = format!("{}\n", initial_cmd);
+                if let Err(e) = stdin_tx.send(cmd_with_newline.into_bytes()) {
+                    error!("Failed to send initial command: {}", e);
+                }
+            }
+        }
+        
         Ok(())
     }
 
     /// Start host-based session
     async fn start_host_session(
         &mut self,
-        output_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<(), String> {
         warn!("Starting terminal on host (less secure)");
 
@@ -229,7 +301,8 @@ impl TerminalSession {
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to get stderr")?;
 
-        let output_tx_clone = output_tx.clone();
+        let output_txs_clone = self.output_txs.clone();
+        let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
 
         tokio::spawn(async move {
@@ -241,15 +314,19 @@ impl TerminalSession {
                     Ok(0) => break,
                     Ok(_) => {
                         *last_activity.write().await = std::time::Instant::now();
-                        if output_tx_clone.send(buffer.clone()).is_err() {
-                            break;
-                        }
+                        Self::broadcast_output(
+                            output_txs_clone.clone(), 
+                            output_history_clone.clone(), 
+                            buffer.clone()
+                        ).await;
                     }
                     Err(_) => break,
                 }
             }
         });
 
+        let output_txs_clone = self.output_txs.clone();
+        let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stderr);
@@ -260,9 +337,11 @@ impl TerminalSession {
                     Ok(0) => break,
                     Ok(_) => {
                         *last_activity.write().await = std::time::Instant::now();
-                        if output_tx.send(buffer.clone()).is_err() {
-                            break;
-                        }
+                        Self::broadcast_output(
+                            output_txs_clone.clone(), 
+                            output_history_clone.clone(), 
+                            buffer.clone()
+                        ).await;
                     }
                     Err(_) => break,
                 }
@@ -277,18 +356,33 @@ impl TerminalSession {
 
     /// Create Docker container
     async fn create_container(&self) -> Result<String, String> {
-        debug!("Creating Docker container");
+        info!("Creating Docker container with image: {}", self.config.docker_image);
+
+        // Check if we should use a non-root user
+        // For Kali Linux images, we need to create a sandbox user first
+        let use_sandbox_user = self.config.docker_image.contains("kali");
+        
+        let mut args = vec![
+            "run",
+            "-d",
+            "--rm",
+            "-i",
+        ];
+        
+        // Add working directory mount if specified
+        if let Some(ref wd) = self.config.working_dir {
+            args.push("-v");
+            args.push("/tmp/workspace:/workspace");
+            args.push("-w");
+            args.push(wd);
+        }
+        
+        args.push(&self.config.docker_image);
+        args.push("sleep");
+        args.push("infinity");
 
         let output = Command::new("docker")
-            .args(&[
-                "run",
-                "-d",
-                "--rm",
-                "-i",
-                &self.config.docker_image,
-                "sleep",
-                "infinity",
-            ])
+            .args(&args)
             .output()
             .await
             .map_err(|e| format!("Failed to create container: {}", e))?;
@@ -299,7 +393,34 @@ impl TerminalSession {
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        debug!("Container created: {}", container_id);
+        info!("Container created: {}", container_id);
+        
+        // For Kali images, create sandbox user if it doesn't exist
+        if use_sandbox_user {
+            info!("Setting up sandbox user in container");
+            let setup_commands = vec![
+                // Create sandbox user if not exists
+                "id -u sandbox &>/dev/null || useradd -m -s /bin/bash sandbox",
+                // Create workspace directory
+                "mkdir -p /workspace",
+                // Set ownership
+                "chown -R sandbox:sandbox /workspace 2>/dev/null || true",
+            ];
+            
+            for cmd in setup_commands {
+                let result = Command::new("docker")
+                    .args(&["exec", &container_id, "bash", "-c", cmd])
+                    .output()
+                    .await;
+                
+                if let Err(e) = result {
+                    warn!("Failed to execute setup command '{}': {}", cmd, e);
+                }
+            }
+            
+            info!("Sandbox user setup completed");
+        }
+        
         Ok(container_id)
     }
 
@@ -313,6 +434,15 @@ impl TerminalSession {
             Ok(())
         } else {
             Err("Terminal not started".to_string())
+        }
+    }
+
+    /// Check if the session is healthy (stdin is open)
+    pub fn is_healthy(&self) -> bool {
+        if let Some(ref tx) = self.stdin_tx {
+            !tx.is_closed()
+        } else {
+            false
         }
     }
 

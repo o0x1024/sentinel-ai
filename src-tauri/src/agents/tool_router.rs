@@ -289,6 +289,23 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
             },
+            ToolMetadata {
+                id: "interactive_shell".to_string(),
+                name: "interactive_shell".to_string(),
+                description: "Create an interactive terminal session for persistent command execution (e.g., msfconsole, sqlmap, database clients). Returns a session ID for continuous interaction.".to_string(),
+                category: ToolCategory::System,
+                tags: vec![
+                    "terminal".to_string(),
+                    "interactive".to_string(),
+                    "session".to_string(),
+                    "persistent".to_string(),
+                    "msfconsole".to_string(),
+                    "sqlmap".to_string(),
+                    "shell".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
             // Planning tool
             ToolMetadata {
                 id: TaskPlannerTool::NAME.to_string(),

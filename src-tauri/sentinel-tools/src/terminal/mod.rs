@@ -7,5 +7,12 @@ pub mod session;
 pub mod manager;
 
 pub use server::TerminalServer;
-pub use session::{TerminalSession, TerminalSessionConfig};
-pub use manager::TerminalSessionManager;
+pub use session::{TerminalSession, TerminalSessionConfig, SessionState};
+pub use manager::{TerminalSessionManager, SessionInfo};
+
+use std::sync::Arc;
+use once_cell::sync::Lazy;
+
+/// Global terminal session manager for sharing between tools and UI
+pub static TERMINAL_MANAGER: Lazy<Arc<TerminalSessionManager>> =
+    Lazy::new(|| Arc::new(TerminalSessionManager::new()));

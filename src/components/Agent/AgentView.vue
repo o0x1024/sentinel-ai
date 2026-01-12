@@ -95,6 +95,16 @@
             <span>{{ t('agent.todos') }}</span>
             <span class="badge badge-xs badge-primary">{{ todosComposable.rootTodos.value.length }}</span>
           </button>
+          <!-- Terminal Button - always visible -->
+          <button 
+            @click="terminalComposable.toggleTerminal()"
+            class="btn btn-sm gap-1"
+            :class="isTerminalActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="isTerminalActive ? t('agent.terminalPanelOpen') : t('agent.viewTerminal')"
+          >
+            <i class="fas fa-terminal"></i>
+            <span>{{ t('agent.terminal') }}</span>
+          </button>
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
@@ -108,20 +118,56 @@
 
       <!-- {{ t('agent.messagesAndTodos') }} -->
       <div class="flex flex-1 overflow-hidden min-h-0">
-        <!-- Message flow -->
-        <MessageFlow 
-          ref="messageFlowRef"
-          :messages="messages"
-          :is-executing="isExecuting"
-          :is-streaming="isStreaming"
-          :streaming-content="streamingContent"
-          :is-vision-active="isVisionActive"
-          class="flex-1"
-          @resend="handleResendMessage"
-        />
+        <!-- Left: Message flow + Input Area -->
+        <div class="message-area flex-1 flex flex-col overflow-hidden min-h-0">
+          <!-- Message flow -->
+          <MessageFlow 
+            ref="messageFlowRef"
+            :messages="messages"
+            :is-executing="isExecuting"
+            :is-streaming="isStreaming"
+            :streaming-content="streamingContent"
+            :is-vision-active="isVisionActive"
+            class="flex-1"
+            @resend="handleResendMessage"
+          />
+          
+          <!-- {{ t('agent.inputArea') }} -->
+          <InputAreaComponent
+            ref="inputAreaRef"
+            v-model:input-message="inputValue"
+            :is-loading="isExecuting"
+            :allow-takeover="true"
+            :show-debug-info="false"
+            :rag-enabled="ragEnabled"
+            :tools-enabled="toolsEnabled"
+            :pending-attachments="pendingAttachments"
+            :referenced-traffic="referencedTraffic"
+            @send-message="handleSubmit"
+            @stop-execution="handleStop"
+            @toggle-rag="handleToggleRAG"
+            @toggle-tools="handleToggleTools"
+            @add-attachments="handleAddAttachments"
+            @remove-attachment="handleRemoveAttachment"
+            @remove-traffic="handleRemoveTraffic"
+            @clear-traffic="handleClearTraffic"
+            @clear-conversation="handleClearConversation"
+            @open-tool-config="showToolConfig = true"
+          />
+        </div>
         
-        <!-- Side Panel (Vision or Todo) -->
-        <div class="sidebar-container w-[350px] flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100" v-if="isVisionActive || isTodosPanelActive">
+        <!-- Right: Side Panel (Vision, Todo, or Terminal) -->
+        <div 
+          v-if="isVisionActive || isTodosPanelActive || isTerminalActive"
+          class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
+          :style="{ width: sidebarWidth + 'px' }"
+        >
+            <!-- Resize Handle -->
+            <div 
+              class="resize-handle absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors z-10"
+              @mousedown="startResize"
+            ></div>
+            
             <VisionExplorerPanel 
                v-if="isVisionActive"
                :steps="visionEvents.steps.value" 
@@ -149,31 +195,13 @@
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
               @close="handleCloseTodos"
             />
+            <InteractiveTerminal
+              v-else-if="isTerminalActive"
+              class="h-full border-0 rounded-none bg-transparent"
+              @close="handleCloseTerminal"
+            />
         </div>
       </div>
-
-      <!-- {{ t('agent.inputArea') }} -->
-      <InputAreaComponent
-        ref="inputAreaRef"
-        v-model:input-message="inputValue"
-        :is-loading="isExecuting"
-        :allow-takeover="true"
-        :show-debug-info="false"
-        :rag-enabled="ragEnabled"
-        :tools-enabled="toolsEnabled"
-        :pending-attachments="pendingAttachments"
-        :referenced-traffic="referencedTraffic"
-        @send-message="handleSubmit"
-        @stop-execution="handleStop"
-        @toggle-rag="handleToggleRAG"
-        @toggle-tools="handleToggleTools"
-        @add-attachments="handleAddAttachments"
-        @remove-attachment="handleRemoveAttachment"
-        @remove-traffic="handleRemoveTraffic"
-        @clear-traffic="handleClearTraffic"
-        @clear-conversation="handleClearConversation"
-        @open-tool-config="showToolConfig = true"
-      />
 
       <!-- {{ t('agent.errorDisplay') }} -->
       <div v-if="error" class="error-banner flex items-center gap-2 px-4 py-3 bg-error/10 border-t border-error text-error text-sm">
@@ -193,10 +221,12 @@ import type { AgentMessage } from '@/types/agent'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useVisionEvents } from '@/composables/useVisionEvents'
 import { useTodos } from '@/composables/useTodos'
+import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
 import VisionExplorerPanel from './VisionExplorerPanel.vue'
+import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import ToolConfigPanel from './ToolConfigPanel.vue'
@@ -282,6 +312,84 @@ const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.val
 // Handle close todos panel
 const handleCloseTodos = () => {
   todosComposable.close()
+}
+
+// Terminal management
+const terminalComposable = useTerminal()
+const isTerminalActive = computed(() => terminalComposable.isTerminalActive.value)
+const hasTerminalHistory = computed(() => terminalComposable.hasHistory.value)
+
+// Handle close terminal panel
+const handleCloseTerminal = () => {
+  terminalComposable.closeTerminal()
+}
+
+// Sidebar resize
+const SIDEBAR_MIN_WIDTH = 300
+const SIDEBAR_MAX_WIDTH = 800
+const SIDEBAR_DEFAULT_WIDTH = 350
+const sidebarWidth = ref(SIDEBAR_DEFAULT_WIDTH)
+const isResizing = ref(false)
+
+// Load saved sidebar width from localStorage
+const loadSidebarWidth = () => {
+  try {
+    const saved = localStorage.getItem('sentinel:sidebar:width')
+    if (saved) {
+      const width = parseInt(saved, 10)
+      if (width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH) {
+        sidebarWidth.value = width
+      }
+    }
+  } catch (e) {
+    console.warn('[AgentView] Failed to load sidebar width:', e)
+  }
+}
+
+// Save sidebar width to localStorage
+const saveSidebarWidth = (width: number) => {
+  try {
+    localStorage.setItem('sentinel:sidebar:width', width.toString())
+  } catch (e) {
+    console.warn('[AgentView] Failed to save sidebar width:', e)
+  }
+}
+
+const startResize = (e: MouseEvent) => {
+  e.preventDefault()
+  isResizing.value = true
+  const startX = e.clientX
+  const startWidth = sidebarWidth.value
+
+  // Add resizing class to body to prevent text selection
+  document.body.classList.add('resizing')
+  document.body.style.cursor = 'col-resize'
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    if (!isResizing.value) return
+    
+    // Calculate new width (dragging left decreases width, right increases)
+    const delta = startX - moveEvent.clientX
+    const newWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, startWidth + delta))
+    sidebarWidth.value = newWidth
+  }
+
+  const onMouseUp = () => {
+    if (isResizing.value) {
+      isResizing.value = false
+      saveSidebarWidth(sidebarWidth.value)
+    }
+    
+    // Remove resizing class from body
+    document.body.classList.remove('resizing')
+    document.body.style.cursor = ''
+    
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
 }
 
 // Combined error
@@ -882,6 +990,9 @@ onMounted(async () => {
   // Load saved tool configuration from database
   await loadToolConfig()
   
+  // Load saved sidebar width
+  loadSidebarWidth()
+  
   // Load conversation history if executionId is provided
   if (props.executionId) {
     conversationId.value = props.executionId
@@ -984,6 +1095,27 @@ defineExpose({
   transform: translateX(100%);
 }
 
+/* Resize handle */
+.resize-handle {
+  transition: background-color 0.2s;
+}
+
+.resize-handle:hover {
+  width: 4px;
+}
+
+/* Prevent text selection during resize */
+body.resizing {
+  user-select: none;
+  cursor: col-resize !important;
+}
+
+/* Message area container */
+.message-area {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .agent-main {
@@ -1000,6 +1132,16 @@ defineExpose({
   .conversation-drawer {
     width: 85vw !important;
     max-width: 320px;
+  }
+  
+  .sidebar-container {
+    width: 100% !important;
+    border-left: none;
+    border-top: 1px solid hsl(var(--b3));
+  }
+  
+  .resize-handle {
+    display: none;
   }
 }
 </style>
