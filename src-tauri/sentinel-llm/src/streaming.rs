@@ -393,15 +393,15 @@ impl StreamingLlmClient {
         preamble: &str,
         user_message: Message,
         chat_history: Vec<Message>,
-        _timeout: std::time::Duration,
+        timeout: std::time::Duration,
         dynamic_tools: Vec<DynamicTool>,
         on_content: &mut F,
     ) -> Result<String>
     where
         F: FnMut(StreamContent) -> bool,
     {
-        use rig::tool::Tool;
-
+        use rig::providers::deepseek;
+        
         let api_key = std::env::var("DEEPSEEK_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
@@ -419,41 +419,25 @@ impl StreamingLlmClient {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
         
-        // Build tools map and JSON definitions
-        let mut tools_map = std::collections::HashMap::new();
-        let mut tools_json = Vec::new();
-        
-        for t in dynamic_tools {
-            let def = t.definition(String::new()).await;
-            let name = def.name.clone();
-            
-            tools_json.push(serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": def.name,
-                    "description": def.description,
-                    "parameters": def.parameters
-                }
-            }));
-            
-            tools_map.insert(name, t);
-        }
+        let mut builder = deepseek::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
 
-        let max_turns = self.config.get_max_turns();
+        if let Some(base_url) = &self.config.base_url {
+            builder = builder.base_url(base_url);
+        }
         
-        crate::custom_provider::stream_deepseek(
-            http_client,
-            self.config.base_url.clone().unwrap_or_else(|| "https://api.deepseek.com".to_string()),
-            api_key,
-            model.to_string(),
-            preamble.to_string(),
-            user_message,
-            chat_history,
-            tools_map,
-            tools_json,
-            max_turns,
-            on_content
-        ).await
+        let client = builder.build()
+            .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
+        
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
+        let agent = client
+            .agent(model)
+            .preamble(preamble)
+            .tool_server_handle(tool_server_handle)
+            .build();
+            
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
     async fn stream_with_ollama<F>(
@@ -666,13 +650,18 @@ impl StreamingLlmClient {
                 }
                 // 工具调用增量
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCallDelta { id, delta },
+                    StreamedAssistantContent::ToolCallDelta { id, content },
                 )) => {
+                    use rig::streaming::ToolCallDeltaContent;
+                    let delta_str = match &content {
+                        ToolCallDeltaContent::Name(n) => n.clone(),
+                        ToolCallDeltaContent::Delta(d) => d.clone(),
+                    };
                     tool_call_args
                         .entry(id.clone())
                         .or_default()
-                        .push_str(&delta);
-                    if !on_content(StreamContent::ToolCallDelta { id, delta }) {
+                        .push_str(&delta_str);
+                    if !on_content(StreamContent::ToolCallDelta { id, delta: delta_str }) {
                         info!("Stream cancelled by callback");
                         break;
                     }

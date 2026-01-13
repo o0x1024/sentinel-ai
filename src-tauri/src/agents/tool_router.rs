@@ -371,7 +371,7 @@ impl ToolRouter {
             ToolMetadata {
                 id: "tenth_man_review".to_string(),
                 name: "tenth_man_review".to_string(),
-                description: "Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis. This tool helps prevent groupthink and confirmation bias.".to_string(),
+                description: "Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.".to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "review".to_string(),

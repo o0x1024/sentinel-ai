@@ -11001,19 +11001,21 @@ checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
 
 [[package]]
 name = "rig-core"
-version = "0.26.0"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01be6d1a1f71ac7fb77c1d84bff8f2b54bf51a1e8111935b9c87799c4e8c1970"
+checksum = "5b1a48121c1ecd6f6ce59d64ec353c791aac6fc07bf4aa353380e8185659e6eb"
 dependencies = [
  "as-any",
  "async-stream",
  "base64 0.22.1",
  "bytes",
  "eventsource-stream",
+ "fastrand",
  "futures",
  "futures-timer",
  "glob",
  "http 1.4.0",
+ "mime",
  "mime_guess",
  "ordered-float",
  "pin-project-lite",
@@ -11046,9 +11048,9 @@ dependencies = [
 
 [[package]]
 name = "rig-lancedb"
-version = "0.2.29"
+version = "0.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "137bb171b306699d8313c6e74e9a31b5fa4c1609d630429f2f2dede31800ed96"
+checksum = "6969a28d988d0f202e43fc7165848c6226871a79f0fecf201f8264c42df7e42b"
 dependencies = [
  "arrow-array 56.2.0",
  "deranged 0.4.0",

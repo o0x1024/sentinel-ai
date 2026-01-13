@@ -534,7 +534,7 @@ impl ToolServer {
 
         // Register tenth_man_review tool
         let tenth_man_def = DynamicToolBuilder::new("tenth_man_review")
-            .description("Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis. This tool helps prevent groupthink and confirmation bias.")
+            .description("Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.")
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {

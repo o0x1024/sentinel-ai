@@ -6,6 +6,12 @@ FROM kalilinux/kali-rolling
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
+# Configure domestic mirror for faster downloads
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list
+
 # Update and install Kali metapackages
 # This includes a comprehensive set of security tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -51,7 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     stegseek \
     zsteg \
     file \
-    strings \
+    binutils \
     xxd \
     hexedit \
     radare2 \

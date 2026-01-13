@@ -707,9 +707,7 @@ const getSupportsVision = (provider: string, modelId: string): boolean => {
 
 const saveAiConfig = async () => {
   try {
-    await invoke('save_ai_config', { config: aiConfig.value })
-    
-    // 保存高级配置参数到数据库
+    // 先保存高级配置参数到数据库（在 reload_services 之前）
     try {
        const temperature = settings.value.ai?.temperature ?? 0.7
        const maxTokens = settings.value.ai?.maxTokens ?? 2000
@@ -725,6 +723,9 @@ const saveAiConfig = async () => {
     } catch(e) {
        console.error('Failed to save AI advanced configs', e)
     }
+    
+    // 然后保存 AI 配置（这会触发 reload_services，加载上面保存的配置）
+    await invoke('save_ai_config', { config: aiConfig.value })
 
     dialog.toast.success('AI配置已保存')
   } catch (error) {

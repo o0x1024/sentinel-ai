@@ -79,7 +79,7 @@ impl TenthManTool {
     }
     
     pub const NAME: &'static str = "tenth_man_review";
-    pub const DESCRIPTION: &'static str = "Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis. This tool helps prevent groupthink and confirmation bias.";
+    pub const DESCRIPTION: &'static str = "Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.";
 }
 
 impl Tool for TenthManTool {

@@ -14,11 +14,14 @@ ENV LANG=C.UTF-8
 # ENV HTTPS_PROXY=http://172.28.38.178:10809
 
 # Configure domestic mirror for faster downloads (skip proxy for apt)
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list
 
 # Update package list and install Kali metapackages
 # kali-tools-top10: Most popular tools (excluding metasploit-framework)
-RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+RUN apt-get update && apt-get install -y --no-install-recommends  \
     aircrack-ng \
     hashcat \
     dirbuster \
@@ -27,17 +30,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     ferret \
     hydra \
     john \
-    maltego \
     nmap \
-    sqlmap \
-    wireshark \
-    zaproxy \
-    && rm -rf /var/lib/apt/lists/*
-    
+    sqlmap
 
 # Install additional essential tools
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
-    apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+RUN apt-get update && apt-get install -y --no-install-recommends  \
     # Basic utilities
     curl \
     wget \
@@ -56,7 +53,6 @@ RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-fre
     # Archive and text processing
     unzip \
     zip \
-    jq \
     # Additional security tools
     gobuster \
     ffuf \
@@ -71,7 +67,7 @@ RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-fre
     stegseek \
     zsteg \
     file \
-    strings \
+    binutils \
     xxd \
     hexedit \
     radare2 \
@@ -79,23 +75,27 @@ RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-fre
     john \
     hydra \
     # Network analysis
-    wireshark-common \
+    # wireshark-common \
     tshark \
     tcpdump \
     # Reverse engineering
     ltrace \
     strace \
-    objdump \
-    && rm -rf /var/lib/apt/lists/*
+    objdump
 
-# Install Node.js (from NodeSource)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends --fix-missing nodejs && \
+# Install jq separately with retry mechanism
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends jq || \
+     (sleep 5 && apt-get install -y --no-install-recommends jq) || \
+     (sleep 10 && apt-get install -y --no-install-recommends jq)) && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Node.js (from NodeSource)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash - && \
+    apt-get install -y --no-install-recommends  nodejs 
+
 # Install PHP and common extensions for CTF
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
-    apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+RUN apt-get update && apt-get install -y --no-install-recommends  \
     php \
     php-cli \
     php-curl \
@@ -108,9 +108,13 @@ RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-fre
     php-pgsql \
     php-sqlite3 \
     composer \
-    && rm -rf /var/lib/apt/lists/*
 
 # Install Python security and CTF tools (Kali already has many)
+# First install system dependencies for gmpy2 and keystone
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgmp-dev libmpfr-dev libmpc-dev \
+
+# Install core Python tools (stable packages)
 RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     beautifulsoup4 \
@@ -121,34 +125,24 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     z3-solver \
     ropgadget \
     ropper \
-    angr \
     capstone \
-    keystone-engine \
     unicorn \
     pillow \
     numpy \
     scipy \
-    sympy \
-    sage \
-    || pip3 install --no-cache-dir \
-    requests \
-    beautifulsoup4 \
-    paramiko \
-    pwntools \
-    pycryptodome \
-    gmpy2 \
-    z3-solver \
-    ropgadget \
-    ropper \
-    pillow \
-    numpy
+    sympy
+
+# Install heavy packages separately (may fail on some architectures)
+RUN pip3 install --no-cache-dir --break-system-packages \
+    angr \
+    keystone-engine \
+    || true
 
 # Install Node.js security and CTF tools
 RUN npm install -g \
     retire \
     eslint \
-    snyk \
-    jwt-cli \
+    jwt-decode \
     crypto-js \
     node-forge \
     || true
@@ -170,11 +164,6 @@ RUN useradd -m -s /bin/bash sandbox && \
     mkdir -p /workspace && \
     chown sandbox:sandbox /workspace
 
-# Unset proxy for runtime
-ENV http_proxy=
-ENV https_proxy=
-ENV HTTP_PROXY=
-ENV HTTPS_PROXY=
 
 # Set working directory
 WORKDIR /workspace

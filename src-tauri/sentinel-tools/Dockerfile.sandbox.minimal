@@ -7,7 +7,14 @@ FROM kalilinux/kali-rolling
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
-# Install essential tools in one layer
+# Configure domestic mirror for faster downloads (skip proxy for apt)
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list && \
+    apt-get update --allow-unauthenticated
+
+# Install essential tools (excluding jq which may have network issues)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Basic utilities
     curl \
@@ -24,14 +31,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     gcc \
     gdb \
-    # Text processing
-    jq \
     # Archive tools
     unzip \
     zip \
     # CTF basic tools
     file \
-    strings \
+    binutils \
     xxd \
     binwalk \
     steghide \
@@ -39,6 +44,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Crypto
     openssl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install jq separately with retry mechanism
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends jq || \
+     (sleep 5 && apt-get install -y --no-install-recommends jq) || \
+     (sleep 10 && apt-get install -y --no-install-recommends jq)) && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install essential Python CTF libraries
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -49,6 +61,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     pwntools \
     pycryptodome
+
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash - && \
+    apt-get install -y --no-install-recommends  nodejs 
 
 # Install PHP for web CTF challenges
 RUN apt-get update && apt-get install -y --no-install-recommends \

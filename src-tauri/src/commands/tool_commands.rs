@@ -380,7 +380,7 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     tools.push(BuiltinToolInfo {
         id: "tenth_man_review".to_string(),
         name: "tenth_man_review".to_string(),
-        description: "Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis.".to_string(),
+        description: "Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.".to_string(),
         category: "ai".to_string(),
         version: "1.0.0".to_string(),
         enabled: *states.get("tenth_man_review").unwrap_or(&true),

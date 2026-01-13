@@ -186,8 +186,8 @@ rsubdomain = "1.2.6"
 notify = "6.1"
 fastrand = "2.3.0"
 
-rig-core = { version = "0.26.0", features = ["derive"] }
-rig-lancedb = "=0.2.29"
+rig-core = { version = "0.28.0", features = ["derive"] }
+rig-lancedb = "0.2.30"
 arrow-array = "55.2.0"
 arrow-schema = "55.2.0"
 
@@ -282,5 +282,5 @@ rmcp = { version = "0.9.1", features = [
     "uuid",
     "base64",
 ] }
-rig-core = { version = "0.26.0", features = ["derive"] }
-rig-lancedb = "=0.2.29"
+rig-core = { version = "0.28.0", features = ["derive"] }
+rig-lancedb = "0.2.30"

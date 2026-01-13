@@ -34,7 +34,6 @@
 pub mod agent;
 mod client;
 mod config;
-pub mod custom_provider;
 pub mod log;
 mod message;
 pub mod service;
