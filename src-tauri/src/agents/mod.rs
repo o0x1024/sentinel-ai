@@ -4,6 +4,7 @@ pub mod agent_builder;
 pub mod executor;
 pub mod tool_router;
 pub mod tenth_man;
+pub mod tenth_man_executor;
 pub mod sliding_window;
 
 pub use agent_builder::*;

@@ -26,6 +26,22 @@ export default {
   failedToGetConversationTitle: '获取会话标题失败',
   failedToUpdateConversationTitle: '更新会话标题失败',
 
+  // Tenth Man
+  tenthManCritique: '第十人审查',
+  tenthManReview: '第十人评审',
+  tenthManWarning: '第十人警告',
+  tenthManIntervention: '第十人介入',
+  riskLevelNone: '无风险',
+  riskLevelLow: '低风险',
+  riskLevelMedium: '中风险',
+  riskLevelHigh: '高风险',
+  riskLevelCritical: '严重风险',
+  tenthManTriggerFinalReview: '最终审查',
+  tenthManTriggerToolCall: '工具调用前',
+  tenthManTriggerConclusion: '结论检测',
+  tenthManToolCalled: 'Agent 主动请求第十人审查',
+  tenthManSystemEnforced: '系统强制第十人审查',
+
   // Comments and logs
   conversationHeader: '会话头部',
   messagesAndTodos: '消息和待办事项',

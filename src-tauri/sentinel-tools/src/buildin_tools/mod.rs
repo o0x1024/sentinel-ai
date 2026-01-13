@@ -3,20 +3,22 @@ pub mod http_request;
 pub mod local_time;
 pub mod shell;
 pub mod subdomain_brute;
-pub mod task_planner;
+pub mod todos;
 pub mod web_search;
 pub mod memory;
 pub mod ocr;
+pub mod tenth_man_tool;
 
 pub use port_scan::PortScanTool;
 pub use http_request::HttpRequestTool;
 pub use local_time::LocalTimeTool;
 pub use shell::ShellTool;
 pub use subdomain_brute::SubdomainBruteTool;
-pub use task_planner::TaskPlannerTool;
+pub use todos::TodosTool;
 pub use web_search::WebSearchTool;
 pub use memory::MemoryManagerTool;
 pub use ocr::OcrTool;
+pub use tenth_man_tool::TenthManTool;
 
 use rig::tool::ToolSet;
 
@@ -28,7 +30,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(LocalTimeTool);
     toolset.add_tool(ShellTool::new());
     toolset.add_tool(SubdomainBruteTool);
-    toolset.add_tool(TaskPlannerTool);
+    toolset.add_tool(TodosTool);
     toolset.add_tool(WebSearchTool::default());
     toolset.add_tool(MemoryManagerTool);
     toolset.add_tool(OcrTool);
@@ -43,7 +45,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(LocalTimeTool),
         Box::new(ShellTool::new()),
         Box::new(SubdomainBruteTool),
-        Box::new(TaskPlannerTool),
+        Box::new(TodosTool),
         Box::new(WebSearchTool::default()),
         Box::new(MemoryManagerTool),
         Box::new(OcrTool),

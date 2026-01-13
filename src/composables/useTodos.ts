@@ -50,6 +50,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   const todos = ref<Todo[]>([])
   const isTodosPanelActive = ref(false)
   let unlisten: UnlistenFn | null = null
+  let lastExecutionId = ref<string | undefined>(undefined)
 
   // 获取当前 executionId
   const getExecutionId = (): string | undefined => {
@@ -120,12 +121,22 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   const startListening = async (): Promise<void> => {
     if (unlisten) return // 已在监听
 
-    unlisten = await listen<TodosUpdatePayload>('agent-todos-update', (event) => {
+    const unlistenTodos = await listen<TodosUpdatePayload>('agent-todos-update', (event) => {
       const targetId = getExecutionId()
       
       // 如果指定了 executionId，则过滤
       if (targetId && event.payload.execution_id !== targetId) {
         return
+      }
+
+      // 检测新的 execution_id，清空旧数据
+      if (event.payload.execution_id !== lastExecutionId.value) {
+        console.log('[useTodos] New execution detected, clearing old todos:', {
+          old: lastExecutionId.value,
+          new: event.payload.execution_id
+        })
+        todos.value = []
+        lastExecutionId.value = event.payload.execution_id
       }
 
       todos.value = event.payload.todos
@@ -134,6 +145,33 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
         isTodosPanelActive.value = true
       }
     })
+
+    // 监听 agent 完成事件，可选择性关闭面板（但保留历史）
+    const unlistenComplete = await listen<{ execution_id: string; success: boolean }>('agent:complete', (event) => {
+      const targetId = getExecutionId()
+      if (targetId && event.payload.execution_id !== targetId) {
+        return
+      }
+      console.log('[useTodos] Agent execution completed:', event.payload.execution_id)
+      // 不清空 todos，保留历史记录供用户查看
+    })
+
+    // 监听 agent 错误事件
+    const unlistenError = await listen<{ execution_id: string; error: string }>('agent:error', (event) => {
+      const targetId = getExecutionId()
+      if (targetId && event.payload.execution_id !== targetId) {
+        return
+      }
+      console.log('[useTodos] Agent execution failed:', event.payload.execution_id)
+      // 不清空 todos，保留历史记录供用户查看
+    })
+
+    // 将所有 unlisten 函数组合
+    unlisten = () => {
+      unlistenTodos()
+      unlistenComplete()
+      unlistenError()
+    }
   }
 
   // 停止监听

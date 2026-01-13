@@ -26,6 +26,22 @@ export default {
   failedToGetConversationTitle: 'Failed to get conversation title',
   failedToUpdateConversationTitle: 'Failed to update conversation title',
 
+  // Tenth Man
+  tenthManCritique: 'Tenth Man Critique',
+  tenthManReview: 'Tenth Man Review',
+  tenthManWarning: 'Tenth Man Warning',
+  tenthManIntervention: 'Tenth Man Intervention',
+  riskLevelNone: 'No Risk',
+  riskLevelLow: 'Low Risk',
+  riskLevelMedium: 'Medium Risk',
+  riskLevelHigh: 'High Risk',
+  riskLevelCritical: 'Critical Risk',
+  tenthManTriggerFinalReview: 'Final Review',
+  tenthManTriggerToolCall: 'Before Tool Call',
+  tenthManTriggerConclusion: 'Conclusion Detected',
+  tenthManToolCalled: 'Agent requested Tenth Man review',
+  tenthManSystemEnforced: 'System enforced Tenth Man review',
+
   // Comments and logs
   conversationHeader: 'Conversation Header',
   messagesAndTodos: 'Messages and Todos',

@@ -306,13 +306,13 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
-            // Planning tool
+            // Todos tool
             ToolMetadata {
-                id: TaskPlannerTool::NAME.to_string(),
-                name: TaskPlannerTool::NAME.to_string(),
-                description: TaskPlannerTool::DESCRIPTION.to_string(),
+                id: TodosTool::NAME.to_string(),
+                name: TodosTool::NAME.to_string(),
+                description: TodosTool::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
-                tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string()],
+                tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string(), "todos".to_string()],
                 cost_estimate: ToolCost::Low,
                 always_available: true,
             },
@@ -366,6 +366,26 @@ impl ToolRouter {
                 ],
                 cost_estimate: ToolCost::Low,
                 always_available: true,
+            },
+            // Tenth Man Review
+            ToolMetadata {
+                id: "tenth_man_review".to_string(),
+                name: "tenth_man_review".to_string(),
+                description: "Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis. This tool helps prevent groupthink and confirmation bias.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "review".to_string(),
+                    "critique".to_string(),
+                    "adversarial".to_string(),
+                    "risk".to_string(),
+                    "analysis".to_string(),
+                    "tenth_man".to_string(),
+                    "verification".to_string(),
+                    "validation".to_string(),
+                    "security".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false, // Only available when Tenth Man is enabled
             },
         ]
     }

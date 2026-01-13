@@ -50,22 +50,41 @@ Be extremely concise. Focus on HIGH-IMPACT risks only.
 /// Intervention mode for the Tenth Man
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InterventionMode {
-    /// Only review at the final result (current mode)
+    /// Tool-only: Only available as LLM-callable tool (no automatic reviews)
+    ToolOnly,
+    /// System-only: Only system automatic reviews (LLM cannot call)
+    SystemOnly,
+    /// Hybrid: LLM can call as tool + System enforces final review
+    Hybrid {
+        /// LLM can call the tool
+        tool_available: bool,
+        /// System forces final review
+        force_final_review: bool,
+        /// Track if LLM has called recently
+        #[serde(skip)]
+        last_tool_call_time: Option<std::time::Instant>,
+    },
+    /// Legacy modes (deprecated but kept for compatibility)
+    #[serde(rename = "final_only")]
     FinalOnly,
-    /// Proactively intervene at key points
+    #[serde(rename = "proactive")]
     Proactive {
         /// Trigger after every N tool calls
         tool_call_interval: Option<usize>,
         /// Trigger when dangerous keywords detected
         dangerous_keywords: Vec<String>,
     },
-    /// Real-time monitoring (high cost)
+    #[serde(rename = "realtime")]
     Realtime,
 }
 
 impl Default for InterventionMode {
     fn default() -> Self {
-        InterventionMode::FinalOnly
+        InterventionMode::Hybrid {
+            tool_available: true,
+            force_final_review: true,
+            last_tool_call_time: None,
+        }
     }
 }
 
@@ -128,6 +147,7 @@ impl Default for TenthManConfig {
     }
 }
 
+
 pub struct TenthMan {
     config: LlmConfig,
     intervention_mode: InterventionMode,
@@ -162,6 +182,18 @@ impl TenthMan {
     /// Check if intervention should be triggered
     pub fn should_trigger(&self, context: &InterventionContext) -> bool {
         match &self.intervention_mode {
+            InterventionMode::ToolOnly => false, // Never auto-trigger, only via tool calls
+            InterventionMode::SystemOnly => {
+                // Always trigger on final response
+                matches!(context.trigger_reason, TriggerReason::FinalResponse)
+            }
+            InterventionMode::Hybrid { force_final_review, .. } => {
+                // Trigger on final response if forced
+                if *force_final_review && matches!(context.trigger_reason, TriggerReason::FinalResponse) {
+                    return true;
+                }
+                false
+            }
             InterventionMode::FinalOnly => false,
             InterventionMode::Proactive {
                 tool_call_interval,
@@ -195,6 +227,15 @@ impl TenthMan {
                 false
             }
             InterventionMode::Realtime => true,
+        }
+    }
+    
+    /// Check if tool is available for LLM to call
+    pub fn is_tool_available(&self) -> bool {
+        match &self.intervention_mode {
+            InterventionMode::ToolOnly => true,
+            InterventionMode::Hybrid { tool_available, .. } => *tool_available,
+            _ => false,
         }
     }
 

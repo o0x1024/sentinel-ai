@@ -76,6 +76,12 @@ impl ChatMessage {
 
 /// 将 ChatMessage 列表转换为 rig Message 列表
 pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
+    use std::collections::HashSet;
+    
+    // Track seen tool_call_ids to prevent duplicate tool_results
+    // Anthropic API requires each tool_use to have exactly one tool_result
+    let mut seen_tool_call_ids: HashSet<String> = HashSet::new();
+    
     history
         .iter()
         .filter_map(|msg| {
@@ -159,6 +165,12 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                     }
                     // tool 消息必须有 tool_call_id
                     let tool_call_id = msg.tool_call_id.as_ref()?.clone();
+                    
+                    // Deduplicate: skip if already seen this tool_call_id
+                    if seen_tool_call_ids.contains(&tool_call_id) {
+                        return None;
+                    }
+                    seen_tool_call_ids.insert(tool_call_id.clone());
                     
                     Some(Message::tool_result(tool_call_id, content.to_string()))
                 },

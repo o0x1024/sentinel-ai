@@ -7,14 +7,37 @@ FROM kalilinux/kali-rolling
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
+# Set proxy for apt
+# ENV http_proxy=http://172.28.38.178:10809
+# ENV https_proxy=http://172.28.38.178:10809
+# ENV HTTP_PROXY=http://172.28.38.178:10809
+# ENV HTTPS_PROXY=http://172.28.38.178:10809
+
+# Configure domestic mirror for faster downloads (skip proxy for apt)
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list
+
 # Update package list and install Kali metapackages
-# kali-tools-top10: Most popular tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    kali-tools-top10 \
+# kali-tools-top10: Most popular tools (excluding metasploit-framework)
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    aircrack-ng \
+    hashcat \
+    dirbuster \
+    dnsrecon \
+    dnsutils \
+    ferret \
+    hydra \
+    john \
+    maltego \
+    nmap \
+    sqlmap \
+    wireshark \
+    zaproxy \
     && rm -rf /var/lib/apt/lists/*
+    
 
 # Install additional essential tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
+    apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     # Basic utilities
     curl \
     wget \
@@ -67,11 +90,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Node.js (from NodeSource)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
+    apt-get install -y --no-install-recommends --fix-missing nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Install PHP and common extensions for CTF
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
+    apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     php \
     php-cli \
     php-curl \
@@ -145,6 +169,12 @@ RUN git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwn
 RUN useradd -m -s /bin/bash sandbox && \
     mkdir -p /workspace && \
     chown sandbox:sandbox /workspace
+
+# Unset proxy for runtime
+ENV http_proxy=
+ENV https_proxy=
+ENV HTTP_PROXY=
+ENV HTTPS_PROXY=
 
 # Set working directory
 WORKDIR /workspace

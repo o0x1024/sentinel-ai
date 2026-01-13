@@ -66,9 +66,31 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     let tool_server = get_tool_server();
     tool_server.init_builtin_tools().await;
 
-    // 设置 task_planner 的 AppHandle 以便发射事件
-    use sentinel_tools::buildin_tools::task_planner::set_planner_app_handle;
-    set_planner_app_handle(app_handle.clone()).await;
+    // 设置 todos 的 AppHandle 以便发射事件
+    use sentinel_tools::buildin_tools::todos::set_todos_app_handle;
+    set_todos_app_handle(app_handle.clone()).await;
+    
+    // 设置 Tenth Man 配置（如果启用）
+    if params.enable_tenth_man_rule {
+        use crate::agents::tenth_man_executor;
+        
+        // Build LLM config for Tenth Man
+        let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
+            .with_timeout(params.timeout_secs)
+            .with_rig_provider(&rig_provider);
+        
+        if let Some(ref api_key) = params.api_key {
+            tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);
+        }
+        if let Some(ref api_base) = params.api_base {
+            tenth_man_llm_config = tenth_man_llm_config.with_base_url(api_base);
+        }
+        
+        tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config).await;
+        tenth_man_executor::set_task_context(params.execution_id.clone(), params.task.clone()).await;
+        
+        tracing::info!("Tenth Man configured for execution_id: {}", params.execution_id);
+    }
 
     // 检查是否启用工具
     let tool_config = params.tool_config.clone().unwrap_or_default();
@@ -438,7 +460,23 @@ async fn execute_agent_with_tools(
         .plan_tools(&params.task, &tool_config, Some(&llm_config), db_pool)
         .await?;
 
-    let selected_tool_ids = selection_plan.tool_ids.clone();
+    let mut selected_tool_ids = selection_plan.tool_ids.clone();
+    
+    // Add tenth_man_review tool if Hybrid or ToolOnly mode
+    if params.enable_tenth_man_rule {
+        if let Some(ref config) = params.tenth_man_config {
+            let should_add_tool = match &config.mode {
+                super::tenth_man::InterventionMode::ToolOnly => true,
+                super::tenth_man::InterventionMode::Hybrid { tool_available, .. } => *tool_available,
+                _ => false,
+            };
+            
+            if should_add_tool && !selected_tool_ids.contains(&"tenth_man_review".to_string()) {
+                selected_tool_ids.push("tenth_man_review".to_string());
+                tracing::info!("Added tenth_man_review tool to available tools");
+            }
+        }
+    }
 
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?}",
@@ -483,9 +521,9 @@ async fn execute_agent_with_tools(
         params.system_prompt.clone()
     };
 
-    // Inject execution_id for task_planner tool
+    // Inject execution_id for todos tool
     final_system_prompt.push_str(&format!(
-        "\n\n[SystemContext: Current Execution ID is '{}'. Use this for task_planner calls.]",
+        "\n\n[SystemContext: Current Execution ID is '{}'. Use this for todos tool calls.]",
         params.execution_id
     ));
 
@@ -1156,58 +1194,85 @@ async fn execute_agent_with_tools(
                     tracing::warn!("Failed to store memory record: {}", e);
                 }
 
-                // Tenth Man Rule: Adversarial Review
+                // Tenth Man Rule: Adversarial Review (System-enforced final check)
                 if params.enable_tenth_man_rule {
-                    tracing::info!("Running Tenth Man Review for execution_id: {}", params.execution_id);
                     let tenth_man = TenthMan::new(&params);
-                    // Use the task as context. Ideally we'd pass the whole history summary.
-                    let context_summary = format!("User Task: {}", params.task); 
                     
-                    match tenth_man.review(&params.task, &context_summary, &response).await {
-                        Ok(critique) => {
-                            tracing::info!("Tenth Man Critique generated ({} chars)", critique.len());
-                            
-                            if let Some(db) = db_for_stream.clone() {
-                                use sentinel_core::models::database as core_db;
-                                let review_msg = core_db::AiMessage {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    conversation_id: params.execution_id.clone(),
-                                    role: "system".to_string(), 
-                                    content: critique.clone(),
-                                    metadata: Some(json!({
-                                        "kind": "tenth_man_critique",
-                                        "trigger": "automatic"
-                                    }).to_string()),
-                                    token_count: Some(critique.len() as i32),
-                                    cost: None,
-                                    tool_calls: None,
-                                    attachments: None,
-                                    reasoning_content: None,
-                                    timestamp: chrono::Utc::now(),
-                                    architecture_type: None,
-                                    architecture_meta: None,
-                                    structured_data: None,
-                                };
+                    // Check if we should run final review based on mode
+                    let should_run_final = if let Some(ref config) = params.tenth_man_config {
+                        match &config.mode {
+                            super::tenth_man::InterventionMode::SystemOnly => true,
+                            super::tenth_man::InterventionMode::Hybrid { force_final_review, .. } => {
+                                *force_final_review
+                            }
+                            super::tenth_man::InterventionMode::ToolOnly => false,
+                            _ => true, // Legacy modes default to true
+                        }
+                    } else {
+                        true // Default: run final review
+                    };
+                    
+                    if should_run_final {
+                        tracing::info!("Running Tenth Man final review for execution_id: {}", params.execution_id);
+                        let context_summary = format!("User Task: {}", params.task); 
+                        
+                        match tenth_man.review(&params.task, &context_summary, &response).await {
+                            Ok(critique) => {
+                                tracing::info!("Tenth Man Critique generated ({} chars)", critique.len());
                                 
-                                if let Err(e) = db.create_ai_message(&review_msg).await {
-                                    tracing::warn!("Failed to save Tenth Man critique: {}", e);
+                                if let Some(db) = db_for_stream.clone() {
+                                    use sentinel_core::models::database as core_db;
+                                    let review_msg = core_db::AiMessage {
+                                        id: uuid::Uuid::new_v4().to_string(),
+                                        conversation_id: params.execution_id.clone(),
+                                        role: "system".to_string(), 
+                                        content: critique.clone(),
+                                        metadata: Some(json!({
+                                            "kind": "tenth_man_critique",
+                                            "trigger": "final_review",
+                                            "mode": "system_enforced"
+                                        }).to_string()),
+                                        token_count: Some(critique.len() as i32),
+                                        cost: None,
+                                        tool_calls: None,
+                                        attachments: None,
+                                        reasoning_content: None,
+                                        timestamp: chrono::Utc::now(),
+                                        architecture_type: None,
+                                        architecture_meta: None,
+                                        structured_data: None,
+                                    };
+                                    
+                                    if let Err(e) = db.create_ai_message(&review_msg).await {
+                                        tracing::warn!("Failed to save Tenth Man critique: {}", e);
+                                    }
+                                    
+                                    // Emit event to frontend
+                                    let _ = app.emit(
+                                        "agent:tenth_man_critique", 
+                                        &json!({
+                                            "execution_id": params.execution_id,
+                                            "critique": critique,
+                                            "message_id": review_msg.id,
+                                            "trigger": "final_review",
+                                            "mode": "system_enforced"
+                                        })
+                                    );
                                 }
-                                
-                                // Emit event to frontend
-                                let _ = app.emit(
-                                    "agent:tenth_man_critique", 
-                                    &json!({
-                                        "execution_id": params.execution_id,
-                                        "critique": critique,
-                                        "message_id": review_msg.id
-                                    })
-                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!("Tenth Man Review failed: {}", e);
                             }
                         }
-                        Err(e) => {
-                            tracing::warn!("Tenth Man Review failed: {}", e);
-                        }
+                    } else {
+                        tracing::info!("Skipping final Tenth Man review (mode: ToolOnly)");
                     }
+                }
+                
+                // Cleanup Tenth Man execution context
+                if params.enable_tenth_man_rule {
+                    use crate::agents::tenth_man_executor;
+                    tenth_man_executor::clear_tenth_man_execution(&params.execution_id).await;
                 }
 
                 return Ok(response);

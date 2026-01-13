@@ -339,9 +339,9 @@ impl ToolServer {
 
         self.registry.register(subdomain_brute_def).await;
 
-        // Register task_planner tool
-        let task_planner_def = DynamicToolBuilder::new("task_planner")
-            .description("Manage and track the agent's execution plan. Actions: add_tasks (append), update_status (change status), get_plan (view), reset (clear all), replan (replace all tasks), update_task (modify description), delete_task (remove), insert_task (add at position). Mandatory for complex multi-step security tasks.")
+        // Register todos tool
+        let todos_def = DynamicToolBuilder::new("todos")
+            .description("Manage and track the agent's execution todos. Actions: add_items (append), update_status (change status), get_list (view), reset (clear all), replan (replace all items), update_item (modify description), delete_item (remove), insert_item (add at position), cleanup (remove list from memory). Mandatory for complex multi-step security tasks.")
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -352,16 +352,16 @@ impl ToolServer {
                     "action": {
                         "type": "string",
                         "description": "Action to perform",
-                        "enum": ["add_tasks", "update_status", "get_plan", "reset", "replan", "update_task", "delete_task", "insert_task"]
+                        "enum": ["add_items", "update_status", "get_list", "reset", "replan", "update_item", "delete_item", "insert_item", "cleanup"]
                     },
-                    "tasks": {
+                    "items": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "List of task descriptions (required for 'add_tasks' and 'replan')"
+                        "description": "List of item descriptions (required for 'add_items' and 'replan')"
                     },
-                    "task_index": {
+                    "item_index": {
                         "type": "integer",
-                        "description": "Index of task (required for 'update_status', 'update_task', 'delete_task', 'insert_task')"
+                        "description": "Index of item (required for 'update_status', 'update_item', 'delete_item', 'insert_item')"
                     },
                     "status": {
                         "type": "string",
@@ -374,30 +374,30 @@ impl ToolServer {
                     },
                     "new_description": {
                         "type": "string",
-                        "description": "New task description (required for 'update_task' and 'insert_task')"
+                        "description": "New item description (required for 'update_item' and 'insert_item')"
                     }
                 },
                 "required": ["execution_id", "action"]
             }))
             .source(ToolSource::Builtin)
             .executor(|args| async move {
-                use crate::buildin_tools::task_planner::{TaskPlannerArgs, TaskPlannerTool};
+                use crate::buildin_tools::todos::{TodosArgs, TodosTool};
                 use rig::tool::Tool;
                 
-                let tool_args: TaskPlannerArgs = serde_json::from_value(args)
+                let tool_args: TodosArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
                 
-                let tool = TaskPlannerTool;
+                let tool = TodosTool;
                 let result = tool.call(tool_args).await
-                    .map_err(|e| format!("Task planning failed: {}", e))?;
+                    .map_err(|e| format!("Todos operation failed: {}", e))?;
                 
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
             .build()
-            .expect("Failed to build task_planner tool");
+            .expect("Failed to build todos tool");
 
-        self.registry.register(task_planner_def).await;
+        self.registry.register(todos_def).await;
 
         // Register memory_manager tool
         let memory_manager_def = DynamicToolBuilder::new("memory_manager")
@@ -531,6 +531,53 @@ impl ToolServer {
             .expect("Failed to build ocr tool");
 
         self.registry.register(ocr_def).await;
+
+        // Register tenth_man_review tool
+        let tenth_man_def = DynamicToolBuilder::new("tenth_man_review")
+            .description("Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis. This tool helps prevent groupthink and confirmation bias.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "execution_id": {
+                        "type": "string",
+                        "description": "The current execution ID"
+                    },
+                    "content_to_review": {
+                        "type": "string",
+                        "description": "Content to review (e.g., current plan, proposed solution, or conclusion)"
+                    },
+                    "context_description": {
+                        "type": "string",
+                        "description": "Context description (what this review is about)"
+                    },
+                    "review_type": {
+                        "type": "string",
+                        "description": "Type of review: 'quick' (lightweight) or 'full' (comprehensive)",
+                        "default": "quick",
+                        "enum": ["quick", "full"]
+                    }
+                },
+                "required": ["execution_id", "content_to_review"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use crate::buildin_tools::tenth_man_tool::{TenthManToolArgs, TenthManTool};
+                use rig::tool::Tool;
+                
+                let tool_args: TenthManToolArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                
+                let tool = TenthManTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Tenth Man review failed: {}", e))?;
+                
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build tenth_man_review tool");
+
+        self.registry.register(tenth_man_def).await;
 
         // Register interactive_shell tool
         let interactive_shell_def = DynamicToolBuilder::new("interactive_shell")
@@ -966,7 +1013,7 @@ mod tests {
         assert!(server.get_tool("local_time").await.is_some());
         assert!(server.get_tool("shell").await.is_some());
         assert!(server.get_tool("subdomain_brute").await.is_some());
-        assert!(server.get_tool("task_planner").await.is_some());
+        assert!(server.get_tool("todos").await.is_some());
         assert!(server.get_tool("web_search").await.is_some());
     }
 

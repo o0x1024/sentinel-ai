@@ -228,9 +228,14 @@ pub(crate) fn reconstruct_chat_history(
     messages: &[sentinel_core::models::database::AiMessage],
 ) -> Vec<LlmChatMessage> {
     use serde_json::Value;
+    use std::collections::HashSet;
     
     let mut result = Vec::new();
     let mut i = 0;
+    
+    // Track seen tool_call_ids to prevent duplicate tool_results
+    // Anthropic API requires each tool_use to have exactly one tool_result
+    let mut seen_tool_call_ids: HashSet<String> = HashSet::new();
     
     while i < messages.len() {
         let msg = &messages[i];
@@ -265,26 +270,32 @@ pub(crate) fn reconstruct_chat_history(
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string();
-                                    let tool_name = metadata.get("tool_name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let tool_args = metadata.get("tool_args")
-                                        .cloned()
-                                        .unwrap_or(Value::Object(serde_json::Map::new()));
+                                    
+                                    // Skip duplicate tool_call_id
+                                    if !tool_call_id.is_empty() && !seen_tool_call_ids.contains(&tool_call_id) {
+                                        seen_tool_call_ids.insert(tool_call_id.clone());
+                                        
+                                        let tool_name = metadata.get("tool_name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let tool_args = metadata.get("tool_args")
+                                            .cloned()
+                                            .unwrap_or(Value::Object(serde_json::Map::new()));
 
-                                    // 构建 tool_call JSON
-                                    tool_calls_json.push(serde_json::json!({
-                                        "id": tool_call_id,
-                                        "type": "function",
-                                        "function": {
-                                            "name": tool_name,
-                                            "arguments": tool_args
-                                        }
-                                    }));
+                                        // 构建 tool_call JSON
+                                        tool_calls_json.push(serde_json::json!({
+                                            "id": tool_call_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": tool_name,
+                                                "arguments": tool_args
+                                            }
+                                        }));
 
-                                    // 保存为 tool result 消息
-                                    tool_results.push((tool_call_id, result_str));
+                                        // 保存为 tool result 消息
+                                        tool_results.push((tool_call_id, result_str));
+                                    }
                                 }
                             }
                         }
@@ -2224,6 +2235,9 @@ pub async fn agent_execute(
                                 "success": true
                             }),
                         );
+                        
+                        // Cleanup todos for this execution
+                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id).await;
                     }
                     Err(e) => {
                         tracing::error!("Agent with tools execution failed: {}", e);
@@ -2234,6 +2248,9 @@ pub async fn agent_execute(
                                 "error": e.to_string()
                             }),
                         );
+                        
+                        // Cleanup todos for this execution even on error
+                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id).await;
                     }
                 }
 

@@ -48,6 +48,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(), true);
     map.insert(OcrTool::NAME.to_string(), true);
     map.insert("interactive_shell".to_string(), true);
+    map.insert("tenth_man_review".to_string(), true);
     RwLock::new(map)
 });
 
@@ -372,6 +373,41 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     "description": "Optional initial command to run (e.g., 'msfconsole', 'sqlmap')"
                 }
             }
+        })),
+    });
+
+    // Add tenth_man_review
+    tools.push(BuiltinToolInfo {
+        id: "tenth_man_review".to_string(),
+        name: "tenth_man_review".to_string(),
+        description: "Request an adversarial review of your current plan or conclusion. The Tenth Man will challenge your assumptions, identify hidden risks, and find potential flaws. Use 'quick' review for rapid risk checks, or 'full' review for comprehensive analysis.".to_string(),
+        category: "ai".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("tenth_man_review").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "execution_id": {
+                    "type": "string",
+                    "description": "The current execution ID (required)"
+                },
+                "content_to_review": {
+                    "type": "string",
+                    "description": "Content to review (e.g., current plan, proposed solution, or conclusion)",
+                    "x-ui-widget": "textarea"
+                },
+                "context_description": {
+                    "type": "string",
+                    "description": "Context description (what this review is about)"
+                },
+                "review_type": {
+                    "type": "string",
+                    "description": "Type of review: 'quick' (lightweight) or 'full' (comprehensive)",
+                    "default": "quick",
+                    "enum": ["quick", "full"]
+                }
+            },
+            "required": ["execution_id", "content_to_review"]
         })),
     });
 

@@ -375,6 +375,10 @@ pub fn run() {
                 handle.manage(workflow_scheduler);
                 handle.manage(commands::vision_explorer_v2::VisionExplorerV2State::default());
 
+                // Initialize Tenth Man executor
+                crate::agents::tenth_man_executor::init_tenth_man_executor();
+                tracing::info!("Tenth Man executor initialized");
+
                 // Initialize tool execution tracker
                 crate::trackers::init_tracker(db_for_tracker, handle.clone());
                 tracing::info!("Tool execution tracker initialized");
