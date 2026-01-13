@@ -1,19 +1,21 @@
 <template>
-  <div class="todo-panel border border-base-300 rounded-lg p-3 my-4 bg-base-200" v-if="isActive && hasTodos">
-    <div class="todo-header flex items-center gap-2 text-sm font-semibold text-base-content/70 mb-2">
-      <span class="todo-title font-bold">📋 To-dos</span>
-      <span class="todo-count bg-base-300 px-1.5 py-0.5 rounded text-xs">{{ rootTodos.length }}</span>
-      <span class="todo-progress ml-auto text-xs text-success" v-if="progress > 0">{{ progress }}%</span>
+  <div class="todo-panel h-full flex flex-col bg-base-100" v-if="isActive">
+    <div class="todo-header flex items-center gap-2 px-4 py-3 border-b border-base-300">
+      <i class="fas fa-tasks text-primary"></i>
+      <span class="font-semibold text-base-content">{{ $t('agent.todos') }}</span>
+      <span v-if="rootTodos.length > 0" class="badge badge-sm badge-primary">{{ rootTodos.length }}</span>
+      <span class="ml-auto text-xs text-success" v-if="progress > 0">{{ progress }}%</span>
       <button 
         @click="$emit('close')"
-        class="btn btn-ghost btn-xs ml-2"
-        title="Close"
+        class="btn btn-ghost btn-sm btn-square"
+        :title="$t('common.close')"
       >
         <i class="fas fa-times"></i>
       </button>
     </div>
     
-    <div class="todo-list flex flex-col gap-1">
+    <!-- Todo List -->
+    <div v-if="hasTodos" class="todo-list flex flex-col gap-1 p-4 overflow-y-auto flex-1">
       <!-- Recursive rendering supports nesting -->
       <TodoItem 
         v-for="todo in rootTodos" 
@@ -22,6 +24,17 @@
         :children="getChildren(todo.id)"
         :get-children="getChildren"
       />
+    </div>
+
+    <!-- Empty State -->
+    <div v-else class="flex-1 flex flex-col items-center justify-center text-base-content/60 p-8">
+      <div class="avatar placeholder mb-4">
+        <div class="bg-base-200 text-base-content/40 rounded-full w-16 flex items-center justify-center">
+          <i class="fas fa-tasks text-2xl"></i>
+        </div>
+      </div>
+      <h3 class="text-base font-semibold mb-2 text-base-content/80">{{ $t('agent.noTodos') }}</h3>
+      <p class="text-sm text-center max-w-xs text-base-content/60">{{ $t('agent.todosWillAppearHere') }}</p>
     </div>
   </div>
 </template>

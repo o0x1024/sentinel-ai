@@ -100,6 +100,7 @@ const sessionId = ref<string>('')
 const isConnected = ref(false)
 const isConnecting = ref(false)
 const error = ref<string>('')
+const resizeObserver = ref<ResizeObserver | null>(null)
 
 // Emits
 const emit = defineEmits<{
@@ -180,8 +181,16 @@ const initTerminal = () => {
   fitAddon.value.fit()
   terminal.value.focus()
 
-  // Handle resize
+  // Handle resize - use both window and container observer
   window.addEventListener('resize', handleResize)
+  
+  // Use ResizeObserver to detect container size changes (for responsive panel width)
+  if (terminalContainer.value) {
+    resizeObserver.value = new ResizeObserver(() => {
+      handleResize()
+    })
+    resizeObserver.value.observe(terminalContainer.value)
+  }
 
   // Welcome message
   terminal.value.writeln('\x1b[1;32mSentinel AI Interactive Terminal\x1b[0m')
@@ -190,8 +199,16 @@ const initTerminal = () => {
 }
 
 const handleResize = () => {
-  if (fitAddon.value) {
-    fitAddon.value.fit()
+  if (fitAddon.value && terminal.value) {
+    // Use requestAnimationFrame to avoid excessive calls
+    requestAnimationFrame(() => {
+      try {
+        fitAddon.value?.fit()
+      } catch (e) {
+        // Ignore fit errors during rapid resizing
+        console.debug('Terminal fit error:', e)
+      }
+    })
   }
 }
 
@@ -401,6 +418,13 @@ onMounted(() => {
 
 onBeforeUnmount(async () => {
   window.removeEventListener('resize', handleResize)
+  
+  // Disconnect ResizeObserver
+  if (resizeObserver.value) {
+    resizeObserver.value.disconnect()
+    resizeObserver.value = null
+  }
+  
   await disconnect()
   terminal.value?.dispose()
   

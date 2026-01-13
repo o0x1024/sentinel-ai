@@ -149,13 +149,21 @@
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
     <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
-      <!-- Actions (overlay) -->
+      <!-- Actions (overlay) - hide when editing -->
       <div
-        v-if="message.type === 'user' || message.type === 'final'"
+        v-if="!isEditing && (message.type === 'user' || message.type === 'final')"
         class="message-actions absolute right-2 top-2 z-10"
       >
         <!-- Desktop/hover: icon buttons -->
         <div class="hidden md:flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto">
+          <button
+            v-if="message.type === 'user'"
+            @click="handleEdit"
+            class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
+            :title="t('agent.editMessage')"
+          >
+            <i class="fas fa-edit"></i>
+          </button>
           <button
             @click="handleCopy"
             class="action-btn btn btn-xs btn-ghost bg-base-100/70 hover:bg-base-100 backdrop-blur text-base-content/60 hover:text-base-content"
@@ -179,6 +187,12 @@
             <i class="fas fa-ellipsis-h"></i>
           </summary>
           <ul class="menu dropdown-content bg-base-100 rounded-box shadow w-40 p-1 mt-1">
+            <li v-if="message.type === 'user'">
+              <button @click="handleEdit">
+                <i class="fas fa-edit"></i>
+                <span class="text-xs">{{ t('agent.edit') }}</span>
+              </button>
+            </li>
             <li>
               <button @click="handleCopy">
                 <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
@@ -222,11 +236,47 @@
       
       <!-- Content -->
       <div class="message-content text-base-content break-words overflow-hidden">
-        <div v-if="shouldHideContent" class="text-xs text-base-content/50 italic py-1 flex items-center gap-2">
-          <i class="fas fa-external-link-alt"></i>
-          <span>{{ t('agent.detailsInVisionPanel') }}</span>
+        <!-- Edit Mode -->
+        <div v-if="isEditing" class="edit-mode space-y-2">
+          <textarea
+            ref="editTextareaRef"
+            v-model="editedContent"
+            class="w-full bg-base-100 border border-base-300 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-primary"
+            rows="3"
+            @keydown.ctrl.enter="handleSaveEdit"
+            @keydown.meta.enter="handleSaveEdit"
+            @keydown.esc="handleCancelEdit"
+          ></textarea>
+          <div class="flex items-center gap-2">
+            <button
+              @click="handleSaveEdit"
+              class="btn btn-xs btn-primary gap-1"
+              :disabled="!editedContent.trim()"
+            >
+              <i class="fas fa-paper-plane"></i>
+              <span>{{ t('agent.sendEdited') }}</span>
+            </button>
+            <button
+              @click="handleCancelEdit"
+              class="btn btn-xs btn-ghost"
+            >
+              <i class="fas fa-times"></i>
+              <span>{{ t('common.cancel') }}</span>
+            </button>
+            <span class="text-xs text-base-content/50 ml-auto">
+              {{ t('agent.editHint') }}
+            </span>
+          </div>
         </div>
-        <MarkdownRenderer v-else :content="formattedContent" :citations="ragInfo?.citations" />
+        
+        <!-- Display Mode -->
+        <div v-else>
+          <div v-if="shouldHideContent" class="text-xs text-base-content/50 italic py-1 flex items-center gap-2">
+            <i class="fas fa-external-link-alt"></i>
+            <span>{{ t('agent.detailsInVisionPanel') }}</span>
+          </div>
+          <MarkdownRenderer v-else :content="formattedContent" :citations="ragInfo?.citations" />
+        </div>
       </div>
       
       <!-- Tool Result details (for standalone tool_result messages) -->
@@ -273,11 +323,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
+  (e: 'edit', message: AgentMessage, newContent: string): void
   (e: 'heightChanged'): void
 }>()
 
 const isExpanded = ref(false)
 const copySuccess = ref(false)
+
+// Edit mode
+const isEditing = ref(false)
+const editedContent = ref('')
+const editTextareaRef = ref<HTMLTextAreaElement | null>(null)
 
 // Tool panel collapse states
 const isToolPanelExpanded = ref(false)
@@ -372,6 +428,55 @@ const handleCopy = async () => {
 const handleResend = () => {
   emit('resend', props.message)
 }
+
+// 编辑消息
+const handleEdit = () => {
+  isEditing.value = true
+  editedContent.value = props.message.content
+  // Focus textarea after mount
+  nextTick(() => {
+    if (editTextareaRef.value) {
+      editTextareaRef.value.focus()
+      // Auto-resize textarea
+      autoResizeTextarea()
+      // Select all text for easy editing
+      editTextareaRef.value.select()
+    }
+  })
+}
+
+// 保存编辑
+const handleSaveEdit = () => {
+  const newContent = editedContent.value.trim()
+  if (!newContent) return
+  
+  isEditing.value = false
+  emit('edit', props.message, newContent)
+}
+
+// 取消编辑
+const handleCancelEdit = () => {
+  isEditing.value = false
+  editedContent.value = ''
+}
+
+// Auto-resize textarea
+const autoResizeTextarea = () => {
+  nextTick(() => {
+    const textarea = editTextareaRef.value
+    if (textarea) {
+      textarea.style.height = 'auto'
+      textarea.style.height = Math.min(textarea.scrollHeight, 300) + 'px'
+    }
+  })
+}
+
+// Watch for edited content changes to auto-resize
+watch(editedContent, () => {
+  if (isEditing.value) {
+    autoResizeTextarea()
+  }
+})
 
 // Type name
 const typeName = computed(() => getMessageTypeName(props.message.type))
@@ -639,6 +744,16 @@ const shouldHideContent = computed(() => {
 
 .action-btn i {
   font-size: 0.75rem;
+}
+
+/* Edit mode styles */
+.edit-mode textarea {
+  transition: border-color 0.2s;
+  min-height: 4rem;
+}
+
+.edit-mode textarea:focus {
+  box-shadow: 0 0 0 3px rgba(var(--p), 0.1);
 }
 
 /* Tool panel styles */

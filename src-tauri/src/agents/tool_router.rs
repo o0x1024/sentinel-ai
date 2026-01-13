@@ -385,7 +385,7 @@ impl ToolRouter {
                     "security".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
-                always_available: false, // Only available when Tenth Man is enabled
+                always_available: true, // Default enabled - LLM can use it anytime
             },
         ]
     }

@@ -158,21 +158,27 @@ impl Tool for HttpRequestTool {
             .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
         let original_size = body.len();
         
-        let max_chars = crate::get_tool_execution_config().max_output_chars;
-
-        // Truncate body if exceeds max size
-        let (body, truncated) = if original_size > max_chars {
-            let truncated_body = body.chars().take(max_chars).collect::<String>();
-            let truncation_msg = format!(
-                "\n\n[Response truncated: showing {} chars of {} bytes total. Original size: {} KB]",
-                truncated_body.len(),
-                original_size,
-                original_size / 1024
-            );
-            (format!("{}{}", truncated_body, truncation_msg), true)
-        } else {
-            (body, false)
+        // Check if body should be stored to container file
+        let body = match crate::output_storage::store_output_unified(
+            "http_response",
+            &body,
+            None,
+        ).await {
+            Ok(storage_result) => storage_result.get_agent_content(),
+            Err(e) => {
+                tracing::warn!("Failed to store HTTP response to container: {}", e);
+                // Fallback: return original body (or truncate if too large)
+                if body.len() > 100_000 {
+                    let preview = body.chars().take(100_000).collect::<String>();
+                    format!("{}\n\n[Response too large, showing first 100K chars. Total: {} KB]", 
+                        preview, original_size / 1024)
+                } else {
+                    body
+                }
+            }
         };
+        
+        let truncated = body.contains("[Large Output Stored");
         
         let body_length = body.len();
         let response_time_ms = start_time.elapsed().as_millis() as u64;

@@ -289,6 +289,13 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
 
+      // Auto-recover execution state after page refresh
+      if (!isExecuting.value) {
+        console.log('[useAgentEvents] Auto-recovering execution state from iteration event')
+        isExecuting.value = true
+        currentExecutionId.value = payload.execution_id
+      }
+
       messages.value.push({
         id: crypto.randomUUID(),
         type: 'progress',
@@ -306,6 +313,13 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     const unlistenChunk = await listen<AgentChunkEvent>('agent:chunk', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+
+      // Auto-recover execution state after page refresh
+      if (!isExecuting.value) {
+        console.log('[useAgentEvents] Auto-recovering execution state from chunk event')
+        isExecuting.value = true
+        currentExecutionId.value = payload.execution_id
+      }
 
       if (payload.chunk_type === 'text') {
         // Text content: reset thinking state and accumulate text
@@ -363,6 +377,13 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
 
+      // Auto-recover execution state after page refresh
+      if (!isExecuting.value) {
+        console.log('[useAgentEvents] Auto-recovering execution state from tool_call event')
+        isExecuting.value = true
+        currentExecutionId.value = payload.execution_id
+      }
+
       // Close current assistant segment so later assistant text won't appear above this tool call
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
@@ -390,6 +411,13 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     const unlistenToolCallComplete = await listen<AgentToolCallCompleteEvent>('agent:tool_call_complete', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+
+      // Auto-recover execution state after page refresh
+      if (!isExecuting.value) {
+        console.log('[useAgentEvents] Auto-recovering execution state from tool_call_complete event')
+        isExecuting.value = true
+        currentExecutionId.value = payload.execution_id
+      }
 
       // 解析参数 JSON
       let parsedArgs: any = {}
@@ -440,6 +468,13 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     const unlistenToolResult = await listen<AgentToolResultEvent>('agent:tool_result', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
+
+      // Auto-recover execution state after page refresh
+      if (!isExecuting.value) {
+        console.log('[useAgentEvents] Auto-recovering execution state from tool_result event')
+        isExecuting.value = true
+        currentExecutionId.value = payload.execution_id
+      }
 
       // 检查是否是新格式（有 tool_call_id 而没有 tool_name）
       const newPayload = payload as any
@@ -804,7 +839,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
 
       console.warn('[useAgentEvents] Agent retry event received:', payload)
       
-      // 清理当前流式状态，准备迎接重试后的新内容
+      // 保留已完成的工具调用和助手消息，只清理流式状态
+      // 不再清空 messages 数组，让用户看到已完成的进度
       assistantSegmentBuffer.value = ''
       streamingContent.value = ''
       contentBuffer.value = ''
@@ -812,11 +848,16 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       currentThinkingMessageId.value = null
       currentAssistantMessageId.value = null
 
-      // 添加一条重试系统消息
+      // 添加一条重试系统消息（显示累积的进度）
+      const accProgress = (payload as any).accumulated_progress
+      const progressInfo = accProgress 
+        ? ` (Progress saved: ${accProgress.tool_calls} tools, ${accProgress.output_chars} chars)`
+        : ''
+      
       messages.value.push({
         id: crypto.randomUUID(),
         type: 'system',
-        content: `Something went wrong, retrying... (Attempt ${payload.retry_count}/${payload.max_retries})`,
+        content: `Something went wrong, retrying... (Attempt ${payload.retry_count}/${payload.max_retries})${progressInfo}`,
         timestamp: Date.now(),
         metadata: {
           kind: 'retry_notification',

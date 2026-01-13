@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Archive tools
     unzip \
     zip \
+    p7zip-full \
+    unrar \
     # CTF basic tools
     file \
     binutils \
@@ -41,10 +43,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     binwalk \
     steghide \
     exiftool \
-    # Crypto
+    bsdmainutils \
+    # Crypto and encoding
     openssl \
+    # Image processing and steganography
+    imagemagick \
+    pngcheck \
+    outguess \
+    # Audio processing
+    sox \
+    ffmpeg \
+    # Document processing
+    poppler-utils \
+    antiword \
+    # Forensics tools
+    foremost \
+    scalpel \
+    testdisk \
+    # OCR
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    # Password cracking
+    john \
+    hashcat \
+    # Other utilities
+    qrencode \
+    zbar-tools \
+    hexedit \
+    tree \
+    mc \
+    htop \
     && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y --no-install-recommends kali-tools-forensics && rm -rf /var/lib/apt/lists/*
 # Install jq separately with retry mechanism
 RUN apt-get update && \
     (apt-get install -y --no-install-recommends jq || \
@@ -53,14 +84,34 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install essential Python CTF libraries
-RUN pip3 install --no-cache-dir --break-system-packages \
+RUN pip3 install --no-cache-dir --user \
     requests \
     pwntools \
     pycryptodome \
-    || pip3 install --no-cache-dir \
+    pillow \
+    numpy \
+    scipy \
+    opencv-python \
+    zsteg-lib \
+    stegano \
+    pyzbar \
+    qrcode \
+    beautifulsoup4 \
+    lxml \
+    || pip3 install --no-cache-dir --user \
     requests \
     pwntools \
-    pycryptodome
+    pycryptodome \
+    pillow \
+    numpy \
+    scipy \
+    opencv-python \
+    zsteg-lib \
+    stegano \
+    pyzbar \
+    qrcode \
+    beautifulsoup4 \
+    lxml
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash - && \
     apt-get install -y --no-install-recommends  nodejs 
@@ -84,6 +135,9 @@ WORKDIR /workspace
 
 # Switch to non-root user
 USER sandbox
+
+# Set PATH to include user-installed Python packages
+ENV PATH="/home/sandbox/.local/bin:$PATH"
 
 # Default command
 CMD ["/bin/bash"]

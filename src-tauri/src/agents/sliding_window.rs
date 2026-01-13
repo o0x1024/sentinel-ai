@@ -474,6 +474,29 @@ impl SlidingWindowManager {
             &prompt
         ).await
     }
+
+    /// Export full conversation history to formatted string
+    pub async fn export_history(&self) -> Result<String> {
+        let db = self.app_handle.state::<Arc<DatabaseService>>();
+        let all_messages = db.get_ai_messages_by_conversation(&self.conversation_id).await?;
+        
+        let mut content = String::new();
+        content.push_str(&format!("=== Conversation History: {} ===\n", self.conversation_id));
+        content.push_str(&format!("Total Messages: {}\n", all_messages.len()));
+        content.push_str(&format!("Exported At: {}\n\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
+        
+        for (idx, msg) in all_messages.iter().enumerate() {
+            content.push_str(&format!("--- Message #{} [{} at {}] ---\n", 
+                idx + 1,
+                msg.role,
+                msg.timestamp.format("%Y-%m-%d %H:%M:%S")
+            ));
+            content.push_str(&msg.content);
+            content.push_str("\n\n");
+        }
+        
+        Ok(content)
+    }
 }
 
 // Helper: Estimate tokens (duplicated from executor.rs, strictly we should share this)

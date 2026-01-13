@@ -164,6 +164,7 @@ RUN useradd -m -s /bin/bash sandbox && \
     mkdir -p /workspace && \
     chown sandbox:sandbox /workspace
 
+RUN mkdir /workspace/tmp
 
 # Set working directory
 WORKDIR /workspace

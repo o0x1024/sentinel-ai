@@ -36,13 +36,13 @@
     >
       <!-- Command line with copy button -->
       <div class="command-line flex items-start gap-2 mb-2 group">
-        <div class="flex-1 text-[#d4d4d4]">
-          <span class="text-[#808080]">$</span>
-          <span class="ml-2 inline-block" v-html="highlightedCommand"></span>
+        <div class="flex-1 text-[#d4d4d4] flex items-start gap-2">
+          <span class="text-[#808080] flex-shrink-0">$</span>
+          <span class="flex-1 break-all" v-html="highlightedCommand"></span>
         </div>
         <button 
           @click.stop="copyCommand" 
-          class="btn btn-ghost btn-xs text-[#808080] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          class="btn btn-ghost btn-xs text-[#808080] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
           :title="$t('agent.copy')"
         >
           <i :class="['fas', copied ? 'fa-check text-success' : 'fa-copy']"></i>

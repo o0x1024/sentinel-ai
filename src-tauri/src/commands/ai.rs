@@ -1993,14 +1993,12 @@ pub async fn agent_execute(
     );
     service.set_app_handle(app_handle.clone());
 
-    // 从数据库读取并应用工具输出限制配置
-    if let Ok(limit_str_opt) = db_service.get_config_internal("ai", "tool_output_limit").await {
-        if let Some(limit_str) = limit_str_opt {
-             if let Ok(limit) = limit_str.parse::<usize>() {
-                 tracing::info!("Setting global tool output limit to {} chars", limit);
-                 sentinel_tools::set_tool_execution_config(sentinel_tools::ToolExecutionConfig {
-                     max_output_chars: limit,
-                 });
+    // 从数据库读取并应用输出存储阈值配置（动态上下文发现）
+    if let Ok(threshold_str_opt) = db_service.get_config_internal("ai", "output_storage_threshold").await {
+        if let Some(threshold_str) = threshold_str_opt {
+             if let Ok(threshold) = threshold_str.parse::<usize>() {
+                 tracing::info!("Setting output storage threshold to {} bytes (Dynamic Context Discovery)", threshold);
+                 sentinel_tools::set_storage_threshold(threshold);
              }
         }
     }

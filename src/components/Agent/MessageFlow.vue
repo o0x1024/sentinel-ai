@@ -26,6 +26,7 @@
         :is-vision-active="isVisionActive" 
         :is-executing="isExecuting && index === displayedMessages.length - 1"
         @resend="handleResend"
+        @edit="handleEdit"
         @heightChanged="handleHeightChanged"
       />
     </div>
@@ -69,6 +70,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
+  (e: 'edit', message: AgentMessage, newContent: string): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -215,6 +217,11 @@ const scrollToBottom = () => {
 // Handle resend event from MessageBlock
 const handleResend = (message: AgentMessage) => {
   emit('resend', message)
+}
+
+// Handle edit event from MessageBlock
+const handleEdit = (message: AgentMessage, newContent: string) => {
+  emit('edit', message, newContent)
 }
 
 // Handle height change from MessageBlock (when tool panels expand/collapse)

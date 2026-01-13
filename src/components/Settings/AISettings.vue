@@ -454,17 +454,19 @@
               </div>
 
               <!-- 工具输出限制设置 -->
+              <!-- 输出存储阈值 -->
               <div class="form-control">
                 <label class="label">
-                  <span class="label-text">{{ t('settings.ai.toolOutputLimit') }}</span>
+                  <span class="label-text">{{ t('settings.ai.outputStorageThreshold') }}</span>
+                  <span class="badge badge-info badge-sm">Dynamic Context</span>
                 </label>
                 <div class="flex items-center gap-4">
-                  <input v-model.number="settings.ai.toolOutputLimit" type="range" min="10000" max="200000" step="10000"
-                    class="range range-secondary flex-1" @change="saveAiConfig" />
-                  <span class="text-sm min-w-[60px]">{{ (settings.ai.toolOutputLimit || 50000) / 1000 }}K</span>
+                  <input v-model.number="settings.ai.outputStorageThreshold" type="range" min="5000" max="200000" step="5000"
+                    class="range range-info flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ (settings.ai.outputStorageThreshold || 10000) / 1000 }}K</span>
                 </div>
                 <label class="label">
-                  <span class="label-text-alt">{{ t('settings.ai.toolOutputLimitHint') }}</span>
+                  <span class="label-text-alt">{{ t('settings.ai.outputStorageThresholdHint') }}</span>
                 </label>
               </div>
 

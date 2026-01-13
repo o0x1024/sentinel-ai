@@ -54,6 +54,9 @@ pub struct ShellOutput {
     pub exit_code: Option<i32>,
     pub success: bool,
     pub execution_time_ms: u64,
+    /// Indicates if output was stored to file
+    #[serde(default)]
+    pub output_stored: bool,
 }
 
 /// Shell command errors
@@ -237,12 +240,38 @@ impl ShellTool {
     pub const NAME: &'static str = "shell";
     pub const DESCRIPTION: &'static str = "Execute shell commands in isolated Docker sandbox or on host. Commands are subject to security policies.";
 
+    /// Check if command is reading files from /workspace/context/ to avoid recursive storage
+    fn is_reading_context_file(command: &str) -> bool {
+        let cmd = command.to_lowercase();
+        let context_patterns = [
+            "/workspace/context/",
+            "workspace/context/",  // relative path
+        ];
+        
+        // Check if command contains context directory path
+        let has_context_path = context_patterns.iter().any(|p| cmd.contains(p));
+        if !has_context_path {
+            return false;
+        }
+        
+        // Check if it's a read operation (cat, grep, tail, head, less, more, etc.)
+        let read_commands = ["cat ", "grep ", "tail ", "head ", "less ", "more ", "view ", "bat "];
+        read_commands.iter().any(|c| cmd.starts_with(c) || cmd.contains(&format!(" | {}", c)))
+    }
+
     /// Execute command in Docker sandbox
     async fn execute_in_docker(
         &self,
         cmd: &str,
         timeout_secs: u64,
-    ) -> Result<(String, String, i32), ShellError> {
+    ) -> Result<(String, String, i32, Arc<DockerSandbox>), ShellError> {
+        // Check Docker availability first
+        if !DockerSandbox::is_docker_available().await {
+            return Err(ShellError::DockerError(
+                "Docker is not available on this system".to_string()
+            ));
+        }
+
         let config = SHELL_CONFIG.read().await;
         let docker_config = config
             .docker_config
@@ -250,36 +279,107 @@ impl ShellTool {
             .unwrap_or_default();
         drop(config);
 
-        let sandbox = DockerSandbox::new(docker_config);
-        sandbox
+        let sandbox = Arc::new(DockerSandbox::new(docker_config));
+        let (stdout, stderr, exit_code) = sandbox
             .execute(cmd, timeout_secs)
             .await
-            .map_err(|e| ShellError::DockerError(e.to_string()))
+            .map_err(|e| ShellError::DockerError(e.to_string()))?;
+        
+        Ok((stdout, stderr, exit_code, sandbox))
     }
 
-    /// Execute command on host machine
+    /// Adapt command for cross-platform execution
+    fn adapt_command_for_platform(cmd: &str) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            // Convert Unix paths to Windows paths
+            let adapted = cmd.replace("/workspace", "C:\\workspace")
+                .replace('/', "\\");
+            adapted
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            cmd.to_string()
+        }
+    }
+
+    /// Execute command on host machine with cross-platform support
     async fn execute_on_host(
         &self,
         cmd: &str,
         cwd: Option<&str>,
         timeout_secs: u64,
     ) -> Result<(String, String, i32), ShellError> {
-        // Determine shell
+        // Determine shell and command structure based on OS
         #[cfg(target_os = "windows")]
-        let (shell, shell_arg) = ("cmd", "/C");
-        #[cfg(not(target_os = "windows"))]
-        let (shell, shell_arg) = ("bash", "-c");
+        let (shell, shell_arg) = {
+            // Check if PowerShell is available (preferred on Windows)
+            let ps_check = std::process::Command::new("powershell")
+                .arg("-Command")
+                .arg("$PSVersionTable.PSVersion.Major")
+                .output();
+            
+            if ps_check.is_ok() {
+                ("powershell", "-Command")
+            } else {
+                ("cmd", "/C")
+            }
+        };
+        
+        #[cfg(target_os = "macos")]
+        let (shell, shell_arg) = {
+            // macOS: prefer zsh (default since Catalina), fallback to bash
+            if std::path::Path::new("/bin/zsh").exists() {
+                ("/bin/zsh", "-c")
+            } else {
+                ("/bin/bash", "-c")
+            }
+        };
+        
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let (shell, shell_arg) = {
+            // Linux/Unix: check available shells
+            if std::path::Path::new("/bin/bash").exists() {
+                ("/bin/bash", "-c")
+            } else if std::path::Path::new("/bin/sh").exists() {
+                ("/bin/sh", "-c")
+            } else {
+                ("sh", "-c")
+            }
+        };
+
+        // Adapt command for platform
+        let adapted_cmd = Self::adapt_command_for_platform(cmd);
 
         // Build command
         let mut command = Command::new(shell);
         command.arg(shell_arg);
-        command.arg(cmd);
+        command.arg(&adapted_cmd);
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
+
+        // Set environment variables for better compatibility
+        #[cfg(target_os = "windows")]
+        {
+            command.env("LANG", "en_US.UTF-8");
+            command.env("CHCP", "65001"); // UTF-8 code page
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            command.env("LANG", "C.UTF-8");
+            command.env("LC_ALL", "C.UTF-8");
+        }
 
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
+
+        tracing::debug!(
+            "Executing on host - shell: {}, command: {}, cwd: {:?}",
+            shell,
+            adapted_cmd,
+            cwd
+        );
 
         // Execute with timeout
         let timeout_duration = Duration::from_secs(timeout_secs);
@@ -290,10 +390,24 @@ impl ShellTool {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                 let exit_code = output.status.code().unwrap_or(-1);
+                
+                tracing::debug!(
+                    "Command completed - exit_code: {}, stdout_len: {}, stderr_len: {}",
+                    exit_code,
+                    stdout.len(),
+                    stderr.len()
+                );
+                
                 Ok((stdout, stderr, exit_code))
             }
-            Ok(Err(e)) => Err(ShellError::ExecutionFailed(e.to_string())),
-            Err(_) => Err(ShellError::Timeout(timeout_secs)),
+            Ok(Err(e)) => {
+                tracing::error!("Command execution failed: {}", e);
+                Err(ShellError::ExecutionFailed(e.to_string()))
+            }
+            Err(_) => {
+                tracing::error!("Command timeout after {} seconds", timeout_secs);
+                Err(ShellError::Timeout(timeout_secs))
+            }
         }
     }
 
@@ -363,46 +477,196 @@ impl Tool for ShellTool {
             .unwrap_or_else(|| config.default_execution_mode.clone());
         drop(config);
 
-        // Execute command based on mode
-        let (stdout, stderr, exit_code) = match execution_mode {
+        // Execute command based on mode with fallback
+        let (stdout, stderr, exit_code, output_stored) = match execution_mode {
             ShellExecutionMode::Docker => {
-                tracing::info!("Executing command in Docker sandbox: {}", args.command);
-                self.execute_in_docker(&args.command, args.timeout_secs).await?
+                tracing::info!("Attempting to execute command in Docker sandbox: {}", args.command);
+                
+                // Try Docker execution, fallback to host if Docker is unavailable
+                match self.execute_in_docker(&args.command, args.timeout_secs).await {
+                    Ok((stdout, stderr, exit_code, sandbox)) => {
+                        // Docker execution successful
+                        tracing::info!("Command executed successfully in Docker sandbox");
+                        
+                        // Check if command is reading context files to avoid recursive storage
+                        let is_reading_context = Self::is_reading_context_file(&args.command);
+                        
+                        // Check if output should be stored in container
+                        let storage_threshold = crate::output_storage::get_storage_threshold();
+                        let mut stored = false;
+                        let mut final_stdout = stdout.clone();
+                        let mut final_stderr = stderr.clone();
+                        
+                        // Store stdout if large (unless reading context files to avoid recursion)
+                        if stdout.len() > storage_threshold && !is_reading_context {
+                            match crate::output_storage::store_output_in_container(
+                                &sandbox,
+                                "shell_stdout",
+                                &stdout,
+                                None,
+                            ).await {
+                                Ok(storage_result) => {
+                                    final_stdout = storage_result.get_agent_content();
+                                    stored = true;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to store stdout to container: {}", e);
+                                    // Fallback to truncation
+                                    final_stdout = stdout.chars().take(storage_threshold).collect();
+                                    final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
+                                }
+                            }
+                        } else if stdout.len() > storage_threshold && is_reading_context {
+                            // Directly truncate to avoid recursive storage
+                            tracing::info!("Command is reading context file, truncating output instead of storing");
+                            final_stdout = stdout.chars().take(storage_threshold).collect();
+                            final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars | Reading context file]", storage_threshold, stdout.len()));
+                        }
+                        
+                        // Store stderr if large
+                        if stderr.len() > storage_threshold {
+                            match crate::output_storage::store_output_in_container(
+                                &sandbox,
+                                "shell_stderr",
+                                &stderr,
+                                None,
+                            ).await {
+                                Ok(storage_result) => {
+                                    final_stderr = storage_result.get_agent_content();
+                                    stored = true;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to store stderr to container: {}", e);
+                                    // Fallback to truncation
+                                    final_stderr = stderr.chars().take(storage_threshold).collect();
+                                    final_stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stderr.len()));
+                                }
+                            }
+                        }
+                        
+                        (final_stdout, final_stderr, exit_code, stored)
+                    }
+                    Err(e) => {
+                        // Docker execution failed, fallback to host
+                        tracing::warn!("Docker execution failed ({}), falling back to host execution", e);
+                        tracing::warn!("Executing command on host machine: {}", args.command);
+                        
+                        let (stdout, stderr, exit_code) = self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?;
+                        
+                        // For host execution, use unified storage for large outputs
+                        let storage_threshold = crate::output_storage::get_storage_threshold();
+                        let mut stored = false;
+                        let mut final_stdout = stdout.clone();
+                        let mut final_stderr = stderr.clone();
+                        
+                        // Store stdout if large
+                        if stdout.len() > storage_threshold {
+                            match crate::output_storage::store_output_unified(
+                                "shell_stdout_host_fallback",
+                                &stdout,
+                                None,
+                            ).await {
+                                Ok(storage_result) => {
+                                    final_stdout = storage_result.get_agent_content();
+                                    stored = true;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to store stdout: {}", e);
+                                    final_stdout = stdout.chars().take(storage_threshold).collect();
+                                    final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
+                                }
+                            }
+                        }
+                        
+                        // Store stderr if large
+                        if stderr.len() > storage_threshold {
+                            match crate::output_storage::store_output_unified(
+                                "shell_stderr_host_fallback",
+                                &stderr,
+                                None,
+                            ).await {
+                                Ok(storage_result) => {
+                                    final_stderr = storage_result.get_agent_content();
+                                    stored = true;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to store stderr: {}", e);
+                                    final_stderr = stderr.chars().take(storage_threshold).collect();
+                                    final_stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stderr.len()));
+                                }
+                            }
+                        }
+                        
+                        (final_stdout, final_stderr, exit_code, stored)
+                    }
+                }
             }
             ShellExecutionMode::Host => {
                 tracing::warn!("Executing command on host machine: {}", args.command);
-                self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?
+                let (stdout, stderr, exit_code) = self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?;
+                
+                // For host execution, also use container storage for large outputs (unified management)
+                let storage_threshold = crate::output_storage::get_storage_threshold();
+                let mut stored = false;
+                let mut final_stdout = stdout.clone();
+                let mut final_stderr = stderr.clone();
+                
+                // Store stdout if large
+                if stdout.len() > storage_threshold {
+                    match crate::output_storage::store_output_unified(
+                        "shell_stdout_host",
+                        &stdout,
+                        None,
+                    ).await {
+                        Ok(storage_result) => {
+                            final_stdout = storage_result.get_agent_content();
+                            stored = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to store stdout to container: {}", e);
+                            // Fallback to truncation
+                            final_stdout = stdout.chars().take(storage_threshold).collect();
+                            final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
+                        }
+                    }
+                }
+                
+                // Store stderr if large
+                if stderr.len() > storage_threshold {
+                    match crate::output_storage::store_output_unified(
+                        "shell_stderr_host",
+                        &stderr,
+                        None,
+                    ).await {
+                        Ok(storage_result) => {
+                            final_stderr = storage_result.get_agent_content();
+                            stored = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to store stderr to container: {}", e);
+                            // Fallback to truncation
+                            final_stderr = stderr.chars().take(storage_threshold).collect();
+                            final_stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stderr.len()));
+                        }
+                    }
+                }
+                
+                (final_stdout, final_stderr, exit_code, stored)
             }
         };
 
-        // Truncate output if needed
-                let max_chars = crate::get_tool_execution_config().max_output_chars;
-
-        let mut stdout = stdout;
-                if stdout.len() > max_chars {
-                    let original_len = stdout.len();
-                    stdout = stdout.chars().take(max_chars).collect();
-                    stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", stdout.len(), original_len));
-                }
-
-        let mut stderr = stderr;
-                 if stderr.len() > max_chars {
-                    let original_len = stderr.len();
-                    stderr = stderr.chars().take(max_chars).collect();
-                    stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", stderr.len(), original_len));
-                }
-
         let success = exit_code == 0;
-                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
-                Ok(ShellOutput {
-                    command: args.command,
-                    stdout,
-                    stderr,
+        Ok(ShellOutput {
+            command: args.command,
+            stdout,
+            stderr,
             exit_code: Some(exit_code),
-                    success,
-                    execution_time_ms,
-                })
+            success,
+            execution_time_ms,
+            output_stored,
+        })
     }
 }
 

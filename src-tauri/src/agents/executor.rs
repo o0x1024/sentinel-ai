@@ -70,27 +70,29 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     use sentinel_tools::buildin_tools::todos::set_todos_app_handle;
     set_todos_app_handle(app_handle.clone()).await;
     
-    // 设置 Tenth Man 配置（如果启用）
-    if params.enable_tenth_man_rule {
-        use crate::agents::tenth_man_executor;
-        
-        // Build LLM config for Tenth Man
-        let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
-            .with_timeout(params.timeout_secs)
-            .with_rig_provider(&rig_provider);
-        
-        if let Some(ref api_key) = params.api_key {
-            tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);
-        }
-        if let Some(ref api_base) = params.api_base {
-            tenth_man_llm_config = tenth_man_llm_config.with_base_url(api_base);
-        }
-        
-        tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config).await;
-        tenth_man_executor::set_task_context(params.execution_id.clone(), params.task.clone()).await;
-        
-        tracing::info!("Tenth Man configured for execution_id: {}", params.execution_id);
+    // 始终初始化 Tenth Man 配置（工具默认开启，可能随时被调用）
+    use crate::agents::tenth_man_executor;
+    
+    // Build LLM config for Tenth Man
+    let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
+        .with_timeout(params.timeout_secs)
+        .with_rig_provider(&rig_provider);
+    
+    if let Some(ref api_key) = params.api_key {
+        tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);
     }
+    if let Some(ref api_base) = params.api_base {
+        tenth_man_llm_config = tenth_man_llm_config.with_base_url(api_base);
+    }
+    
+    tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config).await;
+    tenth_man_executor::set_task_context(params.execution_id.clone(), params.task.clone()).await;
+    
+    tracing::info!(
+        "Tenth Man initialized for execution_id: {} (rule_enabled: {})", 
+        params.execution_id,
+        params.enable_tenth_man_rule
+    );
 
     // 检查是否启用工具
     let tool_config = params.tool_config.clone().unwrap_or_default();
@@ -332,6 +334,9 @@ async fn execute_agent_simple(
 
             // Legacy memory recording removed. Agent now consciously stores memories via tools.
 
+            // Cleanup container context files
+            cleanup_container_context_async(&params.execution_id).await;
+
             Ok(response)
         }
         Err(e) => {
@@ -340,6 +345,10 @@ async fn execute_agent_simple(
                 params.execution_id,
                 e
             );
+            
+            // Cleanup container context files even on error
+            cleanup_container_context_async(&params.execution_id).await;
+            
             // Legacy memory recording removed.
             Err(e)
         }
@@ -462,20 +471,10 @@ async fn execute_agent_with_tools(
 
     let mut selected_tool_ids = selection_plan.tool_ids.clone();
     
-    // Add tenth_man_review tool if Hybrid or ToolOnly mode
-    if params.enable_tenth_man_rule {
-        if let Some(ref config) = params.tenth_man_config {
-            let should_add_tool = match &config.mode {
-                super::tenth_man::InterventionMode::ToolOnly => true,
-                super::tenth_man::InterventionMode::Hybrid { tool_available, .. } => *tool_available,
-                _ => false,
-            };
-            
-            if should_add_tool && !selected_tool_ids.contains(&"tenth_man_review".to_string()) {
-                selected_tool_ids.push("tenth_man_review".to_string());
-                tracing::info!("Added tenth_man_review tool to available tools");
-            }
-        }
+    // 默认添加 tenth_man_review 工具（始终可用，让 LLM 自主决定是否使用）
+    if !selected_tool_ids.contains(&"tenth_man_review".to_string()) {
+        selected_tool_ids.push("tenth_man_review".to_string());
+        tracing::info!("Added tenth_man_review tool to available tools (default enabled)");
     }
 
     tracing::info!(
@@ -540,6 +539,29 @@ async fn execute_agent_with_tools(
         }
     }
 
+    // Inject Docker container context directory information
+    final_system_prompt.push_str(&format!(
+        "\n\n[Context Storage]: All large tool outputs are automatically stored in Docker container at '{}'.\n\
+        - Tool outputs exceeding threshold are saved as files (not truncated)\n\
+        - Applies to: shell commands, HTTP responses, and other tools\n\
+        - Your conversation history is at '{}/history.txt'\n\
+        - Use shell tool with grep/tail/head/cat to access these files\n\
+        \n\
+        Examples:\n\
+        • shell(command=\"ls -lh {}\")  (list all stored files)\n\
+        • shell(command=\"grep -i 'pattern' {}/*.txt\")  (search across files)\n\
+        • shell(command=\"tail -n 100 {}/http_response_*.txt\")  (view HTTP output)\n\
+        • shell(command=\"cat {}/history.txt | grep 'keyword'\")  (search history)\n\
+        \n\
+        All files are centralized in one directory for easy management and search.",
+        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
+        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
+        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
+        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
+        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
+        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR
+    ));
+
     // 5. 使用 SlidingWindowManager 管理上下文和历史
     let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000) as usize;
     
@@ -563,6 +585,22 @@ async fn execute_agent_with_tools(
     // 尝试压缩历史
     if let Err(e) = sliding_window.compress_if_needed(&llm_config).await {
         tracing::warn!("Sliding window compression failed: {}", e);
+    }
+    
+    // Export history to container (for方案3: 对话历史按需检索)
+    if let Ok(history_content) = sliding_window.export_history().await {
+        // Get Docker sandbox config and create sandbox to store history
+        use sentinel_tools::shell::get_shell_config;
+        let shell_config = get_shell_config().await;
+        if let Some(docker_config) = shell_config.docker_config {
+            let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
+            if let Err(e) = sentinel_tools::store_history_in_container(&sandbox, &history_content).await {
+                tracing::warn!("Failed to store history in container: {}", e);
+            } else {
+                tracing::info!("Conversation history exported to container: {}/history.txt", 
+                    sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR);
+            }
+        }
     }
     
     // 构建上下文
@@ -615,17 +653,43 @@ async fn execute_agent_with_tools(
     let mut retries = 0;
     let max_retries = 2; // 最多重试 2 次
     let mut last_error: Option<anyhow::Error> = None;
+    
+    // 累积的工具调用记录（跨重试保留）
+    let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
+    // 累积的助手输出（跨重试保留）
+    let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
     while retries <= max_retries {
         if retries > 0 {
+            // 保存当前已完成的工具调用到累积记录
+            if let Ok(current_calls) = tool_calls_collector.lock() {
+                if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                    acc.extend(current_calls.clone());
+                }
+            }
+            
+            // 保存当前已输出的内容到累积输出
+            if let Ok(current_output) = assistant_segment_buf.lock() {
+                if !current_output.is_empty() {
+                    if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                        if !acc.is_empty() {
+                            acc.push_str("\n\n");
+                        }
+                        acc.push_str(current_output.as_str());
+                    }
+                }
+            }
+            
             tracing::warn!(
-                "Retrying agent execution (attempt {}/{}) due to error: {}",
+                "Retrying agent execution (attempt {}/{}) due to error: {}. Accumulated {} tool calls and {} chars output.",
                 retries,
                 max_retries,
-                last_error.as_ref().map(|e| e.to_string()).unwrap_or_default()
+                last_error.as_ref().map(|e| e.to_string()).unwrap_or_default(),
+                accumulated_tool_calls.lock().map(|c| c.len()).unwrap_or(0),
+                accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0)
             );
 
-            // 发送重试事件给前端
+            // 发送重试事件给前端（包含已完成的进度信息）
             let _ = app_handle.emit(
                 "agent:retry",
                 &json!({
@@ -633,6 +697,10 @@ async fn execute_agent_with_tools(
                     "retry_count": retries,
                     "max_retries": max_retries,
                     "error": last_error.as_ref().map(|e| e.to_string()),
+                    "accumulated_progress": {
+                        "tool_calls": accumulated_tool_calls.lock().map(|c| c.len()).unwrap_or(0),
+                        "output_chars": accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0),
+                    }
                 }),
             );
 
@@ -1158,25 +1226,50 @@ async fn execute_agent_with_tools(
 
         match result {
             Ok(response) => {
+                // 合并最终输出和累积的输出
+                let final_response = if let Ok(acc) = accumulated_assistant_output.lock() {
+                    if !acc.is_empty() && !response.is_empty() {
+                        format!("{}\n\n{}", acc, response)
+                    } else if !acc.is_empty() {
+                        acc.clone()
+                    } else {
+                        response.clone()
+                    }
+                } else {
+                    response.clone()
+                };
+                
                 tracing::info!(
-                    "Agent with tools completed - execution_id: {}, response_length: {}",
+                    "Agent with tools completed - execution_id: {}, response_length: {}, accumulated_length: {}",
                     params.execution_id,
-                    response.len()
+                    final_response.len(),
+                    accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0)
                 );
 
-                let tool_summaries = tool_calls_collector
-                    .lock()
-                    .map(|calls| {
-                        calls
-                            .iter()
-                            .map(|call| ToolCallSummary {
-                                name: call.name.clone(),
-                                success: call.success,
-                                duration_ms: Some(call.duration_ms),
-                            })
-                            .collect::<Vec<_>>()
+                // 合并所有工具调用记录（包括累积的和当前的）
+                let mut all_tool_calls = Vec::new();
+                if let Ok(acc_calls) = accumulated_tool_calls.lock() {
+                    all_tool_calls.extend(acc_calls.clone());
+                }
+                if let Ok(current_calls) = tool_calls_collector.lock() {
+                    all_tool_calls.extend(current_calls.clone());
+                }
+
+                let tool_summaries = all_tool_calls
+                    .iter()
+                    .map(|call| ToolCallSummary {
+                        name: call.name.clone(),
+                        success: call.success,
+                        duration_ms: Some(call.duration_ms),
                     })
-                    .unwrap_or_default();
+                    .collect::<Vec<_>>();
+                    
+                tracing::info!(
+                    "Total tool calls completed: {} (accumulated: {}, current: {})",
+                    tool_summaries.len(),
+                    accumulated_tool_calls.lock().map(|c| c.len()).unwrap_or(0),
+                    tool_calls_collector.lock().map(|c| c.len()).unwrap_or(0)
+                );
 
                 if let Err(e) = get_global_memory()
                     .record_execution(ExecutionRecord {
@@ -1275,10 +1368,16 @@ async fn execute_agent_with_tools(
                     tenth_man_executor::clear_tenth_man_execution(&params.execution_id).await;
                 }
 
-                return Ok(response);
+                // Cleanup container context files (keep history.txt)
+                cleanup_container_context_async(&params.execution_id).await;
+
+                return Ok(final_response);
             }
             Err(e) => {
                 let err_msg = e.to_string();
+                
+                // Cleanup container context files even on error
+                cleanup_container_context_async(&params.execution_id).await;
                 
                 // 优化错误消息
                 let friendly_err = if err_msg.contains("error decoding response body") {
@@ -1298,7 +1397,25 @@ async fn execute_agent_with_tools(
                     retries += 1;
                     last_error = Some(friendly_err);
 
-                    // 清理重试前的临时状态
+                    // 保存当前工作到累积记录中（在清理之前）
+                    if let Ok(current_calls) = tool_calls_collector.lock() {
+                        if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                            acc.extend(current_calls.clone());
+                        }
+                    }
+                    
+                    if let Ok(current_output) = assistant_segment_buf.lock() {
+                        if !current_output.is_empty() {
+                            if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                                if !acc.is_empty() {
+                                    acc.push_str("\n\n");
+                                }
+                                acc.push_str(current_output.as_str());
+                            }
+                        }
+                    }
+
+                    // 清理重试前的临时状态（但不清理累积记录）
                     if let Ok(mut buf) = assistant_segment_buf.lock() {
                         buf.clear();
                     }
@@ -1307,6 +1424,9 @@ async fn execute_agent_with_tools(
                     }
                     if let Ok(mut p) = pending_calls.lock() {
                         p.clear();
+                    }
+                    if let Ok(mut tc) = tool_calls_collector.lock() {
+                        tc.clear();
                     }
 
                     continue;
@@ -1534,4 +1654,35 @@ pub async fn execute_plugin_tool(plugin_id: &str, arguments: &serde_json::Value)
             result.error.unwrap_or_else(|| "Unknown error".to_string())
         ))
     }
+}
+
+/// Cleanup container workspace files asynchronously (non-blocking)
+/// Removes temporary files created during task execution in /workspace
+/// Preserves conversation history at /workspace/context/history.txt
+async fn cleanup_container_context_async(execution_id: &str) {
+    tracing::info!("Starting container workspace cleanup for execution: {}", execution_id);
+    
+    // Spawn cleanup task in background to avoid blocking response
+    let execution_id = execution_id.to_string();
+    tokio::spawn(async move {
+        use sentinel_tools::shell::get_shell_config;
+        
+        match get_shell_config().await.docker_config {
+            Some(docker_config) => {
+                let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
+                
+                match sentinel_tools::cleanup_container_context(&sandbox).await {
+                    Ok(_) => {
+                        tracing::info!("Container workspace cleanup completed for execution: {}", execution_id);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to cleanup container workspace for execution {}: {}", execution_id, e);
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("No Docker config, skipping container workspace cleanup");
+            }
+        }
+    });
 }

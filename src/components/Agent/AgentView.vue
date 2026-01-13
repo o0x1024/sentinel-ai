@@ -83,9 +83,8 @@
             <span>{{ t('agent.explore') }}</span>
             <span class="badge badge-xs badge-primary">{{ visionEvents.steps.value.length }}</span>
           </button>
-          <!-- Todos Button - shows when there's todos history -->
+          <!-- Todos Button - always visible -->
           <button 
-            v-if="todosComposable.hasHistory.value"
             @click="handleToggleTodos()"
             class="btn btn-sm gap-1"
             :class="isTodosPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
@@ -93,7 +92,7 @@
           >
             <i class="fas fa-tasks"></i>
             <span>{{ t('agent.todos') }}</span>
-            <span class="badge badge-xs badge-primary">{{ todosComposable.rootTodos.value.length }}</span>
+            <span v-if="todosComposable.rootTodos.value.length > 0" class="badge badge-xs badge-primary">{{ todosComposable.rootTodos.value.length }}</span>
           </button>
           <!-- Terminal Button - always visible -->
           <button 
@@ -130,6 +129,7 @@
             :is-vision-active="isVisionActive"
             class="flex-1"
             @resend="handleResendMessage"
+            @edit="handleEditMessage"
           />
           
           <!-- {{ t('agent.inputArea') }} -->
@@ -667,6 +667,54 @@ const handleResendMessage = async (message: AgentMessage) => {
   inputValue.value = message.content
 
   // Auto trigger send
+  await handleSubmit()
+}
+
+// Handle edit message - edit user message and resend
+const handleEditMessage = async (message: AgentMessage, newContent: string) => {
+  if (isExecuting.value) {
+    console.log('[AgentView] Cannot edit while executing')
+    return
+  }
+
+  console.log('[AgentView] Editing message:', message.id, 'new content:', newContent)
+  
+  // Find the position of the message in the list
+  const messageIndex = messages.value.findIndex(m => m.id === message.id)
+  if (messageIndex === -1) {
+    console.error('[AgentView] Message not found')
+    return
+  }
+
+  // Delete this message and all messages after it from database
+  if (conversationId.value) {
+    try {
+      // First delete all messages after this message
+      const deletedCount = await invoke<number>('delete_ai_messages_after', {
+        conversationId: conversationId.value,
+        messageId: message.id
+      })
+      console.log(`[AgentView] Deleted ${deletedCount} messages after the edited message from database`)
+      
+      // Then delete the message itself from database
+      await invoke('delete_ai_message', {
+        messageId: message.id
+      })
+      console.log(`[AgentView] Deleted the edited message from database`)
+    } catch (e) {
+      console.error('[AgentView] Failed to delete messages from database:', e)
+      // Continue anyway to update frontend
+    }
+  }
+
+  // Delete this message and all messages after it from frontend
+  const messagesToKeep = messages.value.slice(0, messageIndex)
+  agentEvents.messages.value = messagesToKeep
+
+  // Set edited content to input box
+  inputValue.value = newContent
+
+  // Auto trigger send with edited content
   await handleSubmit()
 }
 
