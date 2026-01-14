@@ -1877,7 +1877,11 @@ pub struct AgentExecuteConfig {
     pub conversation_id: Option<String>,
     pub message_id: Option<String>,
     pub enable_rag: Option<bool>,
+    /// Image attachments (base64 for LLM vision)
     pub attachments: Option<serde_json::Value>,
+    /// Document attachments (content or security mode)
+    #[serde(default)]
+    pub document_attachments: Option<Vec<crate::commands::document_commands::ProcessedDocumentResult>>,
     #[serde(default)]
     pub tool_config: Option<crate::agents::ToolConfig>,
     /// Traffic context to prepend to the task (not shown in user message display)
@@ -1925,6 +1929,7 @@ pub async fn agent_execute(
         message_id: None,
         enable_rag: Some(false),
         attachments: None,
+        document_attachments: None,
         tool_config: None,
         traffic_context: None,
         display_content: None,
@@ -2207,6 +2212,19 @@ pub async fn agent_execute(
                 );
 
                 // 构建代理执行参数
+                // Convert document attachments to executor format
+                let doc_attachments = config.document_attachments.as_ref().map(|docs| {
+                    docs.iter().map(|d| crate::agents::executor::DocumentAttachmentInfo {
+                        id: d.id.clone(),
+                        original_filename: d.original_filename.clone(),
+                        file_size: d.file_size,
+                        mime_type: d.mime_type.clone(),
+                        processing_mode: d.processing_mode.clone(),
+                        extracted_text: d.extracted_text.clone(),
+                        container_path: d.container_path.clone(),
+                    }).collect()
+                });
+                
                 let executor_params = crate::agents::executor::AgentExecuteParams {
                     execution_id: conv_id.clone(),
                     model: model_name_for_closure.clone(),
@@ -2220,6 +2238,7 @@ pub async fn agent_execute(
                     tool_config: effective_tool_config.clone(),
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
                     tenth_man_config: config.tenth_man_config.clone(),
+                    document_attachments: doc_attachments,
                 };
 
                 // 调用工具支持的代理执行器

@@ -294,5 +294,25 @@ export default {
   statusRunning: 'Running',
   statusCompleted: 'Completed',
   statusFailed: 'Failed',
-  statusPending: 'Pending'
+  statusPending: 'Pending',
+
+  // Document attachment
+  document: {
+    contentMode: 'Content',
+    contentModeDesc: 'Extract text for AI understanding',
+    securityMode: 'Security',
+    securityModeDesc: 'Deep scan with security tools',
+    requiresDocker: 'Requires Docker',
+    remove: 'Remove',
+    processing: 'Processing...',
+    statusPending: 'Pending selection',
+    statusProcessing: 'Processing',
+    statusReady: 'Ready',
+    statusFailed: 'Failed',
+    dropDocuments: 'Drop documents here',
+    supportedTypes: 'Supports Word, Excel, PPT, PDF, Email, etc.',
+    dockerNotAvailable: 'Docker unavailable, security analysis disabled',
+    selectProcessingMode: 'Please select processing mode',
+    selectModeFirst: 'Please select document processing mode first',
+  }
 }

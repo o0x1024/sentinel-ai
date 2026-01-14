@@ -294,5 +294,25 @@ export default {
   statusRunning: '执行中',
   statusCompleted: '已完成',
   statusFailed: '失败',
-  statusPending: '等待中'
+  statusPending: '等待中',
+
+  // Document attachment
+  document: {
+    contentMode: '内容',
+    contentModeDesc: '提取文本内容供 AI 理解',
+    securityMode: '安全',
+    securityModeDesc: '使用安全工具深度扫描',
+    requiresDocker: '需要 Docker',
+    remove: '移除',
+    processing: '处理中...',
+    statusPending: '等待选择',
+    statusProcessing: '处理中',
+    statusReady: '已就绪',
+    statusFailed: '处理失败',
+    dropDocuments: '拖放文档到此处',
+    supportedTypes: '支持 Word、Excel、PPT、PDF、邮件等',
+    dockerNotAvailable: 'Docker 不可用，无法进行安全分析',
+    selectProcessingMode: '请选择处理方式',
+    selectModeFirst: '请先选择文档处理方式',
+  }
 }

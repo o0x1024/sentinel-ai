@@ -142,6 +142,8 @@
             :rag-enabled="ragEnabled"
             :tools-enabled="toolsEnabled"
             :pending-attachments="pendingAttachments"
+            :pending-documents="pendingDocuments"
+            :processed-documents="processedDocuments"
             :referenced-traffic="referencedTraffic"
             @send-message="handleSubmit"
             @stop-execution="handleStop"
@@ -149,6 +151,9 @@
             @toggle-tools="handleToggleTools"
             @add-attachments="handleAddAttachments"
             @remove-attachment="handleRemoveAttachment"
+            @add-documents="handleAddDocuments"
+            @remove-document="handleRemoveDocument"
+            @document-processed="handleDocumentProcessed"
             @remove-traffic="handleRemoveTraffic"
             @clear-traffic="handleClearTraffic"
             @clear-conversation="handleClearConversation"
@@ -279,6 +284,8 @@ const ragEnabled = ref(false)
 const toolsEnabled = ref(false)
 const tenthManEnabled = ref(false)
 const pendingAttachments = ref<any[]>([])
+const pendingDocuments = ref<import('@/types/agent').PendingDocumentAttachment[]>([])
+const processedDocuments = ref<import('@/types/agent').ProcessedDocumentResult[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
 
 // Tool configuration
@@ -484,6 +491,43 @@ const handleRemoveAttachment = (index: number) => {
   if (index >= 0 && index < pendingAttachments.value.length) {
     pendingAttachments.value.splice(index, 1)
   }
+}
+
+// Handle document attachments
+const handleAddDocuments = (docs: import('@/types/agent').PendingDocumentAttachment[]) => {
+  pendingDocuments.value.push(...docs)
+  console.log('[AgentView] Added', docs.length, 'document(s) for processing')
+}
+
+const handleRemoveDocument = (index: number) => {
+  if (index >= 0 && index < pendingDocuments.value.length) {
+    const removed = pendingDocuments.value.splice(index, 1)
+    // Also remove from processed list
+    if (removed[0]) {
+      const idx = processedDocuments.value.findIndex(d => d.id === removed[0].id)
+      if (idx >= 0) {
+        processedDocuments.value.splice(idx, 1)
+      }
+    }
+  }
+}
+
+const handleDocumentProcessed = (result: import('@/types/agent').ProcessedDocumentResult) => {
+  // Update processed documents list
+  const existingIdx = processedDocuments.value.findIndex(d => d.id === result.id)
+  if (existingIdx >= 0) {
+    processedDocuments.value[existingIdx] = result
+  } else {
+    processedDocuments.value.push(result)
+  }
+  
+  // Update pending document's mode
+  const pendingIdx = pendingDocuments.value.findIndex(d => d.id === result.id)
+  if (pendingIdx >= 0) {
+    pendingDocuments.value[pendingIdx].processing_mode = result.processing_mode as any
+  }
+  
+  console.log('[AgentView] Document processed:', result.original_filename, result.processing_mode)
 }
 
 // Handle traffic references
@@ -973,9 +1017,18 @@ const handleSubmit = async () => {
   // Clear input and references
   inputValue.value = ''
   const usedAttachments = [...pendingAttachments.value]
+  const usedDocuments = processedDocuments.value.filter(d => d.status === 'ready')
   const usedTraffic = [...referencedTraffic.value]
   pendingAttachments.value = []
+  pendingDocuments.value = []
+  processedDocuments.value = []
   referencedTraffic.value = []
+  
+  // Store document attachments for later injection into user message
+  // We'll inject them when the user_message event arrives from backend
+  if (usedDocuments.length > 0) {
+    agentEvents.setPendingDocumentAttachments(usedDocuments)
+  }
   
   // Force scroll to bottom when user sends a message
   nextTick(() => {
@@ -1015,6 +1068,7 @@ const handleSubmit = async () => {
         conversation_id: conversationId.value,
         message_id: null,
         attachments: usedAttachments.length > 0 ? usedAttachments : undefined,
+        document_attachments: usedDocuments.length > 0 ? usedDocuments : undefined,
         tool_config: toolConfig.value,
         display_content: displayContent,
       }

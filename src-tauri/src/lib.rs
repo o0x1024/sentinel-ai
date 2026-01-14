@@ -920,6 +920,12 @@ pub fn run() {
             commands::cleanup_docker_containers,
             commands::cleanup_shell_container,
             commands::get_shell_container_info,
+            // Document attachment commands
+            commands::get_file_stat,
+            commands::check_docker_for_file_analysis,
+            commands::process_document_attachment,
+            commands::delete_document_from_container,
+            commands::list_container_uploads,
             // Terminal WebSocket commands
             commands::start_terminal_server,
             commands::stop_terminal_server,

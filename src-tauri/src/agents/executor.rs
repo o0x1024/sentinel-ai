@@ -15,6 +15,18 @@ use super::tool_router::{ToolConfig, ToolRouter};
 use super::tenth_man::{TenthMan, TenthManConfig, InterventionContext, TriggerReason};
 use super::sliding_window::{SlidingWindowManager, SlidingWindowConfig};
 
+/// Document attachment info for prompt injection
+#[derive(Debug, Clone)]
+pub struct DocumentAttachmentInfo {
+    pub id: String,
+    pub original_filename: String,
+    pub file_size: u64,
+    pub mime_type: String,
+    pub processing_mode: String,
+    pub extracted_text: Option<String>,
+    pub container_path: Option<String>,
+}
+
 /// Agent 执行配置
 #[derive(Debug, Clone)]
 pub struct AgentExecuteParams {
@@ -30,6 +42,7 @@ pub struct AgentExecuteParams {
     pub tool_config: Option<ToolConfig>,
     pub enable_tenth_man_rule: bool,
     pub tenth_man_config: Option<TenthManConfig>,
+    pub document_attachments: Option<Vec<DocumentAttachmentInfo>>,
 }
 
 /// 执行 agent 任务
@@ -561,6 +574,15 @@ async fn execute_agent_with_tools(
         sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
         sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR
     ));
+
+    // Inject document attachments context
+    if let Some(ref doc_attachments) = params.document_attachments {
+        if !doc_attachments.is_empty() {
+            let doc_context = build_document_attachments_context(doc_attachments);
+            final_system_prompt.push_str(&doc_context);
+            tracing::info!("Injected {} document attachment(s) into system prompt", doc_attachments.len());
+        }
+    }
 
     // 5. 使用 SlidingWindowManager 管理上下文和历史
     let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000) as usize;
@@ -1476,6 +1498,81 @@ fn truncate_for_memory(text: &str, max_len: usize) -> String {
     let mut out = text.chars().take(max_len).collect::<String>();
     out.push_str("...");
     out
+}
+
+/// Build document attachments context for system prompt injection
+fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) -> String {
+    let mut context = String::new();
+    
+    // Separate content and security mode attachments
+    let content_docs: Vec<_> = attachments.iter()
+        .filter(|a| a.processing_mode == "content" && a.extracted_text.is_some())
+        .collect();
+    let security_docs: Vec<_> = attachments.iter()
+        .filter(|a| a.processing_mode == "security" && a.container_path.is_some())
+        .collect();
+    
+    // Content mode documents: include extracted text
+    if !content_docs.is_empty() {
+        context.push_str("\n\n[Document Content]\nThe user has attached the following document(s). The content has been extracted for your analysis:\n\n");
+        
+        for (i, doc) in content_docs.iter().enumerate() {
+            context.push_str(&format!(
+                "--- Document {} ---\n\
+                Filename: {}\n\
+                Size: {} bytes\n\
+                Type: {}\n\n\
+                Content:\n{}\n\n",
+                i + 1,
+                doc.original_filename,
+                doc.file_size,
+                doc.mime_type,
+                doc.extracted_text.as_ref().unwrap_or(&String::new())
+            ));
+        }
+        
+        context.push_str("Please help the user with their request regarding the above document content.\n");
+    }
+    
+    // Security mode documents: provide file paths and analysis instructions
+    if !security_docs.is_empty() {
+        context.push_str("\n\n[Security Analysis Task]\nThe user wants you to perform a security analysis on the following file(s):\n\n");
+        
+        for (i, doc) in security_docs.iter().enumerate() {
+            context.push_str(&format!(
+                "{}. {} ({})\n\
+                   Path: {}\n\
+                   Size: {} bytes\n",
+                i + 1,
+                doc.original_filename,
+                doc.mime_type,
+                doc.container_path.as_ref().unwrap_or(&String::new()),
+                doc.file_size
+            ));
+        }
+        
+        context.push_str("\n\
+Available security analysis tools in the Docker container:\n\
+- olevba: Analyze VBA macros for malicious code (Office documents)\n\
+- oleobj: Extract embedded objects from Office documents\n\
+- exiftool: Examine metadata for suspicious information\n\
+- file: Detect file type and verify file signatures\n\
+- binwalk: Analyze binary files for embedded data\n\
+- strings: Extract printable strings from binary files\n\
+- xxd: Hex dump for binary analysis\n\
+- pdftotext/pdfinfo: Analyze PDF documents\n\
+- unzip/7z: Extract and inspect archive contents\n\n\
+Recommended analysis workflow:\n\
+1. Verify file type with `file <path>`\n\
+2. Check for macros with `olevba <path>` (Office files)\n\
+3. Examine metadata with `exiftool <path>`\n\
+4. Look for embedded objects with `oleobj <path>`\n\
+5. Check for hidden data with `binwalk <path>`\n\
+6. Generate a comprehensive security risk report\n\n\
+Use the shell tool to execute commands. Be thorough and systematic in your analysis.\n");
+    }
+    
+    context
 }
 
 /// Get provider's max context length from database config

@@ -526,6 +526,115 @@ impl DockerSandbox {
         let config = DockerSandboxConfig::default();
         ContainerPool::find_persistent_container(&config).await
     }
+
+    /// Copy file from host to container
+    pub async fn copy_file_to_container(
+        &self,
+        host_path: &str,
+        container_path: &str,
+    ) -> Result<(), DockerError> {
+        // Ensure container is running
+        let container_id = {
+            let mut pool = CONTAINER_POOL.write().await;
+            pool.get_container(&self.config).await?
+        };
+
+        info!("Copying file to container: {} -> {}:{}", host_path, container_id, container_path);
+
+        // Create parent directory in container
+        let parent_dir = std::path::Path::new(container_path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("/workspace/uploads");
+        
+        let mkdir_output = Command::new("docker")
+            .args(&["exec", &container_id, "mkdir", "-p", parent_dir])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DockerError::CommandFailed(format!("Failed to create directory: {}", e)))?;
+
+        if !mkdir_output.status.success() {
+            let stderr = String::from_utf8_lossy(&mkdir_output.stderr);
+            warn!("Failed to create directory in container: {}", stderr);
+        }
+
+        // Copy file using docker cp
+        let output = Command::new("docker")
+            .args(&["cp", host_path, &format!("{}:{}", container_id, container_path)])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DockerError::CommandFailed(format!("Failed to copy file: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DockerError::CommandFailed(format!(
+                "Docker cp failed: {}",
+                stderr
+            )));
+        }
+
+        info!("File copied successfully to container: {}", container_path);
+        Ok(())
+    }
+
+    /// Copy file from container to host
+    pub async fn copy_file_from_container(
+        &self,
+        container_path: &str,
+        host_path: &str,
+    ) -> Result<(), DockerError> {
+        let container_id = {
+            let mut pool = CONTAINER_POOL.write().await;
+            pool.get_container(&self.config).await?
+        };
+
+        info!("Copying file from container: {}:{} -> {}", container_id, container_path, host_path);
+
+        let output = Command::new("docker")
+            .args(&["cp", &format!("{}:{}", container_id, container_path), host_path])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DockerError::CommandFailed(format!("Failed to copy file: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DockerError::CommandFailed(format!(
+                "Docker cp failed: {}",
+                stderr
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Delete file in container
+    pub async fn delete_file_in_container(&self, container_path: &str) -> Result<(), DockerError> {
+        let container_id = {
+            let mut pool = CONTAINER_POOL.write().await;
+            pool.get_container(&self.config).await?
+        };
+
+        let output = Command::new("docker")
+            .args(&["exec", &container_id, "rm", "-f", container_path])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DockerError::CommandFailed(format!("Failed to delete file: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!("Failed to delete file in container: {}", stderr);
+        }
+
+        Ok(())
+    }
 }
 
 /// Initialize Docker sandbox (build image if needed)

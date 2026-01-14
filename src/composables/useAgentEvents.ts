@@ -154,6 +154,7 @@ export interface UseAgentEventsReturn {
   stopExecution: () => void
   startListening: () => Promise<void>
   stopListening: () => void
+  setPendingDocumentAttachments: (docs: any[]) => void
 }
 
 /**
@@ -180,6 +181,9 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
 
   // 工具调用追踪 Map: tool_call_id -> { tool_name, arguments, message_id, message_index }
   const toolCallTracker = new Map<string, { tool_name: string; arguments: any; message_id: string; message_index: number }>()
+
+  // Pending document attachments to inject into next user message
+  const pendingDocumentAttachments = ref<any[]>([])
 
   const unlisteners: UnlistenFn[] = []
 
@@ -246,12 +250,18 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
 
-      // 添加用户消息
+      // 添加用户消息，注入待处理的文档附件
+      const docAttachments = pendingDocumentAttachments.value.length > 0 
+        ? [...pendingDocumentAttachments.value] 
+        : undefined
+      pendingDocumentAttachments.value = [] // Clear after use
+      
       messages.value.push({
         id: payload.message_id,
         type: 'user',
         content: payload.content,
         timestamp: payload.timestamp,
+        metadata: docAttachments ? { document_attachments: docAttachments } : undefined,
       })
     })
     unlisteners.push(unlistenUserMessage)
@@ -276,11 +286,18 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         m.type === 'user' && m.content === payload.task
       )
       if (!hasUserMessage) {
+        // 注入待处理的文档附件
+        const docAttachments = pendingDocumentAttachments.value.length > 0 
+          ? [...pendingDocumentAttachments.value] 
+          : undefined
+        pendingDocumentAttachments.value = [] // Clear after use
+        
         messages.value.push({
           id: crypto.randomUUID(),
           type: 'user',
           content: payload.task,
           timestamp: Date.now(),
+          metadata: docAttachments ? { document_attachments: docAttachments } : undefined,
         })
       }
     })
@@ -1136,6 +1153,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     stopExecution,
     startListening,
     stopListening,
+    // Set pending document attachments to be injected into next user message
+    setPendingDocumentAttachments: (docs: any[]) => {
+      pendingDocumentAttachments.value = docs
+    },
   }
 }
 

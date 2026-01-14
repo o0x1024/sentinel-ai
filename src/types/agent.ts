@@ -45,6 +45,7 @@ export interface MessageMetadata {
   trigger?: string  // 第十人原则触发原因
   retry_count?: number  // 第十人原则重试次数
   requires_confirmation?: boolean  // 第十人原则是否需要确认
+  document_attachments?: ProcessedDocumentResult[]  // 用户消息中的文档附件
 }
 
 // Agent 消息
@@ -278,4 +279,87 @@ export function getMessageTypeIcon(type: MessageType): string {
     system: 'ℹ️',
   }
   return icons[type]
+}
+
+// ============ 文档附件 ============
+
+// 文档处理模式
+export type DocumentProcessingMode = 'content' | 'security'
+
+// 文档附件状态
+export type DocumentAttachmentStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
+// 处理后的文档附件
+export interface ProcessedDocumentResult {
+  id: string
+  original_filename: string
+  file_size: number
+  mime_type: string
+  processing_mode: DocumentProcessingMode
+  status: DocumentAttachmentStatus
+  extracted_text?: string
+  container_path?: string
+  extraction_method?: string
+  error_message?: string
+}
+
+// Docker 分析状态
+export interface DockerAnalysisStatus {
+  docker_available: boolean
+  image_exists: boolean
+  container_ready: boolean
+  ready_for_file_analysis: boolean
+  supported_file_types: string[]
+  error_message?: string
+}
+
+// 待处理的文档附件（用户拖放后，选择模式前）
+export interface PendingDocumentAttachment {
+  id: string
+  original_path: string
+  original_filename: string
+  file_size: number
+  mime_type: string
+  processing_mode?: DocumentProcessingMode  // undefined = pending selection
+}
+
+// 支持的文档扩展名
+export const SUPPORTED_DOCUMENT_EXTENSIONS = [
+  'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt',
+  'pdf', 'txt', 'md', 'rtf',
+  'eml', 'msg',
+  'zip', 'rar', '7z', 'tar', 'gz',
+  'json', 'xml', 'csv',
+]
+
+// 判断是否是支持的文档类型
+export function isSupportedDocumentExtension(ext: string): boolean {
+  return SUPPORTED_DOCUMENT_EXTENSIONS.includes(ext.toLowerCase())
+}
+
+// 从文件扩展名获取文件图标
+export function getDocumentIcon(ext: string): string {
+  const iconMap: Record<string, string> = {
+    docx: 'fa-file-word',
+    doc: 'fa-file-word',
+    xlsx: 'fa-file-excel',
+    xls: 'fa-file-excel',
+    pptx: 'fa-file-powerpoint',
+    ppt: 'fa-file-powerpoint',
+    pdf: 'fa-file-pdf',
+    txt: 'fa-file-alt',
+    md: 'fa-file-alt',
+    rtf: 'fa-file-alt',
+    eml: 'fa-envelope',
+    msg: 'fa-envelope',
+    zip: 'fa-file-archive',
+    rar: 'fa-file-archive',
+    '7z': 'fa-file-archive',
+    tar: 'fa-file-archive',
+    gz: 'fa-file-archive',
+    json: 'fa-file-code',
+    xml: 'fa-file-code',
+    csv: 'fa-file-csv',
+  }
+  return iconMap[ext.toLowerCase()] || 'fa-file'
 }

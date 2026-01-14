@@ -1,6 +1,19 @@
 <template>
-  <div class="input-area-container border-t border-base-300/50 bg-base-100 flex-shrink-0 relative z-0">
-    
+  <div 
+    class="input-area-container border-t border-base-300/50 bg-base-100 flex-shrink-0 relative z-0"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop"
+    :class="{ 'drag-over': isDragOver }"
+  >
+    <!-- Drag overlay -->
+    <div v-if="isDragOver" class="drag-overlay">
+      <div class="drag-content">
+        <i class="fas fa-file-upload text-4xl mb-2"></i>
+        <span class="text-lg">{{ t('agent.document.dropDocuments') }}</span>
+        <span class="text-sm opacity-70">{{ t('agent.document.supportedTypes') }}</span>
+      </div>
+    </div>
 
     <!-- Input area (refactored) -->
     <div class="px-4 pb-3 pt-2">
@@ -50,7 +63,7 @@
         </div>
       </div>
 
-      <!-- 附件预览区（如果有待发附件） -->
+      <!-- 图片附件预览区 -->
       <div v-if="pendingAttachments && pendingAttachments.length > 0" class="mb-2 flex flex-wrap gap-2">
         <div
           v-for="(att, idx) in pendingAttachments"
@@ -70,6 +83,26 @@
             <i class="fas fa-times"></i>
           </button>
         </div>
+      </div>
+
+      <!-- 文档附件预览区 -->
+      <div v-if="pendingDocuments && pendingDocuments.length > 0" class="mb-2 space-y-2">
+        <DocumentModeSelector
+          v-for="(doc, idx) in pendingDocuments"
+          :key="doc.id"
+          :attachment="doc"
+          :docker-available="dockerAvailable"
+          :processed-result="getProcessedResult(doc.id)"
+          @remove="removeDocument(idx)"
+          @processed="onDocumentProcessed"
+          @error="onDocumentError"
+        />
+      </div>
+
+      <!-- Docker 不可用警告 -->
+      <div v-if="!dockerAvailable && pendingDocuments && pendingDocuments.length > 0" class="mb-2 alert alert-warning text-xs py-2">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>{{ t('agent.document.dockerNotAvailable') }}</span>
       </div>
 
       <div ref="containerRef" class="chat-input rounded-2xl bg-base-200/60 border border-base-300/60 backdrop-blur-sm flex flex-col gap-2 px-3 py-2 shadow-sm focus-within:border-primary transition-colors">
@@ -112,14 +145,19 @@
 
           <!-- Right side icons -->
           <div class="flex items-center gap-2 shrink-0">
+            <!-- 未处理文档提示 -->
+            <span v-if="hasUnprocessedDocuments" class="text-xs text-warning flex items-center gap-1">
+              <i class="fas fa-exclamation-triangle"></i>
+              {{ t('agent.document.selectModeFirst') }}
+            </span>
             <button class="icon-btn" title="语言 / 翻译"><i class="fas fa-language"></i></button>
             <button
               v-if="!isLoading || allowTakeover"
               class="send-btn"
-              :disabled="!inputMessage.trim()"
-              :class="{ 'opacity-40 cursor-not-allowed': !inputMessage.trim() }"
+              :disabled="!canSend"
+              :class="{ 'opacity-40 cursor-not-allowed': !canSend }"
               @click="emitSend"
-              :title="isLoading ? '接管并发送 (Enter)' : '发送 (Enter)'"
+              :title="hasUnprocessedDocuments ? t('agent.document.selectModeFirst') : (isLoading ? '接管并发送 (Enter)' : '发送 (Enter)')"
             >
               <i class="fas fa-arrow-up"></i>
             </button>
@@ -150,6 +188,14 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import type { UnlistenFn } from '@tauri-apps/api/event'
+import DocumentModeSelector from './Agent/DocumentModeSelector.vue'
+import type { PendingDocumentAttachment, ProcessedDocumentResult, DockerAnalysisStatus } from '@/types/agent'
+
+const { t } = useI18n()
 
 // 流量引用类型
 type TrafficSendType = 'request' | 'response' | 'both'
@@ -174,6 +220,8 @@ const props = defineProps<{
   ragEnabled?: boolean
   toolsEnabled?: boolean
   pendingAttachments?: any[]
+  pendingDocuments?: PendingDocumentAttachment[]
+  processedDocuments?: ProcessedDocumentResult[]
   referencedTraffic?: ReferencedTraffic[]
 }>()
 
@@ -189,6 +237,9 @@ const emit = defineEmits<{
   (e: 'open-tool-config'): void
   (e: 'add-attachments', files: string[]): void
   (e: 'remove-attachment', index: number): void
+  (e: 'add-documents', files: PendingDocumentAttachment[]): void
+  (e: 'remove-document', index: number): void
+  (e: 'document-processed', result: ProcessedDocumentResult): void
   (e: 'remove-traffic', index: number): void
   (e: 'clear-traffic'): void
 }>()
@@ -263,8 +314,22 @@ const onInput = (e: Event) => {
   autoResize()
 }
 
+// 检查是否有未选择处理模式的文档
+const hasUnprocessedDocuments = computed(() => {
+  if (!props.pendingDocuments || props.pendingDocuments.length === 0) return false
+  // 检查是否有文档没有选择处理模式
+  return props.pendingDocuments.some(doc => !doc.processing_mode)
+})
+
+// 检查是否可以发送
+const canSend = computed(() => {
+  if (!props.inputMessage.trim()) return false
+  if (hasUnprocessedDocuments.value) return false
+  return true
+})
+
 const emitSend = () => {
-  if (!props.inputMessage.trim()) return
+  if (!canSend.value) return
   if (props.isLoading && !allowTakeover.value) return
   emit('send-message')
   // 发送后恢复高度
@@ -461,7 +526,199 @@ const focusInput = () => {
   })
 }
 
-onMounted(() => {
+// ====== 文档拖放功能 ======
+const isDragOver = ref(false)
+const dockerAvailable = ref(false)
+let unlistenDragDrop: UnlistenFn | null = null
+
+// 检查 Docker 状态
+const checkDockerStatus = async () => {
+  try {
+    const status = await invoke<DockerAnalysisStatus>('check_docker_for_file_analysis')
+    dockerAvailable.value = status.ready_for_file_analysis
+  } catch (error) {
+    console.error('Failed to check Docker status:', error)
+    dockerAvailable.value = false
+  }
+}
+
+// 设置 Tauri 原生拖放监听
+const setupTauriDragDrop = async () => {
+  try {
+    const webview = getCurrentWebviewWindow()
+    
+    // Listen for drag-drop events
+    unlistenDragDrop = await webview.onDragDropEvent(async (event) => {
+      console.log('[InputArea] Drag drop event:', event.payload.type)
+      
+      if (event.payload.type === 'over' || event.payload.type === 'enter') {
+        isDragOver.value = true
+      } else if (event.payload.type === 'leave') {
+        isDragOver.value = false
+      } else if (event.payload.type === 'drop') {
+        isDragOver.value = false
+        const paths = event.payload.paths
+        console.log('[InputArea] Dropped files:', paths)
+        
+        if (!paths || paths.length === 0) return
+        
+        await processDroppedFiles(paths)
+      }
+    })
+    
+    console.log('[InputArea] Tauri drag-drop listener registered')
+  } catch (error) {
+    console.error('[InputArea] Failed to setup Tauri drag-drop:', error)
+  }
+}
+
+// 处理拖放的文件
+const processDroppedFiles = async (paths: string[]) => {
+  const imageFiles: string[] = []
+  const documentFiles: PendingDocumentAttachment[] = []
+
+  for (const filePath of paths) {
+    const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown'
+    const ext = fileName.split('.').pop()?.toLowerCase() || ''
+    
+    console.log('[InputArea] Processing file:', fileName, 'ext:', ext)
+    
+    // 判断是图片还是其他文件（其他文件统一作为文档处理）
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+      imageFiles.push(filePath)
+    } else {
+      // 所有非图片文件都作为文档处理（包括未识别的文件类型）
+      let fileSize = 0
+      try {
+        const stat = await invoke<{ size: number }>('get_file_stat', { path: filePath })
+        fileSize = stat.size
+      } catch {
+        console.warn('[InputArea] Could not get file size for:', filePath)
+      }
+      
+      documentFiles.push({
+        id: crypto.randomUUID(),
+        original_path: filePath,
+        original_filename: fileName,
+        file_size: fileSize,
+        mime_type: getMimeTypeFromExt(ext),
+        processing_mode: undefined,
+      })
+    }
+  }
+
+  if (documentFiles.length > 0) {
+    console.log('[InputArea] Adding', documentFiles.length, 'document(s)')
+    emit('add-documents', documentFiles)
+    await checkDockerStatus()
+  }
+  
+  if (imageFiles.length > 0) {
+    console.log('[InputArea] Adding', imageFiles.length, 'image(s)')
+    emit('add-attachments', imageFiles)
+  }
+}
+
+// 从扩展名获取 MIME 类型
+const getMimeTypeFromExt = (ext: string): string => {
+  const mimeMap: Record<string, string> = {
+    // Office 文档
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls: 'application/vnd.ms-excel',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ppt: 'application/vnd.ms-powerpoint',
+    pdf: 'application/pdf',
+    rtf: 'application/rtf',
+    // 邮件
+    eml: 'message/rfc822',
+    msg: 'application/vnd.ms-outlook',
+    // 文本类
+    txt: 'text/plain',
+    md: 'text/markdown',
+    json: 'application/json',
+    xml: 'application/xml',
+    csv: 'text/csv',
+    html: 'text/html',
+    htm: 'text/html',
+    css: 'text/css',
+    // 代码文件（统一作为文本处理）
+    js: 'text/javascript',
+    ts: 'text/typescript',
+    jsx: 'text/javascript',
+    tsx: 'text/typescript',
+    py: 'text/x-python',
+    java: 'text/x-java',
+    c: 'text/x-c',
+    cpp: 'text/x-c++',
+    h: 'text/x-c',
+    hpp: 'text/x-c++',
+    rs: 'text/x-rust',
+    go: 'text/x-go',
+    rb: 'text/x-ruby',
+    php: 'text/x-php',
+    sh: 'text/x-shellscript',
+    bash: 'text/x-shellscript',
+    zsh: 'text/x-shellscript',
+    sql: 'text/x-sql',
+    yaml: 'text/yaml',
+    yml: 'text/yaml',
+    toml: 'text/x-toml',
+    ini: 'text/x-ini',
+    conf: 'text/plain',
+    cfg: 'text/plain',
+    log: 'text/plain',
+    // 压缩文件
+    zip: 'application/zip',
+    tar: 'application/x-tar',
+    gz: 'application/gzip',
+    rar: 'application/vnd.rar',
+    '7z': 'application/x-7z-compressed',
+  }
+  // 未知类型默认作为文本处理
+  return mimeMap[ext] || 'text/plain'
+}
+
+// 保留 HTML5 拖放作为备用（用于视觉反馈）
+const onDragOver = (e: DragEvent) => {
+  // Tauri 会处理实际的拖放，这里只用于视觉反馈
+  if (e.dataTransfer?.types.includes('Files')) {
+    isDragOver.value = true
+  }
+}
+
+const onDragLeave = () => {
+  isDragOver.value = false
+}
+
+const onDrop = async (_e: DragEvent) => {
+  // Tauri 的 onDragDropEvent 会处理实际的文件
+  // 这里只重置状态
+  isDragOver.value = false
+}
+
+// 获取已处理的文档结果
+const getProcessedResult = (docId: string): ProcessedDocumentResult | undefined => {
+  return props.processedDocuments?.find(d => d.id === docId)
+}
+
+// 移除文档
+const removeDocument = (index: number) => {
+  emit('remove-document', index)
+}
+
+// 文档处理完成
+const onDocumentProcessed = (result: ProcessedDocumentResult) => {
+  emit('document-processed', result)
+}
+
+// 文档处理错误
+const onDocumentError = (error: string) => {
+  console.error('Document processing error:', error)
+}
+
+onMounted(async () => {
   autoResize()
   // 同步父组件传入的初始值
   // Initialize persistent states (persisted values take precedence)
@@ -489,6 +746,12 @@ onMounted(() => {
   window.addEventListener('scroll', updatePopoverPosition, true)
   window.addEventListener('click', handleClickOutside, true)
   
+  // 设置 Tauri 拖放监听
+  await setupTauriDragDrop()
+  
+  // 检查 Docker 状态
+  await checkDockerStatus()
+  
   // 自动聚焦输入框
   focusInput()
 })
@@ -497,6 +760,12 @@ onUnmounted(() => {
   window.removeEventListener('resize', updatePopoverPosition)
   window.removeEventListener('scroll', updatePopoverPosition, true)
   window.removeEventListener('click', handleClickOutside, true)
+  
+  // 清理 Tauri 拖放监听
+  if (unlistenDragDrop) {
+    unlistenDragDrop()
+    unlistenDragDrop = null
+  }
 })
 
 // 监听父组件状态变化，保持本地按钮状态一致（并持久化）
@@ -597,5 +866,32 @@ defineExpose({
   .search-popover { 
     width: 18rem; 
   }
+}
+
+/* Drag and drop styles */
+.input-area-container.drag-over {
+  position: relative;
+}
+
+.drag-overlay {
+  position: absolute;
+  inset: 0;
+  background: hsl(var(--p) / 0.1);
+  border: 2px dashed hsl(var(--p));
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+}
+
+.drag-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: hsl(var(--p));
+  text-align: center;
+  padding: 1rem;
 }
 </style>

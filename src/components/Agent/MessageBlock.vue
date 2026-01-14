@@ -295,6 +295,22 @@
             <span>{{ t('agent.detailsInVisionPanel') }}</span>
           </div>
           <MarkdownRenderer v-else :content="formattedContent" :citations="ragInfo?.citations" />
+          
+          <!-- Document attachments for user messages (shown below content) -->
+          <div v-if="message.type === 'user' && documentAttachments.length > 0" class="document-attachments mt-2 pt-2 border-t border-base-300/50">
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="doc in documentAttachments"
+                :key="doc.id"
+                class="doc-attachment inline-flex items-center gap-2 px-2 py-1 rounded-lg text-xs"
+                :class="doc.processing_mode === 'security' ? 'bg-warning/20 text-warning' : 'bg-success/20 text-success'"
+              >
+                <i :class="['fas', doc.processing_mode === 'security' ? 'fa-shield-alt' : 'fa-book-open']"></i>
+                <span class="font-medium truncate max-w-32" :title="doc.original_filename">{{ doc.original_filename }}</span>
+                <span class="opacity-70">({{ formatDocSize(doc.file_size) }})</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -681,6 +697,20 @@ const typeClass = computed(() => {
       return 'bg-base-200'
   }
 })
+
+// Get document attachments from user message metadata
+const documentAttachments = computed(() => {
+  if (props.message.type !== 'user') return []
+  return props.message.metadata?.document_attachments || []
+})
+
+// Format document file size
+const formatDocSize = (bytes: number): string => {
+  if (!bytes || bytes === 0) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
 
 // Format content based on message type
 const formattedContent = computed(() => {
