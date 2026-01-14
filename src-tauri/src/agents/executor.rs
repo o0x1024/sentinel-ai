@@ -1306,10 +1306,9 @@ async fn execute_agent_with_tools(
                     };
                     
                     if should_run_final {
-                        tracing::info!("Running Tenth Man final review for execution_id: {}", params.execution_id);
-                        let context_summary = format!("User Task: {}", params.task); 
+                        tracing::info!("Running Tenth Man final review with full history for execution_id: {}", params.execution_id);
                         
-                        match tenth_man.review(&params.task, &context_summary, &response).await {
+                        match tenth_man.review_with_history(&params.execution_id).await {
                             Ok(critique) => {
                                 tracing::info!("Tenth Man Critique generated ({} chars)", critique.len());
                                 

@@ -87,17 +87,19 @@ interface AgentErrorEvent {
   error: string
 }
 
-// 后端发送的 agent:history_summarized 事件
-interface AgentHistorySummarizedEvent {
-  execution_id: string
-  original_tokens: number
-  summarized_tokens: number
-  saved_tokens: number
-  saved_percentage: number
-  total_tokens: number
-  message_count: number
-  summary_content?: string
-  summary_preview?: string
+// 后端发送的 agent:segment_summary_created 事件
+interface AgentSegmentSummaryCreatedEvent {
+  conversation_id: string
+  segment_index: number
+  summary: string
+  tokens: number
+}
+
+// 后端发送的 agent:global_summary_updated 事件
+interface AgentGlobalSummaryUpdatedEvent {
+  conversation_id: string
+  summary: string
+  tokens: number
 }
 
 // 后端发送的 agent:retry 事件
@@ -806,31 +808,48 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     })
     unlisteners.push(unlistenError)
 
-    // 监听 agent:history_summarized 事件
-    const unlistenHistorySummarized = await listen<AgentHistorySummarizedEvent>('agent:history_summarized', (event) => {
+    // 监听 agent:segment_summary_created 事件（滑动窗口段落摘要）
+    const unlistenSegmentSummary = await listen<AgentSegmentSummaryCreatedEvent>('agent:segment_summary_created', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
+      if (!matchesTarget(payload.conversation_id)) return
 
-      console.log('[useAgentEvents] History summarized event received:', payload)
+      console.log('[useAgentEvents] Segment summary created:', payload)
 
       messages.value.push({
         id: crypto.randomUUID(),
         type: 'system',
-        content: `History automatically summarized: compressed to ${payload.summarized_tokens} tokens`,
+        content: `Memory segment #${payload.segment_index} compressed (${payload.tokens} tokens)`,
         timestamp: Date.now(),
         metadata: {
-          kind: 'history_summarized',
-          original_tokens: payload.original_tokens,
-          summarized_tokens: payload.summarized_tokens,
-          saved_tokens: payload.saved_tokens,
-          saved_percentage: payload.saved_percentage,
-          total_tokens: payload.total_tokens,
-          summary_content: payload.summary_content,
-          summary_preview: payload.summary_preview,
+          kind: 'segment_summary',
+          segment_index: payload.segment_index,
+          summary_tokens: payload.tokens,
+          summary_content: payload.summary,
         }
       })
     })
-    unlisteners.push(unlistenHistorySummarized)
+    unlisteners.push(unlistenSegmentSummary)
+
+    // 监听 agent:global_summary_updated 事件（滑动窗口全局摘要）
+    const unlistenGlobalSummary = await listen<AgentGlobalSummaryUpdatedEvent>('agent:global_summary_updated', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.conversation_id)) return
+
+      console.log('[useAgentEvents] Global summary updated:', payload)
+
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: `Long-term memory updated (${payload.tokens} tokens)`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'global_summary',
+          summary_tokens: payload.tokens,
+          summary_content: payload.summary,
+        }
+      })
+    })
+    unlisteners.push(unlistenGlobalSummary)
 
     // 监听 agent:retry 事件
     const unlistenRetry = await listen<AgentRetryEvent>('agent:retry', (event) => {

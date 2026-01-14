@@ -7,15 +7,15 @@ FROM kalilinux/kali-rolling
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
-# Configure domestic mirror for faster downloads (skip proxy for apt)
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list && \
-    apt-get update --allow-unauthenticated
+# Configure multiple mirrors for better reliability
+RUN echo "deb http://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/kali.list && \
+    echo "deb http://mirrors.ustc.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/kali.list && \
+    echo "deb http://mirror.sjtu.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/kali.list && \
+    apt-get update --allow-unauthenticated || true
 
 # Install essential tools (excluding jq which may have network issues)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update --fix-missing || apt-get update --fix-missing && apt-get install -y --no-install-recommends \
     # Basic utilities
     curl \
     wget \
@@ -49,7 +49,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Image processing and steganography
     imagemagick \
     pngcheck \
-    outguess \
     # Audio processing
     sox \
     ffmpeg \
@@ -75,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     htop \
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install -y --no-install-recommends kali-tools-forensics && rm -rf /var/lib/apt/lists/*
+RUN apt-get update --fix-missing || apt-get update --fix-missing && apt-get install -y --no-install-recommends kali-tools-forensics && rm -rf /var/lib/apt/lists/*
 # Install jq separately with retry mechanism
 RUN apt-get update && \
     (apt-get install -y --no-install-recommends jq || \
@@ -84,7 +83,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install essential Python CTF libraries
-RUN pip3 install --no-cache-dir --user \
+RUN pip3 install --no-cache-dir --user --break-system-packages \
     requests \
     pwntools \
     pycryptodome \
@@ -92,13 +91,12 @@ RUN pip3 install --no-cache-dir --user \
     numpy \
     scipy \
     opencv-python \
-    zsteg-lib \
     stegano \
     pyzbar \
     qrcode \
     beautifulsoup4 \
     lxml \
-    || pip3 install --no-cache-dir --user \
+    || pip3 install --no-cache-dir --user --break-system-packages \
     requests \
     pwntools \
     pycryptodome \
@@ -106,24 +104,131 @@ RUN pip3 install --no-cache-dir --user \
     numpy \
     scipy \
     opencv-python \
-    zsteg-lib \
     stegano \
     pyzbar \
     qrcode \
     beautifulsoup4 \
     lxml
 
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash - && \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x |  bash - && \
     apt-get install -y --no-install-recommends  nodejs 
 
-# Install PHP for web CTF challenges
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install PHP for web CTF challenges (Kali default version)
+RUN apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
     php \
     php-cli \
     php-curl \
-    php-json \
     php-mbstring \
+    php-xml \
+    php-zip \
+    php-mysql \
+    php-gd \
+    php-sqlite3 \
+    php-intl \
+    php-bcmath \
     && rm -rf /var/lib/apt/lists/*
+
+# Install build dependencies for compiling multiple PHP versions
+RUN apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
+    autoconf \
+    bison \
+    build-essential \
+    libxml2-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libssl-dev \
+    libcurl4-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libonig-dev \
+    libzip-dev \
+    libsqlite3-dev \
+    pkg-config \
+    re2c \
+    curl \
+    && rm -rf /var/lib/apt/lists/* && \
+    find /usr/include -name "curl" -type d -exec ls -la {} \;
+
+# Compile and install PHP 5.6 (for old CTF challenges)
+RUN cd /tmp && \
+    wget -q https://www.php.net/distributions/php-5.6.40.tar.gz && \
+    tar xzf php-5.6.40.tar.gz && \
+    cd php-5.6.40 && \
+    ./configure --prefix=/opt/php56 \
+        --enable-cli \
+        --with-curl \
+        --with-openssl \
+        --with-zlib \
+        --enable-mbstring \
+        --with-mysqli=mysqlnd \
+        --with-pdo-mysql=mysqlnd \
+        --disable-cgi && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf php-5.6.40*
+
+# Compile and install PHP 7.0
+RUN cd /tmp && \
+    wget -q https://www.php.net/distributions/php-7.0.33.tar.gz && \
+    tar xzf php-7.0.33.tar.gz && \
+    cd php-7.0.33 && \
+    ./configure --prefix=/opt/php70 \
+        --enable-cli \
+        --with-curl \
+        --with-openssl \
+        --with-zlib \
+        --enable-mbstring \
+        --with-mysqli=mysqlnd \
+        --with-pdo-mysql=mysqlnd \
+        --disable-cgi && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf php-7.0.33*
+
+# Compile and install PHP 7.2
+RUN cd /tmp && \
+    wget -q https://www.php.net/distributions/php-7.2.34.tar.gz && \
+    tar xzf php-7.2.34.tar.gz && \
+    cd php-7.2.34 && \
+    ./configure --prefix=/opt/php72 \
+        --enable-cli \
+        --with-curl \
+        --with-openssl \
+        --with-zlib \
+        --enable-mbstring \
+        --with-mysqli=mysqlnd \
+        --with-pdo-mysql=mysqlnd \
+        --disable-cgi && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf php-7.2.34*
+
+# Compile and install PHP 7.4
+RUN cd /tmp && \
+    wget -q https://www.php.net/distributions/php-7.4.33.tar.gz && \
+    tar xzf php-7.4.33.tar.gz && \
+    cd php-7.4.33 && \
+    ./configure --prefix=/opt/php74 \
+        --enable-cli \
+        --with-curl \
+        --with-openssl \
+        --with-zlib \
+        --enable-mbstring \
+        --with-mysqli=mysqlnd \
+        --with-pdo-mysql=mysqlnd \
+        --disable-cgi && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf php-7.4.33*
+
+# Create symlinks for easy access
+RUN ln -s /opt/php56/bin/php /usr/local/bin/php56 && \
+    ln -s /opt/php70/bin/php /usr/local/bin/php70 && \
+    ln -s /opt/php72/bin/php /usr/local/bin/php72 && \
+    ln -s /opt/php74/bin/php /usr/local/bin/php74
 
 # Create non-root user for execution
 RUN useradd -m -s /bin/bash sandbox && \

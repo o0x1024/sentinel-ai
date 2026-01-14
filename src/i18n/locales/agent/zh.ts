@@ -214,13 +214,11 @@ export default {
   executionResult: '执行结果',
   toolCallId: '工具调用 ID',
 
-  // History summarization
-  historySummarized: '历史消息已自动摘要',
-  originalTokens: '原始 Tokens',
-  summarizedTokens: '摘要后 Tokens',
-  tokensSaved: '节省 Tokens',
-  saved: '节省',
-  summaryPreview: '摘要预览',
+  // Sliding window memory
+  segmentSummary: '记忆段落压缩',
+  globalSummary: '长期记忆更新',
+  segmentIndex: '段落',
+  longTermMemory: '长期记忆',
   summaryContent: '摘要内容',
 
   // VisionExplorerPanel

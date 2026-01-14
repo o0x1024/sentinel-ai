@@ -214,13 +214,11 @@ export default {
   executionResult: 'Execution Result',
   toolCallId: 'Tool Call ID',
 
-  // History summarization
-  historySummarized: 'History Automatically Summarized',
-  originalTokens: 'Original Tokens',
-  summarizedTokens: 'Summarized Tokens',
-  tokensSaved: 'Tokens Saved',
-  saved: 'saved',
-  summaryPreview: 'Summary Preview',
+  // Sliding window memory
+  segmentSummary: 'Memory Segment Compressed',
+  globalSummary: 'Long-term Memory Updated',
+  segmentIndex: 'Segment',
+  longTermMemory: 'Long-term Memory',
   summaryContent: 'Summary Content',
 
   // VisionExplorerPanel

@@ -19,21 +19,55 @@
     </div>
   </div>
 
-  <!-- History Summarized Message - Special System Message -->
-  <div v-else-if="isHistorySummarized" class="history-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning">
+  <!-- Segment Summary Message - Sliding Window Memory -->
+  <div v-else-if="isSegmentSummary" class="segment-summary-panel rounded-lg overflow-hidden bg-info/10 border-l-4 border-info">
+    <!-- Panel Header -->
+    <div 
+      @click="toggleSummaryPanel" 
+      class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-info/20 transition-colors"
+    >
+      <!-- Icon -->
+      <i class="fas fa-layer-group text-info text-lg"></i>
+      
+      <!-- Title -->
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-info">{{ t('agent.segmentSummary') }}</div>
+        <div class="text-xs text-base-content/60 mt-0.5">
+          {{ t('agent.segmentIndex') }}: #{{ message.metadata?.segment_index }} · {{ formatNumber(message.metadata?.summary_tokens) }} tokens
+        </div>
+      </div>
+      
+      <!-- Expand/Collapse Icon -->
+      <i :class="['fas transition-transform text-xs text-info', isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+    </div>
+    
+    <!-- Panel Content (collapsible) -->
+    <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-info/30">
+      <div class="px-4 py-3 bg-base-100/50">
+        <div class="text-xs text-base-content/70">
+          <div v-if="message.metadata?.summary_content" class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto">
+            <MarkdownRenderer :content="message.metadata.summary_content" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Summary Message - Long-term Memory -->
+  <div v-else-if="isGlobalSummary" class="global-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning">
     <!-- Panel Header -->
     <div 
       @click="toggleSummaryPanel" 
       class="summary-panel-header flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-warning/20 transition-colors"
     >
       <!-- Icon -->
-      <i class="fas fa-compress-alt text-warning text-lg"></i>
+      <i class="fas fa-brain text-warning text-lg"></i>
       
       <!-- Title -->
       <div class="flex-1">
-        <div class="font-semibold text-sm text-warning">{{ t('agent.historySummarized') }}</div>
+        <div class="font-semibold text-sm text-warning">{{ t('agent.globalSummary') }}</div>
         <div class="text-xs text-base-content/60 mt-0.5">
-          {{ summaryStats }}
+          {{ t('agent.longTermMemory') }} · {{ formatNumber(message.metadata?.summary_tokens) }} tokens
         </div>
       </div>
       
@@ -44,24 +78,9 @@
     <!-- Panel Content (collapsible) -->
     <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-warning/30">
       <div class="px-4 py-3 bg-base-100/50">
-        <div class="text-xs text-base-content/70 space-y-2">
-          <div class="flex items-center justify-between">
-            <span>{{ t('agent.originalTokens') }}:</span>
-            <span class="font-mono font-semibold">{{ formatNumber(historySummaryMeta?.original_tokens) }}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <span>{{ t('agent.summarizedTokens') }}:</span>
-            <span class="font-mono font-semibold text-success">{{ formatNumber(historySummaryMeta?.summarized_tokens) }}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <span>{{ t('agent.tokensSaved') }}:</span>
-            <span class="font-mono font-semibold text-warning">{{ formatNumber(historySummaryMeta?.saved_tokens) }} ({{ historySummaryMeta?.saved_percentage }}%)</span>
-          </div>
-          <div v-if="historySummaryMeta?.summary_content" class="mt-3 pt-3 border-t border-base-300">
-            <div class="text-xs text-base-content/50 mb-2 font-medium">{{ t('agent.summaryContent') }}:</div>
-            <div class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto">
-              <MarkdownRenderer :content="historySummaryMeta.summary_content" />
-            </div>
+        <div class="text-xs text-base-content/70">
+          <div v-if="message.metadata?.summary_content" class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto">
+            <MarkdownRenderer :content="message.metadata.summary_content" />
           </div>
         </div>
       </div>
@@ -493,10 +512,16 @@ const isShellTool = computed(() => {
   return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
 })
 
-// Check if this is a history summarized message
-const isHistorySummarized = computed(() => {
+// Check if this is a segment summary message (sliding window)
+const isSegmentSummary = computed(() => {
   return props.message.type === 'system' && 
-         props.message.metadata?.kind === 'history_summarized'
+         props.message.metadata?.kind === 'segment_summary'
+})
+
+// Check if this is a global summary message (long-term memory)
+const isGlobalSummary = computed(() => {
+  return props.message.type === 'system' && 
+         props.message.metadata?.kind === 'global_summary'
 })
 
 // Check if this is a Tenth Man Critique message
@@ -505,19 +530,6 @@ const isTenthManCritique = computed(() => {
          (props.message.metadata?.kind === 'tenth_man_critique' ||
           props.message.metadata?.kind === 'tenth_man_intervention' ||
           props.message.metadata?.kind === 'tenth_man_warning')
-})
-
-// History summary metadata
-const historySummaryMeta = computed(() => {
-  if (!isHistorySummarized.value) return null
-  return props.message.metadata as any
-})
-
-// Format summary stats for header
-const summaryStats = computed(() => {
-  if (!historySummaryMeta.value) return ''
-  const { original_tokens, summarized_tokens, saved_percentage } = historySummaryMeta.value
-  return `${formatNumber(original_tokens)} → ${formatNumber(summarized_tokens)} tokens (${t('agent.saved')} ${saved_percentage}%)`
 })
 
 // Format number with commas

@@ -5,12 +5,13 @@
 
 use sentinel_llm::{LlmClient, LlmConfig};
 use sentinel_tools::buildin_tools::tenth_man_tool::{
-    TenthManToolArgs, TenthManToolOutput, TenthManToolError
+    TenthManToolArgs, TenthManToolOutput, TenthManToolError, ReviewMode
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use once_cell::sync::Lazy;
+use tauri::Manager;
 
 /// Global LLM config storage for Tenth Man reviews (set per execution)
 static TENTH_MAN_CONFIGS: Lazy<Arc<RwLock<HashMap<String, LlmConfig>>>> = 
@@ -19,6 +20,10 @@ static TENTH_MAN_CONFIGS: Lazy<Arc<RwLock<HashMap<String, LlmConfig>>>> =
 /// Global task context storage (for providing context to reviews)
 static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, String>>>> = 
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Global AppHandle storage (for accessing database and sliding window)
+static APP_HANDLE: once_cell::sync::OnceCell<tauri::AppHandle> = 
+    once_cell::sync::OnceCell::new();
 
 /// System prompt for quick review
 const TENTH_MAN_QUICK_REVIEW_PROMPT: &str = r#"You are the "Tenth Man" performing a rapid risk assessment.
@@ -70,12 +75,122 @@ pub async fn set_task_context(execution_id: String, task: String) {
     contexts.insert(execution_id, task);
 }
 
+/// Set AppHandle for accessing database
+pub fn set_app_handle(handle: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(handle);
+}
+
 /// Clear config and context for an execution (cleanup)
 pub async fn clear_tenth_man_execution(execution_id: &str) {
     let mut configs = TENTH_MAN_CONFIGS.write().await;
     configs.remove(execution_id);
     let mut contexts = TASK_CONTEXTS.write().await;
     contexts.remove(execution_id);
+}
+
+/// Build history context based on review mode
+async fn build_history_context(
+    execution_id: &str,
+    review_mode: &ReviewMode,
+) -> Result<String, TenthManToolError> {
+    let app_handle = APP_HANDLE.get()
+        .ok_or_else(|| TenthManToolError::InternalError("AppHandle not initialized".to_string()))?;
+    
+    match review_mode {
+        ReviewMode::FullHistory => {
+            // Use SlidingWindow to get complete context with smart summarization
+            use crate::agents::sliding_window::SlidingWindowManager;
+            
+            let sw = SlidingWindowManager::new(app_handle, execution_id, None)
+                .await
+                .map_err(|e| TenthManToolError::InternalError(format!("Failed to create SlidingWindow: {}", e)))?;
+            
+            // Build context (includes global summary, segment summaries, recent messages)
+            let context_messages = sw.build_context("");
+            
+            // Format as text
+            let mut history = String::new();
+            
+            // Extract global summary from first system message
+            if let Some(first) = context_messages.first() {
+                if first.role == "system" {
+                    history.push_str("=== Global Context Summary ===\n");
+                    history.push_str(&first.content);
+                    history.push_str("\n\n");
+                }
+            }
+            
+            // Format conversation history
+            history.push_str("=== Conversation History ===\n");
+            for (idx, msg) in context_messages.iter().enumerate().skip(1) {
+                history.push_str(&format!("\n[Message #{}] {}:\n", idx, msg.role.to_uppercase()));
+                history.push_str(&msg.content);
+                
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    history.push_str(&format!("\n[Tool Calls]: {}", tool_calls));
+                }
+                
+                if let Some(ref reasoning) = msg.reasoning_content {
+                    let reasoning_str: &str = reasoning;
+                    if !reasoning_str.trim().is_empty() {
+                        history.push_str(&format!("\n[Reasoning]: {}", reasoning));
+                    }
+                }
+                
+                history.push_str("\n");
+            }
+            
+            Ok(history)
+        }
+        
+        ReviewMode::RecentMessages { count } => {
+            // Get recent N messages from database
+            use sentinel_db::Database;
+            
+            let db = app_handle.state::<Arc<sentinel_db::DatabaseService>>();
+            let messages: Vec<sentinel_core::models::database::AiMessage> = db.get_ai_messages_by_conversation(execution_id)
+                .await
+                .map_err(|e| TenthManToolError::InternalError(format!("Failed to get messages: {}", e)))?;
+            
+            let recent = messages.iter()
+                .rev()
+                .take(*count)
+                .rev()
+                .collect::<Vec<_>>();
+            
+            let mut history = String::new();
+            history.push_str(&format!("=== Recent {} Messages ===\n", count));
+            
+            for (idx, msg) in recent.iter().enumerate() {
+                history.push_str(&format!("\n[Message #{}] {} at {}:\n", 
+                    idx + 1, 
+                    msg.role.to_uppercase(),
+                    msg.timestamp.format("%Y-%m-%d %H:%M:%S")
+                ));
+                history.push_str(&msg.content);
+                
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    history.push_str(&format!("\n[Tool Calls]: {}", tool_calls));
+                }
+                
+                if let Some(ref reasoning) = msg.reasoning_content {
+                    let reasoning_str: &str = reasoning;
+                    if !reasoning_str.trim().is_empty() {
+                        history.push_str(&format!("\n[Reasoning]: {}", reasoning));
+                    }
+                }
+                
+                history.push_str("\n");
+            }
+            
+            Ok(history)
+        }
+        
+        ReviewMode::SpecificContent { content } => {
+            // Backward compatible: directly return specified content
+            Ok(content.clone())
+        }
+    }
 }
 
 /// Assess risk level from critique content
@@ -117,9 +232,10 @@ fn assess_risk_level(critique: &str) -> String {
 /// Execute Tenth Man review
 pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthManToolOutput, TenthManToolError> {
     tracing::info!(
-        "Executing Tenth Man review - execution_id: {}, review_type: {}",
+        "Executing Tenth Man review - execution_id: {}, review_type: {}, review_mode: {:?}",
         args.execution_id,
-        args.review_type
+        args.review_type,
+        args.review_mode
     );
     
     // Get LLM config for this execution
@@ -135,25 +251,30 @@ pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthMan
     // Get task context
     let task_context = {
         let contexts = TASK_CONTEXTS.read().await;
-        contexts.get(&args.execution_id).cloned().unwrap_or_else(|| "Unknown task".to_string())
+        contexts.get(&args.execution_id)
+            .cloned()
+            .unwrap_or_else(|| "Unknown task".to_string())
     };
     
+    // Build history context based on review mode
+    let history_context = build_history_context(&args.execution_id, &args.review_mode).await?;
+    
     // Build review prompt
-    let context_desc = args.context_description
+    let focus_area = args.focus_area
         .as_deref()
-        .unwrap_or("Agent's current work");
+        .unwrap_or("overall approach and execution process");
     
     let review_prompt = match args.review_type.as_str() {
         "quick" => {
             format!(
-                "### Original Task:\n{}\n\n### Current Context:\n{}\n\n### Content to Review:\n{}\n\n---\n\nPerform quick risk assessment:",
-                task_context, context_desc, args.content_to_review
+                "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### History Context:\n{}\n\n---\n\nPerform quick risk assessment:",
+                task_context, focus_area, history_context
             )
         }
         "full" | _ => {
             format!(
-                "### Original Task:\n{}\n\n### Current Context:\n{}\n\n### Content to Review:\n{}\n\n---\n\nPerform your Tenth Man review now. Attack this conclusion.",
-                task_context, context_desc, args.content_to_review
+                "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### Complete History Context:\n{}\n\n---\n\nPerform your Tenth Man review now. Challenge the current conclusions and execution process.",
+                task_context, focus_area, history_context
             )
         }
     };
@@ -182,9 +303,10 @@ pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthMan
     };
     
     tracing::info!(
-        "Tenth Man review completed - execution_id: {}, risk_level: {}, critique_length: {}",
+        "Tenth Man review completed - execution_id: {}, risk_level: {}, history_length: {}, critique_length: {}",
         args.execution_id,
         risk_level,
+        history_context.len(),
         critique.len()
     );
     

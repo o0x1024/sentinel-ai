@@ -275,7 +275,7 @@ impl TenthMan {
         }
     }
 
-    /// Full review (comprehensive analysis)
+    /// Full review (comprehensive analysis) - Legacy method
     pub async fn review(
         &self,
         task: &str,
@@ -294,5 +294,23 @@ impl TenthMan {
             .await?;
 
         Ok(critique)
+    }
+    
+    /// Review with complete history (System mode uses this)
+    pub async fn review_with_history(&self, execution_id: &str) -> Result<String> {
+        use crate::agents::tenth_man_executor::execute_tenth_man_review;
+        use sentinel_tools::buildin_tools::tenth_man_tool::{TenthManToolArgs, ReviewMode};
+        
+        let args = TenthManToolArgs {
+            execution_id: execution_id.to_string(),
+            review_mode: ReviewMode::FullHistory,
+            review_type: "full".to_string(),
+            focus_area: Some("final solution and complete execution process".to_string()),
+        };
+        
+        let output = execute_tenth_man_review(args).await
+            .map_err(|e| anyhow::anyhow!("Review failed: {}", e))?;
+        
+        output.critique.ok_or_else(|| anyhow::anyhow!("No critique generated"))
     }
 }

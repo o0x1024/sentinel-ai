@@ -58,7 +58,7 @@ pub struct MemoryManagerTool;
 
 impl MemoryManagerTool {
     pub const NAME: &'static str = "memory_manager";
-    pub const DESCRIPTION: &'static str = "Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.";
+    pub const DESCRIPTION: &'static str = "Long-term memory tool. Use 'store' to save solutions, techniques, and findings after completing tasks. Use 'retrieve' to search past experiences before starting new work. Always store results after task completion to build knowledge base.";
 }
 
 impl Tool for MemoryManagerTool {

@@ -401,7 +401,7 @@ impl ToolServer {
 
         // Register memory_manager tool
         let memory_manager_def = DynamicToolBuilder::new("memory_manager")
-            .description("Manage long-term memory for the agent. Use 'store' to save important solutions, workflows, or findings for future reference into the vector database. Use 'retrieve' to perform semantic search on past experiences when facing new problems.")
+            .description("Long-term memory tool. Use 'store' to save solutions, techniques, and findings after completing tasks. Use 'retrieve' to search past experiences before starting new work. Always store results after task completion to build knowledge base.")
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {

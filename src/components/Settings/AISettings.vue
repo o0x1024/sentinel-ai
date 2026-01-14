@@ -1722,15 +1722,15 @@ const applyAndExitFullscreen = () => {
 
 // 统计计算属性
 const totalInputTokens = computed<number>(() => {
-  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.input_tokens || 0), 0)
+  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.input_tokens || 0), 0) as number
 })
 
 const totalOutputTokens = computed<number>(() => {
-  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.output_tokens || 0), 0)
+  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.output_tokens || 0), 0) as number
 })
 
 const totalCost = computed<number>(() => {
-  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.cost || 0), 0)
+  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.cost || 0), 0) as number
 })
 
 const maxTokens = computed<number>(() => {

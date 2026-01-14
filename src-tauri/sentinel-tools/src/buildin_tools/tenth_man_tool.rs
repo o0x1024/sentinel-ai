@@ -31,18 +31,47 @@ fn get_executor() -> Result<&'static TenthManExecutorFn, TenthManToolError> {
 }
 
 
+/// Review mode for Tenth Man
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ReviewMode {
+    /// Review complete history (using sliding window summarization)
+    FullHistory,
+    /// Review recent N messages
+    RecentMessages { 
+        #[schemars(description = "Number of recent messages to review")]
+        count: usize 
+    },
+    /// Review specific content (backward compatible)
+    SpecificContent { 
+        #[schemars(description = "Specific content to review")]
+        content: String 
+    },
+}
+
+impl Default for ReviewMode {
+    fn default() -> Self {
+        ReviewMode::FullHistory
+    }
+}
+
 /// Tenth Man tool arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct TenthManToolArgs {
     /// The execution ID of the current agent run
     pub execution_id: String,
-    /// Content to review (e.g., current plan, proposed solution, or conclusion)
-    pub content_to_review: String,
-    /// Context description (what this review is about)
-    pub context_description: Option<String>,
+    
+    /// Review mode (defaults to FullHistory)
+    #[serde(default)]
+    pub review_mode: ReviewMode,
+    
     /// Type of review: "quick" (lightweight risk check) or "full" (comprehensive analysis)
     #[serde(default = "default_review_type")]
     pub review_type: String,
+    
+    /// Optional: specific focus area for the review
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus_area: Option<String>,
 }
 
 fn default_review_type() -> String {
@@ -79,7 +108,24 @@ impl TenthManTool {
     }
     
     pub const NAME: &'static str = "tenth_man_review";
-    pub const DESCRIPTION: &'static str = "Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.";
+    pub const DESCRIPTION: &'static str = "Request adversarial review of your work from the Tenth Man. \
+        \n\nThe Tenth Man reviews your COMPLETE conversation history (not just current message) to find:\
+        \n- Logic flaws across multiple steps\
+        \n- Dangerous assumptions in your reasoning\
+        \n- Overlooked risks and edge cases\
+        \n- Inconsistencies in your approach\
+        \n\nReview modes:\
+        \n- 'full_history' (default): Reviews entire conversation with smart summarization\
+        \n- 'recent_messages': Reviews last N messages only (specify count)\
+        \n- 'specific_content': Reviews a specific piece of content\
+        \n\nReview types:\
+        \n- 'quick': Fast risk identification (1-2 sentences)\
+        \n- 'full': Comprehensive analysis with detailed critique\
+        \n\nUse this tool when:\
+        \n- Before executing critical operations\
+        \n- After making important decisions\
+        \n- When you want to validate your approach\
+        \n- To catch mistakes before they cause problems";
 }
 
 impl Tool for TenthManTool {
@@ -99,10 +145,11 @@ impl Tool for TenthManTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         tracing::info!(
-            "Tenth Man review requested - execution_id: {}, review_type: {}, context: {:?}",
+            "Tenth Man review requested - execution_id: {}, review_type: {}, review_mode: {:?}, focus_area: {:?}",
             args.execution_id,
             args.review_type,
-            args.context_description
+            args.review_mode,
+            args.focus_area
         );
         
         // Get executor and call it

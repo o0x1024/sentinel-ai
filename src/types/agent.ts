@@ -38,14 +38,10 @@ export interface MessageMetadata {
     citations?: any[]
   }
   execution_id?: string
-  kind?: string  // 消息类型标识（如 'history_summarized'）
-  original_tokens?: number  // 历史摘要：原始token数
-  summarized_tokens?: number  // 历史摘要：摘要后token数
-  saved_tokens?: number  // 历史摘要：节省的token数
-  saved_percentage?: number  // 历史摘要：节省百分比
-  summary_preview?: string  // 历史摘要：摘要预览
-  summary_content?: string  // 历史摘要：完整摘要内容
-  total_tokens?: number  // 历史摘要：总token数
+  kind?: string  // 消息类型标识（如 'segment_summary', 'global_summary', 'tenth_man_critique'）
+  segment_index?: number  // 段落摘要：段落索引
+  summary_tokens?: number  // 摘要：token数
+  summary_content?: string  // 摘要：完整内容
   trigger?: string  // 第十人原则触发原因
   retry_count?: number  // 第十人原则重试次数
   requires_confirmation?: boolean  // 第十人原则是否需要确认
