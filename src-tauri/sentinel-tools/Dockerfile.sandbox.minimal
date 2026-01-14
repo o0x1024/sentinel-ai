@@ -10,7 +10,9 @@ ENV LANG=C.UTF-8
 # Configure apt sources - clear duplicates and use reliable mirrors
 RUN rm -f /etc/apt/sources.list.d/* && \
     echo "deb http://mirrors.aliyun.com/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
-    apt-get update  || true
+    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99-retries && \
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries && \
+    apt-get update --fix-missing || apt-get update --fix-missing || true
 
 # Install essential tools (excluding jq which may have network issues)
 RUN apt-get update --fix-missing || apt-get update --fix-missing && apt-get install -y --no-install-recommends \
@@ -72,9 +74,14 @@ RUN apt-get update --fix-missing || apt-get update --fix-missing && apt-get inst
     htop \
     && rm -rf /var/lib/apt/lists/*
 
-# Install kali forensics tools
+# Install kali forensics tools (with better error handling)
 RUN apt-get update --fix-missing || apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends --fix-missing kali-tools-forensics && \
+    (apt-get install -y --no-install-recommends --fix-missing kali-tools-reverse-engineering || \
+     echo "Warning: kali-tools-reverse-engineering installation failed, trying alternative approach..." && \
+     apt-get install -y --no-install-recommends --fix-missing \
+         apktool binwalk bytecode-viewer dex2jar jd-gui radare2 && \
+     echo "Installed alternative reverse engineering tools") && \
     rm -rf /var/lib/apt/lists/*
 
 # Install jq separately with retry mechanism
@@ -90,7 +97,9 @@ RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
     requests \
     pwntools \
     pycryptodome \
+    cryptography \
     opencv-python \
+    Pillow \
     stegano \
     pyzbar \
     qrcode \
@@ -101,7 +110,15 @@ RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
     python-pptx \
     oletools \
     msoffcrypto-tool \
-    gmpy2
+    gmpy2 \
+    sympy \
+    numpy \
+    scipy \
+    scapy \
+    z3-solver \
+    tqdm \
+    colorama \
+    r2pipe
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \

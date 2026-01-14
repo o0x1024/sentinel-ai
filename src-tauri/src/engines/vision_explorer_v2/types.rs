@@ -228,42 +228,52 @@ pub struct FormField {
 // ==================== Action (What to execute) ====================
 
 /// Action to be executed by the action executor
+/// Supports hybrid mode: index (DOM annotation) > selector > coordinates
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Action {
     /// Navigate to a URL
     Navigate { url: String },
-    
-    /// Click an element
-    Click { 
+
+    /// Click an element (priority: index > selector > coordinates)
+    Click {
+        /// Annotation index from get_annotated_elements (preferred)
+        index: Option<u32>,
+        /// CSS selector (fallback)
         selector: Option<String>,
+        /// X coordinate (vision fallback)
         x: Option<i32>,
+        /// Y coordinate (vision fallback)
         y: Option<i32>,
     },
-    
-    /// Fill a form field
-    Fill { 
-        selector: String, 
-        value: String 
+
+    /// Fill a form field (priority: index > selector)
+    Fill {
+        /// Annotation index (preferred)
+        index: Option<u32>,
+        /// CSS selector (fallback)
+        selector: Option<String>,
+        /// Value to fill
+        value: String,
     },
-    
-    /// Submit a form
+
+    /// Submit a form (press Enter)
     Submit { selector: String },
-    
+
     /// Scroll the page
-    Scroll { 
+    Scroll {
         direction: ScrollDirection,
         amount: u32,
     },
-    
+
     /// Wait for a duration
     Wait { duration_ms: u64 },
-    
+
     /// Take a snapshot of current state
     TakeSnapshot,
-    
+
     /// Go back in browser history
     GoBack,
-    
+
     /// Stop exploration
     Stop { reason: String },
 }
@@ -494,4 +504,84 @@ pub enum VisionMessage {
     Error {
         message: String,
     },
+}
+
+// ==================== Hybrid Exploration Types ====================
+
+/// Site type detection result
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SiteProfile {
+    /// Site type: SPA, MPA, or Hybrid
+    #[serde(rename = "type")]
+    pub site_type: String,
+    /// Detected framework (Vue, React, Angular, etc.)
+    pub framework: Option<String>,
+    /// Whether authentication is detected
+    #[serde(rename = "hasAuth")]
+    pub has_auth: bool,
+    /// Number of forms on the page
+    #[serde(rename = "formCount")]
+    pub form_count: u32,
+    /// Whether virtual scroll is detected
+    #[serde(rename = "hasVirtualScroll")]
+    pub has_virtual_scroll: bool,
+    /// Router type (hash, history, vue-router, react-router)
+    #[serde(rename = "routerType")]
+    pub router_type: Option<String>,
+    /// Detection confidence (0.0 - 1.0)
+    pub confidence: f32,
+}
+
+impl SiteProfile {
+    pub fn is_spa(&self) -> bool {
+        self.site_type == "SPA"
+    }
+
+    pub fn is_mpa(&self) -> bool {
+        self.site_type == "MPA"
+    }
+}
+
+/// Browser storage state (for session management)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StorageState {
+    /// Cookies
+    #[serde(default)]
+    pub cookies: Vec<CookieData>,
+    /// LocalStorage key-value pairs
+    #[serde(default, rename = "localStorage")]
+    pub local_storage: HashMap<String, String>,
+    /// Auth indicators found
+    #[serde(default, rename = "authIndicators")]
+    pub auth_indicators: Vec<String>,
+    /// Whether auth tokens were detected
+    #[serde(default, rename = "hasAuth")]
+    pub has_auth: bool,
+}
+
+/// Cookie data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CookieData {
+    /// Cookie name
+    #[serde(alias = "n")]
+    pub name: String,
+    /// Cookie value
+    #[serde(alias = "v")]
+    pub value: String,
+    /// Domain
+    #[serde(alias = "d")]
+    pub domain: String,
+    /// Path
+    #[serde(alias = "p", default = "default_path")]
+    pub path: String,
+    /// HTTP only flag
+    #[serde(alias = "h", default)]
+    pub http_only: bool,
+    /// Secure flag
+    #[serde(alias = "s", default)]
+    pub secure: bool,
+}
+
+fn default_path() -> String {
+    "/".to_string()
 }

@@ -100,9 +100,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
 
   // 打开面板
   const open = (): void => {
-    if (hasHistory.value) {
-      isTodosPanelActive.value = true
-    }
+    isTodosPanelActive.value = true
   }
 
   // 关闭面板
@@ -112,9 +110,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
 
   // 切换面板
   const toggle = (): void => {
-    if (hasHistory.value) {
-      isTodosPanelActive.value = !isTodosPanelActive.value
-    }
+    isTodosPanelActive.value = !isTodosPanelActive.value
   }
 
   // 开始监听事件

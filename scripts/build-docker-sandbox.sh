@@ -52,7 +52,8 @@ fi
 cd "$TOOLS_DIR"
 echo ""
 echo "Building image (this may take a few minutes)..."
-docker build -t "$IMAGE_NAME" -f "$DOCKERFILE" .
+echo "Using host network mode for better connectivity..."
+docker build --network host -t "$IMAGE_NAME" -f "$DOCKERFILE" .
 
 if [ $? -eq 0 ]; then
     echo ""

@@ -835,13 +835,24 @@ const loadConversationHistory = async (convId: string) => {
           row.role === 'user' && parsedStructured?.display_content
             ? parsedStructured.display_content
             : row.content
+        
+        // Extract document_attachments from metadata or structured_data
+        let finalMetadata = parsedMetadata || {}
+        if (row.role === 'user') {
+          // Try to get document_attachments from metadata first, then structured_data
+          const docAttachments = parsedMetadata?.document_attachments || parsedStructured?.document_attachments
+          if (docAttachments && Array.isArray(docAttachments) && docAttachments.length > 0) {
+            finalMetadata = { ...finalMetadata, document_attachments: docAttachments }
+          }
+        }
+        
         timeline.push({
           msg: {
             id: row.id,
             type: messageType as any,
             content: displayContent,
             timestamp: ts,
-            metadata: parsedMetadata,
+            metadata: finalMetadata,
           },
           ts,
           tie: tie++,

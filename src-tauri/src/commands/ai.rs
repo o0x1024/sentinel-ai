@@ -1950,6 +1950,7 @@ pub async fn agent_execute(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let enable_rag = config.enable_rag.unwrap_or(false);
     let attachments = config.attachments.clone();
+    let document_attachments_for_save = config.document_attachments.clone();
 
     // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
     let effective_tool_config = if config.tool_config.is_some() {
@@ -2075,20 +2076,49 @@ pub async fn agent_execute(
             use sentinel_core::models::database as core_db;
             let user_msg_id = Uuid::new_v4().to_string();
             let display_text = display_content_clone.as_ref().unwrap_or(&task_clone);
-            let structured_data = display_content_clone.as_ref().map(|content| {
-                serde_json::json!({
-                    "display_content": content,
-                })
-                .to_string()
-            });
+            
+            // Build structured_data with display_content and document_attachments
+            let structured_data = {
+                let mut data = serde_json::json!({});
+                if let Some(ref content) = display_content_clone {
+                    data["display_content"] = serde_json::json!(content);
+                }
+                if let Some(ref doc_atts) = document_attachments_for_save {
+                    if !doc_atts.is_empty() {
+                        data["document_attachments"] = serde_json::to_value(doc_atts).unwrap_or_default();
+                    }
+                }
+                if data.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                    None
+                } else {
+                    Some(data.to_string())
+                }
+            };
+            
+            // Build metadata with image attachments and document_attachments
+            let metadata = {
+                let mut meta = serde_json::json!({});
+                if let Some(ref atts) = attachments {
+                    meta["image_attachments"] = atts.clone();
+                }
+                if let Some(ref doc_atts) = document_attachments_for_save {
+                    if !doc_atts.is_empty() {
+                        meta["document_attachments"] = serde_json::to_value(doc_atts).unwrap_or_default();
+                    }
+                }
+                if meta.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                    None
+                } else {
+                    Some(meta.to_string())
+                }
+            };
+            
             let user_msg = core_db::AiMessage {
                 id: user_msg_id.clone(),
                 conversation_id: conv_id.clone(),
                 role: "user".to_string(),
                 content: task_clone.clone(),
-                metadata: attachments
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok()),
+                metadata,
                 token_count: Some(task_clone.len() as i32),
                 cost: None,
                 tool_calls: None,
@@ -2112,6 +2142,7 @@ pub async fn agent_execute(
                         "message_id": user_msg_id,
                         "content": display_text,
                         "timestamp": user_msg.timestamp.timestamp_millis(),
+                        "document_attachments": document_attachments_for_save,
                     }),
                 );
             }

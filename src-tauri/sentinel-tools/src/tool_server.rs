@@ -23,12 +23,20 @@ static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::ne
 /// Global Tavily API key storage
 static TAVILY_API_KEY: Lazy<Arc<RwLock<Option<String>>>> = Lazy::new(|| Arc::new(RwLock::new(None)));
 
-/// Strip ANSI escape sequences from text
+/// Strip ANSI escape sequences and clean up redundant whitespace from text
 fn strip_ansi_codes(text: &str) -> String {
-    // Simple regex-based stripping of ANSI codes
-    // Matches ESC [ ... m and other common ANSI sequences
+    // Strip ANSI codes
     let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[^\x07]*\x07|\x1b[=>]|\x1b\][0-9];[^\x07]*\x07").unwrap();
-    re.replace_all(text, "").to_string()
+    let without_ansi = re.replace_all(text, "").to_string();
+    
+    // Normalize line endings: \r\n -> \n, standalone \r -> \n
+    let normalized = without_ansi.replace("\r\n", "\n").replace('\r', "\n");
+    
+    // Remove consecutive blank lines (keep at most one blank line)
+    let re_blank = regex::Regex::new(r"\n{3,}").unwrap();
+    let cleaned = re_blank.replace_all(&normalized, "\n\n").to_string();
+    
+    cleaned.trim().to_string()
 }
 
 /// Get the global tool server instance
@@ -655,11 +663,11 @@ impl ToolServer {
                     };
                     info!("Using existing terminal session: {}", id);
                     
-                    // Create a new subscriber to capture output for LLM
+                    // Create a new subscriber to capture ONLY new output (skip history)
                     let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
                     {
                         let session = session_lock.read().await;
-                        session.add_subscriber(tx).await;
+                        session.add_subscriber_no_history(tx).await;
                     }
                     
                     (id, rx)

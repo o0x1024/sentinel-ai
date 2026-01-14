@@ -83,11 +83,11 @@ impl TerminalSession {
         })
     }
 
-    /// Add an output subscriber
+    /// Add an output subscriber (with history replay for UI)
     pub async fn add_subscriber(&self, tx: mpsc::UnboundedSender<Vec<u8>>) {
         // Send history to new subscriber
         let history = self.output_history.read().await;
-        info!("[Terminal Session {}] Adding subscriber, history chunks: {}", self.id, history.len());
+        info!("[Terminal Session {}] Adding subscriber with history, chunks: {}", self.id, history.len());
         
         for (i, data) in history.iter().enumerate() {
             info!("[Terminal Session {}] Sending history chunk {}: {} bytes", self.id, i, data.len());
@@ -96,6 +96,14 @@ impl TerminalSession {
             }
         }
         
+        self.output_txs.write().await.push(tx);
+        info!("[Terminal Session {}] Subscriber added, total subscribers: {}", 
+            self.id, self.output_txs.read().await.len());
+    }
+
+    /// Add an output subscriber without history (for LLM - only captures new output)
+    pub async fn add_subscriber_no_history(&self, tx: mpsc::UnboundedSender<Vec<u8>>) {
+        info!("[Terminal Session {}] Adding subscriber without history (LLM mode)", self.id);
         self.output_txs.write().await.push(tx);
         info!("[Terminal Session {}] Subscriber added, total subscribers: {}", 
             self.id, self.output_txs.read().await.len());

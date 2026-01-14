@@ -150,7 +150,7 @@ impl Default for ToolConfig {
         Self {
             selection_strategy: ToolSelectionStrategy::Keyword,
             max_tools: 5,
-            fixed_tools: vec!["local_time".to_string()],
+            fixed_tools: vec!["local_time".to_string(), "todos".to_string()],
             disabled_tools: vec![],
             enabled: false, // 默认关闭，避免意外消耗
         }

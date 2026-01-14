@@ -521,7 +521,7 @@ Decide what to do next."#,
         })
     }
 
-    /// Parse action from JSON
+    /// Parse action from JSON (supports hybrid mode with index)
     fn parse_action(&self, json: &serde_json::Value) -> Result<Action> {
         let action_type = json["type"]
             .as_str()
@@ -537,15 +537,16 @@ Decide what to do next."#,
                     .to_string(),
             },
             "click" => Action::Click {
+                // Priority: index > selector > coordinates
+                index: params["index"].as_u64().map(|n| n as u32),
                 selector: params["selector"].as_str().map(|s| s.to_string()),
                 x: params["x"].as_i64().map(|n| n as i32),
                 y: params["y"].as_i64().map(|n| n as i32),
             },
             "fill" => Action::Fill {
-                selector: params["selector"]
-                    .as_str()
-                    .context("Fill requires selector")?
-                    .to_string(),
+                // Priority: index > selector
+                index: params["index"].as_u64().map(|n| n as u32),
+                selector: params["selector"].as_str().map(|s| s.to_string()),
                 value: params["value"]
                     .as_str()
                     .context("Fill requires value")?
@@ -636,12 +637,14 @@ Decide what to do next."#,
             Action::Navigate { url } => serde_json::json!({
                 "url": url
             }),
-            Action::Click { selector, x, y } => serde_json::json!({
+            Action::Click { index, selector, x, y } => serde_json::json!({
+                "index": index,
                 "selector": selector,
                 "x": x,
                 "y": y
             }),
-            Action::Fill { selector, value } => serde_json::json!({
+            Action::Fill { index, selector, value } => serde_json::json!({
+                "index": index,
                 "selector": selector,
                 "value": value
             }),
