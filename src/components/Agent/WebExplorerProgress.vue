@@ -1,5 +1,5 @@
 <template>
-  <div class="vision-progress mt-3 mb-2 border border-base-300 rounded-lg bg-base-100 overflow-hidden shadow-sm">
+  <div class="web-explorer-progress mt-3 mb-2 border border-base-300 rounded-lg bg-base-100 overflow-hidden shadow-sm">
     <!-- Header Summary -->
     <div 
       class="flex items-center justify-between px-3 py-2 bg-base-200/50 cursor-pointer hover:bg-base-200 transition-colors select-none"
@@ -9,7 +9,7 @@
         <div v-if="isRunning" class="loading loading-spinner loading-xs text-primary"></div>
         <div v-else :class="['w-2 h-2 rounded-full', isComplete ? 'bg-success' : 'bg-base-content/30']"></div>
         
-        <span class="text-xs font-semibold opacity-80">Vision Explorer</span>
+        <span class="text-xs font-semibold opacity-80">Web Explorer</span>
         
         <div v-if="currentStep" class="badge badge-sm badge-ghost text-[10px] font-mono h-5">
            {{ currentStep }}
@@ -340,24 +340,13 @@ const submitCredentials = async () => {
       password = dynamicCredentials.value.password || ''
     }
     
-    // Try V2 first, fallback to V1
-    try {
-      await invoke('vision_explorer_v2_receive_credentials', {
-        executionId: props.executionId,
-        username,
-        password,
-        verificationCode,
-        extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
-      })
-    } catch {
-      await invoke('vision_explorer_receive_credentials', {
-        executionId: props.executionId,
-        username,
-        password,
-        verificationCode,
-        extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
-      })
-    }
+    await invoke('web_explorer_receive_credentials', {
+      executionId: props.executionId,
+      username,
+      password,
+      verificationCode,
+      extraFields: Object.keys(extraFields).length > 0 ? extraFields : null
+    })
     pushLog('Credentials submitted, resuming exploration...', 'success')
     showTakeoverForm.value = false
     // 重置凭据
@@ -374,16 +363,9 @@ const submitCredentials = async () => {
 // Skip login and continue without credentials
 const skipLogin = async () => {
   try {
-    // Try V2 first, fallback to V1
-    try {
-      await invoke('vision_explorer_v2_skip_login', {
-        executionId: props.executionId
-      })
-    } catch {
-      await invoke('vision_explorer_skip_login', {
-        executionId: props.executionId
-      })
-    }
+    await invoke('web_explorer_skip_login', {
+      executionId: props.executionId
+    })
     pushLog('Login skipped, continuing exploration...', 'info')
     showTakeoverForm.value = false
     dynamicCredentials.value = {}
@@ -395,10 +377,10 @@ const skipLogin = async () => {
 }
 
 onMounted(async () => {
-  // Listen for Vision Explorer events sent by VisionExplorerMessageEmitter
+  // Listen for Web Explorer events
 
   // Multi-Agent events
-  unlisteners.push(await listen<any>('vision:multi_agent', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:multi_agent', (e) => {
     const payload = e.payload
     if (payload.execution_id !== props.executionId) return
 
@@ -475,7 +457,7 @@ onMounted(async () => {
     }
   }))
   
-  unlisteners.push(await listen<any>('vision:start', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:start', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     isRunning.value = true
     isComplete.value = false
@@ -483,7 +465,7 @@ onMounted(async () => {
     currentStep.value = 'Starting...'
   }))
 
-  unlisteners.push(await listen<any>('vision:screenshot', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:screenshot', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     const src = convertFileSrc(e.payload.path)
     lastScreenshot.value = {
@@ -495,7 +477,7 @@ onMounted(async () => {
     stats.value.pages = e.payload.iteration 
   }))
 
-  unlisteners.push(await listen<any>('vision:analysis', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:analysis', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     const analysis = e.payload.analysis
     
@@ -508,7 +490,7 @@ onMounted(async () => {
     pushLog(`Analyzed page.${items.length > 0 ? ' Found: ' + items.join(', ') : ''}`, 'info')
   }))
 
-  unlisteners.push(await listen<any>('vision:action', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:action', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     const action = e.payload.action
     const actionStr = `${action.action_type} ${action.value ? `"${action.value}"` : ''}`
@@ -517,7 +499,7 @@ onMounted(async () => {
     stats.value.elements++
   }))
   
-   unlisteners.push(await listen<any>('vision:complete', (e) => {
+   unlisteners.push(await listen<any>('web_explorer:complete', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     isRunning.value = false
     isComplete.value = true
@@ -534,7 +516,7 @@ onMounted(async () => {
   }))
 
   // Listen for coverage updates
-  unlisteners.push(await listen<any>('vision:coverage_update', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:coverage_update', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     
     showCoverage.value = true
@@ -554,7 +536,7 @@ onMounted(async () => {
     pushLog(`Coverage: ${coverage.value.overall.toFixed(1)}% (Routes: ${coverage.value.route.toFixed(0)}%, Elements: ${coverage.value.element.toFixed(0)}%)`, 'info')
   }))
 
-  unlisteners.push(await listen<any>('vision:error', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:error', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     isRunning.value = false
     pushLog(`Error: ${e.payload.error}`, 'error')
@@ -562,7 +544,7 @@ onMounted(async () => {
   }))
 
   // Listen for takeover requests (login page detected)
-  unlisteners.push(await listen<any>('vision:takeover_request', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:takeover_request', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     showTakeoverForm.value = true
     takeoverMessage.value = e.payload.message || 'Login page detected. Please enter credentials below or click "Skip Login" to continue without authentication.'
@@ -593,7 +575,7 @@ onMounted(async () => {
   }))
 
   // Listen for credentials received confirmation
-  unlisteners.push(await listen<any>('vision:credentials_received', (e) => {
+  unlisteners.push(await listen<any>('web_explorer:credentials_received', (e) => {
     if (e.payload.execution_id !== props.executionId) return
     showTakeoverForm.value = false
     pushLog('Credentials received, continuing exploration...', 'success')

@@ -1,4 +1,4 @@
-//! Vision Explorer V2 - ReAct Architecture
+//! Web Explorer - ReAct Architecture
 //!
 //! A simplified web exploration engine using the ReAct (Reasoning + Acting) pattern.
 //! 
@@ -29,9 +29,9 @@ pub mod types;
 // Re-export key items
 pub use graph::{ExplorationGraph, GraphEdge, GraphNode};
 pub use react_engine::ReActEngine;
-pub use tool::VisionExplorerV2Tool;
+pub use tool::WebExplorerTool;
 pub use types::{
     Action, ActionResult, AIConfig, AuthStatus, Element, ExplorationResult, ExplorationState,
     FormField, FormInfo, Observation, PageContext, PageType, ReActDecision, ScrollDirection,
-    Step, VisionExplorerV2Config, VisionMessage,
+    Step, WebExplorerConfig, WebExplorerMessage,
 };

@@ -17,18 +17,18 @@ use tracing::{debug, error, info, warn};
 
 /// ReAct exploration engine
 pub struct ReActEngine {
-    config: VisionExplorerV2Config,
+    config: WebExplorerConfig,
     state: ExplorationState,
     graph: ExplorationGraph,
     action_executor: Arc<ActionExecutor>,
     reasoning_llm: LlmClient,
     session_id: String,
-    message_callback: Option<Arc<dyn Fn(VisionMessage) + Send + Sync>>,
+    message_callback: Option<Arc<dyn Fn(WebExplorerMessage) + Send + Sync>>,
 }
 
 impl ReActEngine {
     /// Create a new ReAct engine (using AgentBrowserService)
-    pub fn new(config: VisionExplorerV2Config) -> Self {
+    pub fn new(config: WebExplorerConfig) -> Self {
         let action_executor = Arc::new(ActionExecutor::new());
         let reasoning_llm = LlmClient::new(config.ai_config.fast_llm_config());
 
@@ -55,7 +55,7 @@ impl ReActEngine {
     /// Set message callback for UI updates
     pub fn with_message_callback<F>(mut self, callback: F) -> Self
     where
-        F: Fn(VisionMessage) + Send + Sync + 'static,
+        F: Fn(WebExplorerMessage) + Send + Sync + 'static,
     {
         self.message_callback = Some(Arc::new(callback));
         self
@@ -81,7 +81,7 @@ impl ReActEngine {
             }
         }
         
-        self.send_message(VisionMessage::Started {
+        self.send_message(WebExplorerMessage::Started {
             session_id: self.session_id.clone(),
             target_url: self.config.target_url.clone(),
         });
@@ -111,6 +111,8 @@ impl ReActEngine {
                     duration_seconds: start_time.elapsed().as_secs(),
                     error: Some(error_msg),
                     graph: self.graph.to_json(),
+                    api_list: Vec::new(),
+                    visited_urls: Vec::new(),
                 });
             }
             Err(e) => {
@@ -123,6 +125,8 @@ impl ReActEngine {
                     duration_seconds: start_time.elapsed().as_secs(),
                     error: Some(e.to_string()),
                     graph: self.graph.to_json(),
+                    api_list: Vec::new(),
+                    visited_urls: Vec::new(),
                 });
             }
         }
@@ -144,7 +148,7 @@ impl ReActEngine {
             }
 
             // Send progress update
-            self.send_message(VisionMessage::Progress {
+            self.send_message(WebExplorerMessage::Progress {
                 steps_taken: self.state.steps_taken,
                 max_steps: self.state.max_steps,
                 pages_visited: self.state.visited_urls.len() as u32,
@@ -166,9 +170,11 @@ impl ReActEngine {
             duration_seconds: duration,
             error: None,
             graph: self.graph.to_json(),
+            api_list: self.state.discovered_apis.iter().cloned().collect(),
+            visited_urls: self.state.visited_urls.iter().cloned().collect(),
         };
 
-        self.send_message(VisionMessage::Completed {
+        self.send_message(WebExplorerMessage::Completed {
             success: true,
             result: result.clone(),
         });
@@ -188,7 +194,7 @@ impl ReActEngine {
         let observation = self.observe().await?;
         
         // Send analysis result to UI
-        self.send_message(VisionMessage::Analysis {
+        self.send_message(WebExplorerMessage::Analysis {
             step_number,
             page_type: observation.page_type.clone(),
             description: observation.description.clone(),
@@ -200,7 +206,7 @@ impl ReActEngine {
         // 2. THINK: Decide next action using LLM
         let decision = self.think(&observation).await?;
         
-        self.send_message(VisionMessage::Step {
+        self.send_message(WebExplorerMessage::Step {
             step_number,
             thought: decision.thought.clone(),
             action: format!("{:?}", decision.action),
@@ -217,7 +223,7 @@ impl ReActEngine {
 
         // 3. ACT: Execute the action
         // Send action executing message
-        self.send_message(VisionMessage::ActionExecuting {
+        self.send_message(WebExplorerMessage::ActionExecuting {
             step_number,
             action_type: self.action_type_name(&decision.action),
             action_details: self.action_to_json(&decision.action),
@@ -226,7 +232,7 @@ impl ReActEngine {
         let action_result = self.action_executor.execute(decision.action.clone()).await?;
 
         // Send action result
-        self.send_message(VisionMessage::ActionResult {
+        self.send_message(WebExplorerMessage::ActionResult {
             step_number,
             success: action_result.success,
             error: action_result.error.clone(),
@@ -274,7 +280,7 @@ impl ReActEngine {
         };
         
         // Send observation message to UI (no screenshot needed)
-        self.send_message(VisionMessage::Screenshot {
+        self.send_message(WebExplorerMessage::Screenshot {
             step_number,
             screenshot_base64: String::new(), // Empty - screenshot disabled
             url: self.state.current_url.clone(),
@@ -421,7 +427,7 @@ impl ReActEngine {
             self.state.add_api(api.clone());
             // Extract method from "METHOD URL" format if possible
             let (method, url) = Self::parse_api_string(api);
-            self.send_message(VisionMessage::ApiDiscovered {
+            self.send_message(WebExplorerMessage::ApiDiscovered {
                 url,
                 method,
             });
@@ -438,7 +444,7 @@ impl ReActEngine {
                     // API format is "METHOD URL"
                     let (method, url) = Self::parse_api_string(&api);
                     debug!("Sending API discovered: method={}, url={}", method, url);
-                    self.send_message(VisionMessage::ApiDiscovered {
+                    self.send_message(WebExplorerMessage::ApiDiscovered {
                         url,
                         method,
                     });
@@ -500,9 +506,8 @@ Your goal is to systematically explore a web application to discover:
 - Navigation structure
 
 For each step, you must:
-1. Reason about what you observe
+1. Analyze the current page state
 2. Decide on the next action
-3. Explain why you chose that action
 
 Available actions:
 - navigate: Go to a new URL (params: {"url": "..."})
@@ -520,31 +525,27 @@ Example: If you see "- @e5 link 'Products'" in the snapshot, use {"ref": "@e5"} 
 
 Return your decision in JSON format:
 {
-  "thought": "Your reasoning about the current state and what to do next",
+  "thought": "Your analysis of the current page and what action to take next",
   "action": {
     "type": "action_type",
     "params": { /* action parameters */ }
-  },
-  "reason": "Why you chose this specific action"
+  }
 }
 
 Examples:
 {
-  "thought": "I see a Products link at @e5. I should explore it to find more pages.",
-  "action": {"type": "click", "params": {"ref": "@e5"}},
-  "reason": "Exploring navigation links to discover more pages"
+  "thought": "I see a Products link at @e5. Clicking it to explore and discover more pages.",
+  "action": {"type": "click", "params": {"ref": "@e5"}}
 }
 
 {
-  "thought": "I see a search input at @e3. I should fill it to test the search functionality.",
-  "action": {"type": "fill", "params": {"ref": "@e3", "value": "test"}},
-  "reason": "Testing search functionality"
+  "thought": "Found a search input at @e3. Testing search functionality by entering a query.",
+  "action": {"type": "fill", "params": {"ref": "@e3", "value": "test"}}
 }
 
 {
-  "thought": "I've explored all visible links on this page. Time to move on.",
-  "action": {"type": "stop", "params": {"reason": "All accessible pages have been visited"}},
-  "reason": "Exploration complete"
+  "thought": "All visible links on this page have been explored. Exploration complete.",
+  "action": {"type": "stop", "params": {"reason": "All accessible pages have been visited"}}
 }"#.to_string()
     }
 
@@ -604,7 +605,7 @@ Decide what to do next. Use @eN refs from the snapshot for click/fill actions.
             observation.auth_status,
             observation.forms.len(),
             observation.links.len(),
-            observation.api_endpoints.len(),
+            self.state.discovered_apis.len(),  // Use state's discovered_apis instead of observation
             elements_section,
             self.format_forms(&observation.forms),
             self.format_links(&observation.links),
@@ -691,17 +692,11 @@ Decide what to do next. Use @eN refs from the snapshot for click/fill actions.
             .unwrap_or("No thought provided")
             .to_string();
 
-        let reason = parsed["reason"]
-            .as_str()
-            .unwrap_or("No reason provided")
-            .to_string();
-
         let action = self.parse_action(&parsed["action"])?;
 
         Ok(ReActDecision {
             thought,
             action,
-            reason,
         })
     }
 
@@ -801,7 +796,7 @@ Decide what to do next. Use @eN refs from the snapshot for click/fill actions.
     }
 
     /// Send message to UI
-    fn send_message(&self, message: VisionMessage) {
+    fn send_message(&self, message: WebExplorerMessage) {
         if let Some(ref callback) = self.message_callback {
             callback(message);
         }

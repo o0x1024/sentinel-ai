@@ -1899,18 +1899,18 @@ export default {
     noKnowledgeBaseCitations: '未引用知识库',
     selected: '已选',
     all: '全部',
-    // VisionExplorerProgress
+    // WebExplorerProgress
     route: '路由',
     element: '元素',
     component: '组件',
     pendingRoutes: '待访问路由',
     pendingRoutesCount: '待访问路由 ({count})',
-    // Vision Plan & Progress
-    visionGoal: '目标',
-    visionSteps: '步骤',
-    visionCompletion: '完成条件',
-    visionProgress: '进度',
-    visionPages: '页面',
-    visionElements: '元素'
+    // Web Plan & Progress
+    webGoal: '目标',
+    webSteps: '步骤',
+    webCompletion: '完成条件',
+    webProgress: '进度',
+    webPages: '页面',
+    webElements: '元素'
   }
 }

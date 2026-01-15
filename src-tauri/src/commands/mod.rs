@@ -29,7 +29,7 @@ pub mod shell_commands;
 pub mod terminal_commands;
 pub mod test_proxy;
 pub mod tool_commands;
-pub mod vision_explorer_v2;
+pub mod web_explorer;
 pub mod window;
 
 // Re-export commands

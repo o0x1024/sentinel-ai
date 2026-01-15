@@ -48,6 +48,12 @@ impl LlmConfig {
         }
     }
 
+    /// 设置模型
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
+    }
+
     /// 设置 API Key
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());

@@ -2,8 +2,8 @@ export default {
   // AgentView
   newConversation: 'New Conversation',
   switchConversationList: 'Switch Conversation List',
-  visionPanelOpen: 'Vision Panel Open',
-  viewVisionHistory: 'View Vision History',
+  webExplorerPanelOpen: 'Web Explorer Panel Open',
+  viewWebExplorerHistory: 'View Web Explorer History',
   explore: 'Explore',
   todosPanelOpen: 'Todos Panel Open',
   viewTodos: 'View Todos',
@@ -227,7 +227,7 @@ export default {
   longTermMemory: 'Long-term Memory',
   summaryContent: 'Summary Content',
 
-  // VisionExplorerPanel
+  // WebExplorerPanel
   loginPageDetected: 'Login page detected, please enter credentials',
   llmThinking: 'LLM Thinking',
   alreadyLoggedIn: 'Logged In',
@@ -236,44 +236,44 @@ export default {
   verificationCodeOptional: 'Verification Code (Optional)',
   continueExploration: 'Continue Exploration',
   skipLogin: 'Skip Login',
-  visionMessagePlaceholder: 'Instruction for Vision Explorer (Enter to send, Shift+Enter for newline)',
+  webMessagePlaceholder: 'Instruction for Web Explorer (Enter to send, Shift+Enter for newline)',
   send: 'Send',
   stop: 'Stop',
 
-  // More VisionExplorerPanel strings
+  // More WebExplorerPanel strings
   username: 'Username',
   verificationCode: 'Verification Code',
 
-  // VisionExplorerProgress
+  // WebExplorerProgress
   route: 'Route',
   element: 'Element',
   component: 'Component',
   pendingRoutes: 'Pending Routes',
   pendingRoutesCount: 'Pending Routes ({count})',
 
-  // Vision Plan & Progress
-  visionGoal: 'Goal',
-  visionSteps: 'Steps',
-  visionCompletion: 'Completion',
-  visionProgress: 'Progress',
-  visionPages: 'Pages',
-  visionElements: 'Elements',
+  // Web Plan & Progress
+  webGoal: 'Goal',
+  webSteps: 'Steps',
+  webCompletion: 'Completion',
+  webProgress: 'Progress',
+  webPages: 'Pages',
+  webElements: 'Elements',
 
   // Multi-Agent Mode
   multiAgentMode: 'Multi-Agent Mode',
   workersCompleted: 'workers completed',
-  visionWaitingForEvents: 'Waiting for events...',
-  visionActivity: 'Activity',
-  visionActivityMultiAgentStart: 'Multi-agent started: {mode}, workers: {count}',
-  visionActivityWorkerTasks: 'Manager assigned {count} scope(s)',
-  visionActivityWorkerProgress: '{scope}: {status} ({pages} {pagesLabel}, {apis} APIs)',
-  visionActivityWorkerComplete: '{scope} completed ({pages} {pagesLabel}, {apis} APIs)',
-  visionActivityWorkerDecision: '{scope} (#{iteration}) decided: {action} ({progress}%)',
-  visionActivityWorkerAction: '{scope} (#{iteration}) action: {action} → {result} {duration}',
-  visionActivityPlan: 'Plan updated: {phase}',
-  visionActivityProgress: 'Progress: {phase} {iteration}/{max}',
-  visionActivityApi: 'API discovered: {method} {url}',
-  visionActivityComplete: 'Completed: {status}',
+  webWaitingForEvents: 'Waiting for events...',
+  webActivity: 'Activity',
+  webActivityMultiAgentStart: 'Multi-agent started: {mode}, workers: {count}',
+  webActivityWorkerTasks: 'Manager assigned {count} scope(s)',
+  webActivityWorkerProgress: '{scope}: {status} ({pages} {pagesLabel}, {apis} APIs)',
+  webActivityWorkerComplete: '{scope} completed ({pages} {pagesLabel}, {apis} APIs)',
+  webActivityWorkerDecision: '{scope} (#{iteration}) decided: {action} ({progress}%)',
+  webActivityWorkerAction: '{scope} (#{iteration}) action: {action} → {result} {duration}',
+  webActivityPlan: 'Plan updated: {phase}',
+  webActivityProgress: 'Progress: {phase} {iteration}/{max}',
+  webActivityApi: 'API discovered: {method} {url}',
+  webActivityComplete: 'Completed: {status}',
   totalUrls: 'Total URLs',
   totalApis: 'Total APIs',
   managerAgent: 'Manager Agent',
@@ -287,7 +287,7 @@ export default {
   sourceCitation: 'Source Citation #{number}',
 
   // MessageBlock actions & status
-  detailsInVisionPanel: 'Details are shown in the Vision Explorer panel',
+  detailsInWebExplorerPanel: 'Details are shown in the Web Explorer panel',
   collapseDetails: 'Collapse details',
   expandDetails: 'Expand details',
   copyMessage: 'Copy message',

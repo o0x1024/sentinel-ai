@@ -71,17 +71,17 @@
           </button>
         </div>
         <div class="flex items-center gap-2">
-          <!-- Vision History Button - shows when there's exploration history -->
+          <!-- Web Explorer History Button - shows when there's exploration history -->
           <button 
-            v-if="visionEvents.hasHistory.value"
-            @click="handleToggleVision()"
+            v-if="webExplorerEvents.hasHistory.value"
+            @click="handleToggleWebExplorer()"
             class="btn btn-sm gap-1"
-            :class="isVisionActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isVisionActive ? t('agent.visionPanelOpen') : t('agent.viewVisionHistory')"
+            :class="isWebExplorerActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="isWebExplorerActive ? t('agent.webExplorerPanelOpen') : t('agent.viewWebExplorerHistory')"
           >
-            <i class="fas fa-eye"></i>
+            <i class="fas fa-globe"></i>
             <span>{{ t('agent.explore') }}</span>
-            <span class="badge badge-xs badge-primary">{{ visionEvents.steps.value.length }}</span>
+            <span class="badge badge-xs badge-primary">{{ webExplorerEvents.steps.value.length }}</span>
           </button>
           <!-- Todos Button - always visible -->
           <button 
@@ -126,7 +126,7 @@
             :is-executing="isExecuting"
             :is-streaming="isStreaming"
             :streaming-content="streamingContent"
-            :is-vision-active="isVisionActive"
+            :is-web-explorer-active="isWebExplorerActive"
             class="flex-1"
             @resend="handleResendMessage"
             @edit="handleEditMessage"
@@ -161,9 +161,9 @@
           />
         </div>
         
-        <!-- Right: Side Panel (Vision, Todo, or Terminal) -->
+        <!-- Right: Side Panel (WebExplorer, Todo, or Terminal) -->
         <div 
-          v-if="isVisionActive || isTodosPanelActive || isTerminalActive"
+          v-if="isWebExplorerActive || isTodosPanelActive || isTerminalActive"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
           :style="{ width: sidebarWidth + 'px' }"
         >
@@ -173,25 +173,25 @@
               @mousedown="startResize"
             ></div>
             
-            <VisionExplorerPanel 
-               v-if="isVisionActive"
-               :steps="visionEvents.steps.value" 
-               :coverage="visionEvents.coverage.value"
-               :discovered-apis="visionEvents.discoveredApis.value"
-               :is-active="isVisionActive"
-               :current-url="visionEvents.currentUrl.value"
-               :current-plan="visionEvents.currentPlan.value"
-               :current-progress="visionEvents.currentProgress.value"
-               :multi-agent="visionEvents.multiAgent.value"
-               :is-multi-agent-mode="visionEvents.isMultiAgentMode.value"
-               :activity="visionEvents.activity.value"
-               :show-takeover-form="visionEvents.showTakeoverForm.value"
-               :takeover-message="visionEvents.takeoverMessage.value"
-               :takeover-fields="visionEvents.takeoverFields.value"
-               :login-timeout-seconds="visionEvents.loginTimeoutSeconds.value"
-               :execution-id="visionEvents.currentExecutionId.value"
+            <WebExplorerPanel 
+               v-if="isWebExplorerActive"
+               :steps="webExplorerEvents.steps.value" 
+               :coverage="webExplorerEvents.coverage.value"
+               :discovered-apis="webExplorerEvents.discoveredApis.value"
+               :is-active="isWebExplorerActive"
+               :current-url="webExplorerEvents.currentUrl.value"
+               :current-plan="webExplorerEvents.currentPlan.value"
+               :current-progress="webExplorerEvents.currentProgress.value"
+               :multi-agent="webExplorerEvents.multiAgent.value"
+               :is-multi-agent-mode="webExplorerEvents.isMultiAgentMode.value"
+               :activity="webExplorerEvents.activity.value"
+               :show-takeover-form="webExplorerEvents.showTakeoverForm.value"
+               :takeover-message="webExplorerEvents.takeoverMessage.value"
+               :takeover-fields="webExplorerEvents.takeoverFields.value"
+               :login-timeout-seconds="webExplorerEvents.loginTimeoutSeconds.value"
+               :execution-id="webExplorerEvents.currentExecutionId.value"
                class="h-full border-0 rounded-none bg-transparent"
-               @close="visionEvents.close()"
+               @close="webExplorerEvents.close()"
             />
             <TodoPanel 
               v-else-if="isTodosPanelActive" 
@@ -224,13 +224,13 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
 import { useAgentEvents } from '@/composables/useAgentEvents'
-import { useVisionEvents } from '@/composables/useVisionEvents'
+import { useWebExplorerEvents } from '@/composables/useWebExplorerEvents'
 import { useTodos } from '@/composables/useTodos'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
-import VisionExplorerPanel from './VisionExplorerPanel.vue'
+import WebExplorerPanel from './WebExplorerPanel.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -304,11 +304,11 @@ const isExecuting = computed(() => agentEvents.isExecuting.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 
-// Vision Events
-// Important: pass through the nullable execution id ref so Vision Explorer can
+// Web Explorer Events
+// Important: pass through the nullable execution id ref so Web Explorer can
 // receive early events (start/plan/progress) and then bind itself to the session.
-const visionEvents = useVisionEvents(agentEvents.currentExecutionId)
-const isVisionActive = computed(() => visionEvents.isVisionActive.value)
+const webExplorerEvents = useWebExplorerEvents(agentEvents.currentExecutionId)
+const isWebExplorerActive = computed(() => webExplorerEvents.isVisionActive.value)
 
 // Todos management
 const todosComposable = useTodos(computed(() => conversationId.value || ''))
@@ -332,14 +332,14 @@ const handleCloseTerminal = () => {
 }
 
 // Handle toggle panel functions - ensure only one panel is active at a time
-const handleToggleVision = () => {
-  if (isVisionActive.value) {
-    visionEvents.close()
+const handleToggleWebExplorer = () => {
+  if (isWebExplorerActive.value) {
+    webExplorerEvents.close()
   } else {
     // Close other panels
     todosComposable.close()
     terminalComposable.closeTerminal()
-    visionEvents.open()
+    webExplorerEvents.open()
   }
 }
 
@@ -348,7 +348,7 @@ const handleToggleTodos = () => {
     todosComposable.close()
   } else {
     // Close other panels
-    visionEvents.close()
+    webExplorerEvents.close()
     terminalComposable.closeTerminal()
     todosComposable.open()
   }
@@ -359,7 +359,7 @@ const handleToggleTerminal = () => {
     terminalComposable.closeTerminal()
   } else {
     // Close other panels
-    visionEvents.close()
+    webExplorerEvents.close()
     todosComposable.close()
     terminalComposable.openTerminal()
   }
@@ -660,10 +660,10 @@ const handleStop = async () => {
     // Notify useAgentEvents to stop execution status
     agentEvents.stopExecution()
     
-    // Also stop Vision Explorer if it's running
-    if (visionEvents.isVisionActive.value) {
-      console.log('[AgentView] Stopping Vision Explorer')
-      visionEvents.stop()
+    // Also stop Web Explorer if it's running
+    if (webExplorerEvents.isVisionActive.value) {
+      console.log('[AgentView] Stopping Web Explorer')
+      webExplorerEvents.stop()
     }
     
   } catch (e) {
@@ -1154,6 +1154,9 @@ onMounted(async () => {
     // Default load the last conversation
     await loadLatestConversation()
   }
+  
+  // Preconnect terminal server in background (non-blocking)
+  terminalComposable.preconnect()
   
   // 自动聚焦输入框
   nextTick(() => {

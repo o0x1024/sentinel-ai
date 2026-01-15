@@ -1,8 +1,8 @@
-//! V2 Vision Explorer Tool - Rig Tool implementation for ReAct Engine
+//! Web Explorer Tool - Rig Tool implementation for ReAct Engine
 //! Uses AgentBrowserService for browser automation
 
 use super::react_engine::ReActEngine;
-use super::types::{VisionExplorerV2Config, VisionMessage};
+use super::types::{WebExplorerConfig, WebExplorerMessage};
 use crate::engines::LlmConfig;
 use rig::completion::ToolDefinition;
 use rig::tool::{Tool, ToolError};
@@ -13,42 +13,42 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Get message type name for frontend
-fn msg_type_name(msg: &VisionMessage) -> String {
+fn msg_type_name(msg: &WebExplorerMessage) -> String {
     match msg {
-        VisionMessage::Started { .. } => "started",
-        VisionMessage::Step { .. } => "step",
-        VisionMessage::Screenshot { .. } => "screenshot",
-        VisionMessage::Analysis { .. } => "analysis",
-        VisionMessage::ActionExecuting { .. } => "action_executing",
-        VisionMessage::ActionResult { .. } => "action_result",
-        VisionMessage::Observation { .. } => "observation",
-        VisionMessage::Progress { .. } => "progress",
-        VisionMessage::ApiDiscovered { .. } => "api_discovered",
-        VisionMessage::Completed { .. } => "completed",
-        VisionMessage::Error { .. } => "error",
+        WebExplorerMessage::Started { .. } => "started",
+        WebExplorerMessage::Step { .. } => "step",
+        WebExplorerMessage::Screenshot { .. } => "screenshot",
+        WebExplorerMessage::Analysis { .. } => "analysis",
+        WebExplorerMessage::ActionExecuting { .. } => "action_executing",
+        WebExplorerMessage::ActionResult { .. } => "action_result",
+        WebExplorerMessage::Observation { .. } => "observation",
+        WebExplorerMessage::Progress { .. } => "progress",
+        WebExplorerMessage::ApiDiscovered { .. } => "api_discovered",
+        WebExplorerMessage::Completed { .. } => "completed",
+        WebExplorerMessage::Error { .. } => "error",
     }.to_string()
 }
 
 /// Convert message to data object for frontend
-fn msg_to_data(msg: &VisionMessage) -> serde_json::Value {
+fn msg_to_data(msg: &WebExplorerMessage) -> serde_json::Value {
     match msg {
-        VisionMessage::Started { session_id, target_url } => json!({
+        WebExplorerMessage::Started { session_id, target_url } => json!({
             "session_id": session_id,
             "target_url": target_url
         }),
-        VisionMessage::Step { step_number, thought, action, current_url } => json!({
+        WebExplorerMessage::Step { step_number, thought, action, current_url } => json!({
             "step_number": step_number,
             "thought": thought,
             "action": action,
             "current_url": current_url
         }),
-        VisionMessage::Screenshot { step_number, screenshot_base64, url, title } => json!({
+        WebExplorerMessage::Screenshot { step_number, screenshot_base64, url, title } => json!({
             "step_number": step_number,
             "screenshot_base64": screenshot_base64,
             "url": url,
             "title": title
         }),
-        VisionMessage::Analysis { step_number, page_type, description, elements_count, forms_count, links_count } => json!({
+        WebExplorerMessage::Analysis { step_number, page_type, description, elements_count, forms_count, links_count } => json!({
             "step_number": step_number,
             "page_type": format!("{:?}", page_type),
             "description": description,
@@ -56,45 +56,45 @@ fn msg_to_data(msg: &VisionMessage) -> serde_json::Value {
             "forms_count": forms_count,
             "links_count": links_count
         }),
-        VisionMessage::ActionExecuting { step_number, action_type, action_details } => json!({
+        WebExplorerMessage::ActionExecuting { step_number, action_type, action_details } => json!({
             "step_number": step_number,
             "action_type": action_type,
             "action_details": action_details
         }),
-        VisionMessage::ActionResult { step_number, success, error, new_url } => json!({
+        WebExplorerMessage::ActionResult { step_number, success, error, new_url } => json!({
             "step_number": step_number,
             "success": success,
             "error": error,
             "new_url": new_url
         }),
-        VisionMessage::Observation { step_number, page_type, description, elements_count } => json!({
+        WebExplorerMessage::Observation { step_number, page_type, description, elements_count } => json!({
             "step_number": step_number,
             "page_type": format!("{:?}", page_type),
             "description": description,
             "elements_count": elements_count
         }),
-        VisionMessage::Progress { steps_taken, max_steps, pages_visited, apis_discovered } => json!({
+        WebExplorerMessage::Progress { steps_taken, max_steps, pages_visited, apis_discovered } => json!({
             "steps_taken": steps_taken,
             "max_steps": max_steps,
             "pages_visited": pages_visited,
             "apis_discovered": apis_discovered
         }),
-        VisionMessage::ApiDiscovered { url, method } => json!({
+        WebExplorerMessage::ApiDiscovered { url, method } => json!({
             "url": url,
             "method": method
         }),
-        VisionMessage::Completed { success, result } => json!({
+        WebExplorerMessage::Completed { success, result } => json!({
             "success": success,
             "result": result
         }),
-        VisionMessage::Error { message } => json!({
+        WebExplorerMessage::Error { message } => json!({
             "message": message
         }),
     }
 }
 
 #[derive(Deserialize)]
-pub struct VisionExplorerV2Args {
+pub struct WebExplorerArgs {
     /// The URL to explore
     url: String,
     /// Maximum exploration depth
@@ -106,16 +106,16 @@ pub struct VisionExplorerV2Args {
     headers: Option<HashMap<String, String>>,
 }
 
-/// V2 Vision Explorer Tool for Agent integration
-/// Now uses AgentBrowserService instead of MCP Playwright
+/// Web Explorer Tool for Agent integration
+/// Uses AgentBrowserService for browser automation
 #[derive(Clone)]
-pub struct VisionExplorerV2Tool {
+pub struct WebExplorerTool {
     llm_config: LlmConfig,
     app_handle: Option<AppHandle>,
     execution_id: Option<String>,
 }
 
-impl VisionExplorerV2Tool {
+impl WebExplorerTool {
     pub fn new(llm_config: LlmConfig) -> Self {
         Self {
             llm_config,
@@ -135,17 +135,17 @@ impl VisionExplorerV2Tool {
     }
 }
 
-impl Tool for VisionExplorerV2Tool {
-    const NAME: &'static str = "vision_explorer";
+impl Tool for WebExplorerTool {
+    const NAME: &'static str = "web_explorer";
 
     type Error = ToolError;
-    type Args = VisionExplorerV2Args;
+    type Args = WebExplorerArgs;
     type Output = String;
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
-            name: "vision_explorer".to_string(),
-            description: "Explore a website using Vision Explorer V2 with ReAct architecture. Systematically discovers pages, APIs, and interactive elements through intelligent reasoning and action.".to_string(),
+            name: "web_explorer".to_string(),
+            description: "Explore a website using Web Explorer with ReAct architecture. Systematically discovers pages, APIs, and interactive elements through intelligent reasoning and action.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -173,8 +173,8 @@ impl Tool for VisionExplorerV2Tool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        // Build V2 config (no longer requires MCP Playwright)
-        let mut ai_config = crate::engines::vision_explorer_v2::types::AIConfig {
+        // Build config (no longer requires MCP Playwright)
+        let mut ai_config = crate::engines::web_explorer::types::AIConfig {
             fast_model_id: self.llm_config.model.clone(),
             vision_model_id: self.llm_config.model.clone(),
             fast_provider: self.llm_config.provider.clone(),
@@ -191,7 +191,7 @@ impl Tool for VisionExplorerV2Tool {
                 // Get default LLM (Fast model)
                 if let Ok(Some(model_info)) = ai_manager.get_default_model("llm").await {
                     if let Ok(Some(provider_cfg)) = ai_manager.get_provider_config(&model_info.provider).await {
-                        log::info!("VisionExplorerV2: Using default LLM model {} ({})", model_info.name, provider_cfg.provider);
+                        log::info!("WebExplorer: Using default LLM model {} ({})", model_info.name, provider_cfg.provider);
                         ai_config.fast_model_id = model_info.name;
                         ai_config.fast_provider = provider_cfg.provider;
                         ai_config.fast_api_key = provider_cfg.api_key;
@@ -200,11 +200,11 @@ impl Tool for VisionExplorerV2Tool {
                 }
                 
                 // VLM (Vision model) is disabled - using DOM-only analysis
-                log::info!("VisionExplorerV2: Using DOM-only analysis (VLM disabled)");
+                log::info!("WebExplorer: Using DOM-only analysis (VLM disabled)");
             }
         }
 
-        let config = VisionExplorerV2Config {
+        let config = WebExplorerConfig {
             target_url: args.url.clone(),
             max_depth: args.max_depth.unwrap_or(5),
             max_steps: args.max_steps.unwrap_or(100),
@@ -230,7 +230,7 @@ impl Tool for VisionExplorerV2Tool {
                     "ts": chrono::Utc::now().timestamp_millis(),
                     "data": msg_to_data(&msg)
                 });
-                let _ = handle.emit("vision:v2", envelope);
+                let _ = handle.emit("web_explorer:event", envelope);
             }
         });
 
@@ -243,23 +243,47 @@ impl Tool for VisionExplorerV2Tool {
             Ok(result) => {
                 let duration = start_time.elapsed().as_secs();
 
+                // Format API list
+                let api_list_str = if result.api_list.is_empty() {
+                    "  (none)".to_string()
+                } else {
+                    result.api_list.iter()
+                        .map(|api| format!("  - {}", api))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+
+                // Format visited URLs
+                let urls_str = if result.visited_urls.is_empty() {
+                    "  (none)".to_string()
+                } else {
+                    result.visited_urls.iter()
+                        .map(|url| format!("  - {}", url))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+
                 Ok(format!(
-                    "Vision Explorer V2 completed exploration of {}\n\
+                    "Web Explorer completed exploration of {}\n\
                      Session ID: {}\n\
                      Pages visited: {}\n\
                      APIs discovered: {}\n\
                      Actions performed: {}\n\
-                     Duration: {}s",
+                     Duration: {}s\n\n\
+                     Discovered API Endpoints:\n{}\n\n\
+                     Visited URLs:\n{}",
                     args.url,
                     session_id,
                     result.pages_visited,
                     result.apis_discovered,
                     result.actions_performed,
-                    duration
+                    duration,
+                    api_list_str,
+                    urls_str
                 ))
             }
             Err(e) => Err(ToolError::ToolCallError(
-                format!("Vision Explorer V2 failed: {}", e).into(),
+                format!("Web Explorer failed: {}", e).into(),
             )),
         }
     }

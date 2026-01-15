@@ -18,12 +18,12 @@
     <div 
     v-for="(msg, index) in displayedMessages" 
     :key="msg.id" 
-    v-memo="[msg.content, msg.metadata?.status, msg.metadata?.duration_ms, isVisionActive, isExecuting && index === displayedMessages.length - 1]"
+    v-memo="[msg.content, msg.metadata?.status, msg.metadata?.duration_ms, isWebExplorerActive, isExecuting && index === displayedMessages.length - 1]"
     class="message-wrapper animate-fadeIn min-w-0"
     >
       <MessageBlock 
         :message="msg" 
-        :is-vision-active="isVisionActive" 
+        :is-web-explorer-active="isWebExplorerActive" 
         :is-executing="isExecuting && index === displayedMessages.length - 1"
         @resend="handleResend"
         @edit="handleEdit"
@@ -65,7 +65,7 @@ const props = defineProps<{
   isExecuting?: boolean
   isStreaming?: boolean
   streamingContent?: string
-  isVisionActive?: boolean
+  isWebExplorerActive?: boolean
 }>()
 
 const emit = defineEmits<{

@@ -4,6 +4,7 @@
  */
 
 import { ref, computed } from 'vue'
+import TerminalAPI from '@/api/terminal'
 
 interface TerminalState {
   isActive: boolean
@@ -21,6 +22,21 @@ const terminalState = ref<TerminalState>({
   isActive: false,
   sessionId: null,
   hasHistory: false,
+})
+
+// Preconnection state
+const preconnectionState = ref<{
+  isPreconnecting: boolean
+  isPreconnected: boolean
+  serverRunning: boolean
+  wsUrl: string | null
+  error: string | null
+}>({
+  isPreconnecting: false,
+  isPreconnected: false,
+  serverRunning: false,
+  wsUrl: null,
+  error: null,
 })
 
 // Event bus for writing to terminal
@@ -108,11 +124,56 @@ export function useTerminal() {
     }
   }
 
+  /**
+   * Preconnect terminal server in background
+   * This starts the server and gets the WebSocket URL ready
+   * so that when user opens terminal panel, connection is instant
+   */
+  async function preconnect(): Promise<void> {
+    if (preconnectionState.value.isPreconnecting || preconnectionState.value.isPreconnected) {
+      return
+    }
+
+    preconnectionState.value.isPreconnecting = true
+    preconnectionState.value.error = null
+
+    try {
+      // Check if server is already running
+      const status = await TerminalAPI.getStatus()
+      if (!status.running) {
+        console.log('[useTerminal] Starting terminal server for preconnection...')
+        await TerminalAPI.startServer()
+        // Wait for server to be ready
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+
+      // Get WebSocket URL
+      const wsUrl = await TerminalAPI.getWebSocketUrl()
+      
+      preconnectionState.value.serverRunning = true
+      preconnectionState.value.wsUrl = wsUrl
+      preconnectionState.value.isPreconnected = true
+      
+      console.log('[useTerminal] Terminal server preconnected:', wsUrl)
+    } catch (e: any) {
+      console.error('[useTerminal] Preconnection failed:', e)
+      preconnectionState.value.error = e.message || String(e)
+    } finally {
+      preconnectionState.value.isPreconnecting = false
+    }
+  }
+
+  // Preconnection state accessors
+  const isPreconnected = computed(() => preconnectionState.value.isPreconnected)
+  const preconnectedWsUrl = computed(() => preconnectionState.value.wsUrl)
+
   return {
     // State
     isTerminalActive,
     currentSessionId,
     hasHistory,
+    isPreconnected,
+    preconnectedWsUrl,
     
     // Actions
     openTerminal,
@@ -123,5 +184,6 @@ export function useTerminal() {
     resetTerminal,
     writeToTerminal,
     onTerminalWrite,
+    preconnect,
   }
 }

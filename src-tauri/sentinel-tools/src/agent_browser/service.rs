@@ -533,7 +533,7 @@ impl AgentBrowserService {
     }
 
     /// Get discovered API endpoints from network requests
-    /// Only returns requests matching the target domain (same-origin)
+    /// Returns all non-static requests from the target domain
     pub async fn get_discovered_apis(&mut self) -> Result<Vec<String>> {
         let requests = self.get_network_requests(None).await?;
         
@@ -546,11 +546,11 @@ impl AgentBrowserService {
             .filter(|r| {
                 let url = &r.url;
                 let resource_type = &r.resource_type;
+                let url_lower = url.to_lowercase();
                 
-                // Filter by target domain - only keep same-origin requests
+                // Only keep requests from target domain
                 if let Some(ref domain) = target_domain {
                     if let Some(req_domain) = Self::extract_domain(url) {
-                        // Only keep requests from the same domain
                         if !req_domain.eq_ignore_ascii_case(domain) && 
                            !req_domain.ends_with(&format!(".{}", domain)) {
                             return false;
@@ -560,45 +560,36 @@ impl AgentBrowserService {
                     }
                 }
                 
-                // More strict filtering: exclude common static resources
-                // Skip common static file extensions
-                let is_static = url.ends_with(".js") 
-                    || url.ends_with(".css") 
-                    || url.ends_with(".png") 
-                    || url.ends_with(".jpg") 
-                    || url.ends_with(".jpeg")
-                    || url.ends_with(".gif") 
-                    || url.ends_with(".svg") 
-                    || url.ends_with(".woff") 
-                    || url.ends_with(".woff2")
-                    || url.ends_with(".ttf")
-                    || url.ends_with(".ico")
+                // Only exclude static resources
+                let is_static = url_lower.ends_with(".js") 
+                    || url_lower.ends_with(".css") 
+                    || url_lower.ends_with(".png") 
+                    || url_lower.ends_with(".jpg") 
+                    || url_lower.ends_with(".jpeg")
+                    || url_lower.ends_with(".gif") 
+                    || url_lower.ends_with(".svg") 
+                    || url_lower.ends_with(".woff") 
+                    || url_lower.ends_with(".woff2")
+                    || url_lower.ends_with(".ttf")
+                    || url_lower.ends_with(".ico")
+                    || url_lower.ends_with(".map")
+                    || url_lower.ends_with(".eot")
+                    || url_lower.ends_with(".webp")
+                    || url_lower.ends_with(".mp3")
+                    || url_lower.ends_with(".mp4")
+                    || url_lower.ends_with(".webm")
+                    || url_lower.ends_with(".ogg")
+                    || url_lower.ends_with(".wav")
+                    || url_lower.ends_with(".pdf")
                     || resource_type == "image"
                     || resource_type == "stylesheet"
                     || resource_type == "font"
-                    || resource_type == "media";
+                    || resource_type == "media"
+                    || resource_type == "script";
                 
-                if is_static {
-                    return false;
-                }
-                
-                // Include only likely API endpoints
-                let has_api_path = url.contains("/api/")
-                    || url.contains("/v1/")
-                    || url.contains("/v2/")
-                    || url.contains("/v3/")
-                    || url.contains("/graphql")
-                    || url.contains("/rest/");
-                
-                // Or XHR/fetch requests (but not document navigations)
-                let is_ajax = (resource_type == "fetch" || resource_type == "xhr") 
-                    && !url.ends_with(".html")
-                    && !url.ends_with("/");
-                
-                has_api_path || is_ajax
+                !is_static
             })
             .map(|r| {
-                // Ensure method is not empty
                 let method = if r.method.is_empty() { "GET" } else { &r.method };
                 format!("{} {}", method, r.url)
             })

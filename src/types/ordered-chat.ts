@@ -4,7 +4,7 @@
 export type ChunkType = 'Content' | 'Thinking' | 'ToolResult' | 'PlanInfo' | 'Error' | 'Meta' | 'StreamComplete'
 
 // ReWOO、LLMCompiler、PlanAndExecute 已内嵌到泛化的 ReAct 引擎
-export type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanAndExecute' | 'VisionExplorer' | 'Unknown'
+export type ArchitectureType = 'ReAct' | 'ReWOO' | 'LLMCompiler' | 'PlanAndExecute' | 'WebExplorer' | 'VisionExplorer' | 'Unknown'
 
 export interface OrderedMessageChunk {
   execution_id: string

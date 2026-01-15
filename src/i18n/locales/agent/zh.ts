@@ -2,8 +2,8 @@ export default {
   // AgentView
   newConversation: '新会话',
   switchConversationList: '切换会话列表',
-  visionPanelOpen: '视觉探索面板已打开',
-  viewVisionHistory: '查看视觉探索历史',
+  webExplorerPanelOpen: 'Web 探索面板已打开',
+  viewWebExplorerHistory: '查看 Web 探索历史',
   explore: '探索',
   todosPanelOpen: '任务面板已打开',
   viewTodos: '查看任务列表',
@@ -227,7 +227,7 @@ export default {
   longTermMemory: '长期记忆',
   summaryContent: '摘要内容',
 
-  // VisionExplorerPanel
+  // WebExplorerPanel
   loginPageDetected: '检测到登录页面，请输入凭证',
   llmThinking: 'LLM 思考过程',
   alreadyLoggedIn: '已登录',
@@ -236,44 +236,44 @@ export default {
   verificationCodeOptional: '验证码（可选）',
   continueExploration: '继续探索',
   skipLogin: '跳过登录',
-  visionMessagePlaceholder: '给 Vision Explorer 的指令（Enter 发送，Shift+Enter 换行）',
+  webMessagePlaceholder: '给 Web Explorer 的指令（Enter 发送，Shift+Enter 换行）',
   send: '发送',
   stop: '停止',
 
-  // More VisionExplorerPanel strings
+  // More WebExplorerPanel strings
   username: '用户名',
   verificationCode: '验证码',
 
-  // VisionExplorerProgress
+  // WebExplorerProgress
   route: '路由',
   element: '元素',
   component: '组件',
   pendingRoutes: '待访问路由',
   pendingRoutesCount: '待访问路由 ({count})',
 
-  // Vision Plan & Progress
-  visionGoal: '目标',
-  visionSteps: '步骤',
-  visionCompletion: '完成标准',
-  visionProgress: '探索进度',
-  visionPages: '页面',
-  visionElements: '元素',
+  // Web Plan & Progress
+  webGoal: '目标',
+  webSteps: '步骤',
+  webCompletion: '完成标准',
+  webProgress: '探索进度',
+  webPages: '页面',
+  webElements: '元素',
 
   // Multi-Agent Mode
   multiAgentMode: '多 Agent 模式',
   workersCompleted: '个 Worker 已完成',
-  visionWaitingForEvents: '等待事件中...',
-  visionActivity: '活动',
-  visionActivityMultiAgentStart: '多 Agent 已启动：{mode}，Worker 数：{count}',
-  visionActivityWorkerTasks: 'Manager 分配了 {count} 个作用域',
-  visionActivityWorkerProgress: '{scope}：{status}（{pages} {pagesLabel}，{apis} APIs）',
-  visionActivityWorkerComplete: '{scope} 已完成（{pages} {pagesLabel}，{apis} APIs）',
-  visionActivityWorkerDecision: '{scope}（第 {iteration} 轮）决策：{action}（{progress}%）',
-  visionActivityWorkerAction: '{scope}（第 {iteration} 轮）动作：{action} → {result} {duration}',
-  visionActivityPlan: '计划更新：{phase}',
-  visionActivityProgress: '进度：{phase} {iteration}/{max}',
-  visionActivityApi: '发现 API：{method} {url}',
-  visionActivityComplete: '已完成：{status}',
+  webWaitingForEvents: '等待事件中...',
+  webActivity: '活动',
+  webActivityMultiAgentStart: '多 Agent 已启动：{mode}，Worker 数：{count}',
+  webActivityWorkerTasks: 'Manager 分配了 {count} 个作用域',
+  webActivityWorkerProgress: '{scope}：{status}（{pages} {pagesLabel}，{apis} APIs）',
+  webActivityWorkerComplete: '{scope} 已完成（{pages} {pagesLabel}，{apis} APIs）',
+  webActivityWorkerDecision: '{scope}（第 {iteration} 轮）决策：{action}（{progress}%）',
+  webActivityWorkerAction: '{scope}（第 {iteration} 轮）动作：{action} → {result} {duration}',
+  webActivityPlan: '计划更新：{phase}',
+  webActivityProgress: '进度：{phase} {iteration}/{max}',
+  webActivityApi: '发现 API：{method} {url}',
+  webActivityComplete: '已完成：{status}',
   totalUrls: '总 URL 数',
   totalApis: '总 API 数',
   managerAgent: '管理 Agent',
@@ -287,7 +287,7 @@ export default {
   sourceCitation: '知识库引用 #{number}',
 
   // MessageBlock actions & status
-  detailsInVisionPanel: '详情显示在 Vision Explorer 面板中',
+  detailsInWebExplorerPanel: '详情显示在 Web Explorer 面板中',
   collapseDetails: '收起详情',
   expandDetails: '展开详情',
   copyMessage: '复制消息',

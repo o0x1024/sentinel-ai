@@ -103,19 +103,19 @@
                   >
                     <i class="fas fa-shield-alt"></i>
                   </button>
-                  <!-- Vision Explorer V2 Special Actions -->
+                  <!-- Web Explorer Special Actions -->
                   <button 
-                    v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
-                    @click="openVisionExplorerModal(tool)"
+                    v-if="tool.name === 'web_explorer'"
+                    @click="openWebExplorerModal(tool)"
                     class="btn btn-primary btn-sm"
-                    title="测试 Vision Explorer"
+                    title="测试 Web Explorer"
                   >
                     <i class="fas fa-play mr-1"></i>
                     测试
                   </button>
                   <!-- Regular Tools -->
                   <button 
-                    v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
+                    v-if="tool.name !== 'shell' && tool.name !== 'web_explorer'"
                     @click="openTestModal(tool)"
                     class="btn btn-primary btn-sm"
                     title="测试工具"
@@ -190,18 +190,18 @@
                     >
                       <i class="fas fa-shield-alt"></i>
                     </button>
-                    <!-- Vision Explorer V2 -->
+                    <!-- Web Explorer -->
                     <button 
-                      v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
-                      @click="openVisionExplorerModal(tool)"
+                      v-if="tool.name === 'web_explorer'"
+                      @click="openWebExplorerModal(tool)"
                       class="btn btn-primary btn-xs"
-                      title="测试 Vision Explorer"
+                      title="测试 Web Explorer"
                     >
                       <i class="fas fa-play"></i>
                     </button>
                     <!-- Regular Tools -->
                     <button 
-                      v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
+                      v-if="tool.name !== 'shell' && tool.name !== 'web_explorer'"
                       @click="openTestModal(tool)"
                       class="btn btn-primary btn-xs"
                       title="测试工具"
@@ -249,14 +249,14 @@
     <ShellTerminal v-model="showShellTerminal" />
 
     <!-- Vision Explorer V2 测试模态框 -->
-    <dialog :class="['modal', { 'modal-open': showVisionExplorerModal }]">
+    <dialog :class="['modal', { 'modal-open': showWebExplorerModal }]">
       <div class="modal-box w-11/12 max-w-3xl">
         <div class="flex justify-between items-center mb-4">
           <h3 class="font-bold text-lg">
             <i class="fas fa-eye text-primary mr-2"></i>
             Vision Explorer V2 测试
           </h3>
-          <button @click="closeVisionExplorerModal" class="btn btn-sm btn-ghost">✕</button>
+          <button @click="closeWebExplorerModal" class="btn btn-sm btn-ghost">✕</button>
         </div>
 
         <div class="space-y-4">
@@ -309,17 +309,17 @@
         </div>
 
         <div class="modal-action">
-          <button @click="closeVisionExplorerModal" class="btn">关闭</button>
+          <button @click="closeWebExplorerModal" class="btn">关闭</button>
           <button 
             v-if="veStatus?.is_running"
-            @click="stopVisionExplorer"
+            @click="stopWebExplorer"
             class="btn btn-warning"
           >
             <i class="fas fa-stop mr-1"></i>
             停止
           </button>
           <button 
-            @click="startVisionExplorer"
+            @click="startWebExplorer"
             class="btn btn-primary"
             :disabled="isVeTesting || !veTargetUrl"
           >
@@ -432,7 +432,7 @@ const getToolCountByCategory = (category: string) => {
 }
 
 // Vision Explorer V2 状态
-const showVisionExplorerModal = ref(false)
+const showWebExplorerModal = ref(false)
 const veTargetUrl = ref('https://example.com')
 const veMaxDepth = ref(5)
 const veStatus = ref<any>(null)
@@ -451,8 +451,7 @@ function getToolIcon(toolName: string) {
     'port_scan': 'fas fa-network-wired',
     'shell': 'fas fa-terminal',
     'interactive_shell': 'fas fa-terminal',
-    'vision_explorer': 'fas fa-eye',
-    'vision_explorer_v2': 'fas fa-eye',
+    'web_explorer': 'fas fa-globe',
     'web_search': 'fas fa-search',
     'http_request': 'fas fa-globe',
     'local_time': 'fas fa-clock',
@@ -565,32 +564,32 @@ function openTestModal(tool: any) {
 
 
 // ============================================================================
-// Vision Explorer V2 方法
+// Web Explorer 方法
 // ============================================================================
 
-function openVisionExplorerModal(tool: any) {
+function openWebExplorerModal(tool: any) {
   veStatus.value = null
   veResult.value = ''
-  showVisionExplorerModal.value = true
+  showWebExplorerModal.value = true
 }
 
-function closeVisionExplorerModal() {
-  showVisionExplorerModal.value = false
+function closeWebExplorerModal() {
+  showWebExplorerModal.value = false
 }
 
 
 
-async function startVisionExplorer() {
+async function startWebExplorer() {
   if (!veTargetUrl.value) {
     dialog.toast.warning('请输入目标 URL')
     return
   }
 
   isVeTesting.value = true
-  veResult.value = '正在启动 Vision Explorer V2...'
+  veResult.value = '正在启动 Web Explorer...'
 
   try {
-    const executionId = await invoke<string>('start_vision_explorer_v2', {
+    const executionId = await invoke<string>('start_web_explorer', {
       config: {
         target_url: veTargetUrl.value,
         max_depth: veMaxDepth.value,
@@ -602,48 +601,48 @@ async function startVisionExplorer() {
     dialog.toast.success(`探索已启动，执行ID: ${executionId.substring(0, 8)}...`)
     
     // Poll status periodically
-    await pollVeStatus(executionId)
+    await pollWeStatus(executionId)
   } catch (error: any) {
-    console.error('Failed to start Vision Explorer V2:', error)
+    console.error('Failed to start Web Explorer:', error)
     veResult.value = `启动失败: ${error?.message || error}`
-    dialog.toast.error('启动 Vision Explorer V2 失败')
+    dialog.toast.error('启动 Web Explorer 失败')
   } finally {
     isVeTesting.value = false
   }
 }
 
-async function stopVisionExplorer() {
+async function stopWebExplorer() {
   if (!veExecutionId.value) return
 
   try {
-    await invoke('stop_vision_explorer_v2', {
+    await invoke('stop_web_explorer', {
       executionId: veExecutionId.value
     })
     dialog.toast.success('已发送停止请求')
     veResult.value = '探索已停止'
     
     // Refresh status
-    await pollVeStatus(veExecutionId.value)
+    await pollWeStatus(veExecutionId.value)
   } catch (error: any) {
-    console.error('Failed to stop Vision Explorer V2:', error)
+    console.error('Failed to stop Web Explorer:', error)
     dialog.toast.error(`停止失败: ${error?.message || error}`)
   }
 }
 
-async function pollVeStatus(executionId: string) {
+async function pollWeStatus(executionId: string) {
   try {
-    const status = await invoke<any>('get_vision_explorer_v2_status', { executionId })
+    const status = await invoke<any>('get_web_explorer_status', { executionId })
     veStatus.value = status
     
     if (status.is_running) {
       veResult.value = `探索进行中...\n会话ID: ${status.session_id}\n目标: ${status.target_url}`
       // Continue polling
-      setTimeout(() => pollVeStatus(executionId), 2000)
+      setTimeout(() => pollWeStatus(executionId), 2000)
     } else {
       veResult.value = `探索已完成\n会话ID: ${status.session_id}\n目标: ${status.target_url}`
     }
   } catch (error: any) {
-    console.warn('Failed to get V2 status:', error)
+    console.warn('Failed to get Web Explorer status:', error)
     // Session may have ended or not found
     veResult.value = '会话已结束或未找到'
     veStatus.value = null

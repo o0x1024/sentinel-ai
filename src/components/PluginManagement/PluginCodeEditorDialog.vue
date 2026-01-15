@@ -386,18 +386,22 @@ declare module '@vue/runtime-core' {
 }
 
 // Click outside directive implementation
+interface ClickOutsideHTMLElement extends HTMLElement {
+  _clickOutsideHandler?: (event: MouseEvent) => void
+}
+
 const vClickOutside = {
-  mounted(el: HTMLElement, binding: any) {
+  mounted(el: ClickOutsideHTMLElement, binding: any) {
     el._clickOutsideHandler = (event: MouseEvent) => {
       if (!el.contains(event.target as Node)) {
         binding.value()
       }
     }
     setTimeout(() => {
-      document.addEventListener('click', el._clickOutsideHandler)
+      document.addEventListener('click', el._clickOutsideHandler!)
     }, 0)
   },
-  beforeUnmount(el: HTMLElement) {
+  beforeUnmount(el: ClickOutsideHTMLElement) {
     if (el._clickOutsideHandler) {
       document.removeEventListener('click', el._clickOutsideHandler)
     }

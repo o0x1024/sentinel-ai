@@ -373,7 +373,7 @@ pub fn run() {
                 handle.manage(PacketCaptureState::default());
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
-                handle.manage(commands::vision_explorer_v2::VisionExplorerV2State::default());
+                handle.manage(commands::web_explorer::WebExplorerState::default());
 
                 // Initialize Tenth Man executor
                 crate::agents::tenth_man_executor::set_app_handle(handle.clone());

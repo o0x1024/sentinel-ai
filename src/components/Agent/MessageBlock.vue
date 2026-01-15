@@ -263,7 +263,7 @@
           <img
             :src="getImagePreviewUrl(img)"
             class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
-            :alt="img.filename || 'attachment'"
+            :alt="(typeof img === 'object' && img?.filename) || 'attachment'"
             @click="openImagePreview(getImagePreviewUrl(img))"
           />
         </div>
@@ -368,7 +368,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   message: AgentMessage
-  isVisionActive?: boolean
+  isWebExplorerActive?: boolean
   isExecuting?: boolean
 }>()
 
@@ -817,21 +817,21 @@ const formattedContent = computed(() => {
   }
 })
 
-// Check if content should be hidden (Vision Explorer duplication)
+// Check if content should be hidden (Web Explorer duplication)
 const shouldHideContent = computed(() => {
-  // Only apply if vision drawer is active
-  if (!props.isVisionActive) return false
+  // Only apply if web explorer drawer is active
+  if (!props.isWebExplorerActive) return false
   
-  // Check if it is a vision explorer tool message
+  // Check if it is a web explorer tool message
   const toolName = props.message.metadata?.tool_name
-  if (toolName === 'vision_explorer') {
+  if (toolName === 'web_explorer' || toolName === 'vision_explorer') {
     // Hide tool_result and progress messages (which are usually verbose logs)
     return ['tool_result', 'progress'].includes(props.message.type)
   }
   
   // Also check if content looks like iteration logs
   if (['tool_result', 'final'].includes(props.message.type)) {
-     if (props.message.content.includes('**迭代') && props.message.content.includes('vision_explorer')) {
+     if (props.message.content.includes('**迭代') && (props.message.content.includes('web_explorer') || props.message.content.includes('vision_explorer'))) {
        return true
      }
   }

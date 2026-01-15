@@ -1,7 +1,7 @@
 import { ref, computed, onMounted, onUnmounted, type Ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-export interface VisionStep {
+export interface WebStep {
   iteration: number
   phase: string
   status: string
@@ -26,7 +26,7 @@ export interface VisionStep {
   error?: string
 }
 
-export interface VisionPlan {
+export interface WebPlan {
   phase: string
   phase_name: string
   goal: string
@@ -35,7 +35,7 @@ export interface VisionPlan {
   reason: string
 }
 
-export interface VisionProgress {
+export interface WebProgress {
   phase: string
   iteration: number
   max_iterations: number
@@ -44,7 +44,7 @@ export interface VisionProgress {
   elements_interacted: number
 }
 
-export interface VisionCoverage {
+export interface WebCoverage {
   route_coverage: number
   element_coverage: number
   component_coverage: number
@@ -94,35 +94,35 @@ export interface MultiAgentState {
   } | null
 }
 
-export type VisionActivityEvent =
+export type WebActivityEvent =
   | { type: 'multi_agent_start'; ts: number; mode: string; total_workers: number }
   | { type: 'worker_tasks'; ts: number; count: number }
   | { type: 'worker_progress'; ts: number; task_id: string; scope_name: string; status: string; pages: number; apis: number; progress: number }
   | { type: 'worker_complete'; ts: number; task_id: string; scope_name: string; pages: number; apis: number; completion_reason?: string }
   | { type: 'worker_decision'; ts: number; task_id: string; scope_name: string; iteration: number; page_analysis: string; action_type: string; element_index?: number; value?: string; reason: string; progress: number; estimated_apis?: string[] }
   | { type: 'worker_action'; ts: number; task_id: string; scope_name: string; iteration: number; action_type: string; element_index?: number; value?: string; success: boolean; duration_ms?: number; reason: string }
-  | { type: 'vision_plan'; ts: number; phase_name: string; phase: string }
-  | { type: 'vision_progress'; ts: number; phase: string; iteration: number; max_iterations: number }
+  | { type: 'web_plan'; ts: number; phase_name: string; phase: string }
+  | { type: 'web_progress'; ts: number; phase: string; iteration: number; max_iterations: number }
   | { type: 'api_discovered'; ts: number; method: string; url: string }
   | { type: 'takeover_request'; ts: number; request_type: string }
   | { type: 'complete'; ts: number; status: string }
 
-interface VisionV2Envelope {
+interface WebExplorerEnvelope {
   execution_id: string
   type: string
   ts: number
   data: any
 }
 
-export function useVisionEvents(executionId?: Ref<string | null>) {
-  const steps = ref<VisionStep[]>([])
-  const coverage = ref<VisionCoverage | null>(null)
+export function useWebExplorerEvents(executionId?: Ref<string | null>) {
+  const steps = ref<WebStep[]>([])
+  const coverage = ref<WebCoverage | null>(null)
   const discoveredApis = ref<{ method: string; url: string }[]>([])
   const isVisionActive = ref(false)
   const currentUrl = ref('')
 
-  const currentPlan = ref<VisionPlan | null>(null)
-  const currentProgress = ref<VisionProgress | null>(null)
+  const currentPlan = ref<WebPlan | null>(null)
+  const currentProgress = ref<WebProgress | null>(null)
 
   const showTakeoverForm = ref(false)
   const takeoverMessage = ref('')
@@ -138,7 +138,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
   })
   const isMultiAgentMode = computed(() => multiAgent.value.mode?.is_multi_agent ?? false)
 
-  const activity = ref<VisionActivityEvent[]>([])
+  const activity = ref<WebActivityEvent[]>([])
 
   const unlisteners: UnlistenFn[] = []
 
@@ -164,14 +164,14 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     }
   }
 
-  const pushActivity = (evt: VisionActivityEvent) => {
+  const pushActivity = (evt: WebActivityEvent) => {
     activity.value.push(evt)
     if (activity.value.length > 200) {
       activity.value.splice(0, activity.value.length - 200)
     }
   }
 
-  const handleV2 = (payload: VisionV2Envelope) => {
+  const handleWebExplorerEvent = (payload: WebExplorerEnvelope) => {
     if (executionId?.value && payload.execution_id !== executionId.value) return
 
     isVisionActive.value = true
@@ -301,8 +301,9 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         return
       }
 
+      case 'web_step':
       case 'vision_step': {
-        const step = data?.step as VisionStep | undefined
+        const step = data?.step as WebStep | undefined
         if (step) {
           steps.value.push(step)
           if (step.url) currentUrl.value = step.url
@@ -382,6 +383,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
         return
       }
 
+      case 'web_plan':
       case 'vision_plan': {
         currentPlan.value = {
           phase: data?.phase || '',
@@ -391,10 +393,11 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
           completion_criteria: data?.completion_criteria || '',
           reason: data?.reason || ''
         }
-        pushActivity({ type: 'vision_plan', ts: now, phase_name: data?.phase_name || '', phase: data?.phase || '' })
+        pushActivity({ type: 'web_plan', ts: now, phase_name: data?.phase_name || '', phase: data?.phase || '' })
         return
       }
 
+      case 'web_progress':
       case 'vision_progress': {
         currentProgress.value = {
           phase: data?.phase || '',
@@ -405,7 +408,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
           elements_interacted: data?.elements_interacted || 0
         }
         pushActivity({
-          type: 'vision_progress',
+          type: 'web_progress',
           ts: now,
           phase: data?.phase || '',
           iteration: data?.iteration || 0,
@@ -547,8 +550,15 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
   }
 
   const startListening = async () => {
-    const unlistenV2 = await listen<VisionV2Envelope>('vision:v2', evt => {
-      handleV2(evt.payload)
+    // Listen for web_explorer events
+    const unlistenWebExplorer = await listen<WebExplorerEnvelope>('web_explorer:event', evt => {
+      handleWebExplorerEvent(evt.payload)
+    })
+    unlisteners.push(unlistenWebExplorer)
+    
+    // Also listen for legacy vision:v2 events for backward compatibility
+    const unlistenV2 = await listen<WebExplorerEnvelope>('vision:v2', evt => {
+      handleWebExplorerEvent(evt.payload)
     })
     unlisteners.push(unlistenV2)
   }
@@ -578,12 +588,12 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     }
   }
 
-  // Stop vision explorer execution
+  // Stop web explorer execution
   const stop = () => {
     isVisionActive.value = false
     // Reset any active state
     if (currentExecutionId.value) {
-      console.log('[useVisionEvents] Stopping vision explorer:', currentExecutionId.value)
+      console.log('[useWebExplorerEvents] Stopping web explorer:', currentExecutionId.value)
     }
   }
 

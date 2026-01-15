@@ -1327,10 +1327,14 @@ const handleReferTestResultToAi = () => {
   if (!testResult.value) return
   
   // 构建测试结果引用
-  const resultText = `Test Result:\n${JSON.stringify(testResult.value, null, 2)}`
   store.selectedTestResultRef = {
     result: testResult.value,
-    preview: testResult.value.message?.substring(0, 100) || 'Test Result'
+    success: testResult.value.success || false,
+    message: testResult.value.message || '',
+    preview: testResult.value.message?.substring(0, 100) || 'Test Result',
+    findings: testResult.value.findings,
+    error: testResult.value.error,
+    timestamp: Date.now()
   }
   
   store.showAiPanel = true

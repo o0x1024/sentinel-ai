@@ -116,10 +116,10 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         tracing::info!("Refreshing MCP tools before execution...");
         mcp_adapter::refresh_mcp_tools(&tool_server).await;
 
-        // Register VisionExplorerV2Tool if enabled
-        if tool_config.enabled && !tool_config.disabled_tools.contains(&"vision_explorer".to_string()) {
+        // Register WebExplorerTool if enabled
+        if tool_config.enabled && !tool_config.disabled_tools.contains(&"web_explorer".to_string()) {
            if let Some(_mcp_service) = app_handle.try_state::<std::sync::Arc<crate::services::mcp::McpService>>() {
-                use crate::engines::vision_explorer_v2::VisionExplorerV2Tool;
+                use crate::engines::web_explorer::WebExplorerTool;
                 use sentinel_tools::dynamic_tool::{DynamicToolBuilder, ToolSource};
                 use rig::tool::Tool;
 
@@ -128,7 +128,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                    .with_timeout(params.timeout_secs)
                    .with_rig_provider(&rig_provider);
                 
-                // Set api_key and base_url for VisionExplorer V2
+                // Set api_key and base_url for WebExplorer
                 if let Some(ref api_key) = params.api_key {
                     llm_config = llm_config.with_api_key(api_key);
                 }
@@ -136,22 +136,22 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                     llm_config = llm_config.with_base_url(api_base);
                 }
 
-                let ve_tool = VisionExplorerV2Tool::new(llm_config)
+                let we_tool = WebExplorerTool::new(llm_config)
                     .with_app_handle(app_handle.clone())
                     .with_execution_id(params.execution_id.clone());
                 
                 // Get definition
-                let def = ve_tool.definition(String::new()).await;
+                let def = we_tool.definition(String::new()).await;
                 
                 let tool_def = DynamicToolBuilder::new(def.name)
                    .description(def.description)
                    .input_schema(def.parameters)
                    .source(ToolSource::Builtin)
                    .executor(move |args| {
-                       let tool = ve_tool.clone();
+                       let tool = we_tool.clone();
                        async move {
                            // Deserialize args
-                           let tool_args: crate::engines::vision_explorer_v2::tool::VisionExplorerV2Args = 
+                           let tool_args: crate::engines::web_explorer::tool::WebExplorerArgs = 
                                serde_json::from_value(args).map_err(|e| e.to_string())?;
                            
                            let result = tool.call(tool_args).await
@@ -164,12 +164,12 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                 
                 if let Ok(tool_def) = tool_def {
                     tool_server.register_tool(tool_def).await;
-                    tracing::info!("Registered VisionExplorerV2Tool");
+                    tracing::info!("Registered WebExplorerTool");
                 } else if let Err(e) = tool_def {
-                     tracing::warn!("Failed to build VisionExplorerV2Tool definition: {}", e);
+                     tracing::warn!("Failed to build WebExplorerTool definition: {}", e);
                 }
            } else {
-               tracing::warn!("McpService not found, skipping VisionExplorerV2Tool registration");
+               tracing::warn!("McpService not found, skipping WebExplorerTool registration");
            }
         }
 

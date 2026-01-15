@@ -243,16 +243,24 @@ const connect = async () => {
       console.warn('[Terminal] Failed to load agent config, using defaults:', e)
     }
 
-    // Start terminal server if not running
-    const status = await TerminalAPI.getStatus()
-    if (!status.running) {
-      await TerminalAPI.startServer()
-      // Wait a bit for server to start
-      await new Promise(resolve => setTimeout(resolve, 1000))
-    }
+    let wsUrl: string
 
-    // Get WebSocket URL
-    const wsUrl = await TerminalAPI.getWebSocketUrl()
+    // Check if already preconnected
+    if (terminalComposable.isPreconnected.value && terminalComposable.preconnectedWsUrl.value) {
+      console.log('[Terminal] Using preconnected server')
+      wsUrl = terminalComposable.preconnectedWsUrl.value
+    } else {
+      // Start terminal server if not running
+      const status = await TerminalAPI.getStatus()
+      if (!status.running) {
+        await TerminalAPI.startServer()
+        // Wait a bit for server to start
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+
+      // Get WebSocket URL
+      wsUrl = await TerminalAPI.getWebSocketUrl()
+    }
 
     // Create WebSocket connection
     ws.value = new WebSocket(wsUrl)

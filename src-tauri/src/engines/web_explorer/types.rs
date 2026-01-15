@@ -1,4 +1,4 @@
-//! Data types for Vision Explorer V2 ReAct Architecture
+//! Data types for Web Explorer ReAct Architecture
 
 use crate::engines::LlmConfig;
 use serde::{Deserialize, Serialize};
@@ -6,9 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 // ==================== Configuration ====================
 
-/// Configuration for Vision Explorer V2
+/// Configuration for Web Explorer
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VisionExplorerV2Config {
+pub struct WebExplorerConfig {
     /// Target URL to start exploration
     pub target_url: String,
 
@@ -85,7 +85,7 @@ impl AIConfig {
     }
 }
 
-impl Default for VisionExplorerV2Config {
+impl Default for WebExplorerConfig {
     fn default() -> Self {
         Self {
             target_url: "about:blank".to_string(),
@@ -416,14 +416,11 @@ pub struct Step {
 /// Decision made by the ReAct LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReActDecision {
-    /// Thought process
+    /// Thought process (analysis + action intent)
     pub thought: String,
     
     /// Chosen action
     pub action: Action,
-    
-    /// Reasoning for the action
-    pub reason: String,
 }
 
 // ==================== Exploration Result ====================
@@ -438,6 +435,12 @@ pub struct ExplorationResult {
     pub duration_seconds: u64,
     pub error: Option<String>,
     pub graph: serde_json::Value, // Simplified graph for export
+    /// List of discovered API endpoints
+    #[serde(default)]
+    pub api_list: Vec<String>,
+    /// List of visited URLs
+    #[serde(default)]
+    pub visited_urls: Vec<String>,
 }
 
 // ==================== Message Types (for UI updates) ====================
@@ -445,7 +448,7 @@ pub struct ExplorationResult {
 /// Message types sent to the UI
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum VisionMessage {
+pub enum WebExplorerMessage {
     Started {
         session_id: String,
         target_url: String,

@@ -120,9 +120,11 @@ impl ActionExecutor {
             match service.evaluate(&script).await {
                 Ok(_) => {
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    // Get new URL after click
+                    let new_url = service.get_url().await.ok();
                     return Ok(ActionResult {
                         success: true,
-                        new_url: None,
+                        new_url,
                         error: None,
                         observation: None,
                     });
@@ -148,9 +150,11 @@ impl ActionExecutor {
         match service.click(&target).await {
             Ok(_) => {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                // Get new URL after click - page may have navigated
+                let new_url = service.get_url().await.ok();
                 Ok(ActionResult {
                     success: true,
-                    new_url: None,
+                    new_url,
                     error: None,
                     observation: None,
                 })
@@ -219,9 +223,11 @@ impl ActionExecutor {
             Ok(_) => {
                 // Wait briefly for form submission
                 let _ = service.wait(None, Some(1000)).await;
+                // Get new URL after submit - form may have navigated
+                let new_url = service.get_url().await.ok();
                 Ok(ActionResult {
                     success: true,
-                    new_url: None,
+                    new_url,
                     error: None,
                     observation: None,
                 })
@@ -302,9 +308,11 @@ impl ActionExecutor {
         match service.back().await {
             Ok(_) => {
                 let _ = service.wait(None, Some(500)).await;
+                // Get new URL after go back
+                let new_url = service.get_url().await.ok();
                 Ok(ActionResult {
                     success: true,
-                    new_url: None,
+                    new_url,
                     error: None,
                     observation: None,
                 })

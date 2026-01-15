@@ -1,10 +1,10 @@
 <template>
-  <div class="vision-panel border border-base-300 rounded-lg bg-base-200 flex flex-col h-full min-h-0 overflow-hidden" v-if="isActive">
+  <div class="web-explorer-panel border border-base-300 rounded-lg bg-base-200 flex flex-col h-full min-h-0 overflow-hidden" v-if="isActive">
     <!-- Header -->
-    <div class="vision-header p-3 border-b border-base-300 flex justify-between items-center bg-base-100">
+    <div class="web-explorer-header p-3 border-b border-base-300 flex justify-between items-center bg-base-100">
       <div class="flex items-center gap-2">
-        <span class="text-lg">👁️</span>
-        <span class="font-bold text-sm">Vision Explorer</span>
+        <span class="text-lg">🌐</span>
+        <span class="font-bold text-sm">Web Explorer</span>
       </div>
       <div class="flex gap-2 items-center">
          <div class="badge badge-sm badge-info gap-1" v-if="discoveredApis.length > 0">
@@ -191,9 +191,9 @@
           <span class="font-bold text-secondary">📊</span>
           <span class="badge badge-xs badge-secondary">{{ currentProgress.iteration }}/{{ currentProgress.max_iterations }}</span>
           <div class="flex gap-3 ml-auto">
-            <span class="text-primary font-bold">{{ currentProgress.pages_visited }} <span class="font-normal opacity-60">{{ t('agent.visionPages') }}</span></span>
+            <span class="text-primary font-bold">{{ currentProgress.pages_visited }} <span class="font-normal opacity-60">{{ t('agent.webPages') }}</span></span>
             <span class="text-accent font-bold">{{ currentProgress.apis_discovered }} <span class="font-normal opacity-60">APIs</span></span>
-            <span class="text-info font-bold">{{ currentProgress.elements_interacted }} <span class="font-normal opacity-60">{{ t('agent.visionElements') }}</span></span>
+            <span class="text-info font-bold">{{ currentProgress.elements_interacted }} <span class="font-normal opacity-60">{{ t('agent.webElements') }}</span></span>
           </div>
         </div>
       </div>
@@ -223,10 +223,10 @@
 
     <!-- Timeline Steps -->
     <div class="steps-container flex-1 overflow-y-auto p-3 flex flex-col gap-3 scroll-smooth" ref="stepsContainer">
-       <!-- Activity feed (meta-only / multi-agent runs may not emit vision_step timeline) -->
+       <!-- Activity feed (meta-only / multi-agent runs may not emit web_step timeline) -->
        <div v-if="activity && activity.length" class="mb-3">
          <div class="flex items-center gap-2 text-[10px] opacity-70 mb-2">
-           <span class="font-bold">{{ t('agent.visionActivity') }}</span>
+           <span class="font-bold">{{ t('agent.webActivity') }}</span>
            <span class="ml-auto">{{ activity.length }}</span>
          </div>
          <div class="bg-base-100 rounded border border-base-300 overflow-hidden">
@@ -241,10 +241,10 @@
        </div>
 
        <div v-if="steps.length === 0 && (!activity || activity.length === 0)" class="text-center text-xs opacity-50 py-4">
-         {{ t('agent.visionWaitingForEvents') }}
+         {{ t('agent.webWaitingForEvents') }}
        </div>
 
-       <div v-for="(step, idx) in steps" :key="idx" class="vision-step flex gap-3 text-xs">
+       <div v-for="(step, idx) in steps" :key="idx" class="web-explorer-step flex gap-3 text-xs">
           <!-- Icon Column -->
           <div class="flex flex-col items-center">
              <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs border bg-base-100 z-10"
@@ -332,7 +332,7 @@
         <textarea
           v-model="userMessage"
           class="textarea textarea-bordered w-full text-xs leading-5 min-h-[2.75rem] max-h-28 resize-none pr-20"
-          :placeholder="t('agent.visionMessagePlaceholder')"
+          :placeholder="t('agent.webMessagePlaceholder')"
           @keydown="onUserMessageKeydown"
         />
 
@@ -358,19 +358,19 @@
 import { ref, watch, nextTick, computed, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
-import type { VisionStep, VisionCoverage, VisionPlan, VisionProgress, MultiAgentState, WorkerProgress, VisionActivityEvent } from '@/composables/useVisionEvents'
+import type { WebStep, WebCoverage, WebPlan, WebProgress, MultiAgentState, WorkerProgress, WebActivityEvent } from '@/composables/useWebExplorerEvents'
 
 const { t } = useI18n()
 
 const props = defineProps<{
-  steps: VisionStep[]
-  coverage: VisionCoverage | null
+  steps: WebStep[]
+  coverage: WebCoverage | null
   discoveredApis: { method: string; url: string }[]
   isActive: boolean
   currentUrl: string
   // Plan & Progress props
-  currentPlan?: VisionPlan | null
-  currentProgress?: VisionProgress | null
+  currentPlan?: WebPlan | null
+  currentProgress?: WebProgress | null
   // Takeover props
   showTakeoverForm?: boolean
   takeoverMessage?: string
@@ -381,7 +381,7 @@ const props = defineProps<{
   multiAgent?: MultiAgentState | null
   isMultiAgentMode?: boolean
   // Activity feed props
-  activity?: VisionActivityEvent[]
+  activity?: WebActivityEvent[]
 }>()
 
 defineEmits<{
@@ -550,32 +550,32 @@ const formatStatus = (status?: string) => {
   }
 }
 
-const formatActivity = (evt: VisionActivityEvent) => {
+const formatActivity = (evt: WebActivityEvent) => {
   switch (evt.type) {
     case 'multi_agent_start':
-      return t('agent.visionActivityMultiAgentStart', { mode: evt.mode, count: evt.total_workers })
+      return t('agent.webActivityMultiAgentStart', { mode: evt.mode, count: evt.total_workers })
     case 'worker_tasks':
-      return t('agent.visionActivityWorkerTasks', { count: evt.count })
+      return t('agent.webActivityWorkerTasks', { count: evt.count })
     case 'worker_progress':
-      return t('agent.visionActivityWorkerProgress', {
+      return t('agent.webActivityWorkerProgress', {
         scope: evt.scope_name,
         status: formatStatus(evt.status),
         pages: evt.pages,
         apis: evt.apis,
-        pagesLabel: t('agent.visionPages')
+        pagesLabel: t('agent.webPages')
       })
     case 'worker_complete':
-      return t('agent.visionActivityWorkerComplete', {
+      return t('agent.webActivityWorkerComplete', {
         scope: evt.scope_name,
         pages: evt.pages,
         apis: evt.apis,
-        pagesLabel: t('agent.visionPages')
+        pagesLabel: t('agent.webPages')
       })
     case 'worker_decision': {
       const idx = evt.element_index !== undefined && evt.element_index !== null ? ` [${evt.element_index}]` : ''
       const val = evt.value ? ` = ${String(evt.value).slice(0, 80)}` : ''
       const progress = Number.isFinite(evt.progress) ? Math.round(evt.progress) : 0
-      return t('agent.visionActivityWorkerDecision', {
+      return t('agent.webActivityWorkerDecision', {
         scope: evt.scope_name,
         iteration: evt.iteration,
         action: `${evt.action_type}${idx}${val}`,
@@ -587,7 +587,7 @@ const formatActivity = (evt: VisionActivityEvent) => {
       const val = evt.value ? ` = ${String(evt.value).slice(0, 80)}` : ''
       const duration = evt.duration_ms ? `${evt.duration_ms}ms` : ''
       const result = evt.success ? t('agent.statusCompleted') : t('agent.statusFailed')
-      return t('agent.visionActivityWorkerAction', {
+      return t('agent.webActivityWorkerAction', {
         scope: evt.scope_name,
         iteration: evt.iteration,
         action: `${evt.action_type}${idx}${val}`,
@@ -595,16 +595,16 @@ const formatActivity = (evt: VisionActivityEvent) => {
         duration
       })
     }
-    case 'vision_plan':
-      return t('agent.visionActivityPlan', { phase: evt.phase_name || evt.phase })
-    case 'vision_progress':
-      return t('agent.visionActivityProgress', { phase: evt.phase, iteration: evt.iteration, max: evt.max_iterations })
+    case 'web_plan':
+      return t('agent.webActivityPlan', { phase: evt.phase_name || evt.phase })
+    case 'web_progress':
+      return t('agent.webActivityProgress', { phase: evt.phase, iteration: evt.iteration, max: evt.max_iterations })
     case 'api_discovered':
-      return t('agent.visionActivityApi', { method: evt.method, url: evt.url })
+      return t('agent.webActivityApi', { method: evt.method, url: evt.url })
     case 'takeover_request':
       return t('agent.loginPageDetected')
     case 'complete':
-      return t('agent.visionActivityComplete', { status: evt.status })
+      return t('agent.webActivityComplete', { status: evt.status })
     default:
       // exhaustive guard
       return ''
@@ -623,37 +623,37 @@ const sendUserMessage = async () => {
   if (!message) return
   const eid = props.executionId
   if (!eid) {
-    console.warn('[VisionPanel] Missing executionId for sending message')
+    console.warn('[WebExplorerPanel] Missing executionId for sending message')
     return
   }
 
   isSendingMessage.value = true
   try {
-    await invoke('vision_explorer_send_user_message', {
+    await invoke('web_explorer_send_user_message', {
       executionId: eid,
       message
     })
     userMessage.value = ''
-    console.log('[VisionPanel] User message sent')
+    console.log('[WebExplorerPanel] User message sent')
   } catch (error) {
-    console.error('[VisionPanel] Failed to send user message:', error)
+    console.error('[WebExplorerPanel] Failed to send user message:', error)
   } finally {
     isSendingMessage.value = false
   }
 }
 
-const stopVision = async () => {
+const stopWebExplorer = async () => {
   const eid = props.executionId
   if (!eid) {
-    console.warn('[VisionPanel] Missing executionId for stop')
+    console.warn('[WebExplorerPanel] Missing executionId for stop')
     return
   }
   isStopping.value = true
   try {
     await invoke('cancel_ai_stream', { conversation_id: eid })
-    console.log('[VisionPanel] Stop command sent')
+    console.log('[WebExplorerPanel] Stop command sent')
   } catch (error) {
-    console.error('[VisionPanel] Failed to stop:', error)
+    console.error('[WebExplorerPanel] Failed to stop:', error)
   } finally {
     isStopping.value = false
   }
@@ -661,24 +661,19 @@ const stopVision = async () => {
 
 // Skip login and continue exploration without credentials
 const skipLogin = async () => {
-  const eid = props.executionId || (window as any).__visionExecutionId
+  const eid = props.executionId || (window as any).__webExplorerExecutionId
   if (!eid) {
-    console.warn('[VisionPanel] Missing executionId for skip login')
+    console.warn('[WebExplorerPanel] Missing executionId for skip login')
     return
   }
 
   isSkippingLogin.value = true
   try {
-    // Try V2 first, fallback to V1
-    try {
-      await invoke('vision_explorer_v2_skip_login', { executionId: eid })
-    } catch {
-      await invoke('vision_explorer_skip_login', { executionId: eid })
-    }
+    await invoke('web_explorer_skip_login', { executionId: eid })
     credentialsSubmitted.value = true
-    console.log('[VisionPanel] Skip login requested')
+    console.log('[WebExplorerPanel] Skip login requested')
   } catch (error) {
-    console.error('[VisionPanel] Failed to skip login:', error)
+    console.error('[WebExplorerPanel] Failed to skip login:', error)
   } finally {
     isSkippingLogin.value = false
   }
@@ -688,19 +683,19 @@ const isManualLoginCompleting = ref(false)
 
 // Signal manual login completion
 const manualLoginComplete = async () => {
-  const eid = props.executionId || (window as any).__visionExecutionId
+  const eid = props.executionId || (window as any).__webExplorerExecutionId
   if (!eid) {
-    console.warn('[VisionPanel] Missing executionId for manual login complete')
+    console.warn('[WebExplorerPanel] Missing executionId for manual login complete')
     return
   }
 
   isManualLoginCompleting.value = true
   try {
-    await invoke('vision_explorer_manual_login_complete', { executionId: eid })
+    await invoke('web_explorer_manual_login_complete', { executionId: eid })
     credentialsSubmitted.value = true
-    console.log('[VisionPanel] Manual login complete signaled')
+    console.log('[WebExplorerPanel] Manual login complete signaled')
   } catch (error) {
-    console.error('[VisionPanel] Failed to signal manual login complete:', error)
+    console.error('[WebExplorerPanel] Failed to signal manual login complete:', error)
   } finally {
     isManualLoginCompleting.value = false
   }
@@ -712,7 +707,7 @@ const submitCredentials = async () => {
   
   isSubmittingCredentials.value = true
   try {
-    const eid = props.executionId || (window as any).__visionExecutionId
+    const eid = props.executionId || (window as any).__webExplorerExecutionId
     
     if (!eid) {
       console.warn('No execution ID available for credential submission')
@@ -754,25 +749,14 @@ const submitCredentials = async () => {
         verificationCode = credentials.value.verificationCode || null
     }
     
-    // Try V2 first, fallback to V1
-    try {
-      await invoke('vision_explorer_v2_receive_credentials', {
-        executionId: eid,
-        username,
-        password,
-        verificationCode,
-        extraFields
-      })
-    } catch {
-      await invoke('vision_explorer_receive_credentials', {
-        executionId: eid,
-        username,
-        password,
-        verificationCode,
-        extraFields
-      })
-    }
-    console.log('[VisionPanel] Credentials submitted successfully')
+    await invoke('web_explorer_receive_credentials', {
+      executionId: eid,
+      username,
+      password,
+      verificationCode,
+      extraFields
+    })
+    console.log('[WebExplorerPanel] Credentials submitted successfully')
     
     // Mark as submitted to immediately hide the form
     credentialsSubmitted.value = true
@@ -812,7 +796,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.vision-step:last-child .w-0\.5 {
+.web-explorer-step:last-child .w-0\.5 {
   display: none;
 }
 </style>

@@ -935,7 +935,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       }
 
       const chunkType = chunk.chunk_type
-      const isVisionExplorer = chunk.architecture === 'VisionExplorer'
+      const isWebExplorer = chunk.architecture === 'WebExplorer' || chunk.architecture === 'VisionExplorer'
 
       if (chunkType === 'Meta' && chunk.stage === 'start') {
         isExecuting.value = true
@@ -972,16 +972,16 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         return
       }
 
-      // VisionExplorer: planning/progress now handled by VisionExplorerPanel via useVisionEvents
-      // Skip PlanInfo and vision_progress chunks here to avoid duplicate display
-      if (isVisionExplorer) {
+      // WebExplorer: planning/progress now handled by WebExplorerPanel via useWebExplorerEvents
+      // Skip PlanInfo and web_explorer progress chunks here to avoid duplicate display
+      if (isWebExplorer) {
         if (chunkType === 'PlanInfo') {
-          return // Handled by VisionExplorerPanel
+          return // Handled by WebExplorerPanel
         }
         if (chunkType === 'Meta') {
           const sd = (chunk as any).structured_data
-          if (sd?.type === 'vision_plan' || sd?.type === 'vision_progress') {
-            return // Handled by VisionExplorerPanel
+          if (sd?.type === 'vision_plan' || sd?.type === 'vision_progress' || sd?.type === 'web_explorer_plan' || sd?.type === 'web_explorer_progress') {
+            return // Handled by WebExplorerPanel
           }
         }
       }

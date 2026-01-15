@@ -734,17 +734,33 @@ pub async fn generate_plugin_stream(
     app_handle: AppHandle,
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
-    // Get actual default LLM provider from database config
+    // Get actual default LLM provider and model from database config
     let mut service_name = request.service_name.clone().unwrap_or_else(|| "default".to_string());
+    let mut override_model: Option<String> = None;
     
-    // If using default, try to get the actual provider name from config
+    // If using default, try to get the actual provider name and model from config
     if service_name == "default" {
         if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-            if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
-                let provider_lc = default_llm_provider.to_lowercase();
-                if ai_manager.get_service(&provider_lc).is_some() {
-                    service_name = provider_lc;
-                    tracing::debug!("Using default LLM provider from config: {}", service_name);
+            // Get default model (format: "provider/model")
+            if let Ok(Some(default_llm_model)) = db.get_config("ai", "default_llm_model").await {
+                if let Some((provider, model)) = default_llm_model.split_once('/') {
+                    let provider_lc = provider.to_lowercase();
+                    if ai_manager.get_service(&provider_lc).is_some() {
+                        service_name = provider_lc;
+                        override_model = Some(model.to_string());
+                        tracing::debug!("Using default LLM model from config: {}/{}", service_name, model);
+                    }
+                }
+            }
+            
+            // Fallback to default_llm_provider if model not set
+            if override_model.is_none() {
+                if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+                    let provider_lc = default_llm_provider.to_lowercase();
+                    if ai_manager.get_service(&provider_lc).is_some() {
+                        service_name = provider_lc;
+                        tracing::debug!("Using default LLM provider from config: {}", service_name);
+                    }
                 }
             }
         }
@@ -755,26 +771,31 @@ pub async fn generate_plugin_stream(
         .or_else(|| ai_manager.get_service("default"))
         .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
     
+    // Use override model if available, otherwise use service's configured model
+    let model_to_use = override_model.unwrap_or_else(|| service.get_config().model.clone());
+    
     tracing::info!("Plugin generation using provider: {}, model: {}", 
-        service.get_config().provider, service.get_config().model);
+        service.get_config().provider, model_to_use);
 
     let stream_id = request.stream_id.clone();
     let user_message = request.message.clone();
     let system_prompt = request.system_prompt.clone();
-    let service_clone = service.clone();
 
     let _cancellation_token = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
     let history = request.history.unwrap_or_default();
 
+    // Build LLM config with correct model
+    let mut llm_config = service.service.to_llm_config();
+    llm_config = llm_config.with_model(&model_to_use);
+
     tokio::spawn(async move {
         let _guard = CancellationGuard(sid.clone());
         // Start event
         let _ = app_clone.emit("plugin_gen_start", &serde_json::json!({ "stream_id": sid }));
 
-        // Create LLM client and stream
-        let llm_config = service_clone.service.to_llm_config();
+        // Create LLM client with configured model
         let streaming_client = StreamingLlmClient::new(llm_config);
         let app_for_callback = app_clone.clone();
         let sid_for_callback = sid.clone();

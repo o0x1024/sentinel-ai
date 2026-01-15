@@ -164,6 +164,7 @@ export interface CodeReference {
 
 // Test result reference type for AI assistant
 export interface TestResultReference {
+  result: any  // Original test result object
   success: boolean
   message: string
   preview: string

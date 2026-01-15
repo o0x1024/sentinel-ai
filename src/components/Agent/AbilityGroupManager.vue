@@ -137,13 +137,22 @@
 
           <div class="flex items-center justify-between text-xs text-base-content/60">
             <span>{{ selectedToolCount }} {{ t('agent.toolsSelected') }}</span>
-            <button 
-              v-if="selectedToolCount > 0"
-              @click="clearToolSelection" 
-              class="btn btn-xs btn-ghost"
-            >
-              {{ t('agent.clearSelection') }}
-            </button>
+            <div class="flex gap-1">
+              <button 
+                v-if="filteredTools.length > 0 && !isAllFilteredSelected"
+                @click="selectAllFilteredTools" 
+                class="btn btn-xs btn-ghost"
+              >
+                {{ t('agent.selectAll') }}
+              </button>
+              <button 
+                v-if="selectedToolCount > 0"
+                @click="clearToolSelection" 
+                class="btn btn-xs btn-ghost"
+              >
+                {{ t('agent.clearSelection') }}
+              </button>
+            </div>
           </div>
 
           <div class="border border-base-300 rounded-lg p-2 max-h-96 overflow-y-auto bg-base-100">
@@ -294,6 +303,11 @@ const isFullscreen = computed(() => props.isFullscreen)
 
 const selectedToolCount = computed(() => editingGroup.value?.tool_ids?.length || 0)
 
+const isAllFilteredSelected = computed(() => {
+  if (!editingGroup.value || filteredTools.value.length === 0) return false
+  return filteredTools.value.every(tool => editingGroup.value?.tool_ids.includes(tool.id))
+})
+
 const hasExistingContent = computed(() => {
   if (!editingGroup.value) return false
   return !!(
@@ -348,6 +362,13 @@ const clearToolSelection = () => {
   if (editingGroup.value) {
     editingGroup.value.tool_ids = []
   }
+}
+
+const selectAllFilteredTools = () => {
+  if (!editingGroup.value) return
+  const currentIds = new Set(editingGroup.value.tool_ids)
+  filteredTools.value.forEach(tool => currentIds.add(tool.id))
+  editingGroup.value.tool_ids = Array.from(currentIds)
 }
 
 const loadGroups = async () => {
