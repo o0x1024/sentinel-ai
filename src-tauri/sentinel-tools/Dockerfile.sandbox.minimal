@@ -1,161 +1,127 @@
-# Sentinel AI Security Sandbox (Minimal Version)
-# Lightweight version with essential tools only
-# Based on Kali Linux
+# -----------------------------------------------------------------------------
+# Sentinel AI Security Sandbox (Tsinghua Mirror + Auto-Retry Edition)
+# -----------------------------------------------------------------------------
 FROM kalilinux/kali-rolling
 
-# Prevent interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=C.UTF-8
 
-# Configure apt sources - clear duplicates and use reliable mirrors
+
 RUN rm -f /etc/apt/sources.list.d/* && \
     echo "deb http://mirrors.aliyun.com/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
     echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99-retries && \
     echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries && \
-    apt-get update --fix-missing || apt-get update --fix-missing || true
+    apt-get update --fix-missing || true
+        
 
-# Install essential tools (excluding jq which may have network issues)
-RUN apt-get update --fix-missing || apt-get update --fix-missing && apt-get install -y --no-install-recommends \
-    # Basic utilities
-    curl \
-    wget \
-    git \
-    ca-certificates \
-    # Network tools (most already in Kali) 
-    netcat-traditional \
-    nmap \
-    dnsutils \
-    iputils-ping \
-    # Development
-    python3 \
-    python3-pip \
-    gcc \
-    gdb \
-    # Archive tools
-    unzip \
-    zip \
-    p7zip-full \
-    unrar \
-    # CTF basic tools
-    file \
-    binutils \
-    xxd \
-    binwalk \
-    steghide \
-    exiftool \
-    bsdmainutils \
-    # Crypto and encoding
-    openssl \
-    # Image processing and steganography
-    imagemagick \
-    pngcheck \
-    # Audio processing
-    sox \
-    ffmpeg \
-    # Document processing
-    poppler-utils \
-    antiword \
-    # Forensics tools
-    foremost \
-    scalpel \
-    testdisk \
-    # OCR
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    # Password cracking
-    john \
-    hashcat \
-    # Other utilities
-    qrencode \
-    zbar-tools \
-    hexedit \
-    tree \
-    mc \
-    htop \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install kali forensics tools (with better error handling)
-RUN apt-get update --fix-missing || apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends --fix-missing kali-tools-forensics && \
-    (apt-get install -y --no-install-recommends --fix-missing kali-tools-reverse-engineering || \
-     echo "Warning: kali-tools-reverse-engineering installation failed, trying alternative approach..." && \
-     apt-get install -y --no-install-recommends --fix-missing \
-         apktool binwalk bytecode-viewer dex2jar jd-gui radare2 && \
-     echo "Installed alternative reverse engineering tools") && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install jq separately with retry mechanism
 RUN apt-get update && \
-    (apt-get install -y --no-install-recommends jq || \
-     (sleep 5 && apt-get install -y --no-install-recommends jq) || \
-     (sleep 10 && apt-get install -y --no-install-recommends jq)) && \
-    rm -rf /var/lib/apt/lists/*
+        apt-get install -y --no-install-recommends --fix-missing\
+        # [基础网络与下载工具]
+        curl wget git ca-certificates \
+        netcat-openbsd nmap dnsutils iputils-ping \
+        # [SSH 工具]
+        openssh-client openssh-server sshpass sshfs \
+        # [构建环境]
+        build-essential gcc gdb make \
+        python3 python3-pip python3-dev python3-venv \
+        libffi-dev libssl-dev libxml2-dev libxslt-dev libjpeg-dev zlib1g-dev \
+        # [常用压缩/解压]
+        unzip zip p7zip-full unrar-free \
+        # [CTF 基础分析工具]
+        file binutils xxd bsdmainutils \
+        procps htop tree mc \
+        # [逆向与取证]
+        apktool \
+        binwalk \
+        steghide \
+        exiftool \
+        foremost \
+        # outguess \
+        testdisk \
+        radare2 \
+        # [媒体处理]
+        ffmpeg \
+        sox \
+        poppler-utils \
+        antiword \
+        # [OCR 与条码]
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        qrencode \
+        zbar-tools \
+        # [Java 环境]
+        default-jre-headless \
+        # [Crypto]
+        openssl \
+        # [JSON 处理]
+        jq \
+        # [NodeJS]
+        nodejs \
+        npm \
+        # [PHP]
+        php-cli php-curl php-mbstring php-xml php-zip php-mysql php-sqlite3 php-bcmath \
+        && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+    
 
-# Install essential Python CTF libraries and document processing
-# Note: numpy/scipy are pre-installed by system, don't override
-RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
-    requests \
-    pwntools \
-    pycryptodome \
-    cryptography \
-    opencv-python \
-    Pillow \
-    stegano \
-    pyzbar \
-    qrcode \
-    beautifulsoup4 \
-    lxml \
-    python-docx \
-    openpyxl \
-    python-pptx \
-    oletools \
-    msoffcrypto-tool \
-    gmpy2 \
-    sympy \
-    numpy \
-    scipy \
-    scapy \
-    z3-solver \
-    tqdm \
-    colorama \
-    r2pipe
-
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install PHP for web CTF challenges (Kali default version)
-# Clean up any extra sources added by nodesource script
-RUN rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true && \
-    echo "deb http://mirrors.aliyun.com/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    php \
-    php-cli \
-    php-curl \
-    php-mbstring \
-    php-xml \
-    php-zip \
-    php-mysql \
-    php-gd \
-    php-sqlite3 \
-    php-intl \
-    php-bcmath \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user for execution
+    # [Pwn 增强: GDB GEF]
+RUN wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py && \
+    echo source ~/.gdbinit-gef.py >> ~/.gdbinit
+    
+    # [Web 增强: SQLMap]
+RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap && \
+    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
+    
+    # [Web 增强: Dirsearch]
+RUN git clone --depth 1 https://github.com/maurosoria/dirsearch.git /opt/dirsearch && \
+    ln -s /opt/dirsearch/dirsearch.py /usr/local/bin/dirsearch
+    
+    # -----------------------------------------------------------------------------
+    # 4. Python Libraries (清华源)
+    # -----------------------------------------------------------------------------
+    # 配置 pip 使用清华镜像，并设置超时
+RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+        pip3 config set global.timeout 120 && \
+        pip3 install --no-cache-dir --break-system-packages \
+        requests \
+        pwntools \
+        scapy \
+        tqdm \
+        colorama \
+        pycryptodome \
+        cryptography \
+        opencv-python-headless \
+        Pillow \
+        stegano \
+        pyzbar \
+        qrcode \
+        beautifulsoup4 \
+        lxml \
+        python-docx \
+        openpyxl \
+        python-pptx \
+        oletools \
+        msoffcrypto-tool \
+        gmpy2 \
+        sympy \
+        z3-solver \
+        r2pipe \
+        numpy \
+        scipy \
+        ROPgadget \
+        one_gadget \
+        uncompyle6
+    
+    # -----------------------------------------------------------------------------
+    # 5. User Configuration
+    # -----------------------------------------------------------------------------
 RUN useradd -m -s /bin/bash sandbox && \
-    mkdir -p /workspace && \
-    chown sandbox:sandbox /workspace
-
-# Set working directory
+        mkdir -p /workspace && \
+        chown sandbox:sandbox /workspace && \
+        # 配置 GEF 给 sandbox 用户
+        cp /root/.gdbinit /home/sandbox/.gdbinit && \
+        cp /root/.gdbinit-gef.py /home/sandbox/.gdbinit-gef.py && \
+        chown sandbox:sandbox /home/sandbox/.gdbinit /home/sandbox/.gdbinit-gef.py
+    
 WORKDIR /workspace
-
-# Switch to non-root user
 USER sandbox
-
-# Set PATH to include user-installed Python packages
-ENV PATH="/home/sandbox/.local/bin:$PATH"
-
-# Default command
 CMD ["/bin/bash"]

@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use sentinel_db::Database;
-use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
+use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient, parse_image_from_json};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::{get_tool_server, mcp_adapter, ToolServer};
 use serde_json::json;
@@ -43,6 +43,7 @@ pub struct AgentExecuteParams {
     pub enable_tenth_man_rule: bool,
     pub tenth_man_config: Option<TenthManConfig>,
     pub document_attachments: Option<Vec<DocumentAttachmentInfo>>,
+    pub image_attachments: Option<serde_json::Value>,
 }
 
 /// 执行 agent 任务
@@ -117,7 +118,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
 
         // Register VisionExplorerV2Tool if enabled
         if tool_config.enabled && !tool_config.disabled_tools.contains(&"vision_explorer".to_string()) {
-           if let Some(mcp_service) = app_handle.try_state::<std::sync::Arc<crate::services::mcp::McpService>>() {
+           if let Some(_mcp_service) = app_handle.try_state::<std::sync::Arc<crate::services::mcp::McpService>>() {
                 use crate::engines::vision_explorer_v2::VisionExplorerV2Tool;
                 use sentinel_tools::dynamic_tool::{DynamicToolBuilder, ToolSource};
                 use rig::tool::Tool;
@@ -135,9 +136,9 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                     llm_config = llm_config.with_base_url(api_base);
                 }
 
-                let ve_tool = VisionExplorerV2Tool::new(mcp_service.inner().clone(), llm_config)
-                   .with_app_handle(app_handle.clone())
-                   .with_execution_id(params.execution_id.clone());
+                let ve_tool = VisionExplorerV2Tool::new(llm_config)
+                    .with_app_handle(app_handle.clone())
+                    .with_execution_id(params.execution_id.clone());
                 
                 // Get definition
                 let def = ve_tool.definition(String::new()).await;
@@ -482,14 +483,8 @@ async fn execute_agent_with_tools(
         .plan_tools(&params.task, &tool_config, Some(&llm_config), db_pool)
         .await?;
 
-    let mut selected_tool_ids = selection_plan.tool_ids.clone();
+    let selected_tool_ids = selection_plan.tool_ids.clone();
     
-    // 默认添加 tenth_man_review 工具（始终可用，让 LLM 自主决定是否使用）
-    if !selected_tool_ids.contains(&"tenth_man_review".to_string()) {
-        selected_tool_ids.push("tenth_man_review".to_string());
-        tracing::info!("Added tenth_man_review tool to available tools (default enabled)");
-    }
-
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?}",
         selected_tool_ids.len(),
@@ -644,6 +639,9 @@ async fn execute_agent_with_tools(
         }
     }
 
+    // 解析图片附件
+    let image_attachment = parse_image_from_json(params.image_attachments.as_ref());
+    
     // 6. 使用 rig-core 原生工具调用
     // rig 的 multi_turn() 会自动处理工具调用循环
     let client = StreamingLlmClient::new(llm_config);
@@ -735,7 +733,7 @@ async fn execute_agent_with_tools(
                 final_system_prompt_content.as_deref(),
                 &params.task,
                 &history_chat_messages,
-                None, // 无图片
+                image_attachment.as_ref(), // 传递图片附件
                 dynamic_tools.clone(),
                 |content| {
                     if crate::commands::ai::is_conversation_cancelled(&execution_id) {

@@ -599,6 +599,11 @@ impl TerminalSession {
         *self.last_activity.read().await
     }
 
+    /// Update last activity timestamp
+    pub async fn touch(&self) {
+        *self.last_activity.write().await = std::time::Instant::now();
+    }
+
     /// Get container ID
     pub fn container_id(&self) -> Option<String> {
         self.container_id.clone()

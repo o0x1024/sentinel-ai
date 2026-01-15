@@ -77,6 +77,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import TerminalAPI from '@/api/terminal'
 import { useTerminal } from '@/composables/useTerminal'
+import { invoke } from '@tauri-apps/api/core'
 
 // Props
 interface Props {
@@ -85,11 +86,24 @@ interface Props {
   shell?: string
 }
 
+interface TerminalConfig {
+  docker_image: string
+  use_docker: boolean
+}
+
+interface AgentConfig {
+  terminal?: TerminalConfig
+}
+
 const props = withDefaults(defineProps<Props>(), {
   useDocker: true,
   dockerImage: 'sentinel-sandbox:latest',
   shell: 'bash'
 })
+
+// Actual config (from settings or props)
+const actualDockerImage = ref(props.dockerImage)
+const actualUseDocker = ref(props.useDocker)
 
 // State
 const terminalContainer = ref<HTMLElement | null>(null)
@@ -217,6 +231,18 @@ const connect = async () => {
     isConnecting.value = true
     error.value = ''
 
+    // Load terminal config from settings
+    try {
+      const agentConfig = await invoke<AgentConfig>('get_agent_config')
+      if (agentConfig?.terminal) {
+        actualDockerImage.value = agentConfig.terminal.docker_image || props.dockerImage
+        actualUseDocker.value = agentConfig.terminal.use_docker ?? props.useDocker
+        console.log('[Terminal] Loaded config from settings:', actualDockerImage.value, actualUseDocker.value)
+      }
+    } catch (e) {
+      console.warn('[Terminal] Failed to load agent config, using defaults:', e)
+    }
+
     // Start terminal server if not running
     const status = await TerminalAPI.getStatus()
     if (!status.running) {
@@ -233,6 +259,7 @@ const connect = async () => {
 
     ws.value.onopen = () => {
       console.log('WebSocket connected')
+      startKeepAlive()
       
       // If we have a sessionId from the composable, use it to reconnect
       if (terminalComposable.currentSessionId.value) {
@@ -243,10 +270,10 @@ const connect = async () => {
 
       // No session ID yet - send default config to create a new session
       // This happens when user opens terminal before any interactive_shell call
-      console.log('[Terminal] No session ID, creating new session with default config')
+      console.log('[Terminal] No session ID, creating new session with config:', actualDockerImage.value)
       const config = {
-        use_docker: props.useDocker,
-        docker_image: props.dockerImage,
+        use_docker: actualUseDocker.value,
+        docker_image: actualDockerImage.value,
         working_dir: '/workspace',
         env_vars: {},
         shell: props.shell,
@@ -290,6 +317,10 @@ const connect = async () => {
       console.error('WebSocket error:', err)
       error.value = 'Connection error'
       isConnecting.value = false
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval)
+        keepAliveInterval = null
+      }
     }
 
     ws.value.onclose = () => {
@@ -297,6 +328,10 @@ const connect = async () => {
       isConnected.value = false
       isConnecting.value = false
       terminal.value?.writeln('\r\n\x1b[1;31m✗ Connection closed\x1b[0m')
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval)
+        keepAliveInterval = null
+      }
     }
 
     // Handle terminal input
@@ -318,6 +353,10 @@ const disconnect = async () => {
   if (ws.value) {
     ws.value.close()
     ws.value = null
+  }
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval)
+    keepAliveInterval = null
   }
   isConnected.value = false
   sessionId.value = ''
@@ -341,6 +380,20 @@ const clearTerminal = () => {
 // Terminal composable
 const terminalComposable = useTerminal()
 let unregisterWriteCallback: (() => void) | null = null
+let stopWatch: (() => void) | null = null
+let fontSizeInterval: ReturnType<typeof setInterval> | null = null
+let keepAliveInterval: ReturnType<typeof setInterval> | null = null
+
+const startKeepAlive = () => {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval)
+  }
+  keepAliveInterval = setInterval(() => {
+    if (ws.value?.readyState === WebSocket.OPEN) {
+      ws.value.send('__keepalive__')
+    }
+  }, 30000)
+}
 
 // Lifecycle
 onMounted(() => {
@@ -356,7 +409,7 @@ onMounted(() => {
   })
 
   // 3. Watch for session ID changes (in case it's set after connection)
-  const stopWatch = watch(
+  stopWatch = watch(
     () => terminalComposable.currentSessionId.value,
     async (newSessionId, oldSessionId) => {
       if (newSessionId && newSessionId !== oldSessionId && !isConnected.value) {
@@ -367,8 +420,7 @@ onMounted(() => {
   )
 
   // 4. Watch for system font size changes
-  let currentFontSizeInterval: any = null
-  currentFontSizeInterval = setInterval(() => {
+  fontSizeInterval = setInterval(() => {
     try {
       const savedSettings = localStorage.getItem('sentinel-settings')
       if (savedSettings && terminal.value) {
@@ -395,29 +447,18 @@ onMounted(() => {
   console.log('[Terminal] Initial connection attempt, session ID:', terminalComposable.currentSessionId.value)
   connect()
 
-  // 6. Cleanup function (returned from setup or registered via onUnmounted)
-  // Store reference for clean-up
-  const cleanup = () => {
-    if (currentFontSizeInterval) clearInterval(currentFontSizeInterval)
-    if (stopWatch) stopWatch()
-  }
-  
-  // Vue 3 will handle this correctly since it's registered before any async delay
-  onBeforeUnmount(async () => {
-    cleanup()
-    window.removeEventListener('resize', handleResize)
-    await disconnect()
-    terminal.value?.dispose()
-    
-    // Unregister write callback
-    if (unregisterWriteCallback) {
-      unregisterWriteCallback()
-    }
-  })
 })
 
 onBeforeUnmount(async () => {
   window.removeEventListener('resize', handleResize)
+  if (fontSizeInterval) {
+    clearInterval(fontSizeInterval)
+    fontSizeInterval = null
+  }
+  if (stopWatch) {
+    stopWatch()
+    stopWatch = null
+  }
   
   // Disconnect ResizeObserver
   if (resizeObserver.value) {

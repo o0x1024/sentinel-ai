@@ -238,7 +238,7 @@ impl ShellTool {
     }
 
     pub const NAME: &'static str = "shell";
-    pub const DESCRIPTION: &'static str = "Execute shell commands in isolated Docker sandbox or on host. Commands are subject to security policies.";
+    pub const DESCRIPTION: &'static str = "Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). For interactive tools that require continuous input/output (like msfconsole, sqlmap, database clients, Python REPL), use interactive_shell instead.";
 
     /// Check if command is reading files from /workspace/context/ to avoid recursive storage
     fn is_reading_context_file(command: &str) -> bool {

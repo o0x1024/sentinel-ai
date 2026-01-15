@@ -13,6 +13,51 @@
             {{ t('settings.agent.terminal.title') }}
           </h3>
 
+          <!-- Docker Configuration -->
+          <div class="mb-6 p-4 bg-base-200 rounded-lg">
+            <h4 class="font-semibold mb-4">
+              <i class="fab fa-docker mr-2"></i>
+              {{ t('settings.agent.terminal.dockerImage') }}
+            </h4>
+            
+            <!-- Use Docker Toggle -->
+            <div class="form-control mb-4">
+              <label class="label cursor-pointer justify-start gap-4">
+                <input 
+                  type="checkbox" 
+                  class="toggle toggle-primary" 
+                  :checked="terminalConfig.use_docker"
+                  @change="toggleUseDocker"
+                />
+                <div>
+                  <span class="label-text font-medium">{{ t('settings.agent.terminal.useDocker') }}</span>
+                  <p class="text-xs text-base-content/60 mt-1">
+                    {{ t('settings.agent.terminal.useDockerDesc') }}
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <!-- Docker Image Input -->
+            <div v-if="terminalConfig.use_docker" class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.agent.terminal.dockerImage') }}</span>
+              </label>
+              <input 
+                type="text" 
+                :value="terminalConfig.docker_image"
+                @input="updateDockerImage"
+                :placeholder="t('settings.agent.terminal.dockerImagePlaceholder')"
+                class="input input-bordered w-full font-mono"
+              />
+              <label class="label">
+                <span class="label-text-alt text-base-content/60">
+                  {{ t('settings.agent.terminal.dockerImageDesc') }}
+                </span>
+              </label>
+            </div>
+          </div>
+
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Terminal Command Auto Execution -->
             <div class="space-y-4">
@@ -159,8 +204,14 @@ interface ShellConfig {
   denied_commands: string[]
 }
 
+interface TerminalConfig {
+  docker_image: string
+  use_docker: boolean
+}
+
 interface AgentConfig {
   shell: ShellConfig
+  terminal: TerminalConfig
 }
 
 const { t } = useI18n()
@@ -170,6 +221,11 @@ const shellConfig = ref<ShellConfig>({
   default_policy: 'RequestReview',
   allowed_commands: [],
   denied_commands: ['rm', 'rm -rf', 'mkfs', 'dd']
+})
+
+const terminalConfig = ref<TerminalConfig>({
+  docker_image: 'sentinel-sandbox:latest',
+  use_docker: true
 })
 
 const newAllowCommand = ref('')
@@ -190,6 +246,12 @@ async function loadConfig() {
         denied_commands: result.shell.denied_commands || ['rm', 'rm -rf', 'mkfs', 'dd']
       }
     }
+    if (result?.terminal) {
+      terminalConfig.value = {
+        docker_image: result.terminal.docker_image || 'sentinel-sandbox:latest',
+        use_docker: result.terminal.use_docker ?? true
+      }
+    }
   } catch (e) {
     console.error('Failed to load agent config:', e)
   } finally {
@@ -205,7 +267,8 @@ async function autoSaveConfig() {
   saveTimeout = setTimeout(async () => {
     try {
       const agentConfig: AgentConfig = {
-        shell: shellConfig.value
+        shell: shellConfig.value,
+        terminal: terminalConfig.value
       }
       await invoke('save_agent_config', { config: agentConfig })
       console.log('Agent config auto-saved')
@@ -214,6 +277,19 @@ async function autoSaveConfig() {
       dialog.toast.error(t('settings.agent.autoSaveFailed'))
     }
   }, 300)
+}
+
+// Update docker image
+function updateDockerImage(event: Event) {
+  const target = event.target as HTMLInputElement
+  terminalConfig.value.docker_image = target.value
+  autoSaveConfig()
+}
+
+// Toggle use docker
+function toggleUseDocker() {
+  terminalConfig.value.use_docker = !terminalConfig.value.use_docker
+  autoSaveConfig()
 }
 
 // Set default policy

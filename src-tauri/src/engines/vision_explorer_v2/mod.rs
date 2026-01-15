@@ -5,17 +5,17 @@
 //! ## Architecture
 //! 
 //! The engine follows a simple loop:
-//! 1. **Observe**: Analyze the current page using Vision LLM
+//! 1. **Observe**: Analyze the current page using Vision LLM + Snapshot
 //! 2. **Think**: Use LLM to reason about what action to take next
-//! 3. **Act**: Execute the chosen action via MCP Playwright
+//! 3. **Act**: Execute the chosen action via AgentBrowserService
 //! 4. **Update**: Record results and update exploration state
 //! 
 //! ## Modules
 //! 
 //! - `types`: Core data structures
 //! - `graph`: Simple exploration graph for tracking visited pages
-//! - `perception`: Page analysis using Vision LLM
-//! - `action_executor`: Browser action execution via MCP
+//! - `perception`: Page analysis using Vision LLM and snapshot
+//! - `action_executor`: Browser action execution via AgentBrowserService
 //! - `react_engine`: Main ReAct loop implementation
 //! - `tool`: Rig tool interface for agent integration
 

@@ -2270,6 +2270,7 @@ pub async fn agent_execute(
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
                     tenth_man_config: config.tenth_man_config.clone(),
                     document_attachments: doc_attachments,
+                    image_attachments: attachments.clone(),
                 };
 
                 // 调用工具支持的代理执行器

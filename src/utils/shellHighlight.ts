@@ -46,7 +46,7 @@ function tokenizeShellCommand(command: string): Token[] {
   
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const line = lines[lineIdx]
-    let linePos = 0
+    const linePos = 0
     
     // Create a stream-like object for the mode
     const stream = {

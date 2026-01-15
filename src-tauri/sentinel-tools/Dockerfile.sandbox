@@ -1,176 +1,161 @@
-# Sentinel AI Security Sandbox
-# Provides isolated environment for shell command execution
-# Based on Kali Linux with pre-installed security tools
+# Sentinel AI Security Sandbox (Minimal Version)
+# Lightweight version with essential tools only
+# Based on Kali Linux
 FROM kalilinux/kali-rolling
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 
-# Set proxy for apt
-# ENV http_proxy=http://172.28.38.178:10809
-# ENV https_proxy=http://172.28.38.178:10809
-# ENV HTTP_PROXY=http://172.28.38.178:10809
-# ENV HTTPS_PROXY=http://172.28.38.178:10809
+# Configure apt sources - clear duplicates and use reliable mirrors
+RUN rm -f /etc/apt/sources.list.d/* && \
+    echo "deb http://mirrors.aliyun.com/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
+    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99-retries && \
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries && \
+    apt-get update --fix-missing || true
 
-# Configure domestic mirror for faster downloads (skip proxy for apt)
-RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list
-
-# Update package list and install Kali metapackages
-# kali-tools-top10: Most popular tools (excluding metasploit-framework)
-RUN apt-get update && apt-get install -y --no-install-recommends  \
-    aircrack-ng \
-    hashcat \
-    dirbuster \
-    dnsrecon \
-    dnsutils \
-    ferret \
-    hydra \
-    john \
-    nmap \
-    sqlmap
-
-# Install additional essential tools
-RUN apt-get update && apt-get install -y --no-install-recommends  \
+# Install essential tools (excluding jq which may have network issues)
+RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
     # Basic utilities
     curl \
     wget \
     git \
-    vim \
-    nano \
     ca-certificates \
-    # Development tools
+    # Network tools (most already in Kali) 
+    netcat-traditional \
+    nmap \
+    dnsutils \
+    iputils-ping \
+    # Development
     python3 \
     python3-pip \
-    python3-dev \
-    build-essential \
     gcc \
-    g++ \
     gdb \
-    # Archive and text processing
+    # Archive tools
     unzip \
     zip \
-    # Additional security tools
-    gobuster \
-    ffuf \
-    wfuzz \
-    # CTF essential tools
-    netcat-traditional \
-    socat \
-    binwalk \
-    foremost \
-    exiftool \
-    steghide \
-    stegseek \
-    zsteg \
+    p7zip-full \
+    unrar \
+    # CTF basic tools
     file \
     binutils \
     xxd \
-    hexedit \
-    radare2 \
-    hashcat \
+    binwalk \
+    steghide \
+    exiftool \
+    bsdmainutils \
+    # Crypto and encoding
+    openssl \
+    # Image processing and steganography
+    imagemagick \
+    pngcheck \
+    # Audio processing
+    sox \
+    ffmpeg \
+    # Document processing
+    poppler-utils \
+    antiword \
+    # Forensics tools
+    foremost \
+    scalpel \
+    testdisk \
+    # OCR
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    # Password cracking
     john \
-    hydra \
-    # Network analysis
-    # wireshark-common \
-    tshark \
-    tcpdump \
-    # Reverse engineering
-    ltrace \
-    strace \
-    objdump
+    hashcat \
+    # Other utilities
+    qrencode \
+    zbar-tools \
+    hexedit \
+    tree \
+    mc \
+    htop \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+
+# Install kali forensics tools (with better error handling)
+RUN  apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends --fix-missing kali-tools-forensics && \
+    (apt-get install -y --no-install-recommends --fix-missing kali-tools-reverse-engineering || \
+     echo "Warning: kali-tools-reverse-engineering installation failed, trying alternative approach..." && \
+     apt-get install -y --no-install-recommends --fix-missing \
+         apktool binwalk bytecode-viewer dex2jar jd-gui radare2 && \
+     echo "Installed alternative reverse engineering tools") && \
+     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
 # Install jq separately with retry mechanism
 RUN apt-get update && \
     (apt-get install -y --no-install-recommends jq || \
      (sleep 5 && apt-get install -y --no-install-recommends jq) || \
      (sleep 10 && apt-get install -y --no-install-recommends jq)) && \
-    rm -rf /var/lib/apt/lists/*
+     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
-# Install Node.js (from NodeSource)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash - && \
-    apt-get install -y --no-install-recommends  nodejs 
+# Install essential Python CTF libraries and document processing
+# Note: numpy/scipy are pre-installed by system, don't override
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
+    requests \
+    pwntools \
+    pycryptodome \
+    cryptography \
+    opencv-python \
+    Pillow \
+    stegano \
+    pyzbar \
+    qrcode \
+    beautifulsoup4 \
+    lxml \
+    python-docx \
+    openpyxl \
+    python-pptx \
+    oletools \
+    msoffcrypto-tool \
+    gmpy2 \
+    sympy \
+    numpy \
+    scipy \
+    scapy \
+    z3-solver \
+    tqdm \
+    colorama \
+    r2pipe
 
-# Install PHP and common extensions for CTF
-RUN apt-get update && apt-get install -y --no-install-recommends  \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+
+# Install PHP for web CTF challenges (Kali default version)
+# Clean up any extra sources added by nodesource script
+RUN rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true && \
+    echo "deb http://mirrors.aliyun.com/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
     php \
     php-cli \
     php-curl \
-    php-gd \
-    php-json \
     php-mbstring \
     php-xml \
     php-zip \
     php-mysql \
-    php-pgsql \
+    php-gd \
     php-sqlite3 \
-    composer \
-
-# Install Python security and CTF tools (Kali already has many)
-# First install system dependencies for gmpy2 and keystone
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgmp-dev libmpfr-dev libmpc-dev \
-
-# Install core Python tools (stable packages)
-RUN pip3 install --no-cache-dir --break-system-packages \
-    requests \
-    beautifulsoup4 \
-    paramiko \
-    pwntools \
-    pycryptodome \
-    gmpy2 \
-    z3-solver \
-    ropgadget \
-    ropper \
-    capstone \
-    unicorn \
-    pillow \
-    numpy \
-    scipy \
-    sympy
-
-# Install heavy packages separately (may fail on some architectures)
-RUN pip3 install --no-cache-dir --break-system-packages \
-    angr \
-    keystone-engine \
-    || true
-
-# Install Node.js security and CTF tools
-RUN npm install -g \
-    retire \
-    eslint \
-    jwt-decode \
-    crypto-js \
-    node-forge \
-    || true
-
-# Install PHP security and CTF tools via Composer
-RUN composer global require \
-    phpunit/phpunit \
-    squizlabs/php_codesniffer \
-    vimeo/psalm \
-    || true && \
-    echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> /home/sandbox/.bashrc
-
-# Install additional CTF tools from GitHub
-RUN git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwntools-tutorial 2>/dev/null || true && \
-    git clone --depth 1 https://github.com/secdev/scapy /opt/scapy 2>/dev/null || true
+    php-intl \
+    php-bcmath \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
 # Create non-root user for execution
 RUN useradd -m -s /bin/bash sandbox && \
     mkdir -p /workspace && \
     chown sandbox:sandbox /workspace
 
-RUN mkdir /workspace/tmp
-
 # Set working directory
 WORKDIR /workspace
 
 # Switch to non-root user
 USER sandbox
+
+# Set PATH to include user-installed Python packages
+ENV PATH="/home/sandbox/.local/bin:$PATH"
 
 # Default command
 CMD ["/bin/bash"]

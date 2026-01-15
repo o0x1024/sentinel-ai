@@ -449,7 +449,12 @@ export default {
       denyListDesc: 'Agent 执行匹配拒绝列表条目的命令前会请求权限',
       enterCommand: '输入命令...',
       noAllowedCommands: '允许列表为空',
-      noDeniedCommands: '拒绝列表为空'
+      noDeniedCommands: '拒绝列表为空',
+      dockerImage: 'Docker 镜像',
+      dockerImageDesc: '交互式终端使用的 Docker 镜像',
+      dockerImagePlaceholder: '例如: sentinel-sandbox:latest',
+      useDocker: '使用 Docker',
+      useDockerDesc: '使用 Docker 容器作为终端环境（推荐），关闭后将使用主机终端'
     }
   }
 }

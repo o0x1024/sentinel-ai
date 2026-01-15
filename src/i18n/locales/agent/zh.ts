@@ -103,7 +103,10 @@ export default {
   toolManagement: '工具管理',
   searchToolNamesOrDescriptions: '搜索工具名称或描述...',
   all: '全部',
-  plugins: '插件',
+  plugins: {
+    category: '插件',
+    referToAi: '引用到AI助手'
+  },
   autoSelect: '自动选择',
   alwaysEnabled: '始终启用',
   disableTool: '禁用工具',
@@ -130,7 +133,10 @@ export default {
   security: '安全',
   data: '数据',
   system: '系统',
+  browser: '浏览器',
   areYouSureClearStatistics: '确定要清空所有工具使用统计吗？',
+  selectAll: '全选',
+  deselectAll: '取消全选',
 
   // Tour guide
   tour: {
@@ -223,6 +229,7 @@ export default {
 
   // VisionExplorerPanel
   loginPageDetected: '检测到登录页面，请输入凭证',
+  llmThinking: 'LLM 思考过程',
   alreadyLoggedIn: '已登录',
   usernameAccount: '用户名/账号',
   password: '密码',

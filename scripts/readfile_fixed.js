@@ -13,9 +13,13 @@
 // ✅ 使用 require 而不是 import
 const fs = require('fs').promises;
 
+// eslint-disable-next-line no-undef
+/** @typedef {BufferEncoding} BufferEncoding */
+
 // Tool input interface
 interface ToolInput {
     filePath?: string; // Path to the file to read
+    // eslint-disable-next-line no-undef
     encoding?: BufferEncoding; // File encoding
 }
 

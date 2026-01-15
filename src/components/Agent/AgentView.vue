@@ -660,6 +660,12 @@ const handleStop = async () => {
     // Notify useAgentEvents to stop execution status
     agentEvents.stopExecution()
     
+    // Also stop Vision Explorer if it's running
+    if (visionEvents.isVisionActive.value) {
+      console.log('[AgentView] Stopping Vision Explorer')
+      visionEvents.stop()
+    }
+    
   } catch (e) {
     console.error('[AgentView] Failed to stop execution:', e)
     localError.value = t('agent.failedToStopExecution') + ': ' + e

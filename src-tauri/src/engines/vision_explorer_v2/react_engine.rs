@@ -1,27 +1,25 @@
 //! ReAct Engine - Main exploration loop
 //!
 //! Implements the ReAct (Reasoning + Acting) pattern:
-//! 1. Observe: Analyze current page state
+//! 1. Observe: Analyze current page state (using snapshot)
 //! 2. Think: Use LLM to decide next action
-//! 3. Act: Execute the chosen action
+//! 3. Act: Execute the chosen action via AgentBrowserService
 //! 4. Update: Record results and update state
 
 use super::action_executor::ActionExecutor;
 use super::graph::ExplorationGraph;
-use super::perception::PerceptionEngine;
 use super::types::*;
 use crate::engines::LlmClient;
-use crate::services::mcp::McpService;
 use anyhow::{Context, Result};
+use sentinel_tools::agent_browser::get_browser_service;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// ReAct exploration engine
 pub struct ReActEngine {
     config: VisionExplorerV2Config,
     state: ExplorationState,
     graph: ExplorationGraph,
-    perception_engine: Arc<PerceptionEngine>,
     action_executor: Arc<ActionExecutor>,
     reasoning_llm: LlmClient,
     session_id: String,
@@ -29,22 +27,9 @@ pub struct ReActEngine {
 }
 
 impl ReActEngine {
-    /// Create a new ReAct engine
-    pub fn new(
-        config: VisionExplorerV2Config,
-        mcp_service: Arc<McpService>,
-        mcp_server_name: String,
-    ) -> Self {
-        let perception_engine = Arc::new(PerceptionEngine::new(
-            config.ai_config.vision_llm_config(),
-        ));
-
-        let action_executor = Arc::new(ActionExecutor::new(
-            mcp_service.clone(),
-            perception_engine.clone(),
-            mcp_server_name,
-        ));
-
+    /// Create a new ReAct engine (using AgentBrowserService)
+    pub fn new(config: VisionExplorerV2Config) -> Self {
+        let action_executor = Arc::new(ActionExecutor::new());
         let reasoning_llm = LlmClient::new(config.ai_config.fast_llm_config());
 
         let state = ExplorationState::new(
@@ -60,7 +45,6 @@ impl ReActEngine {
             config,
             state,
             graph,
-            perception_engine,
             action_executor,
             reasoning_llm,
             session_id,
@@ -85,6 +69,17 @@ impl ReActEngine {
     /// Start the exploration
     pub async fn run(&mut self) -> Result<ExplorationResult> {
         info!("Starting ReAct exploration: {}", self.config.target_url);
+
+        // Ensure browser visibility matches the Vision config.
+        // Vision exploration should typically be headed (headless=false), but this also
+        // fixes cases where the global browser service was previously initialized headless.
+        {
+            let service = get_browser_service().await;
+            let mut service = service.write().await;
+            if let Err(e) = service.set_headless(self.config.headless).await {
+                error!("Failed to set browser headless mode: {}", e);
+            }
+        }
         
         self.send_message(VisionMessage::Started {
             session_id: self.session_id.clone(),
@@ -101,6 +96,9 @@ impl ReActEngine {
         match self.action_executor.execute(init_action).await {
             Ok(result) if result.success => {
                 info!("Initial navigation successful");
+                if let Err(e) = self.action_executor.enable_network_interception().await {
+                    error!("Failed to enable network interception: {}", e);
+                }
             }
             Ok(result) => {
                 let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
@@ -242,28 +240,122 @@ impl ReActEngine {
     }
 
     /// Observe: Analyze current page state
+    /// Takes a snapshot to build the refMap for element references (@e1, @e2, etc.)
+    /// Snapshot provides all needed info: ARIA tree, element refs, and page structure
     async fn observe(&mut self) -> Result<Observation> {
         debug!("Observing current page");
         
         let step_number = self.state.steps_taken + 1;
         
-        // Capture page context
-        let context = self.action_executor.capture_page_context().await?;
+        // Take snapshot - this is the only browser call needed
+        // Snapshot provides: ARIA tree with @e1, @e2 refs for LLM to use
+        let snapshot = match tokio::time::timeout(
+            tokio::time::Duration::from_secs(10),
+            self.action_executor.get_snapshot()
+        ).await {
+            Ok(Ok(s)) => {
+                debug!("Snapshot taken with {} refs", s.refs.len());
+                s
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to get snapshot: {}", e);
+                sentinel_tools::agent_browser::Snapshot {
+                    tree: String::new(),
+                    refs: std::collections::HashMap::new(),
+                }
+            }
+            Err(_) => {
+                warn!("Snapshot timed out after 10s");
+                sentinel_tools::agent_browser::Snapshot {
+                    tree: String::new(),
+                    refs: std::collections::HashMap::new(),
+                }
+            }
+        };
         
-        // Send screenshot to UI
-        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-        let screenshot_base64 = BASE64.encode(&context.screenshot);
+        // Send observation message to UI (no screenshot needed)
         self.send_message(VisionMessage::Screenshot {
             step_number,
-            screenshot_base64,
-            url: context.url.clone(),
-            title: context.title.clone(),
+            screenshot_base64: String::new(), // Empty - screenshot disabled
+            url: self.state.current_url.clone(),
+            title: String::new(),
         });
         
-        // Analyze with perception engine
-        let observation = self.perception_engine.analyze(&context).await?;
+        // Build observation directly from snapshot
+        // No need for separate page context capture - snapshot has everything
+        let observation = self.build_observation_from_snapshot(&snapshot);
+        
+        // Log snapshot tree for debugging
+        if !snapshot.tree.is_empty() {
+            debug!("Snapshot tree (first 500 chars): {}", &snapshot.tree[..snapshot.tree.len().min(500)]);
+        } else {
+            warn!("Snapshot tree is empty - LLM may not have element refs");
+        }
         
         Ok(observation)
+    }
+    
+    /// Build observation directly from snapshot without additional browser calls
+    fn build_observation_from_snapshot(&self, snapshot: &sentinel_tools::agent_browser::Snapshot) -> super::types::Observation {
+        use super::types::*;
+        
+        // Analyze snapshot tree to determine page type
+        let tree = &snapshot.tree;
+        let page_type = if tree.contains("password") || tree.contains("login") || tree.contains("Login") {
+            PageType::Login
+        } else if tree.contains("error") || tree.contains("Error") {
+            PageType::Error
+        } else if tree.contains("form") || tree.contains("Form") {
+            PageType::Form
+        } else {
+            PageType::Unknown
+        };
+        
+        // Check auth status from snapshot
+        let auth_status = if tree.contains("logout") || tree.contains("Logout") || tree.contains("sign out") {
+            AuthStatus::Authenticated { username: None }
+        } else if page_type == PageType::Login {
+            AuthStatus::NotAuthenticated
+        } else {
+            AuthStatus::Unknown
+        };
+        
+        // Extract links from snapshot refs
+        let links: Vec<String> = snapshot.refs.iter()
+            .filter(|(_, data)| data.role == "link")
+            .filter_map(|(_, data)| data.name.clone())
+            .collect();
+        
+        // Build elements from snapshot refs
+        let elements: Vec<Element> = snapshot.refs.iter()
+            .map(|(ref_id, ref_data)| {
+                Element {
+                    element_id: format!("@e{}", ref_id),
+                    element_type: ref_data.role.clone(),
+                    selector: format!("@e{}", ref_id),
+                    text: ref_data.name.clone(),
+                    href: None,
+                    x: None,
+                    y: None,
+                    width: None,
+                    height: None,
+                    is_visible: true,
+                }
+            })
+            .collect();
+        
+        Observation {
+            page_type,
+            description: format!("Page with {} interactive elements", elements.len()),
+            auth_status,
+            elements,
+            forms: Vec::new(), // Forms are handled via snapshot refs
+            links,
+            api_endpoints: Vec::new(),
+            confidence: 0.8,
+            metadata: std::collections::HashMap::new(),
+            snapshot_tree: Some(snapshot.tree.clone()),
+        }
     }
 
     /// Think: Use LLM to decide next action
@@ -289,6 +381,9 @@ impl ReActEngine {
         decision: &ReActDecision,
         result: &ActionResult,
     ) -> Result<()> {
+        let prev_url = self.state.current_url.clone();
+        let prev_depth = self.state.current_depth;
+
         // Record step in history
         let step = Step {
             step_number: self.state.steps_taken + 1,
@@ -310,17 +405,86 @@ impl ReActEngine {
             self.state.mark_visited(new_url.clone());
         }
 
-        // Add discovered APIs
+        // Update depth based on action and navigation
+        if matches!(decision.action, Action::GoBack) {
+            if self.state.current_depth > 0 {
+                self.state.current_depth -= 1;
+            }
+        } else if let Some(ref new_url) = result.new_url {
+            if new_url != &prev_url {
+                self.state.current_depth = prev_depth.saturating_add(1);
+            }
+        }
+
+        // Add discovered APIs from observation
         for api in &observation.api_endpoints {
             self.state.add_api(api.clone());
+            // Extract method from "METHOD URL" format if possible
+            let (method, url) = Self::parse_api_string(api);
             self.send_message(VisionMessage::ApiDiscovered {
-                url: api.clone(),
-                method: "Unknown".to_string(),
+                url,
+                method,
             });
         }
 
+        // Merge APIs discovered from network interception
+        if let Ok(apis) = self.action_executor.get_discovered_apis().await {
+            for api in apis {
+                // Only send message if this is a new API (not already in the list)
+                let is_new = !self.state.discovered_apis.contains(&api);
+                self.state.add_api(api.clone());
+                
+                if is_new {
+                    // API format is "METHOD URL"
+                    let (method, url) = Self::parse_api_string(&api);
+                    debug!("Sending API discovered: method={}, url={}", method, url);
+                    self.send_message(VisionMessage::ApiDiscovered {
+                        url,
+                        method,
+                    });
+                }
+            }
+        }
+
+        // Check if we've navigated outside target domain - return if so
+        if let Some(ref new_url) = result.new_url {
+            if !self.is_same_domain(new_url) {
+                warn!("Navigated outside target domain: {} -> {}", self.config.target_url, new_url);
+                info!("Returning to target domain...");
+                let _ = self.action_executor.execute(Action::Navigate {
+                    url: self.config.target_url.clone(),
+                }).await;
+                self.state.current_url = self.config.target_url.clone();
+            }
+        }
+
         // Update graph
-        // TODO: Add nodes and edges based on navigation
+        let to_url = self.state.current_url.clone();
+        let from_id = format!("{}#{}", prev_url, self.state.steps_taken.saturating_sub(1));
+        let to_id = format!("{}#{}", to_url, self.state.steps_taken);
+        if !self.graph.has_node(&from_id) {
+            self.graph.add_node(
+                from_id.clone(),
+                prev_url.clone(),
+                observation.description.clone(),
+                format!("{:?}", observation.page_type).to_lowercase(),
+                prev_depth,
+            );
+        }
+        if !self.graph.has_node(&to_id) {
+            self.graph.add_node(
+                to_id.clone(),
+                to_url.clone(),
+                observation.description.clone(),
+                format!("{:?}", observation.page_type).to_lowercase(),
+                self.state.current_depth,
+            );
+        }
+        self.graph.add_edge(
+            from_id,
+            to_id,
+            format!("{:?}", decision.action).to_lowercase(),
+        );
 
         Ok(())
     }
@@ -341,15 +505,18 @@ For each step, you must:
 3. Explain why you chose that action
 
 Available actions:
-- navigate: Go to a new URL
-- click: Click an element (by selector or coordinates)
-- fill: Fill a form field
-- submit: Submit a form
-- scroll: Scroll the page (up/down/left/right)
-- wait: Wait for content to load
-- take_snapshot: Record current state
-- go_back: Return to previous page
-- stop: End exploration
+- navigate: Go to a new URL (params: {"url": "..."})
+- click: Click an element by ref (params: {"ref": "@e5"})
+- fill: Fill a form field by ref (params: {"ref": "@e3", "value": "text"})
+- submit: Submit a form (params: {"selector": "form"})
+- scroll: Scroll the page (params: {"direction": "up|down|left|right", "amount": 500})
+- wait: Wait for content to load (params: {"duration_ms": 1000})
+- take_snapshot: Record current state (params: {})
+- go_back: Return to previous page (params: {})
+- stop: End exploration (params: {"reason": "..."})
+
+IMPORTANT: For click and fill actions, use the @eN refs from the snapshot tree.
+Example: If you see "- @e5 link 'Products'" in the snapshot, use {"ref": "@e5"} to click it.
 
 Return your decision in JSON format:
 {
@@ -363,9 +530,15 @@ Return your decision in JSON format:
 
 Examples:
 {
-  "thought": "I see a login form. I should explore other pages first before dealing with authentication.",
-  "action": {"type": "click", "params": {"selector": "a[href='/about']"}},
-  "reason": "Clicking the About link to discover more pages without authentication"
+  "thought": "I see a Products link at @e5. I should explore it to find more pages.",
+  "action": {"type": "click", "params": {"ref": "@e5"}},
+  "reason": "Exploring navigation links to discover more pages"
+}
+
+{
+  "thought": "I see a search input at @e3. I should fill it to test the search functionality.",
+  "action": {"type": "fill", "params": {"ref": "@e3", "value": "test"}},
+  "reason": "Testing search functionality"
 }
 
 {
@@ -379,6 +552,18 @@ Examples:
     fn build_thinking_user_prompt(&self, observation: &Observation) -> String {
         let recent_history = self.get_recent_history_summary(3);
         
+        // Use snapshot tree if available, otherwise fall back to formatted elements
+        let elements_section = if let Some(ref tree) = observation.snapshot_tree {
+            // Truncate tree if too long
+            if tree.len() > 3000 {
+                format!("{}...\n(truncated)", &tree[..3000])
+            } else {
+                tree.clone()
+            }
+        } else {
+            self.format_elements(&observation.elements)
+        };
+        
         format!(
             r#"Current State:
 URL: {}
@@ -390,12 +575,11 @@ Current Observation:
 - Page Type: {:?}
 - Description: {}
 - Auth Status: {:?}
-- Elements: {} interactive elements found
 - Forms: {} forms detected
 - Links: {} links discovered
 - APIs: {} endpoints found
 
-Interactive Elements:
+Page Snapshot (use @eN refs for click/fill actions):
 {}
 
 Forms:
@@ -407,7 +591,8 @@ Links:
 Recent History (last 3 steps):
 {}
 
-Decide what to do next."#,
+Decide what to do next. Use @eN refs from the snapshot for click/fill actions.
+**IMPORTANT**: You must answer in Chinese (Simplified Chinese)"#,
             self.state.current_url,
             self.state.steps_taken,
             self.state.max_steps,
@@ -417,11 +602,10 @@ Decide what to do next."#,
             observation.page_type,
             observation.description,
             observation.auth_status,
-            observation.elements.len(),
             observation.forms.len(),
             observation.links.len(),
             observation.api_endpoints.len(),
-            self.format_elements(&observation.elements),
+            elements_section,
             self.format_forms(&observation.forms),
             self.format_links(&observation.links),
             recent_history
@@ -521,7 +705,7 @@ Decide what to do next."#,
         })
     }
 
-    /// Parse action from JSON (supports hybrid mode with index)
+    /// Parse action from JSON (supports ref like @e5)
     fn parse_action(&self, json: &serde_json::Value) -> Result<Action> {
         let action_type = json["type"]
             .as_str()
@@ -536,21 +720,28 @@ Decide what to do next."#,
                     .context("Navigate requires url")?
                     .to_string(),
             },
-            "click" => Action::Click {
-                // Priority: index > selector > coordinates
-                index: params["index"].as_u64().map(|n| n as u32),
-                selector: params["selector"].as_str().map(|s| s.to_string()),
-                x: params["x"].as_i64().map(|n| n as i32),
-                y: params["y"].as_i64().map(|n| n as i32),
+            "click" => {
+                // Support ref (@e5), index, selector, or coordinates
+                // Priority: ref > index > selector > coordinates
+                let (index, selector) = Self::parse_ref_or_index(params);
+                Action::Click {
+                    index,
+                    selector,
+                    x: params["x"].as_i64().map(|n| n as i32),
+                    y: params["y"].as_i64().map(|n| n as i32),
+                }
             },
-            "fill" => Action::Fill {
-                // Priority: index > selector
-                index: params["index"].as_u64().map(|n| n as u32),
-                selector: params["selector"].as_str().map(|s| s.to_string()),
-                value: params["value"]
-                    .as_str()
-                    .context("Fill requires value")?
-                    .to_string(),
+            "fill" => {
+                // Support ref (@e3) or index or selector
+                let (index, selector) = Self::parse_ref_or_index(params);
+                Action::Fill {
+                    index,
+                    selector,
+                    value: params["value"]
+                        .as_str()
+                        .context("Fill requires value")?
+                        .to_string(),
+                }
             },
             "submit" => Action::Submit {
                 selector: params["selector"]
@@ -664,5 +855,81 @@ Decide what to do next."#,
                 "reason": reason
             }),
         }
+    }
+
+    /// Parse API string in "METHOD URL" format
+    fn parse_api_string(api: &str) -> (String, String) {
+        let parts: Vec<&str> = api.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            (parts[0].to_string(), parts[1].to_string())
+        } else {
+            // No method specified, assume GET
+            ("GET".to_string(), api.to_string())
+        }
+    }
+
+    /// Parse ref (@e5) or index from params
+    /// Returns (index, selector) - one will be Some, other None
+    fn parse_ref_or_index(params: &serde_json::Value) -> (Option<u32>, Option<String>) {
+        // Check for ref first (e.g., "@e5")
+        if let Some(ref_str) = params["ref"].as_str() {
+            // Parse @eN format to extract index
+            if let Some(num_str) = ref_str.strip_prefix("@e") {
+                if let Ok(idx) = num_str.parse::<u32>() {
+                    return (Some(idx), None);
+                }
+            }
+            // If not @eN format, treat as selector
+            return (None, Some(ref_str.to_string()));
+        }
+        
+        // Check for index
+        if let Some(idx) = params["index"].as_u64() {
+            return (Some(idx as u32), None);
+        }
+        
+        // Check for selector
+        if let Some(sel) = params["selector"].as_str() {
+            return (None, Some(sel.to_string()));
+        }
+        
+        (None, None)
+    }
+
+    /// Check if a URL is on the same domain as the target
+    fn is_same_domain(&self, url: &str) -> bool {
+        // Extract domain from target URL
+        let target_domain = Self::extract_domain(&self.config.target_url);
+        let url_domain = Self::extract_domain(url);
+        
+        // Allow same domain or subdomains
+        if let (Some(target), Some(current)) = (target_domain, url_domain) {
+            current == target || current.ends_with(&format!(".{}", target))
+        } else {
+            // If we can't parse domains, allow navigation
+            true
+        }
+    }
+
+    /// Extract domain from URL
+    fn extract_domain(url: &str) -> Option<String> {
+        // Simple domain extraction
+        let url = url.trim();
+        
+        // Remove protocol
+        let without_protocol = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(url);
+        
+        // Get domain part (before first / or ?)
+        let domain = without_protocol
+            .split('/')
+            .next()
+            .and_then(|s| s.split('?').next())
+            .and_then(|s| s.split(':').next()) // Remove port
+            .map(|s| s.to_lowercase());
+        
+        domain
     }
 }

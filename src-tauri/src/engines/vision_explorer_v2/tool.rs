@@ -1,9 +1,9 @@
 //! V2 Vision Explorer Tool - Rig Tool implementation for ReAct Engine
+//! Uses AgentBrowserService for browser automation
 
 use super::react_engine::ReActEngine;
 use super::types::{VisionExplorerV2Config, VisionMessage};
 use crate::engines::LlmConfig;
-use crate::services::mcp::McpService;
 use rig::completion::ToolDefinition;
 use rig::tool::{Tool, ToolError};
 use serde::Deserialize;
@@ -107,18 +107,17 @@ pub struct VisionExplorerV2Args {
 }
 
 /// V2 Vision Explorer Tool for Agent integration
+/// Now uses AgentBrowserService instead of MCP Playwright
 #[derive(Clone)]
 pub struct VisionExplorerV2Tool {
-    mcp_service: Arc<McpService>,
     llm_config: LlmConfig,
     app_handle: Option<AppHandle>,
     execution_id: Option<String>,
 }
 
 impl VisionExplorerV2Tool {
-    pub fn new(mcp_service: Arc<McpService>, llm_config: LlmConfig) -> Self {
+    pub fn new(llm_config: LlmConfig) -> Self {
         Self {
-            mcp_service,
             llm_config,
             app_handle: None,
             execution_id: None,
@@ -174,25 +173,7 @@ impl Tool for VisionExplorerV2Tool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        // Check if Playwright MCP is connected and get the server name
-        let connections = self.mcp_service.get_connection_info().await.map_err(|e| {
-            ToolError::ToolCallError(format!("Failed to check MCP connections: {}", e).into())
-        })?;
-
-        let playwright_server = connections.iter().find(|c| {
-            c.name.to_lowercase().contains("playwright") && c.status.to_lowercase() == "connected"
-        });
-
-        let mcp_server_name = match playwright_server {
-            Some(server) => server.name.clone(),
-            None => {
-                return Err(ToolError::ToolCallError(
-                    "Playwright MCP server not connected. Please connect the server to use Vision Explorer.".into(),
-                ));
-            }
-        };
-
-        // Build V2 config
+        // Build V2 config (no longer requires MCP Playwright)
         let mut ai_config = crate::engines::vision_explorer_v2::types::AIConfig {
             fast_model_id: self.llm_config.model.clone(),
             vision_model_id: self.llm_config.model.clone(),
@@ -218,16 +199,8 @@ impl Tool for VisionExplorerV2Tool {
                     }
                 }
                 
-                // Get default VLM (Vision model)
-                if let Ok(Some(model_info)) = ai_manager.get_default_model("vlm").await {
-                    if let Ok(Some(provider_cfg)) = ai_manager.get_provider_config(&model_info.provider).await {
-                        log::info!("VisionExplorerV2: Using default VLM model {} ({})", model_info.name, provider_cfg.provider);
-                        ai_config.vision_model_id = model_info.name;
-                        ai_config.vision_provider = provider_cfg.provider;
-                        ai_config.vision_api_key = provider_cfg.api_key;
-                        ai_config.vision_base_url = provider_cfg.api_base;
-                    }
-                }
+                // VLM (Vision model) is disabled - using DOM-only analysis
+                log::info!("VisionExplorerV2: Using DOM-only analysis (VLM disabled)");
             }
         }
 
@@ -248,19 +221,18 @@ impl Tool for VisionExplorerV2Tool {
 
         let app_handle_clone = self.app_handle.clone();
         let execution_id_clone = execution_id.clone();
-        let mut engine = ReActEngine::new(config, self.mcp_service.clone(), mcp_server_name)
-            .with_message_callback(move |msg| {
-                if let Some(ref handle) = app_handle_clone {
-                    // Wrap message in envelope format expected by frontend
-                    let envelope = serde_json::json!({
-                        "execution_id": execution_id_clone,
-                        "type": msg_type_name(&msg),
-                        "ts": chrono::Utc::now().timestamp_millis(),
-                        "data": msg_to_data(&msg)
-                    });
-                    let _ = handle.emit("vision:v2", envelope);
-                }
-            });
+        let mut engine = ReActEngine::new(config).with_message_callback(move |msg| {
+            if let Some(ref handle) = app_handle_clone {
+                // Wrap message in envelope format expected by frontend
+                let envelope = serde_json::json!({
+                    "execution_id": execution_id_clone,
+                    "type": msg_type_name(&msg),
+                    "ts": chrono::Utc::now().timestamp_millis(),
+                    "data": msg_to_data(&msg)
+                });
+                let _ = handle.emit("vision:v2", envelope);
+            }
+        });
 
         let session_id = engine.session_id().to_string();
 

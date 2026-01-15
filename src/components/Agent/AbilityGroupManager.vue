@@ -594,30 +594,32 @@ Ensure the content is in the same language as the tool descriptions (or Chinese 
 
 const getCategoryDisplayName = (category: string) => {
   const nameMap: Record<string, string> = {
-    'Network': '网络',
-    'Security': '安全',
-    'Data': '数据',
-    'AI': 'AI',
-    'System': '系统',
-    'MCP': 'MCP',
-    'Plugin': '插件',
-    'Workflow': '工作流',
+    'network': '网络',
+    'security': '安全',
+    'data': '数据',
+    'ai': 'AI',
+    'system': '系统',
+    'mcp': 'MCP',
+    'plugin': '插件',
+    'workflow': '工作流',
+    'browser': '浏览器',
   }
-  return nameMap[category] || category
+  return nameMap[category.toLowerCase()] || category
 }
 
 const getCategoryBadgeClass = (category: string) => {
   const map: Record<string, string> = {
-    'Network': 'badge-info',
-    'Security': 'badge-error',
-    'Data': 'badge-success',
-    'AI': 'badge-warning',
-    'System': 'badge-neutral',
-    'MCP': 'badge-primary',
-    'Plugin': 'badge-secondary',
-    'Workflow': 'badge-accent',
+    'network': 'badge-info',
+    'security': 'badge-error',
+    'data': 'badge-success',
+    'ai': 'badge-warning',
+    'system': 'badge-neutral',
+    'mcp': 'badge-primary',
+    'plugin': 'badge-secondary',
+    'workflow': 'badge-accent',
+    'browser': 'badge-primary',
   }
-  return map[category] || 'badge-ghost'
+  return map[category.toLowerCase()] || 'badge-ghost'
 }
 
 watch([toolSearchQuery, selectedCategory], () => {

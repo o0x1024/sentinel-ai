@@ -49,6 +49,23 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(OcrTool::NAME.to_string(), true);
     map.insert("interactive_shell".to_string(), true);
     map.insert("tenth_man_review".to_string(), true);
+    // Browser automation tools
+    map.insert("browser_open".to_string(), true);
+    map.insert("browser_snapshot".to_string(), true);
+    map.insert("browser_click".to_string(), true);
+    map.insert("browser_fill".to_string(), true);
+    map.insert("browser_type".to_string(), true);
+    map.insert("browser_select".to_string(), true);
+    map.insert("browser_scroll".to_string(), true);
+    map.insert("browser_wait".to_string(), true);
+    map.insert("browser_get_text".to_string(), true);
+    map.insert("browser_screenshot".to_string(), true);
+    map.insert("browser_back".to_string(), true);
+    map.insert("browser_press".to_string(), true);
+    map.insert("browser_hover".to_string(), true);
+    map.insert("browser_evaluate".to_string(), true);
+    map.insert("browser_get_url".to_string(), true);
+    map.insert("browser_close".to_string(), true);
     RwLock::new(map)
 });
 
@@ -351,7 +368,7 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     tools.push(BuiltinToolInfo {
         id: "interactive_shell".to_string(),
         name: "interactive_shell".to_string(),
-        description: "Create an interactive terminal session for persistent command execution (e.g., msfconsole, sqlmap, database clients). Returns a session ID for continuous interaction.".to_string(),
+        description: "Create persistent terminal session for tools requiring continuous interaction: REQUIRED for ssh, msfconsole, sqlmap, mysql/psql clients, Python/Node REPL, or any tool that maintains state between commands. Returns session ID for multi-turn interaction. Use this when a tool needs to stay running between commands.".to_string(),
         category: "system".to_string(),
         version: "1.0.0".to_string(),
         enabled: *states.get("interactive_shell").unwrap_or(&true),
@@ -408,6 +425,334 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                 }
             },
             "required": ["execution_id", "content_to_review"]
+        })),
+    });
+
+    // Browser automation tools
+    tools.push(BuiltinToolInfo {
+        id: "browser_open".to_string(),
+        name: "browser_open".to_string(),
+        description: "Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_open").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL to open"
+                },
+                "wait_until": {
+                    "type": "string",
+                    "description": "Wait condition: 'load', 'domcontentloaded', or 'networkidle'",
+                    "default": "load",
+                    "enum": ["load", "domcontentloaded", "networkidle"]
+                }
+            },
+            "required": ["url"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_snapshot".to_string(),
+        name: "browser_snapshot".to_string(),
+        description: "Get current page structure as accessibility tree with refs (@e1, @e2).".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_snapshot").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "interactive_only": {
+                    "type": "boolean",
+                    "description": "Only show interactive elements",
+                    "default": true
+                },
+                "compact": {
+                    "type": "boolean",
+                    "description": "Remove empty structural elements",
+                    "default": true
+                }
+            }
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_click".to_string(),
+        name: "browser_click".to_string(),
+        description: "Click an element by ref (@e1) or CSS selector.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_click").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Element ref (e.g., '@e1') or CSS selector"
+                }
+            },
+            "required": ["target"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_fill".to_string(),
+        name: "browser_fill".to_string(),
+        description: "Fill text into an input field.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_fill").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Element ref or CSS selector"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Text to fill"
+                }
+            },
+            "required": ["target", "value"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_type".to_string(),
+        name: "browser_type".to_string(),
+        description: "Type text character by character.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_type").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Element ref or CSS selector"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Text to type"
+                },
+                "delay_ms": {
+                    "type": "integer",
+                    "description": "Delay between keystrokes in ms"
+                }
+            },
+            "required": ["target", "text"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_select".to_string(),
+        name: "browser_select".to_string(),
+        description: "Select an option from a dropdown.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_select").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Element ref or CSS selector"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Option value to select"
+                }
+            },
+            "required": ["target", "value"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_scroll".to_string(),
+        name: "browser_scroll".to_string(),
+        description: "Scroll the page.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_scroll").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "description": "Scroll direction",
+                    "default": "down",
+                    "enum": ["up", "down", "left", "right"]
+                },
+                "amount": {
+                    "type": "integer",
+                    "description": "Scroll amount in pixels",
+                    "default": 300
+                }
+            }
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_wait".to_string(),
+        name: "browser_wait".to_string(),
+        description: "Wait for an element or timeout.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_wait").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector to wait for"
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Maximum wait time in ms",
+                    "default": 30000
+                }
+            }
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_get_text".to_string(),
+        name: "browser_get_text".to_string(),
+        description: "Get text content of an element.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_get_text").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Element ref or CSS selector"
+                }
+            },
+            "required": ["target"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_screenshot".to_string(),
+        name: "browser_screenshot".to_string(),
+        description: "Take a screenshot of the page.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_screenshot").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "full_page": {
+                    "type": "boolean",
+                    "description": "Capture full page",
+                    "default": false
+                }
+            }
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_back".to_string(),
+        name: "browser_back".to_string(),
+        description: "Navigate back to previous page.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_back").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_press".to_string(),
+        name: "browser_press".to_string(),
+        description: "Press a keyboard key.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_press").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Key to press (e.g., 'Enter', 'Tab')"
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Optional element to focus first"
+                }
+            },
+            "required": ["key"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_hover".to_string(),
+        name: "browser_hover".to_string(),
+        description: "Hover over an element.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_hover").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Element ref or CSS selector"
+                }
+            },
+            "required": ["target"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_evaluate".to_string(),
+        name: "browser_evaluate".to_string(),
+        description: "Execute JavaScript in the browser.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_evaluate").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "script": {
+                    "type": "string",
+                    "description": "JavaScript code to execute"
+                }
+            },
+            "required": ["script"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_get_url".to_string(),
+        name: "browser_get_url".to_string(),
+        description: "Get current page URL and title.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_get_url").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "browser_close".to_string(),
+        name: "browser_close".to_string(),
+        description: "Close the browser.".to_string(),
+        category: "browser".to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("browser_close").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {}
         })),
     });
 
@@ -1098,6 +1443,7 @@ pub async fn get_tools_by_category(
         "mcp" => ToolCategory::MCP,
         "plugin" => ToolCategory::Plugin,
         "workflow" => ToolCategory::Workflow,
+        "browser" => ToolCategory::Browser,
         _ => return Err(format!("Unknown category: {}", category)),
     };
 

@@ -50,7 +50,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   const todos = ref<Todo[]>([])
   const isTodosPanelActive = ref(false)
   let unlisten: UnlistenFn | null = null
-  let lastExecutionId = ref<string | undefined>(undefined)
+  const lastExecutionId = ref<string | undefined>(undefined)
 
   // 获取当前 executionId
   const getExecutionId = (): string | undefined => {

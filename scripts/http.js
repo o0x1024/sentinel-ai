@@ -183,7 +183,9 @@ export async function analyze(input: ToolInput): Promise<ToolOutput> {
         // Optional: Emit finding if the status code indicates a potential issue (e.g., 500 server error)
         if (response.status >= 500) {
             // @ts-ignore
+            // eslint-disable-next-line no-undef
             if (typeof Sentinel !== 'undefined') {
+                // eslint-disable-next-line no-undef
                 Sentinel.emitFinding({
                     title: 'Server Error Detected',
                     description: `Target ${currentUrl} returned a ${response.status} status code.`,

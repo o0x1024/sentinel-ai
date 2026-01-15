@@ -149,7 +149,7 @@ pub struct Observation {
     /// Authentication status
     pub auth_status: AuthStatus,
 
-    /// Interactive elements found on the page
+    /// Interactive elements found on the page (with @e1, @e2 refs)
     pub elements: Vec<Element>,
 
     /// Forms detected
@@ -166,6 +166,10 @@ pub struct Observation {
 
     /// Additional metadata
     pub metadata: HashMap<String, serde_json::Value>,
+
+    /// Snapshot ARIA tree (for LLM context)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_tree: Option<String>,
 }
 
 /// Type of page

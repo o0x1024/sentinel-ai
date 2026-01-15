@@ -64,6 +64,18 @@ impl TerminalSessionManager {
         session.write(data).await
     }
 
+    /// Touch session to keep it active
+    pub async fn touch_session(&self, session_id: &str) -> Result<(), String> {
+        let session = self
+            .get_session(session_id)
+            .await
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        let session = session.read().await;
+        session.touch().await;
+        Ok(())
+    }
+
     /// Stop a session
     pub async fn stop_session(&self, session_id: &str) -> Result<(), String> {
         let session = {

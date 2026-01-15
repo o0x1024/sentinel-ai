@@ -23,6 +23,7 @@ pub struct ToolMetadata {
 
 /// 工具分类
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolCategory {
     Network,
     Security,
@@ -32,6 +33,7 @@ pub enum ToolCategory {
     MCP,
     Plugin,
     Workflow,
+    Browser,
 }
 
 /// 工具成本估算（token 数量）
@@ -278,7 +280,7 @@ impl ToolRouter {
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
                 name: ShellTool::NAME.to_string(),
-                description: ShellTool::DESCRIPTION.to_string(),
+                description: "Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). For interactive tools that require continuous input/output (like msfconsole, sqlmap, database clients, Python REPL), use interactive_shell instead.".to_string(),
                 category: ToolCategory::System,
                 tags: vec![
                     "shell".to_string(),
@@ -292,7 +294,7 @@ impl ToolRouter {
             ToolMetadata {
                 id: "interactive_shell".to_string(),
                 name: "interactive_shell".to_string(),
-                description: "Create an interactive terminal session for persistent command execution (e.g., msfconsole, sqlmap, database clients). Returns a session ID for continuous interaction.".to_string(),
+                description: "Create persistent terminal session for tools requiring continuous interaction: REQUIRED for ssh, msfconsole, sqlmap, mysql/psql clients, Python/Node REPL, or any tool that maintains state between commands. Returns session ID for multi-turn interaction. Use this when a tool needs to stay running between commands.".to_string(),
                 category: ToolCategory::System,
                 tags: vec![
                     "terminal".to_string(),
@@ -386,6 +388,218 @@ impl ToolRouter {
                 ],
                 cost_estimate: ToolCost::Medium,
                 always_available: true, // Default enabled - LLM can use it anytime
+            },
+            // Browser automation tools
+            ToolMetadata {
+                id: "browser_open".to_string(),
+                name: "browser_open".to_string(),
+                description: "Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "web".to_string(),
+                    "navigate".to_string(),
+                    "url".to_string(),
+                    "automation".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_snapshot".to_string(),
+                name: "browser_snapshot".to_string(),
+                description: "Get current page structure as accessibility tree with refs. Each interactive element has a ref like @e1, @e2 for interaction.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "snapshot".to_string(),
+                    "page".to_string(),
+                    "elements".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_click".to_string(),
+                name: "browser_click".to_string(),
+                description: "Click an element by ref (@e1) or CSS selector.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "click".to_string(),
+                    "interact".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_fill".to_string(),
+                name: "browser_fill".to_string(),
+                description: "Fill text into an input field by ref or selector.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "fill".to_string(),
+                    "input".to_string(),
+                    "form".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_type".to_string(),
+                name: "browser_type".to_string(),
+                description: "Type text character by character into an element.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "type".to_string(),
+                    "keyboard".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_select".to_string(),
+                name: "browser_select".to_string(),
+                description: "Select an option from a dropdown.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "select".to_string(),
+                    "dropdown".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_scroll".to_string(),
+                name: "browser_scroll".to_string(),
+                description: "Scroll the page in a direction.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "scroll".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_wait".to_string(),
+                name: "browser_wait".to_string(),
+                description: "Wait for an element to appear or for a timeout.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "wait".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_get_text".to_string(),
+                name: "browser_get_text".to_string(),
+                description: "Get the text content of an element.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "text".to_string(),
+                    "extract".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_screenshot".to_string(),
+                name: "browser_screenshot".to_string(),
+                description: "Take a screenshot of the current page.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "screenshot".to_string(),
+                    "capture".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_back".to_string(),
+                name: "browser_back".to_string(),
+                description: "Navigate back to the previous page.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "back".to_string(),
+                    "navigate".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_press".to_string(),
+                name: "browser_press".to_string(),
+                description: "Press a keyboard key (Enter, Tab, Escape, etc.).".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "press".to_string(),
+                    "keyboard".to_string(),
+                    "key".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_hover".to_string(),
+                name: "browser_hover".to_string(),
+                description: "Hover over an element.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "hover".to_string(),
+                    "mouse".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_evaluate".to_string(),
+                name: "browser_evaluate".to_string(),
+                description: "Execute JavaScript code in the browser.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "javascript".to_string(),
+                    "evaluate".to_string(),
+                    "script".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_get_url".to_string(),
+                name: "browser_get_url".to_string(),
+                description: "Get the current page URL and title.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "url".to_string(),
+                    "title".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "browser_close".to_string(),
+                name: "browser_close".to_string(),
+                description: "Close the browser.".to_string(),
+                category: ToolCategory::Browser,
+                tags: vec![
+                    "browser".to_string(),
+                    "close".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
             },
         ]
     }

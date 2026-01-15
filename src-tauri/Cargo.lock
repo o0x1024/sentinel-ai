@@ -12022,9 +12022,11 @@ dependencies = [
  "dirs 5.0.1",
  "futures",
  "futures-util",
+ "glob",
  "hickory-resolver 0.25.2",
  "image 0.25.9",
  "jsonschema",
+ "libc",
  "oar-ocr",
  "once_cell",
  "portable-pty",
@@ -12052,6 +12054,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

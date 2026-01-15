@@ -275,6 +275,15 @@
                 <div class="text-[10px] mt-1 opacity-70 truncate">{{ step.title }}</div>
              </div>
 
+             <!-- Thought Process (LLM Reasoning) -->
+             <div v-if="step.thought" class="bg-accent/10 p-2 rounded border border-accent/30 mb-2">
+                <div class="text-[10px] text-accent font-semibold mb-1 flex items-center gap-1">
+                   <i class="fas fa-brain"></i>
+                   <span>{{ t('agent.llmThinking') || 'LLM Thinking' }}</span>
+                </div>
+                <p class="text-[11px] italic leading-relaxed">{{ step.thought }}</p>
+             </div>
+
              <!-- Analysis -->
              <div v-if="step.analysis" class="bg-base-100 p-2 rounded border border-base-300">
                 <p class="mb-1">{{ step.analysis.page_analysis }}</p>
@@ -291,14 +300,21 @@
              <!-- Action -->
              <div v-if="step.action" class="bg-base-100 p-2 rounded border border-base-300" :class="{'border-error/50 bg-error/5': !step.action.success}">
                  <div class="font-bold mb-1">{{ step.action.action_type }}</div>
+                 
+                 <!-- Element-based actions (click, input, select, etc.) -->
                  <div v-if="step.action.element_index !== undefined" class="mb-0.5 opacity-80">
                     Target: Index [{{ step.action.element_index }}]
                  </div>
                  <div v-if="step.action.value" class="mb-0.5 break-all">
                     Value: <span class="font-mono bg-base-200 px-1 rounded">{{ step.action.value }}</span>
                  </div>
-                 <div class="text-[10px] italic opacity-60 mt-1">
-                    "{{ step.action.reason }}"
+                 
+                 <!-- Params-based actions (navigate, wait, etc.) -->
+                 <div v-if="step.action.params" class="mb-0.5 space-y-0.5">
+                    <div v-for="(value, key) in step.action.params" :key="key" class="break-all">
+                       <span class="opacity-70">{{ key }}:</span>
+                       <span class="font-mono bg-base-200 px-1 rounded ml-1">{{ value }}</span>
+                    </div>
                  </div>
              </div>
 
@@ -322,15 +338,6 @@
 
         <!-- Inline buttons inside textarea -->
         <div class="absolute right-2 bottom-2 flex items-center gap-1">
-          <!-- <button
-            class="btn btn-xs btn-ghost"
-            :title="t('agent.stop')"
-            :disabled="isStopping"
-            @click="stopVision"
-          >
-            <span v-if="isStopping" class="loading loading-spinner loading-xs"></span>
-            <i v-else class="fas fa-stop"></i>
-          </button> -->
 
           <button
             class="btn btn-xs btn-primary"

@@ -208,16 +208,37 @@
                 {{ t('agent.selected') }} ({{ (localConfig.manual_tools || []).length }})
               </button>
               
-              <!-- 所有分类按钮（包括插件） -->
+              <!-- 所有分类按钮（包括插件和浏览器） -->
               <button 
                 v-for="cat in allCategories" 
                 :key="cat"
                 @click="toggleCategory(cat)"
                 class="btn btn-xs"
-                :class="selectedCategories.includes(cat) ? 'btn-primary' : 'btn-ghost'"
+                :class="selectedCategories.includes(cat) ? getCategoryBadgeClass(cat) : 'btn-ghost'"
               >
+                <i :class="getCategoryIcon(cat)" class="mr-1"></i>
                 {{ getCategoryDisplayName(cat) }}
               </button>
+
+              <!-- 全选/取消全选按钮 (仅手动模式) -->
+              <div v-if="localConfig.selection_strategy === 'Manual'" class="ml-auto flex gap-1">
+                <button 
+                  @click="selectAllFilteredTools"
+                  class="btn btn-xs btn-outline btn-success"
+                  :title="t('agent.selectAll')"
+                >
+                  <i class="fas fa-check-double mr-1"></i>
+                  {{ t('agent.selectAll') }}
+                </button>
+                <button 
+                  @click="deselectAllFilteredTools"
+                  class="btn btn-xs btn-outline btn-error"
+                  :title="t('agent.deselectAll')"
+                >
+                  <i class="fas fa-times mr-1"></i>
+                  {{ t('agent.deselectAll') }}
+                </button>
+              </div>
             </div>
 
             <!-- Tool List -->
@@ -634,30 +655,68 @@ const clearCategoryFilter = () => {
 
 const getCategoryDisplayName = (category: string) => {
   const nameMap: Record<string, string> = {
-    'Network': '网络',
-    'Security': '安全',
-    'Data': '数据',
-    'AI': 'AI',
-    'System': '系统',
-    'MCP': 'MCP',
-    'Plugin': '插件',
-    'Workflow': '工作流',
+    'network': '网络',
+    'security': '安全',
+    'data': '数据',
+    'ai': 'AI',
+    'system': '系统',
+    'mcp': 'MCP',
+    'plugin': '插件',
+    'workflow': '工作流',
+    'browser': '浏览器',
   }
-  return nameMap[category] || category
+  return nameMap[category.toLowerCase()] || category
 }
 
 const getCategoryBadgeClass = (category: string) => {
   const map: Record<string, string> = {
-    'Network': 'badge-info',
-    'Security': 'badge-error',
-    'Data': 'badge-success',
-    'AI': 'badge-warning',
-    'System': 'badge-neutral',
-    'MCP': 'badge-primary',
-    'Plugin': 'badge-secondary',
-    'Workflow': 'badge-accent',
+    'network': 'btn-info',
+    'security': 'btn-error',
+    'data': 'btn-success',
+    'ai': 'btn-warning',
+    'system': 'btn-neutral',
+    'mcp': 'btn-primary',
+    'plugin': 'btn-secondary',
+    'workflow': 'btn-accent',
+    'browser': 'btn-primary',
   }
-  return map[category] || 'badge-ghost'
+  return map[category.toLowerCase()] || 'btn-ghost'
+}
+
+const getCategoryIcon = (category: string) => {
+  const map: Record<string, string> = {
+    'network': 'fas fa-network-wired',
+    'security': 'fas fa-shield-alt',
+    'data': 'fas fa-database',
+    'ai': 'fas fa-brain',
+    'system': 'fas fa-cog',
+    'mcp': 'fas fa-plug',
+    'plugin': 'fas fa-puzzle-piece',
+    'workflow': 'fas fa-project-diagram',
+    'browser': 'fas fa-globe',
+  }
+  return map[category.toLowerCase()] || 'fas fa-tools'
+}
+
+// 全选当前筛选的工具
+const selectAllFilteredTools = () => {
+  if (!localConfig.value.manual_tools) {
+    localConfig.value.manual_tools = []
+  }
+  for (const tool of filteredTools.value) {
+    if (!localConfig.value.manual_tools.includes(tool.id)) {
+      localConfig.value.manual_tools.push(tool.id)
+    }
+  }
+  emitUpdate()
+}
+
+// 取消选择当前筛选的工具
+const deselectAllFilteredTools = () => {
+  if (!localConfig.value.manual_tools) return
+  const filteredIds = new Set(filteredTools.value.map(t => t.id))
+  localConfig.value.manual_tools = localConfig.value.manual_tools.filter(id => !filteredIds.has(id))
+  emitUpdate()
 }
 
 const getStrategyDescription = (strategy: string) => {

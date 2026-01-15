@@ -103,7 +103,10 @@ export default {
   toolManagement: 'Tool Management',
   searchToolNamesOrDescriptions: 'Search tool names or descriptions...',
   all: 'All',
-  plugins: 'Plugins',
+  plugins: {
+    category: 'Plugins',
+    referToAi: 'Reference to AI Assistant'
+  },
   autoSelect: 'Auto Select',
   alwaysEnabled: 'Always Enabled',
   disableTool: 'Disable Tool',
@@ -130,7 +133,10 @@ export default {
   security: 'Security',
   data: 'Data',
   system: 'System',
+  browser: 'Browser',
   areYouSureClearStatistics: 'Are you sure you want to clear all tool usage statistics?',
+  selectAll: 'Select All',
+  deselectAll: 'Deselect All',
 
   // Tour guide
   tour: {
@@ -223,6 +229,7 @@ export default {
 
   // VisionExplorerPanel
   loginPageDetected: 'Login page detected, please enter credentials',
+  llmThinking: 'LLM Thinking',
   alreadyLoggedIn: 'Logged In',
   usernameAccount: 'Username/Account',
   password: 'Password',

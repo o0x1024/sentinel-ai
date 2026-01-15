@@ -241,7 +241,7 @@ impl ToolServer {
 
         // Register shell tool
         let shell_def = DynamicToolBuilder::new("shell")
-            .description("Execute shell commands (use with caution)")
+            .description("Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). NOT suitable for interactive tools like msfconsole, sqlmap, or database clients - use interactive_shell for those.")
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -589,7 +589,7 @@ impl ToolServer {
 
         // Register interactive_shell tool
         let interactive_shell_def = DynamicToolBuilder::new("interactive_shell")
-            .description("Create an interactive terminal session for persistent command execution (e.g., msfconsole, sqlmap, database clients). Returns a session ID and WebSocket URL for continuous interaction.")
+            .description("Create persistent terminal session for tools requiring continuous interaction: REQUIRED for msfconsole, sqlmap, mysql/psql clients, Python/Node REPL, or any tool that maintains state between commands. Returns session ID for multi-turn interaction. Use this when a tool needs to stay running between commands.")
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -603,9 +603,13 @@ impl ToolServer {
                         "description": "Docker image to use (default: sentinel-sandbox:latest)",
                         "default": "sentinel-sandbox:latest"
                     },
-                    "initial_command": {
+                    "command": {
                         "type": "string",
-                        "description": "Optional initial command to run (e.g., 'msfconsole', 'sqlmap')"
+                        "description": "Command to execute in the terminal"
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session ID to reuse an existing terminal session"
                     }
                 }
             }))
@@ -626,14 +630,23 @@ impl ToolServer {
                     .unwrap_or("sentinel-sandbox:latest")
                     .to_string();
                 
-                let initial_command = args.get("initial_command")
+                // Support both 'command' and 'initial_command' for backward compatibility
+                let command = args.get("command")
+                    .or_else(|| args.get("initial_command"))
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
                 
-                // 1. Try to find an existing active and healthy session
+                let requested_session_id = args.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                
+                // 1. Try to find an existing session (prefer requested_session_id, then first active)
                 let sessions = TERMINAL_MANAGER.list_sessions().await;
-                let active_session = if !sessions.is_empty() {
+                let active_session = if let Some(ref sid) = requested_session_id {
+                    // Use the requested session if it exists
+                    TERMINAL_MANAGER.get_session(sid).await
+                } else if !sessions.is_empty() {
                     let session_opt = TERMINAL_MANAGER.get_session(&sessions[0].id).await;
                     // Check if session is healthy
                     if let Some(ref session_lock) = session_opt {
@@ -689,8 +702,8 @@ impl ToolServer {
                     (id, rx)
                 };
 
-                // If no initial_command, just return session info
-                let Some(cmd) = initial_command else {
+                // If no command, just return session info
+                let Some(cmd) = command else {
                     return Ok(serde_json::json!({
                         "success": true,
                         "session_id": session_id,
@@ -745,8 +758,358 @@ impl ToolServer {
 
         self.registry.register(interactive_shell_def).await;
 
+        // Register browser tools
+        self.register_browser_tools().await;
+
         *initialized = true;
         tracing::info!("Builtin tools initialized");
+    }
+
+    /// Register browser automation tools
+    async fn register_browser_tools(&self) {
+        use crate::buildin_tools::browser::*;
+
+        // browser_open
+        let browser_open_def = DynamicToolBuilder::new("browser_open")
+            .description("Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms. Returns page structure with refs (@e1, @e2) for interaction. URL can be provided with or without http:// prefix.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to open (e.g., 'example.com' or 'https://example.com'). Protocol prefix is optional, https:// will be added automatically if missing."
+                    },
+                    "wait_until": {
+                        "type": "string",
+                        "description": "Wait condition: 'load', 'domcontentloaded', or 'networkidle'",
+                        "default": "load",
+                        "enum": ["load", "domcontentloaded", "networkidle"]
+                    },
+                    "show_browser": {
+                        "type": "boolean",
+                        "description": "Whether to show browser window (true) or use headless mode (false). Default is false (headless).",
+                        "default": false
+                    }
+                },
+                "required": ["url"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_open(args).await })
+            .build()
+            .expect("Failed to build browser_open tool");
+        self.registry.register(browser_open_def).await;
+
+        // browser_snapshot
+        let browser_snapshot_def = DynamicToolBuilder::new("browser_snapshot")
+            .description("Get current page structure as accessibility tree with refs. Each interactive element has a ref like @e1, @e2 that can be used with browser_click and browser_fill.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "interactive_only": {
+                        "type": "boolean",
+                        "description": "Only show interactive elements (buttons, inputs, links)",
+                        "default": true
+                    },
+                    "compact": {
+                        "type": "boolean",
+                        "description": "Remove empty structural elements",
+                        "default": true
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum tree depth"
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to scope the snapshot"
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_snapshot(args).await })
+            .build()
+            .expect("Failed to build browser_snapshot tool");
+        self.registry.register(browser_snapshot_def).await;
+
+        // browser_click
+        let browser_click_def = DynamicToolBuilder::new("browser_click")
+            .description("Click an element by ref (@e1) or CSS selector. Prefer using refs from browser_snapshot for reliability.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Element ref (e.g., '@e1') or CSS selector"
+                    }
+                },
+                "required": ["target"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_click(args).await })
+            .build()
+            .expect("Failed to build browser_click tool");
+        self.registry.register(browser_click_def).await;
+
+        // browser_fill
+        let browser_fill_def = DynamicToolBuilder::new("browser_fill")
+            .description("Fill text into an input field by ref or selector. Clears existing content first.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Element ref (e.g., '@e3') or CSS selector"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Text to fill"
+                    }
+                },
+                "required": ["target", "value"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_fill(args).await })
+            .build()
+            .expect("Failed to build browser_fill tool");
+        self.registry.register(browser_fill_def).await;
+
+        // browser_type
+        let browser_type_def = DynamicToolBuilder::new("browser_type")
+            .description("Type text character by character into an element. Useful for inputs that need keystroke events.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Element ref or CSS selector"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type"
+                    },
+                    "delay_ms": {
+                        "type": "integer",
+                        "description": "Delay between keystrokes in milliseconds"
+                    }
+                },
+                "required": ["target", "text"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_type(args).await })
+            .build()
+            .expect("Failed to build browser_type tool");
+        self.registry.register(browser_type_def).await;
+
+        // browser_select
+        let browser_select_def = DynamicToolBuilder::new("browser_select")
+            .description("Select an option from a dropdown by ref or selector.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Element ref or CSS selector for the select element"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Option value to select"
+                    }
+                },
+                "required": ["target", "value"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_select(args).await })
+            .build()
+            .expect("Failed to build browser_select tool");
+        self.registry.register(browser_select_def).await;
+
+        // browser_scroll
+        let browser_scroll_def = DynamicToolBuilder::new("browser_scroll")
+            .description("Scroll the page in a direction. Useful for loading more content or reaching elements.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "description": "Scroll direction",
+                        "default": "down",
+                        "enum": ["up", "down", "left", "right"]
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": "Scroll amount in pixels",
+                        "default": 300
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_scroll(args).await })
+            .build()
+            .expect("Failed to build browser_scroll tool");
+        self.registry.register(browser_scroll_def).await;
+
+        // browser_wait
+        let browser_wait_def = DynamicToolBuilder::new("browser_wait")
+            .description("Wait for an element to appear or for a timeout. Use after actions that trigger page changes.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to wait for"
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Maximum wait time in milliseconds",
+                        "default": 30000
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_wait(args).await })
+            .build()
+            .expect("Failed to build browser_wait tool");
+        self.registry.register(browser_wait_def).await;
+
+        // browser_get_text
+        let browser_get_text_def = DynamicToolBuilder::new("browser_get_text")
+            .description("Get the text content of an element by ref or selector.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Element ref or CSS selector"
+                    }
+                },
+                "required": ["target"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_get_text(args).await })
+            .build()
+            .expect("Failed to build browser_get_text tool");
+        self.registry.register(browser_get_text_def).await;
+
+        // browser_screenshot
+        let browser_screenshot_def = DynamicToolBuilder::new("browser_screenshot")
+            .description("Take a screenshot of the current page. Returns base64 encoded image.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "full_page": {
+                        "type": "boolean",
+                        "description": "Capture full page including scrollable area",
+                        "default": false
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_screenshot(args).await })
+            .build()
+            .expect("Failed to build browser_screenshot tool");
+        self.registry.register(browser_screenshot_def).await;
+
+        // browser_back
+        let browser_back_def = DynamicToolBuilder::new("browser_back")
+            .description("Navigate back to the previous page in browser history.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_back(args).await })
+            .build()
+            .expect("Failed to build browser_back tool");
+        self.registry.register(browser_back_def).await;
+
+        // browser_press
+        let browser_press_def = DynamicToolBuilder::new("browser_press")
+            .description("Press a keyboard key. Useful for Enter, Tab, Escape, etc.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Key to press (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown')"
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Optional element ref or selector to focus first"
+                    }
+                },
+                "required": ["key"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_press(args).await })
+            .build()
+            .expect("Failed to build browser_press tool");
+        self.registry.register(browser_press_def).await;
+
+        // browser_hover
+        let browser_hover_def = DynamicToolBuilder::new("browser_hover")
+            .description("Hover over an element. Useful for triggering hover menus or tooltips.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Element ref or CSS selector"
+                    }
+                },
+                "required": ["target"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_hover(args).await })
+            .build()
+            .expect("Failed to build browser_hover tool");
+        self.registry.register(browser_hover_def).await;
+
+        // browser_evaluate
+        let browser_evaluate_def = DynamicToolBuilder::new("browser_evaluate")
+            .description("Execute JavaScript code in the browser. Returns the result of the expression.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "description": "JavaScript code to execute"
+                    }
+                },
+                "required": ["script"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_evaluate(args).await })
+            .build()
+            .expect("Failed to build browser_evaluate tool");
+        self.registry.register(browser_evaluate_def).await;
+
+        // browser_get_url
+        let browser_get_url_def = DynamicToolBuilder::new("browser_get_url")
+            .description("Get the current page URL and title.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_get_url(args).await })
+            .build()
+            .expect("Failed to build browser_get_url tool");
+        self.registry.register(browser_get_url_def).await;
+
+        // browser_close
+        let browser_close_def = DynamicToolBuilder::new("browser_close")
+            .description("Close the browser. Call this when done with browser tasks to free resources.")
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move { execute_browser_close(args).await })
+            .build()
+            .expect("Failed to build browser_close tool");
+        self.registry.register(browser_close_def).await;
+
+        tracing::info!("Browser tools registered");
     }
 
     /// Register a dynamic tool

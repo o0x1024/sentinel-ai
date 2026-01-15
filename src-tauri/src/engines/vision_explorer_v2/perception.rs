@@ -12,6 +12,7 @@ use tracing::debug;
 
 /// Perception engine for analyzing web pages
 pub struct PerceptionEngine {
+    #[allow(dead_code)]
     llm_client: LlmClient,
 }
 
@@ -25,30 +26,15 @@ impl PerceptionEngine {
 
     /// Analyze the current page and produce an observation
     pub async fn analyze(&self, context: &PageContext) -> Result<Observation> {
-        debug!("Analyzing page: {}", context.url);
-
-        let system_prompt = self.build_system_prompt();
-        let user_prompt = self.build_user_prompt(context);
-
-        // Prepare image attachment
-        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-        let image = crate::engines::ImageAttachment {
-            base64_data: BASE64.encode(&context.screenshot),
-            media_type: "image/png".to_string(),
-        };
-
-        // Call LLM with vision capability
-        let response = self
-            .llm_client
-            .chat(Some(&system_prompt), &user_prompt, &[], Some(&image))
-            .await
-            .context("Failed to call LLM for perception")?;
-
-        // Parse the response
-        self.parse_llm_response(&response, context)
+        debug!("Analyzing page: {} (using DOM-only analysis)", context.url);
+        
+        // Use DOM-only analysis by default
+        // Vision LLM is disabled to avoid dependency on external vision services
+        Ok(self.analyze_dom_only(context))
     }
 
     /// Build system prompt for perception
+    #[allow(dead_code)]
     fn build_system_prompt(&self) -> String {
         r#"You are a web page analyzer. Your task is to analyze a screenshot and HTML of a web page and provide structured information about it.
 
@@ -108,6 +94,7 @@ Return ONLY the JSON object, no additional text."#.to_string()
     }
 
     /// Build user prompt with context
+    #[allow(dead_code)]
     fn build_user_prompt(&self, context: &PageContext) -> String {
         format!(
             r#"Analyze this web page:
@@ -133,6 +120,7 @@ Please analyze the screenshot and HTML to provide structured information about t
     }
 
     /// Parse LLM response into Observation
+    #[allow(dead_code)]
     fn parse_llm_response(&self, response: &str, _context: &PageContext) -> Result<Observation> {
         // Try to extract JSON from response
         let json_str = self.extract_json(response)?;
@@ -217,10 +205,12 @@ Please analyze the screenshot and HTML to provide structured information about t
             api_endpoints,
             confidence,
             metadata: HashMap::new(),
+            snapshot_tree: None,
         })
     }
 
     /// Extract JSON from LLM response (handles markdown code blocks)
+    #[allow(dead_code)]
     fn extract_json(&self, response: &str) -> Result<String> {
         let trimmed = response.trim();
         
@@ -246,6 +236,7 @@ Please analyze the screenshot and HTML to provide structured information about t
     }
 
     /// Parse an element from JSON
+    #[allow(dead_code)]
     fn parse_element(&self, json: &serde_json::Value) -> Option<Element> {
         Some(Element {
             element_id: json["element_id"].as_str()?.to_string(),
@@ -262,6 +253,7 @@ Please analyze the screenshot and HTML to provide structured information about t
     }
 
     /// Parse a form from JSON
+    #[allow(dead_code)]
     fn parse_form(&self, json: &serde_json::Value) -> Option<FormInfo> {
         let fields = if let Some(arr) = json["fields"].as_array() {
             arr.iter()
@@ -280,6 +272,7 @@ Please analyze the screenshot and HTML to provide structured information about t
     }
 
     /// Parse a form field from JSON
+    #[allow(dead_code)]
     fn parse_form_field(&self, json: &serde_json::Value) -> Option<FormField> {
         Some(FormField {
             name: json["name"].as_str()?.to_string(),
@@ -290,6 +283,185 @@ Please analyze the screenshot and HTML to provide structured information about t
             placeholder: json["placeholder"].as_str().map(|s| s.to_string()),
         })
     }
+
+    /// DOM-only fallback when vision model is unavailable
+    fn analyze_dom_only(&self, context: &PageContext) -> Observation {
+        let html = context.html.as_str();
+
+        let mut elements = Vec::new();
+        let mut links = Vec::new();
+        let mut inputs = Vec::new();
+
+        // Extract links
+        for href in Self::extract_attr_values(html, "a", "href").into_iter().take(50) {
+            links.push(href.clone());
+            elements.push(Element {
+                element_id: format!("link-{}", elements.len() + 1),
+                element_type: "link".to_string(),
+                selector: format!("a[href=\"{}\"]", href),
+                text: None,
+                href: Some(href),
+                x: None,
+                y: None,
+                width: None,
+                height: None,
+                is_visible: true,
+            });
+        }
+
+        // Extract inputs
+        let input_attrs = Self::extract_input_fields(html);
+        for field in &input_attrs {
+            inputs.push(FormField {
+                name: field.name.clone().unwrap_or_else(|| "unknown".to_string()),
+                field_type: field.field_type.clone().unwrap_or_else(|| "text".to_string()),
+                label: None,
+                required: false,
+                value: None,
+                placeholder: field.placeholder.clone(),
+            });
+
+            let selector = if let Some(ref name) = field.name {
+                format!("input[name=\"{}\"]", name)
+            } else if let Some(ref input_type) = field.field_type {
+                format!("input[type=\"{}\"]", input_type)
+            } else {
+                "input".to_string()
+            };
+
+            elements.push(Element {
+                element_id: format!("input-{}", elements.len() + 1),
+                element_type: "input".to_string(),
+                selector,
+                text: None,
+                href: None,
+                x: None,
+                y: None,
+                width: None,
+                height: None,
+                is_visible: true,
+            });
+        }
+
+        let forms = if inputs.is_empty() {
+            Vec::new()
+        } else {
+            vec![FormInfo {
+                selector: "form".to_string(),
+                action: None,
+                method: "POST".to_string(),
+                fields: inputs,
+            }]
+        };
+
+        let page_type = if html.contains("type=\"password\"") || html.contains("password") {
+            PageType::Login
+        } else if !forms.is_empty() {
+            PageType::Form
+        } else if html.contains("error") {
+            PageType::Error
+        } else {
+            PageType::Unknown
+        };
+
+        let auth_status = if html.contains("logout") || html.contains("sign out") {
+            AuthStatus::Authenticated { username: None }
+        } else if page_type == PageType::Login {
+            AuthStatus::NotAuthenticated
+        } else {
+            AuthStatus::Unknown
+        };
+
+        Observation {
+            page_type,
+            description: "DOM-only analysis (no vision model)".to_string(),
+            auth_status,
+            elements,
+            forms,
+            links,
+            api_endpoints: Vec::new(),
+            confidence: 0.3,
+            metadata: HashMap::from([(
+                "perception_mode".to_string(),
+                serde_json::Value::String("dom_only".to_string()),
+            )]),
+            snapshot_tree: None, // Will be set by react_engine with actual snapshot
+        }
+    }
+
+    fn extract_attr_values(html: &str, tag: &str, attr: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut remaining = html;
+        let tag_open = format!("<{}", tag);
+        let attr_pattern = format!("{}=", attr);
+
+        while let Some(pos) = remaining.find(&tag_open) {
+            let rest = &remaining[pos..];
+            if let Some(end) = rest.find('>') {
+                let tag_content = &rest[..end];
+                if let Some(attr_pos) = tag_content.find(&attr_pattern) {
+                    let value_start = attr_pos + attr_pattern.len();
+                    let quote = tag_content.as_bytes().get(value_start).copied();
+                    if let Some(q) = quote {
+                        let q = q as char;
+                        if q == '"' || q == '\'' {
+                            let value_slice = &tag_content[(value_start + 1)..];
+                            if let Some(value_end) = value_slice.find(q) {
+                                values.push(value_slice[..value_end].to_string());
+                            }
+                        }
+                    }
+                }
+                remaining = &rest[end..];
+            } else {
+                break;
+            }
+        }
+        values
+    }
+
+    fn extract_input_fields(html: &str) -> Vec<InputField> {
+        let mut fields = Vec::new();
+        let mut remaining = html;
+        let tag_open = "<input";
+
+        while let Some(pos) = remaining.find(tag_open) {
+            let rest = &remaining[pos..];
+            if let Some(end) = rest.find('>') {
+                let tag_content = &rest[..end];
+                let field = InputField {
+                    name: Self::extract_attr(tag_content, "name"),
+                    field_type: Self::extract_attr(tag_content, "type"),
+                    placeholder: Self::extract_attr(tag_content, "placeholder"),
+                };
+                fields.push(field);
+                remaining = &rest[end..];
+            } else {
+                break;
+            }
+        }
+        fields
+    }
+
+    fn extract_attr(tag_content: &str, attr: &str) -> Option<String> {
+        let attr_pattern = format!("{}=", attr);
+        let attr_pos = tag_content.find(&attr_pattern)?;
+        let value_start = attr_pos + attr_pattern.len();
+        let quote = tag_content.as_bytes().get(value_start).copied()? as char;
+        if quote != '"' && quote != '\'' {
+            return None;
+        }
+        let value_slice = &tag_content[(value_start + 1)..];
+        let value_end = value_slice.find(quote)?;
+        Some(value_slice[..value_end].to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct InputField {
+    name: Option<String>,
+    field_type: Option<String>,
+    placeholder: Option<String>,
 }
 
 #[cfg(test)]

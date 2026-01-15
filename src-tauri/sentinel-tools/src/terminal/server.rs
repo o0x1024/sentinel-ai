@@ -101,7 +101,10 @@ impl TerminalServer {
                         
                         (session_id, rx)
                     } else {
-                        return Err(format!("Session not found: {}", session_id));
+                        // Session not found - client has stale session ID
+                        // Create new session with default config instead of returning error
+                        warn!("Session not found: {}, creating new session", session_id);
+                        self.manager.create_session(TerminalSessionConfig::default()).await?
                     }
                 } else {
                     // Parse as config
@@ -157,6 +160,10 @@ impl TerminalServer {
                     }
                 }
                 Ok(Message::Text(text)) => {
+                    if text == "__keepalive__" {
+                        let _ = manager.touch_session(&session_id_clone).await;
+                        continue;
+                    }
                     // Convert Utf8Bytes to Vec<u8>
                     let data = text.as_bytes().to_vec();
                     if let Err(e) = manager.write_to_session(&session_id_clone, data).await {
@@ -169,12 +176,14 @@ impl TerminalServer {
                     break;
                 }
                 Ok(Message::Ping(data)) => {
+                    let _ = manager.touch_session(&session_id_clone).await;
                     // Respond with pong
                     // Note: ws_sender is moved, so we can't use it here
                     // The ping/pong is handled automatically by tokio-tungstenite
                     debug!("Received ping: {:?}", data);
                 }
                 Ok(Message::Pong(_)) => {
+                    let _ = manager.touch_session(&session_id_clone).await;
                     // Ignore pong
                 }
                 Ok(Message::Frame(_)) => {

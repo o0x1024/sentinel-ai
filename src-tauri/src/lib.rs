@@ -403,6 +403,17 @@ pub fn run() {
                     }
                 });
 
+                // Auto-start agent-browser daemon for browser automation
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    tracing::info!("Starting agent-browser daemon...");
+                    if let Err(e) = sentinel_tools::agent_browser::ensure_daemon("default") {
+                        tracing::warn!("Failed to start agent-browser daemon: {}", e);
+                    } else {
+                        tracing::info!("Agent-browser daemon started successfully");
+                    }
+                });
+
                 // Delay MCP server auto-connect to avoid blocking main process startup
                 let handle_for_mcp = handle.clone();
                 tokio::spawn(async move {
@@ -1047,6 +1058,10 @@ async fn cleanup_and_exit(app: &tauri::AppHandle) {
             let _ = traffic_analysis_commands::stop_traffic_analysis_internal(app, &state).await;
         }
     }
+
+    // Stop agent-browser daemon
+    tracing::info!("Stopping agent-browser daemon...");
+    sentinel_tools::agent_browser::stop_all_daemons();
 
     tracing::info!("Application cleanup completed, exiting");
     std::process::exit(0);

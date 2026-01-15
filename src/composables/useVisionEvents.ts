@@ -8,6 +8,7 @@ export interface VisionStep {
   url?: string
   title?: string
   screenshot?: string
+  thought?: string  // LLM thought process
   analysis?: {
     page_analysis: string
     estimated_apis?: string[]
@@ -15,6 +16,7 @@ export interface VisionStep {
   }
   action?: {
     action_type: string
+    params?: Record<string, any>
     element_index?: number
     value?: string
     reason: string
@@ -282,13 +284,18 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
       case 'step': {
         // Legacy step message or thought update
         const stepNumber = data?.step_number || steps.value.length
-        const step = steps.value.find(s => s.iteration === stepNumber)
-        if (step) {
-          // Update existing step with thought
-          if (data?.thought) {
-            step.analysis = step.analysis || { page_analysis: '', estimated_apis: [], exploration_progress: 0 }
-            step.analysis.page_analysis = data.thought
+        let step = steps.value.find(s => s.iteration === stepNumber)
+        if (!step) {
+          step = {
+            iteration: stepNumber,
+            phase: 'think',
+            status: 'running'
           }
+          steps.value.push(step)
+        }
+        // Update existing step with thought
+        if (data?.thought) {
+          step.thought = data.thought
         }
         if (data?.current_url) currentUrl.value = data.current_url
         return
@@ -338,11 +345,12 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
 
       case 'api_discovered': {
         if (!data) return
-        const api = { method: data.method, url: data.api }
+        // Backend sends 'url' field, not 'api'
+        const api = { method: data.method || 'GET', url: data.url || data.api || '' }
         if (!discoveredApis.value.some(a => a.method === api.method && a.url === api.url)) {
           discoveredApis.value.push(api)
         }
-        pushActivity({ type: 'api_discovered', ts: now, method: data.method, url: data.api })
+        pushActivity({ type: 'api_discovered', ts: now, method: api.method, url: api.url })
         return
       }
 
@@ -570,6 +578,15 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     }
   }
 
+  // Stop vision explorer execution
+  const stop = () => {
+    isVisionActive.value = false
+    // Reset any active state
+    if (currentExecutionId.value) {
+      console.log('[useVisionEvents] Stopping vision explorer:', currentExecutionId.value)
+    }
+  }
+
   const activeWorkers = computed(() => Array.from(multiAgent.value.workers.values()).filter(w => w.status === 'running'))
 
   const completedWorkers = computed(() => Array.from(multiAgent.value.workers.values()).filter(w => w.status === 'completed'))
@@ -596,6 +613,7 @@ export function useVisionEvents(executionId?: Ref<string | null>) {
     resetstate,
     close,
     open,
+    stop,
     activity,
     multiAgent,
     isMultiAgentMode,

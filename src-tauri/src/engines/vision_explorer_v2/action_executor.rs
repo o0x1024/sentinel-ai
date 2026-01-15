@@ -1,36 +1,20 @@
-//! Action Executor - Executes actions on the browser using MCP Playwright
+//! Action Executor - Executes actions on the browser using AgentBrowserService
 //!
 //! This module is responsible for the "Act" step in ReAct loop
-//! Updated for hybrid exploration (Vision + DOM annotation)
+//! Uses agent-browser for browser automation with snapshot-based element selection
 
-use super::perception::PerceptionEngine;
-use super::types::{Action, ActionResult, PageContext, ScrollDirection, SiteProfile, StorageState};
-use crate::services::mcp::McpService;
-use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
-use serde_json::json;
-use std::sync::Arc;
-use tracing::{debug, info};
+use super::types::{Action, ActionResult, ScrollDirection};
+use anyhow::Result;
+use sentinel_tools::agent_browser::{get_browser_service, SnapshotOptions};
+use tracing::{debug, info, warn};
 
-/// Action executor using MCP Playwright (hybrid mode)
-pub struct ActionExecutor {
-    mcp_service: Arc<McpService>,
-    perception_engine: Arc<PerceptionEngine>,
-    mcp_server_name: String,
-}
+/// Action executor using AgentBrowserService
+pub struct ActionExecutor;
 
 impl ActionExecutor {
     /// Create a new action executor
-    pub fn new(
-        mcp_service: Arc<McpService>,
-        perception_engine: Arc<PerceptionEngine>,
-        mcp_server_name: String,
-    ) -> Self {
-        Self {
-            mcp_service,
-            perception_engine,
-            mcp_server_name,
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     // ==================== Core Actions ====================
@@ -70,41 +54,38 @@ impl ActionExecutor {
     async fn execute_navigate(&self, url: &str) -> Result<ActionResult> {
         debug!("Navigating to: {}", url);
 
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_navigate",
-                json!({
-                    "url": url,
-                    "waitUntil": "load",
-                }),
-            )
-            .await;
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
 
-        match result {
-            Ok(_) => {
-                // Wait for network idle after navigation
-                let _ = self.wait_for_network_idle(3000).await;
+        match service.open(url, Some("load")).await {
+            Ok(result) => {
+                info!("Navigation successful to: {}", result.url);
+                
+                // Wait briefly for any dynamic content
+                let _ = service.wait(None, Some(500)).await;
+                debug!("Wait completed after navigation");
 
-                let observation = self.capture_observation().await.ok();
+                // Observation will be captured in the main observe() loop
                 Ok(ActionResult {
                     success: true,
-                    new_url: Some(url.to_string()),
+                    new_url: Some(result.url),
                     error: None,
-                    observation,
+                    observation: None,
                 })
             }
-            Err(e) => Ok(ActionResult {
-                success: false,
-                new_url: None,
-                error: Some(format!("Navigation failed: {}", e)),
-                observation: None,
-            }),
+            Err(e) => {
+                warn!("Navigation failed: {}", e);
+                Ok(ActionResult {
+                    success: false,
+                    new_url: None,
+                    error: Some(format!("Navigation failed: {}", e)),
+                    observation: None,
+                })
+            }
         }
     }
 
-    /// Execute click action - supports index, selector, or coordinates
+    /// Execute click action - supports ref (@e1), selector, or coordinates
     async fn execute_click(
         &self,
         selector: &Option<String>,
@@ -117,34 +98,44 @@ impl ActionExecutor {
             index, selector, x, y
         );
 
-        // Priority: index > selector > coordinates
-        let result = if let Some(idx) = index {
-            // Click by annotation index (most reliable for hybrid mode)
-            self.mcp_service
-                .execute_client_tool(
-                    &self.mcp_server_name,
-                    "playwright_click",
-                    json!({ "index": idx }),
-                )
-                .await
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+
+        // NOTE: Do NOT take snapshot here! The index is based on the snapshot
+        // that was taken during the observe phase. Taking a new snapshot would
+        // regenerate the refMap and the index would point to a different element.
+
+        // Build target: prefer index (as ref), then selector, then coordinates
+        let target = if let Some(idx) = index {
+            // Convert index to ref format
+            format!("@e{}", idx)
         } else if let Some(sel) = selector {
-            // Click by selector
-            self.mcp_service
-                .execute_client_tool(
-                    &self.mcp_server_name,
-                    "playwright_click",
-                    json!({ "selector": sel }),
-                )
-                .await
+            sel.clone()
         } else if let (Some(x_coord), Some(y_coord)) = (x, y) {
-            // Click by coordinates (vision fallback)
-            self.mcp_service
-                .execute_client_tool(
-                    &self.mcp_server_name,
-                    "playwright_click",
-                    json!({ "coordinate": [x_coord, y_coord] }),
-                )
-                .await
+            // For coordinates, use JavaScript click
+            let script = format!(
+                "document.elementFromPoint({}, {})?.click()",
+                x_coord, y_coord
+            );
+            match service.evaluate(&script).await {
+                Ok(_) => {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    return Ok(ActionResult {
+                        success: true,
+                        new_url: None,
+                        error: None,
+                        observation: None,
+                    });
+                }
+                Err(e) => {
+                    return Ok(ActionResult {
+                        success: false,
+                        new_url: None,
+                        error: Some(format!("Click by coordinates failed: {}", e)),
+                        observation: None,
+                    });
+                }
+            }
         } else {
             return Ok(ActionResult {
                 success: false,
@@ -154,16 +145,14 @@ impl ActionExecutor {
             });
         };
 
-        match result {
+        match service.click(&target).await {
             Ok(_) => {
-                // Wait briefly for any state changes
-                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                let observation = self.capture_observation().await.ok();
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                 Ok(ActionResult {
                     success: true,
                     new_url: None,
                     error: None,
-                    observation,
+                    observation: None,
                 })
             }
             Err(e) => Ok(ActionResult {
@@ -175,32 +164,25 @@ impl ActionExecutor {
         }
     }
 
-    /// Execute fill action - supports index or selector
+    /// Execute fill action - supports ref or selector
     async fn execute_fill(
         &self,
         selector: &Option<String>,
         index: &Option<u32>,
         value: &str,
     ) -> Result<ActionResult> {
-        debug!("Filling: index={:?}, selector={:?}, value={}", index, selector, value);
+        debug!(
+            "Filling: index={:?}, selector={:?}, value={}",
+            index, selector, value
+        );
 
-        // Priority: index > selector
-        let result = if let Some(idx) = index {
-            self.mcp_service
-                .execute_client_tool(
-                    &self.mcp_server_name,
-                    "playwright_fill",
-                    json!({ "index": idx, "value": value }),
-                )
-                .await
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+
+        let target = if let Some(idx) = index {
+            format!("@e{}", idx)
         } else if let Some(sel) = selector {
-            self.mcp_service
-                .execute_client_tool(
-                    &self.mcp_server_name,
-                    "playwright_fill",
-                    json!({ "selector": sel, "value": value }),
-                )
-                .await
+            sel.clone()
         } else {
             return Ok(ActionResult {
                 success: false,
@@ -210,7 +192,7 @@ impl ActionExecutor {
             });
         };
 
-        match result {
+        match service.fill(&target, value).await {
             Ok(_) => Ok(ActionResult {
                 success: true,
                 new_url: None,
@@ -230,28 +212,18 @@ impl ActionExecutor {
     async fn execute_submit(&self, selector: &str) -> Result<ActionResult> {
         debug!("Submitting form: {}", selector);
 
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_press_key",
-                json!({
-                    "selector": selector,
-                    "key": "Enter",
-                }),
-            )
-            .await;
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
 
-        match result {
+        match service.press("Enter", Some(selector)).await {
             Ok(_) => {
-                // Wait for form submission
-                let _ = self.wait_for_network_idle(3000).await;
-                let observation = self.capture_observation().await.ok();
+                // Wait briefly for form submission
+                let _ = service.wait(None, Some(1000)).await;
                 Ok(ActionResult {
                     success: true,
                     new_url: None,
                     error: None,
-                    observation,
+                    observation: None,
                 })
             }
             Err(e) => Ok(ActionResult {
@@ -264,41 +236,27 @@ impl ActionExecutor {
     }
 
     /// Execute scroll action
-    async fn execute_scroll(
-        &self,
-        direction: ScrollDirection,
-        amount: u32,
-    ) -> Result<ActionResult> {
+    async fn execute_scroll(&self, direction: ScrollDirection, amount: u32) -> Result<ActionResult> {
         debug!("Scrolling: {:?} by {}", direction, amount);
 
-        let dir = match direction {
-            ScrollDirection::Down => "down",
-            ScrollDirection::Up => "up",
-            ScrollDirection::Left => "down", // Treat as down for simplicity
-            ScrollDirection::Right => "down",
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+
+        let scroll_dir = match direction {
+            ScrollDirection::Down => sentinel_tools::agent_browser::ScrollDirection::Down,
+            ScrollDirection::Up => sentinel_tools::agent_browser::ScrollDirection::Up,
+            ScrollDirection::Left => sentinel_tools::agent_browser::ScrollDirection::Left,
+            ScrollDirection::Right => sentinel_tools::agent_browser::ScrollDirection::Right,
         };
 
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_scroll",
-                json!({
-                    "direction": dir,
-                    "amount": amount,
-                }),
-            )
-            .await;
-
-        match result {
+        match service.scroll(scroll_dir, Some(amount)).await {
             Ok(_) => {
-                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                let observation = self.capture_observation().await.ok();
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                 Ok(ActionResult {
                     success: true,
                     new_url: None,
                     error: None,
-                    observation,
+                    observation: None,
                 })
             }
             Err(e) => Ok(ActionResult {
@@ -325,12 +283,12 @@ impl ActionExecutor {
     /// Execute snapshot action
     async fn execute_snapshot(&self) -> Result<ActionResult> {
         debug!("Taking snapshot");
-        let observation = self.capture_observation().await.ok();
+        // Snapshot is taken in observe() loop, this just signals success
         Ok(ActionResult {
             success: true,
             new_url: None,
             error: None,
-            observation,
+            observation: None,
         })
     }
 
@@ -338,20 +296,17 @@ impl ActionExecutor {
     async fn execute_go_back(&self) -> Result<ActionResult> {
         debug!("Going back");
 
-        let result = self
-            .mcp_service
-            .execute_client_tool(&self.mcp_server_name, "playwright_go_back", json!({}))
-            .await;
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
 
-        match result {
+        match service.back().await {
             Ok(_) => {
-                let _ = self.wait_for_network_idle(2000).await;
-                let observation = self.capture_observation().await.ok();
+                let _ = service.wait(None, Some(500)).await;
                 Ok(ActionResult {
                     success: true,
                     new_url: None,
                     error: None,
-                    observation,
+                    observation: None,
                 })
             }
             Err(e) => Ok(ActionResult {
@@ -363,312 +318,40 @@ impl ActionExecutor {
         }
     }
 
-    // ==================== Hybrid Exploration Methods ====================
+    // ==================== Snapshot-based Methods ====================
+
+    /// Get page snapshot (ARIA tree with refs)
+    pub async fn get_snapshot(&self) -> Result<sentinel_tools::agent_browser::Snapshot> {
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+        service.snapshot(SnapshotOptions::interactive()).await
+    }
+
+    /// Get full snapshot with all elements
+    pub async fn get_full_snapshot(&self) -> Result<sentinel_tools::agent_browser::Snapshot> {
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+        service.snapshot(SnapshotOptions::full()).await
+    }
+
+    // ==================== Network & Storage ====================
 
     /// Enable network request interception for API discovery
     pub async fn enable_network_interception(&self) -> Result<()> {
-        self.mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_intercept_requests",
-                json!({ "enabled": true }),
-            )
-            .await?;
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+        service.start_network_tracking().await?;
+        info!("Network interception enabled for API discovery");
         Ok(())
     }
 
     /// Get discovered API endpoints from network interception
     pub async fn get_discovered_apis(&self) -> Result<Vec<String>> {
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_get_requests",
-                json!({ "limit": 200 }),
-            )
-            .await?;
-
-        // Parse apis from response
-        let apis = self
-            .extract_text_from_response(&result)
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .and_then(|v| v.get("apis").cloned())
-            .and_then(|apis| apis.as_array().cloned())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
-
+        let service = get_browser_service().await;
+        let mut service = service.write().await;
+        let apis = service.get_discovered_apis().await?;
+        debug!("Discovered {} API endpoints", apis.len());
         Ok(apis)
     }
 
-    /// Detect site type (SPA/MPA) and framework
-    pub async fn detect_site_type(&self) -> Result<SiteProfile> {
-        let result = self
-            .mcp_service
-            .execute_client_tool(&self.mcp_server_name, "playwright_detect_site", json!({}))
-            .await?;
-
-        let text = self
-            .extract_text_from_response(&result)
-            .unwrap_or_else(|| "{}".to_string());
-
-        serde_json::from_str(&text).context("Failed to parse site profile")
-    }
-
-    /// Wait for network to become idle (for SPAs)
-    pub async fn wait_for_network_idle(&self, timeout_ms: u64) -> Result<()> {
-        let _ = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_wait_for_network_idle",
-                json!({ "timeout": timeout_ms }),
-            )
-            .await;
-        Ok(())
-    }
-
-    /// Wait for a specific selector to appear
-    pub async fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> Result<bool> {
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_wait_for_selector",
-                json!({
-                    "selector": selector,
-                    "timeout": timeout_ms,
-                    "state": "visible"
-                }),
-            )
-            .await;
-
-        Ok(result.is_ok())
-    }
-
-    /// Get browser storage (for session detection)
-    pub async fn get_storage(&self) -> Result<StorageState> {
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_get_storage",
-                json!({ "type": "all" }),
-            )
-            .await?;
-
-        let text = self
-            .extract_text_from_response(&result)
-            .unwrap_or_else(|| "{}".to_string());
-
-        Ok(serde_json::from_str(&text).unwrap_or_else(|_| StorageState::default()))
-    }
-
-    /// Set browser storage (for session restoration)
-    pub async fn set_storage(&self, storage: &StorageState) -> Result<()> {
-        self.mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_set_storage",
-                json!({
-                    "cookies": storage.cookies,
-                    "localStorage": storage.local_storage,
-                }),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Get annotated elements (DOM-based element detection)
-    pub async fn get_annotated_elements(&self) -> Result<Vec<AnnotatedElement>> {
-        let result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_get_annotated_elements",
-                json!({}),
-            )
-            .await?;
-
-        let text = self
-            .extract_text_from_response(&result)
-            .unwrap_or_else(|| "{}".to_string());
-
-        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-
-        let elements = parsed
-            .get("elements")
-            .and_then(|e| e.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|e| {
-                        Some(AnnotatedElement {
-                            index: e.get("i")?.as_u64()? as u32,
-                            element_type: e.get("t")?.as_str()?.to_string(),
-                            text: e.get("x").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                            href: e.get("h").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                            name: e.get("n").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                            tag: e.get("g").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Ok(elements)
-    }
-
-    /// Scroll element into view by index
-    pub async fn scroll_into_view(&self, index: u32) -> Result<()> {
-        self.mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_scroll",
-                json!({ "index": index }),
-            )
-            .await?;
-        Ok(())
-    }
-
-    // ==================== Observation Methods ====================
-
-    /// Capture current page observation
-    async fn capture_observation(&self) -> Result<super::types::Observation> {
-        let context = self.capture_page_context().await?;
-        self.perception_engine.analyze(&context).await
-    }
-
-    /// Capture current page context (screenshot + HTML)
-    pub async fn capture_page_context(&self) -> Result<PageContext> {
-        // Get screenshot
-        let screenshot_result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_screenshot",
-                json!({
-                    "name": "vision_explorer",
-                    "fullPage": false,
-                }),
-            )
-            .await
-            .context("Failed to capture screenshot")?;
-
-        // Parse screenshot from response
-        let screenshot_base64 = screenshot_result
-            .get("content")
-            .and_then(|content| content.as_array())
-            .and_then(|arr| {
-                arr.iter().find_map(|item| {
-                    if item.get("type")?.as_str()? == "text" {
-                        let text = item.get("text")?.as_str()?;
-                        if let Ok(json_obj) = serde_json::from_str::<serde_json::Value>(text) {
-                            return json_obj
-                                .get("screenshot_base64")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                        }
-                    }
-                    None
-                })
-            })
-            .or_else(|| {
-                screenshot_result
-                    .get("content")
-                    .and_then(|content| content.as_array())
-                    .and_then(|arr| {
-                        arr.iter().find_map(|item| {
-                            if item.get("type")?.as_str()? == "image" {
-                                return item.get("data")?.as_str().map(|s| s.to_string());
-                            }
-                            None
-                        })
-                    })
-            })
-            .context("Screenshot not found in response")?;
-
-        let screenshot =
-            BASE64_STANDARD.decode(screenshot_base64).context("Failed to decode screenshot")?;
-
-        // Get HTML
-        let html_result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_get_visible_html",
-                json!({ "maxLength": 50000 }),
-            )
-            .await
-            .context("Failed to get HTML content")?;
-
-        let html = self
-            .extract_text_from_response(&html_result)
-            .map(|s| s.strip_prefix("HTML content:\n").unwrap_or(&s).to_string())
-            .unwrap_or_default();
-
-        // Get page info
-        let info_result = self
-            .mcp_service
-            .execute_client_tool(
-                &self.mcp_server_name,
-                "playwright_evaluate",
-                json!({
-                    "script": "JSON.stringify({ url: window.location.href, title: document.title, width: window.innerWidth, height: window.innerHeight })"
-                }),
-            )
-            .await
-            .context("Failed to get page info")?;
-
-        let page_info_str = self
-            .extract_text_from_response(&info_result)
-            .unwrap_or_else(|| "{}".to_string());
-
-        let page_info: serde_json::Value = serde_json::from_str(&page_info_str).unwrap_or_default();
-
-        Ok(PageContext {
-            url: page_info
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            title: page_info
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            screenshot,
-            html,
-            viewport_width: page_info.get("width").and_then(|v| v.as_u64()).unwrap_or(1280) as u32,
-            viewport_height: page_info.get("height").and_then(|v| v.as_u64()).unwrap_or(720) as u32,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
-        })
-    }
-
-    // ==================== Helper Methods ====================
-
-    /// Extract text content from MCP response
-    fn extract_text_from_response(&self, result: &serde_json::Value) -> Option<String> {
-        result
-            .get("content")
-            .and_then(|content| content.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|item| item.get("text"))
-            .and_then(|text| text.as_str())
-            .map(|s| s.to_string())
-    }
-}
-
-/// Annotated element from DOM
-#[derive(Debug, Clone)]
-pub struct AnnotatedElement {
-    pub index: u32,
-    pub element_type: String,
-    pub text: Option<String>,
-    pub href: Option<String>,
-    pub name: Option<String>,
-    pub tag: Option<String>,
 }

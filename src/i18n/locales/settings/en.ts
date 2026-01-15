@@ -457,7 +457,12 @@ export default {
       denyListDesc: 'Agent asks for permission before executing commands matched by a deny list entry',
       enterCommand: 'Enter command...',
       noAllowedCommands: 'Allow list is empty',
-      noDeniedCommands: 'Deny list is empty'
+      noDeniedCommands: 'Deny list is empty',
+      dockerImage: 'Docker Image',
+      dockerImageDesc: 'Docker image used for interactive terminal',
+      dockerImagePlaceholder: 'e.g., sentinel-sandbox:latest',
+      useDocker: 'Use Docker',
+      useDockerDesc: 'Use Docker container as terminal environment (recommended), otherwise uses host terminal'
     }
   }
 }

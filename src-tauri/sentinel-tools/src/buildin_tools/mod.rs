@@ -1,24 +1,26 @@
-pub mod port_scan;
+pub mod browser;
 pub mod http_request;
 pub mod local_time;
-pub mod shell;
-pub mod subdomain_brute;
-pub mod todos;
-pub mod web_search;
 pub mod memory;
 pub mod ocr;
+pub mod port_scan;
+pub mod shell;
+pub mod subdomain_brute;
 pub mod tenth_man_tool;
+pub mod todos;
+pub mod web_search;
 
-pub use port_scan::PortScanTool;
+pub use browser::*;
 pub use http_request::HttpRequestTool;
 pub use local_time::LocalTimeTool;
-pub use shell::ShellTool;
-pub use subdomain_brute::SubdomainBruteTool;
-pub use todos::TodosTool;
-pub use web_search::WebSearchTool;
 pub use memory::MemoryManagerTool;
 pub use ocr::OcrTool;
+pub use port_scan::PortScanTool;
+pub use shell::ShellTool;
+pub use subdomain_brute::SubdomainBruteTool;
 pub use tenth_man_tool::TenthManTool;
+pub use todos::TodosTool;
+pub use web_search::WebSearchTool;
 
 use rig::tool::ToolSet;
 

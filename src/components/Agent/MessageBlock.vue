@@ -253,6 +253,22 @@
         </span>
       </div>
       
+      <!-- Image Attachments (for user messages) -->
+      <div v-if="message.type === 'user' && imageAttachments.length > 0" class="image-attachments mb-2 flex flex-wrap gap-2">
+        <div
+          v-for="(img, idx) in imageAttachments"
+          :key="idx"
+          class="image-attachment relative group"
+        >
+          <img
+            :src="getImagePreviewUrl(img)"
+            class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
+            :alt="img.filename || 'attachment'"
+            @click="openImagePreview(getImagePreviewUrl(img))"
+          />
+        </div>
+      </div>
+      
       <!-- Content -->
       <div class="message-content text-base-content break-words overflow-hidden">
         <!-- Edit Mode -->
@@ -704,6 +720,58 @@ const documentAttachments = computed(() => {
   return props.message.metadata?.document_attachments || []
 })
 
+// Get image attachments from user message metadata
+const imageAttachments = computed(() => {
+  if (props.message.type !== 'user') return []
+  const attachments = props.message.metadata?.image_attachments
+  if (!attachments) return []
+  
+  // Handle both array format and single object format
+  if (Array.isArray(attachments)) {
+    return attachments.map(att => {
+      // Handle MessageAttachment::Image format
+      if (att.image) return att.image
+      // Handle direct image format
+      return att
+    })
+  }
+  
+  return []
+})
+
+// Get image preview URL from base64 data
+const getImagePreviewUrl = (img: any): string => {
+  try {
+    const mediaTypeRaw: string | undefined = img?.media_type
+    const mime = toMimeType(mediaTypeRaw)
+    const dataField = img?.data
+    const base64 = typeof dataField === 'string' ? dataField : dataField?.data
+    if (!base64) return ''
+    return `data:${mime};base64,${base64}`
+  } catch (e) {
+    console.error('[MessageBlock] Failed to construct image preview:', e, img)
+    return ''
+  }
+}
+
+// Convert media type enum to MIME type
+const toMimeType = (mediaType?: string): string => {
+  if (!mediaType) return 'image/jpeg'
+  const t = mediaType.toLowerCase()
+  if (t === 'jpeg' || t === 'jpg') return 'image/jpeg'
+  if (t === 'png') return 'image/png'
+  if (t === 'gif') return 'image/gif'
+  if (t === 'webp') return 'image/webp'
+  return t.startsWith('image/') ? t : `image/${t}`
+}
+
+// Open image preview (simple implementation - can be enhanced)
+const openImagePreview = (url: string) => {
+  if (!url) return
+  // Open in new window
+  window.open(url, '_blank')
+}
+
 // Format document file size
 const formatDocSize = (bytes: number): string => {
   if (!bytes || bytes === 0) return '0 B'
@@ -782,6 +850,20 @@ const shouldHideContent = computed(() => {
   min-height: 1.5rem;
   height: 1.5rem;
   padding: 0 0.5rem;
+}
+
+/* Image attachments styles */
+.image-attachments {
+  position: relative;
+}
+
+.image-attachment {
+  position: relative;
+  overflow: hidden;
+}
+
+.image-attachment img {
+  display: block;
 }
 
 .action-btn i {

@@ -46,6 +46,12 @@ export interface MessageMetadata {
   retry_count?: number  // 第十人原则重试次数
   requires_confirmation?: boolean  // 第十人原则是否需要确认
   document_attachments?: ProcessedDocumentResult[]  // 用户消息中的文档附件
+  image_attachments?: ImageAttachment[]  // 用户消息中的图片附件
+}
+
+export interface ImageAttachment {
+  image: string
+  filename?: string
 }
 
 // Agent 消息

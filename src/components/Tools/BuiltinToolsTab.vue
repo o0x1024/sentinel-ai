@@ -3,7 +3,7 @@
     <div class="flex justify-between items-center">
       <div class="alert alert-info flex-1 mr-4">
         <i class="fas fa-info-circle"></i>
-        <span>这些是系统内置的MCP工具，已自动注册并可供AI助手调用。</span>
+        <span>这些是系统内置的工具，已自动注册并可供AI助手调用。</span>
       </div>
       <div class="join">
         <button @click="viewMode = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': viewMode === 'card'}]">
@@ -15,166 +15,206 @@
       </div>
     </div>
     
+    <!-- 分类筛选 -->
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button 
+        @click="selectedCategory = ''"
+        :class="['btn btn-sm', selectedCategory === '' ? 'btn-primary' : 'btn-ghost']"
+      >
+        全部 ({{ tools.length }})
+      </button>
+      <button 
+        v-for="cat in categories" 
+        :key="cat.key"
+        @click="selectedCategory = cat.key"
+        :class="['btn btn-sm', selectedCategory === cat.key ? cat.btnClass : 'btn-ghost']"
+      >
+        <i :class="cat.icon" class="mr-1"></i>
+        {{ cat.label }} ({{ getToolCountByCategory(cat.key) }})
+      </button>
+    </div>
+
     <div v-if="isLoading" class="text-center p-8">
       <i class="fas fa-spinner fa-spin text-2xl"></i>
       <p class="mt-2">正在加载内置工具...</p>
     </div>
     
-    <!-- 卡片视图 -->
-    <div v-else-if="tools.length > 0 && viewMode === 'card'" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-      <div 
-        v-for="tool in tools" 
-        :key="tool.id"
-        class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow"
-      >
-        <div class="card-body">
-          <div class="flex items-center gap-3">
-            <div class="avatar">
-              <div class="w-12 h-12 rounded-lg bg-success/10 flex items-center justify-center">
-                <i :class="getToolIcon(tool.name)" class="text-success text-xl"></i>
+    <!-- 卡片视图 - 按分类分组 -->
+    <div v-else-if="tools.length > 0 && viewMode === 'card'" class="space-y-6">
+      <div v-for="group in groupedTools" :key="group.category" class="space-y-3">
+        <!-- 分类标题 -->
+        <div class="flex items-center gap-2 border-b border-base-300 pb-2">
+          <i :class="[getCategoryConfig(group.category).icon, getCategoryConfig(group.category).textClass]"></i>
+          <h3 class="font-semibold text-lg">{{ getCategoryConfig(group.category).label }}</h3>
+          <span class="badge badge-ghost badge-sm">{{ group.tools.length }} 个工具</span>
+        </div>
+        
+        <!-- 工具卡片 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div 
+            v-for="tool in group.tools" 
+            :key="tool.id"
+            class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow"
+          >
+            <div class="card-body">
+              <div class="flex items-center gap-3">
+                <div class="avatar">
+                  <div :class="['w-12 h-12 rounded-lg flex items-center justify-center', getCategoryConfig(tool.category).bgClass]">
+                    <i :class="[getToolIcon(tool.name), getCategoryConfig(tool.category).textClass, 'text-xl']"></i>
+                  </div>
+                </div>
+                <div class="flex-1">
+                  <h3 class="card-title text-lg">{{ tool.name }}</h3>
+                  <span :class="['badge badge-sm', getCategoryConfig(tool.category).badgeClass]">{{ getCategoryConfig(tool.category).label }}</span>
+                </div>
+                <div class="form-control">
+                  <label class="label cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      class="toggle toggle-success toggle-sm" 
+                      :checked="tool.enabled !== false"
+                      @change="toggleTool(tool)"
+                      :disabled="tool.is_toggling"
+                    />
+                  </label>
+                </div>
               </div>
-            </div>
-            <div class="flex-1">
-              <h3 class="card-title text-lg">{{ tool.name }}</h3>
-              <span class="badge badge-success badge-sm">{{ tool.category }}</span>
-            </div>
-            <div class="form-control">
-              <label class="label cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  class="toggle toggle-success toggle-sm" 
-                  :checked="tool.enabled !== false"
-                  @change="toggleTool(tool)"
-                  :disabled="tool.is_toggling"
-                />
-              </label>
-            </div>
-          </div>
 
-          <p class="text-sm mt-2 h-16">{{ tool.description }}</p>
+              <p class="text-sm mt-2 h-16">{{ tool.description }}</p>
 
-          <div class="card-actions justify-between items-center mt-4">
-            <span class="text-xs text-base-content/60">v{{ tool.version }}</span>
-            <div class="flex gap-2">
-              <!-- Shell Tool Special Actions -->
-              <button 
-                v-if="tool.name === 'shell'"
-                @click="showShellTerminal = true"
-                class="btn btn-primary btn-sm"
-                title="打开终端"
-              >
-                <i class="fas fa-terminal mr-1"></i>
-                终端
-              </button>
-              <button 
-                v-if="tool.name === 'shell'"
-                @click="showShellConfigModal = true"
-                class="btn btn-warning btn-sm"
-                title="安全配置"
-              >
-                <i class="fas fa-shield-alt"></i>
-              </button>
-              <!-- Vision Explorer V2 Special Actions -->
-              <button 
-                v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
-                @click="openVisionExplorerModal(tool)"
-                class="btn btn-primary btn-sm"
-                title="测试 Vision Explorer"
-              >
-                <i class="fas fa-play mr-1"></i>
-                测试
-              </button>
-              <!-- Regular Tools -->
-              <button 
-                v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
-                @click="openTestModal(tool)"
-                class="btn btn-primary btn-sm"
-                title="测试工具"
-              >
-                <i class="fas fa-play mr-1"></i>
-                测试
-              </button>
+              <div class="card-actions justify-between items-center mt-4">
+                <span class="text-xs text-base-content/60">v{{ tool.version }}</span>
+                <div class="flex gap-2">
+                  <!-- Shell Tool Special Actions -->
+                  <button 
+                    v-if="tool.name === 'shell'"
+                    @click="showShellTerminal = true"
+                    class="btn btn-primary btn-sm"
+                    title="打开终端"
+                  >
+                    <i class="fas fa-terminal mr-1"></i>
+                    终端
+                  </button>
+                  <button 
+                    v-if="tool.name === 'shell'"
+                    @click="showShellConfigModal = true"
+                    class="btn btn-warning btn-sm"
+                    title="安全配置"
+                  >
+                    <i class="fas fa-shield-alt"></i>
+                  </button>
+                  <!-- Vision Explorer V2 Special Actions -->
+                  <button 
+                    v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
+                    @click="openVisionExplorerModal(tool)"
+                    class="btn btn-primary btn-sm"
+                    title="测试 Vision Explorer"
+                  >
+                    <i class="fas fa-play mr-1"></i>
+                    测试
+                  </button>
+                  <!-- Regular Tools -->
+                  <button 
+                    v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
+                    @click="openTestModal(tool)"
+                    class="btn btn-primary btn-sm"
+                    title="测试工具"
+                  >
+                    <i class="fas fa-play mr-1"></i>
+                    测试
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
     
-    <!-- 列表视图 -->
-    <div v-else-if="tools.length > 0 && viewMode === 'list'" class="overflow-x-auto">
-      <table class="table w-full">
-        <thead>
-          <tr>
-            <th class="w-1/12">启用</th>
-            <th>名称</th>
-            <th>分类</th>
-            <th>描述</th>
-            <th>版本</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="tool in tools" :key="tool.id">
-            <td>
-              <input 
-                type="checkbox" 
-                class="toggle toggle-success toggle-sm" 
-                :checked="tool.enabled !== false"
-                @change="toggleTool(tool)"
-                :disabled="tool.is_toggling"
-              />
-            </td>
-            <td>
-              <div class="flex items-center gap-2">
-                <i :class="getToolIcon(tool.name)" class="text-success"></i>
-                <span class="font-semibold">{{ tool.name }}</span>
-              </div>
-            </td>
-            <td><span class="badge badge-success badge-sm">{{ tool.category }}</span></td>
-            <td class="text-sm">{{ tool.description }}</td>
-            <td class="text-xs text-base-content/60">v{{ tool.version }}</td>
-            <td>
-              <div class="flex gap-1">
-                <!-- Shell Tool -->
-                <button 
-                  v-if="tool.name === 'shell'"
-                  @click="showShellTerminal = true"
-                  class="btn btn-primary btn-xs"
-                  title="打开终端"
-                >
-                  <i class="fas fa-terminal"></i>
-                </button>
-                <button 
-                  v-if="tool.name === 'shell'"
-                  @click="showShellConfigModal = true"
-                  class="btn btn-warning btn-xs"
-                  title="安全配置"
-                >
-                  <i class="fas fa-shield-alt"></i>
-                </button>
-                <!-- Vision Explorer V2 -->
-                <button 
-                  v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
-                  @click="openVisionExplorerModal(tool)"
-                  class="btn btn-primary btn-xs"
-                  title="测试 Vision Explorer"
-                >
-                  <i class="fas fa-play"></i>
-                </button>
-                <!-- Regular Tools -->
-                <button 
-                  v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
-                  @click="openTestModal(tool)"
-                  class="btn btn-primary btn-xs"
-                  title="测试工具"
-                >
-                  <i class="fas fa-play"></i>
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <!-- 列表视图 - 按分类分组 -->
+    <div v-else-if="tools.length > 0 && viewMode === 'list'" class="space-y-6">
+      <div v-for="group in groupedTools" :key="group.category" class="space-y-2">
+        <!-- 分类标题 -->
+        <div class="flex items-center gap-2 border-b border-base-300 pb-2">
+          <i :class="[getCategoryConfig(group.category).icon, getCategoryConfig(group.category).textClass]"></i>
+          <h3 class="font-semibold">{{ getCategoryConfig(group.category).label }}</h3>
+          <span class="badge badge-ghost badge-sm">{{ group.tools.length }}</span>
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="table w-full">
+            <thead>
+              <tr>
+                <th class="w-1/12">启用</th>
+                <th>名称</th>
+                <th>描述</th>
+                <th>版本</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="tool in group.tools" :key="tool.id">
+                <td>
+                  <input 
+                    type="checkbox" 
+                    class="toggle toggle-success toggle-sm" 
+                    :checked="tool.enabled !== false"
+                    @change="toggleTool(tool)"
+                    :disabled="tool.is_toggling"
+                  />
+                </td>
+                <td>
+                  <div class="flex items-center gap-2">
+                    <i :class="[getToolIcon(tool.name), getCategoryConfig(tool.category).textClass]"></i>
+                    <span class="font-semibold">{{ tool.name }}</span>
+                  </div>
+                </td>
+                <td class="text-sm">{{ tool.description }}</td>
+                <td class="text-xs text-base-content/60">v{{ tool.version }}</td>
+                <td>
+                  <div class="flex gap-1">
+                    <!-- Shell Tool -->
+                    <button 
+                      v-if="tool.name === 'shell'"
+                      @click="showShellTerminal = true"
+                      class="btn btn-primary btn-xs"
+                      title="打开终端"
+                    >
+                      <i class="fas fa-terminal"></i>
+                    </button>
+                    <button 
+                      v-if="tool.name === 'shell'"
+                      @click="showShellConfigModal = true"
+                      class="btn btn-warning btn-xs"
+                      title="安全配置"
+                    >
+                      <i class="fas fa-shield-alt"></i>
+                    </button>
+                    <!-- Vision Explorer V2 -->
+                    <button 
+                      v-if="tool.name === 'vision_explorer' || tool.name === 'vision_explorer_v2'"
+                      @click="openVisionExplorerModal(tool)"
+                      class="btn btn-primary btn-xs"
+                      title="测试 Vision Explorer"
+                    >
+                      <i class="fas fa-play"></i>
+                    </button>
+                    <!-- Regular Tools -->
+                    <button 
+                      v-if="tool.name !== 'shell' && tool.name !== 'vision_explorer' && tool.name !== 'vision_explorer_v2'"
+                      @click="openTestModal(tool)"
+                      class="btn btn-primary btn-xs"
+                      title="测试工具"
+                    >
+                      <i class="fas fa-play"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
     
     <div v-else class="text-center p-8">
@@ -294,12 +334,43 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import ShellConfigModal from './ShellConfigModal.vue'
 import ShellTerminal from './ShellTerminal.vue'
 import UnifiedToolTest from './UnifiedToolTest.vue'
+
+// 分类配置
+interface CategoryConfig {
+  key: string
+  label: string
+  icon: string
+  btnClass: string
+  badgeClass: string
+  bgClass: string
+  textClass: string
+}
+
+const categoryConfigs: CategoryConfig[] = [
+  { key: 'network', label: '网络', icon: 'fas fa-network-wired', btnClass: 'btn-info', badgeClass: 'badge-info', bgClass: 'bg-info/10', textClass: 'text-info' },
+  { key: 'system', label: '系统', icon: 'fas fa-cog', btnClass: 'btn-neutral', badgeClass: 'badge-neutral', bgClass: 'bg-neutral/10', textClass: 'text-neutral' },
+  { key: 'ai', label: 'AI', icon: 'fas fa-brain', btnClass: 'btn-warning', badgeClass: 'badge-warning', bgClass: 'bg-warning/10', textClass: 'text-warning' },
+  { key: 'browser', label: '浏览器', icon: 'fas fa-globe', btnClass: 'btn-primary', badgeClass: 'badge-primary', bgClass: 'bg-primary/10', textClass: 'text-primary' },
+  { key: 'utility', label: '工具', icon: 'fas fa-tools', btnClass: 'btn-success', badgeClass: 'badge-success', bgClass: 'bg-success/10', textClass: 'text-success' },
+]
+
+const getCategoryConfig = (category: string): CategoryConfig => {
+  return categoryConfigs.find(c => c.key === category.toLowerCase()) || {
+    key: category,
+    label: category,
+    icon: 'fas fa-tools',
+    btnClass: 'btn-ghost',
+    badgeClass: 'badge-ghost',
+    bgClass: 'bg-base-200',
+    textClass: 'text-base-content'
+  }
+}
 
 // 状态
 const tools = ref<any[]>([])
@@ -309,6 +380,56 @@ const showTestModal = ref(false)
 const showShellConfigModal = ref(false)
 const showShellTerminal = ref(false)
 const testingTool = ref<any>(null)
+const selectedCategory = ref('')
+
+// 计算属性：可用的分类
+const categories = computed(() => {
+  const cats = new Set(tools.value.map(t => t.category?.toLowerCase() || 'utility'))
+  return categoryConfigs.filter(c => cats.has(c.key))
+})
+
+// 计算属性：按分类分组的工具
+const groupedTools = computed(() => {
+  let filteredTools = tools.value
+  
+  // 如果选择了分类，只显示该分类
+  if (selectedCategory.value) {
+    filteredTools = tools.value.filter(t => 
+      (t.category?.toLowerCase() || 'utility') === selectedCategory.value
+    )
+  }
+  
+  // 按分类分组
+  const groups: { category: string; tools: any[] }[] = []
+  const categoryOrder = categoryConfigs.map(c => c.key)
+  
+  for (const cat of categoryOrder) {
+    const categoryTools = filteredTools.filter(t => 
+      (t.category?.toLowerCase() || 'utility') === cat
+    )
+    if (categoryTools.length > 0) {
+      groups.push({ category: cat, tools: categoryTools })
+    }
+  }
+  
+  // 添加未分类的工具
+  const knownCategories = new Set(categoryOrder)
+  const otherTools = filteredTools.filter(t => 
+    !knownCategories.has(t.category?.toLowerCase() || 'utility')
+  )
+  if (otherTools.length > 0) {
+    groups.push({ category: 'other', tools: otherTools })
+  }
+  
+  return groups
+})
+
+// 获取分类工具数量
+const getToolCountByCategory = (category: string) => {
+  return tools.value.filter(t => 
+    (t.category?.toLowerCase() || 'utility') === category
+  ).length
+}
 
 // Vision Explorer V2 状态
 const showVisionExplorerModal = ref(false)
@@ -323,15 +444,41 @@ const veExecutionId = ref('')
 
 // methods
 function getToolIcon(toolName: string) {
-  switch (toolName) {
-    case 'subdomain_scanner': return 'fas fa-sitemap'
-    case 'port_scanner': return 'fas fa-network-wired'
-    case 'shell': return 'fas fa-terminal'
-    case 'vision_explorer': 
-    case 'vision_explorer_v2': return 'fas fa-eye'
-    case 'web_search': return 'fas fa-search'
-    default: return 'fas fa-tools'
+  const iconMap: Record<string, string> = {
+    'subdomain_scanner': 'fas fa-sitemap',
+    'subdomain_brute': 'fas fa-sitemap',
+    'port_scanner': 'fas fa-network-wired',
+    'port_scan': 'fas fa-network-wired',
+    'shell': 'fas fa-terminal',
+    'interactive_shell': 'fas fa-terminal',
+    'vision_explorer': 'fas fa-eye',
+    'vision_explorer_v2': 'fas fa-eye',
+    'web_search': 'fas fa-search',
+    'http_request': 'fas fa-globe',
+    'local_time': 'fas fa-clock',
+    'memory_manager': 'fas fa-memory',
+    'ocr': 'fas fa-file-image',
+    'tenth_man_review': 'fas fa-user-secret',
+    'todos': 'fas fa-tasks',
+    // Browser tools
+    'browser_open': 'fas fa-external-link-alt',
+    'browser_snapshot': 'fas fa-camera',
+    'browser_click': 'fas fa-mouse-pointer',
+    'browser_fill': 'fas fa-keyboard',
+    'browser_type': 'fas fa-i-cursor',
+    'browser_select': 'fas fa-list',
+    'browser_scroll': 'fas fa-arrows-alt-v',
+    'browser_wait': 'fas fa-hourglass-half',
+    'browser_get_text': 'fas fa-font',
+    'browser_screenshot': 'fas fa-camera-retro',
+    'browser_back': 'fas fa-arrow-left',
+    'browser_press': 'fas fa-keyboard',
+    'browser_hover': 'fas fa-hand-pointer',
+    'browser_evaluate': 'fas fa-code',
+    'browser_get_url': 'fas fa-link',
+    'browser_close': 'fas fa-times-circle',
   }
+  return iconMap[toolName] || 'fas fa-tools'
 }
 
 function generateDefaultParams(schema: any): string {
