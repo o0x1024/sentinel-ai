@@ -18,6 +18,12 @@ pub struct TerminalServer {
     running: Arc<RwLock<bool>>,
 }
 
+
+impl TerminalServer {
+    pub const NAME: &'static str = "interactive_shell";
+    pub const DESCRIPTION: &'static str = "Interactive shell for interactive tools like ssh, msfconsole, sqlmap, etc.";
+}
+
 impl TerminalServer {
     /// Create a new terminal server
     pub fn new(addr: SocketAddr) -> Self {

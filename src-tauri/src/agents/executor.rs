@@ -52,6 +52,7 @@ pub struct AgentExecuteParams {
 /// 通过 Tauri 事件将流式响应发送给前端。
 pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -> Result<String> {
     let rig_provider = params.rig_provider.to_lowercase();
+    let execution_id = params.execution_id.clone();
 
     tracing::info!(
         "Executing agent - rig_provider: {}, model: {}, execution_id: {}, tools_enabled: {}",
@@ -64,6 +65,19 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
             .map(|c| c.enabled)
             .unwrap_or(false)
     );
+
+    // Cache parent context for subagent delegation
+    let parent_context = super::subagent_executor::SubagentParentContext {
+        rig_provider: params.rig_provider.clone(),
+        model: params.model.clone(),
+        api_key: params.api_key.clone(),
+        api_base: params.api_base.clone(),
+        system_prompt: params.system_prompt.clone(),
+        tool_config: params.tool_config.clone().unwrap_or_default(),
+        max_iterations: params.max_iterations,
+        timeout_secs: params.timeout_secs,
+    };
+    super::subagent_executor::set_parent_context(execution_id.clone(), parent_context).await;
 
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
         if let Ok(client) = db.get_db() {
@@ -111,7 +125,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     // 检查是否启用工具
     let tool_config = params.tool_config.clone().unwrap_or_default();
 
-    if tool_config.enabled {
+    let result = if tool_config.enabled {
         // 刷新 MCP 工具以确保它们已注册到 ToolServer
         tracing::info!("Refreshing MCP tools before execution...");
         mcp_adapter::refresh_mcp_tools(&tool_server).await;
@@ -186,7 +200,12 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     } else {
         // 简单的 LLM 调用（无工具）
         execute_agent_simple(app_handle, params).await
-    }
+    };
+
+    // Cleanup subagent parent context
+    super::subagent_executor::clear_parent_context(&execution_id).await;
+
+    result
 }
 
 /// 简单的 Agent 执行（无工具调用）

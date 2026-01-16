@@ -23,6 +23,14 @@
           <i class="fas fa-sync-alt"></i>
         </button>
         <button
+          @click="createNewSession"
+          :disabled="isConnecting"
+          class="btn btn-xs btn-ghost"
+          :title="$t('agent.newSession')"
+        >
+          <i class="fas fa-plus"></i>
+        </button>
+        <button
           @click="clearTerminal"
           class="btn btn-xs btn-ghost"
           :title="$t('agent.clear')"
@@ -342,12 +350,16 @@ const connect = async () => {
       }
     }
 
-    // Handle terminal input
-    terminal.value?.onData((data) => {
+    // Handle terminal input - dispose old listener first to avoid duplicates
+    if (terminalDataDisposable) {
+      terminalDataDisposable.dispose()
+      terminalDataDisposable = null
+    }
+    terminalDataDisposable = terminal.value?.onData((data) => {
       if (ws.value?.readyState === WebSocket.OPEN) {
         ws.value.send(data)
       }
-    })
+    }) || null
 
   } catch (err: any) {
     console.error('Failed to connect:', err)
@@ -366,19 +378,34 @@ const disconnect = async () => {
     clearInterval(keepAliveInterval)
     keepAliveInterval = null
   }
+  // Dispose terminal data listener to avoid duplicates on reconnect
+  if (terminalDataDisposable) {
+    terminalDataDisposable.dispose()
+    terminalDataDisposable = null
+  }
   isConnected.value = false
   sessionId.value = ''
 }
 
 const reconnect = async () => {
   await disconnect()
-  // Only reconnect if we have a session ID
+  // Try to reconnect with existing session, or create new one
   if (terminalComposable.currentSessionId.value) {
     await connect()
   } else {
-    error.value = 'No session available. Please create a session first by using interactive_shell tool.'
-    terminal.value?.writeln('\r\n\x1b[1;33m⚠ No session available\x1b[0m')
+    // No session ID, create a new session
+    await createNewSession()
   }
+}
+
+// Create a new terminal session (clear old session ID first)
+const createNewSession = async () => {
+  await disconnect()
+  // Clear old session ID to force creating a new session
+  terminalComposable.setSessionId('')
+  sessionId.value = ''
+  terminal.value?.writeln('\r\n\x1b[1;36mCreating new session...\x1b[0m')
+  await connect()
 }
 
 const clearTerminal = () => {
@@ -391,6 +418,7 @@ let unregisterWriteCallback: (() => void) | null = null
 let stopWatch: (() => void) | null = null
 let fontSizeInterval: ReturnType<typeof setInterval> | null = null
 let keepAliveInterval: ReturnType<typeof setInterval> | null = null
+let terminalDataDisposable: { dispose: () => void } | null = null
 
 const startKeepAlive = () => {
   if (keepAliveInterval) {
@@ -423,6 +451,12 @@ onMounted(() => {
       if (newSessionId && newSessionId !== oldSessionId && !isConnected.value) {
         console.log('[Terminal] Session ID changed, reconnecting:', newSessionId)
         await connect()
+      } else if (!newSessionId && oldSessionId && isConnected.value) {
+        // Session ID was cleared (e.g., new conversation created), disconnect current session
+        console.log('[Terminal] Session ID cleared, disconnecting current session')
+        await disconnect()
+        sessionId.value = ''
+        terminal.value?.writeln('\r\n\x1b[1;33m⚠ Session reset (new conversation)\x1b[0m')
       }
     }
   )

@@ -87,6 +87,14 @@ impl AiServiceWrapper {
         self.db.get_ai_conversations().await
     }
 
+    pub async fn list_conversations_paginated(&self, limit: i64, offset: i64) -> Result<Vec<AiConversation>> {
+        self.db.get_ai_conversations_paginated(limit, offset).await
+    }
+
+    pub async fn get_conversations_count(&self) -> Result<i64> {
+        self.db.get_ai_conversations_count().await
+    }
+
     pub async fn update_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
         self.db.update_ai_conversation_title(conversation_id, title).await
     }

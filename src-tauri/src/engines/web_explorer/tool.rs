@@ -116,6 +116,11 @@ pub struct WebExplorerTool {
 }
 
 impl WebExplorerTool {
+
+    pub const NAME: &'static str = "web_explorer";
+    pub const DESCRIPTION: &'static str = "Explore a website using Web Explorer with ReAct architecture. Systematically discovers pages, APIs, and interactive elements through intelligent reasoning and action.";
+
+
     pub fn new(llm_config: LlmConfig) -> Self {
         Self {
             llm_config,
@@ -136,7 +141,7 @@ impl WebExplorerTool {
 }
 
 impl Tool for WebExplorerTool {
-    const NAME: &'static str = "web_explorer";
+     const NAME: &'static str = "web_explorer";
 
     type Error = ToolError;
     type Args = WebExplorerArgs;

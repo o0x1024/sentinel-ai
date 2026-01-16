@@ -10,6 +10,57 @@ use crate::agent_browser::{get_browser_service, ScrollDirection, SnapshotOptions
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// Tool name and description constants
+pub mod constants {
+    pub const BROWSER_OPEN_NAME: &str = "browser_open";
+    pub const BROWSER_OPEN_DESC: &str = "Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms.";
+    
+    pub const BROWSER_SNAPSHOT_NAME: &str = "browser_snapshot";
+    pub const BROWSER_SNAPSHOT_DESC: &str = "Get current page structure as accessibility tree with refs. Each interactive element has a ref like @e1, @e2 for interaction.";
+    
+    pub const BROWSER_CLICK_NAME: &str = "browser_click";
+    pub const BROWSER_CLICK_DESC: &str = "Click an element by ref (@e1) or CSS selector.";
+    
+    pub const BROWSER_FILL_NAME: &str = "browser_fill";
+    pub const BROWSER_FILL_DESC: &str = "Fill text into an input field by ref or selector.";
+    
+    pub const BROWSER_TYPE_NAME: &str = "browser_type";
+    pub const BROWSER_TYPE_DESC: &str = "Type text character by character into an element.";
+    
+    pub const BROWSER_SELECT_NAME: &str = "browser_select";
+    pub const BROWSER_SELECT_DESC: &str = "Select an option from a dropdown.";
+    
+    pub const BROWSER_SCROLL_NAME: &str = "browser_scroll";
+    pub const BROWSER_SCROLL_DESC: &str = "Scroll the page in a direction.";
+    
+    pub const BROWSER_WAIT_NAME: &str = "browser_wait";
+    pub const BROWSER_WAIT_DESC: &str = "Wait for an element to appear or for a timeout.";
+    
+    pub const BROWSER_GET_TEXT_NAME: &str = "browser_get_text";
+    pub const BROWSER_GET_TEXT_DESC: &str = "Get the text content of an element.";
+    
+    pub const BROWSER_SCREENSHOT_NAME: &str = "browser_screenshot";
+    pub const BROWSER_SCREENSHOT_DESC: &str = "Take a screenshot of the current page.";
+    
+    pub const BROWSER_BACK_NAME: &str = "browser_back";
+    pub const BROWSER_BACK_DESC: &str = "Navigate back to the previous page.";
+    
+    pub const BROWSER_PRESS_NAME: &str = "browser_press";
+    pub const BROWSER_PRESS_DESC: &str = "Press a keyboard key (Enter, Tab, Escape, etc.).";
+    
+    pub const BROWSER_HOVER_NAME: &str = "browser_hover";
+    pub const BROWSER_HOVER_DESC: &str = "Hover over an element.";
+    
+    pub const BROWSER_EVALUATE_NAME: &str = "browser_evaluate";
+    pub const BROWSER_EVALUATE_DESC: &str = "Execute JavaScript code in the browser.";
+    
+    pub const BROWSER_GET_URL_NAME: &str = "browser_get_url";
+    pub const BROWSER_GET_URL_DESC: &str = "Get the current page URL and title.";
+    
+    pub const BROWSER_CLOSE_NAME: &str = "browser_close";
+    pub const BROWSER_CLOSE_DESC: &str = "Close the browser.";
+}
+
 /// Browser open arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserOpenArgs {

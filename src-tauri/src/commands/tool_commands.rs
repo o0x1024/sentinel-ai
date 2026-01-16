@@ -10,10 +10,19 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool,
+    HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool, SubagentTool,
+    TodosTool, TenthManTool,
+    browser::constants as browser_constants,
 };
 use sentinel_tools::get_tool_server;
+use sentinel_tools::terminal::server::TerminalServer;
 
+use crate::engines::web_explorer::WebExplorerTool;
+
+use crate::agents::tool_router::{
+    clear_tool_usage_records, get_tool_usage_statistics, ToolCategory, ToolMetadata, ToolRouter,
+    ToolStatistics, ToolUsageStatistics,
+};
 /// Builtin tool info for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuiltinToolInfo {
@@ -47,25 +56,30 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(), true);
     map.insert(sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(), true);
     map.insert(OcrTool::NAME.to_string(), true);
-    map.insert("interactive_shell".to_string(), true);
-    map.insert("tenth_man_review".to_string(), true);
+    map.insert(TerminalServer::NAME.to_string(), true);
+    map.insert(TenthManTool::NAME.to_string(), true);
+    map.insert(TodosTool::NAME.to_string(), true);
+    // Subagent tools
+    map.insert("subagent_spawn".to_string(), true);
+    map.insert("subagent_wait".to_string(), true);
+    map.insert(SubagentTool::NAME.to_string(), true);
     // Browser automation tools
-    map.insert("browser_open".to_string(), true);
-    map.insert("browser_snapshot".to_string(), true);
-    map.insert("browser_click".to_string(), true);
-    map.insert("browser_fill".to_string(), true);
-    map.insert("browser_type".to_string(), true);
-    map.insert("browser_select".to_string(), true);
-    map.insert("browser_scroll".to_string(), true);
-    map.insert("browser_wait".to_string(), true);
-    map.insert("browser_get_text".to_string(), true);
-    map.insert("browser_screenshot".to_string(), true);
-    map.insert("browser_back".to_string(), true);
-    map.insert("browser_press".to_string(), true);
-    map.insert("browser_hover".to_string(), true);
-    map.insert("browser_evaluate".to_string(), true);
-    map.insert("browser_get_url".to_string(), true);
-    map.insert("browser_close".to_string(), true);
+    map.insert(browser_constants::BROWSER_OPEN_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_SNAPSHOT_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_CLICK_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_FILL_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_TYPE_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_SELECT_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_SCROLL_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_WAIT_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_GET_TEXT_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_SCREENSHOT_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_BACK_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_PRESS_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_HOVER_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_EVALUATE_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_GET_URL_NAME.to_string(), true);
+    map.insert(browser_constants::BROWSER_CLOSE_NAME.to_string(), true);
     RwLock::new(map)
 });
 
@@ -156,7 +170,7 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             id: LocalTimeTool::NAME.to_string(),
             name: LocalTimeTool::NAME.to_string(),
             description: LocalTimeTool::DESCRIPTION.to_string(),
-            category: "utility".to_string(),
+            category: ToolCategory::System.to_string(),
             version: "1.0.0".to_string(),
             enabled: *states.get(LocalTimeTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
@@ -206,7 +220,7 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             id: sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
             name: sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
             description: sentinel_tools::buildin_tools::SubdomainBruteTool::DESCRIPTION.to_string(),
-            category: "network".to_string(),
+            category: ToolCategory::Network.to_string(),
             version: "1.0.0".to_string(),
             enabled: *states.get(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME).unwrap_or(&true),
             input_schema: Some(serde_json::json!({
@@ -341,12 +355,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
 
     // Add vision_explorer
     tools.push(BuiltinToolInfo {
-        id: "vision_explorer".to_string(),
-        name: "vision_explorer".to_string(),
-        description: "Explore a website using vision capabilities to discover APIs, pages, and interactive elements.".to_string(),
-        category: "ai".to_string(),
+        id: WebExplorerTool::NAME.to_string(),
+        name: WebExplorerTool::NAME.to_string(),
+        description: WebExplorerTool::DESCRIPTION.to_string(),
+        category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("vision_explorer").unwrap_or(&true),
+        enabled: *states.get(WebExplorerTool::NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -366,12 +380,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
 
     // Add interactive_shell
     tools.push(BuiltinToolInfo {
-        id: "interactive_shell".to_string(),
-        name: "interactive_shell".to_string(),
-        description: "Create persistent terminal session for tools requiring continuous interaction: REQUIRED for ssh, msfconsole, sqlmap, mysql/psql clients, Python/Node REPL, or any tool that maintains state between commands. Returns session ID for multi-turn interaction. Use this when a tool needs to stay running between commands.".to_string(),
-        category: "system".to_string(),
+        id: TerminalServer::NAME.to_string(),
+        name: TerminalServer::NAME.to_string(),
+        description: TerminalServer::DESCRIPTION.to_string(),
+        category: ToolCategory::System.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("interactive_shell").unwrap_or(&true),
+        enabled: *states.get(TerminalServer::NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -393,14 +407,81 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
+    // Add subagent tools: spawn (async), wait, run (sync)
+    tools.push(BuiltinToolInfo {
+        id: "subagent_spawn".to_string(),
+        name: "subagent_spawn".to_string(),
+        description: "Start a subagent task asynchronously (NON-BLOCKING). Returns task_id immediately for parallel execution.".to_string(),
+        category: ToolCategory::AI.to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("subagent_spawn").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                "task": { "type": "string", "description": "Task for the subagent" },
+                "role": { "type": "string", "description": "Optional role label" },
+                "system_prompt": { "type": "string", "description": "Optional system prompt" },
+                "tool_config": { "type": "object", "description": "Optional tool config" },
+                "max_iterations": { "type": "integer", "default": 6 },
+                "timeout_secs": { "type": "integer" },
+                "inherit_parent_llm": { "type": "boolean", "default": true },
+                "inherit_parent_tools": { "type": "boolean", "default": false }
+            },
+            "required": ["parent_execution_id", "task"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: "subagent_wait".to_string(),
+        name: "subagent_wait".to_string(),
+        description: "Wait for spawned subagent tasks to complete. Use after subagent_spawn.".to_string(),
+        category: ToolCategory::AI.to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get("subagent_wait").unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                "task_ids": { "type": "array", "items": { "type": "string" }, "description": "Task IDs to wait for" },
+                "timeout_secs": { "type": "integer", "default": 300 }
+            },
+            "required": ["parent_execution_id", "task_ids"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: SubagentTool::NAME.to_string(),
+        name: SubagentTool::NAME.to_string(),
+        description: "Execute a subagent task synchronously (BLOCKING). For parallel, use subagent_spawn + subagent_wait.".to_string(),
+        category: ToolCategory::AI.to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get(SubagentTool::NAME).unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                "task": { "type": "string", "description": "Task for the subagent" },
+                "role": { "type": "string", "description": "Optional role label" },
+                "system_prompt": { "type": "string", "description": "Optional system prompt" },
+                "tool_config": { "type": "object", "description": "Optional tool config" },
+                "max_iterations": { "type": "integer", "default": 6 },
+                "timeout_secs": { "type": "integer" },
+                "inherit_parent_llm": { "type": "boolean", "default": true },
+                "inherit_parent_tools": { "type": "boolean", "default": false }
+            },
+            "required": ["parent_execution_id", "task"]
+        })),
+    });
+
     // Add tenth_man_review
     tools.push(BuiltinToolInfo {
-        id: "tenth_man_review".to_string(),
-        name: "tenth_man_review".to_string(),
-        description: "Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.".to_string(),
-        category: "ai".to_string(),
+        id: TenthManTool::NAME.to_string(),
+        name: TenthManTool::NAME.to_string(),
+        description: TenthManTool::DESCRIPTION.to_string(),
+        category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("tenth_man_review").unwrap_or(&true),
+        enabled: *states.get(TenthManTool::NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -430,12 +511,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
 
     // Browser automation tools
     tools.push(BuiltinToolInfo {
-        id: "browser_open".to_string(),
-        name: "browser_open".to_string(),
-        description: "Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_OPEN_NAME.to_string(),
+        name: browser_constants::BROWSER_OPEN_NAME.to_string(),
+        description: browser_constants::BROWSER_OPEN_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_open").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_OPEN_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -455,12 +536,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_snapshot".to_string(),
-        name: "browser_snapshot".to_string(),
-        description: "Get current page structure as accessibility tree with refs (@e1, @e2).".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
+        name: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
+        description: browser_constants::BROWSER_SNAPSHOT_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_snapshot").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_SNAPSHOT_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -479,12 +560,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_click".to_string(),
-        name: "browser_click".to_string(),
-        description: "Click an element by ref (@e1) or CSS selector.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_CLICK_NAME.to_string(),
+        name: browser_constants::BROWSER_CLICK_NAME.to_string(),
+        description: browser_constants::BROWSER_CLICK_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_click").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_CLICK_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -498,12 +579,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_fill".to_string(),
-        name: "browser_fill".to_string(),
-        description: "Fill text into an input field.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_FILL_NAME.to_string(),
+        name: browser_constants::BROWSER_FILL_NAME.to_string(),
+        description: browser_constants::BROWSER_FILL_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_fill").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_FILL_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -521,12 +602,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_type".to_string(),
-        name: "browser_type".to_string(),
-        description: "Type text character by character.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_TYPE_NAME.to_string(),
+        name: browser_constants::BROWSER_TYPE_NAME.to_string(),
+        description: browser_constants::BROWSER_TYPE_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_type").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_TYPE_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -548,12 +629,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_select".to_string(),
-        name: "browser_select".to_string(),
-        description: "Select an option from a dropdown.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_SELECT_NAME.to_string(),
+        name: browser_constants::BROWSER_SELECT_NAME.to_string(),
+        description: browser_constants::BROWSER_SELECT_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_select").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_SELECT_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -571,12 +652,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_scroll".to_string(),
-        name: "browser_scroll".to_string(),
-        description: "Scroll the page.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_SCROLL_NAME.to_string(),
+        name: browser_constants::BROWSER_SCROLL_NAME.to_string(),
+        description: browser_constants::BROWSER_SCROLL_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_scroll").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_SCROLL_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -596,12 +677,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_wait".to_string(),
-        name: "browser_wait".to_string(),
-        description: "Wait for an element or timeout.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_WAIT_NAME.to_string(),
+        name: browser_constants::BROWSER_WAIT_NAME.to_string(),
+        description: browser_constants::BROWSER_WAIT_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_wait").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_WAIT_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -619,12 +700,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_get_text".to_string(),
-        name: "browser_get_text".to_string(),
-        description: "Get text content of an element.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
+        name: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
+        description: browser_constants::BROWSER_GET_TEXT_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_get_text").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_GET_TEXT_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -638,12 +719,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_screenshot".to_string(),
-        name: "browser_screenshot".to_string(),
-        description: "Take a screenshot of the page.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
+        name: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
+        description: browser_constants::BROWSER_SCREENSHOT_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_screenshot").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_SCREENSHOT_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -657,12 +738,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_back".to_string(),
-        name: "browser_back".to_string(),
-        description: "Navigate back to previous page.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_BACK_NAME.to_string(),
+        name: browser_constants::BROWSER_BACK_NAME.to_string(),
+        description: browser_constants::BROWSER_BACK_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_back").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_BACK_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {}
@@ -670,12 +751,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_press".to_string(),
-        name: "browser_press".to_string(),
-        description: "Press a keyboard key.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_PRESS_NAME.to_string(),
+        name: browser_constants::BROWSER_PRESS_NAME.to_string(),
+        description: browser_constants::BROWSER_PRESS_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_press").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_PRESS_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -693,12 +774,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_hover".to_string(),
-        name: "browser_hover".to_string(),
-        description: "Hover over an element.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_HOVER_NAME.to_string(),
+        name: browser_constants::BROWSER_HOVER_NAME.to_string(),
+        description: browser_constants::BROWSER_HOVER_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_hover").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_HOVER_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -712,12 +793,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_evaluate".to_string(),
-        name: "browser_evaluate".to_string(),
-        description: "Execute JavaScript in the browser.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
+        name: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
+        description: browser_constants::BROWSER_EVALUATE_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_evaluate").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_EVALUATE_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -731,12 +812,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_get_url".to_string(),
-        name: "browser_get_url".to_string(),
-        description: "Get current page URL and title.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_GET_URL_NAME.to_string(),
+        name: browser_constants::BROWSER_GET_URL_NAME.to_string(),
+        description: browser_constants::BROWSER_GET_URL_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_get_url").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_GET_URL_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {}
@@ -744,12 +825,12 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     });
 
     tools.push(BuiltinToolInfo {
-        id: "browser_close".to_string(),
-        name: "browser_close".to_string(),
-        description: "Close the browser.".to_string(),
-        category: "browser".to_string(),
+        id: browser_constants::BROWSER_CLOSE_NAME.to_string(),
+        name: browser_constants::BROWSER_CLOSE_NAME.to_string(),
+        description: browser_constants::BROWSER_CLOSE_DESC.to_string(),
+        category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("browser_close").unwrap_or(&true),
+        enabled: *states.get(browser_constants::BROWSER_CLOSE_NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {}
@@ -1412,10 +1493,7 @@ pub async fn build_node_catalog(
 // Tool Metadata Management Commands
 // ============================================================================
 
-use crate::agents::tool_router::{
-    clear_tool_usage_records, get_tool_usage_statistics, ToolCategory, ToolMetadata, ToolRouter,
-    ToolStatistics, ToolUsageStatistics,
-};
+
 
 /// Get all tool metadata
 #[tauri::command]

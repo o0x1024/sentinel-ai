@@ -1387,6 +1387,42 @@ pub async fn get_ai_conversations(
     Ok(vec![])
 }
 
+// 分页获取AI对话列表
+#[tauri::command]
+pub async fn get_ai_conversations_paginated(
+    limit: i64,
+    offset: i64,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<Vec<AiConversation>, String> {
+    let services = ai_manager.list_services();
+    if let Some(service_name) = services.first() {
+        if let Some(service) = ai_manager.get_service(service_name) {
+            return service
+                .list_conversations_paginated(limit, offset)
+                .await
+                .map_err(|e| e.to_string());
+        }
+    }
+    Ok(vec![])
+}
+
+// 获取AI对话总数
+#[tauri::command]
+pub async fn get_ai_conversations_count(
+    ai_manager: State<'_, Arc<AiServiceManager>>,
+) -> Result<i64, String> {
+    let services = ai_manager.list_services();
+    if let Some(service_name) = services.first() {
+        if let Some(service) = ai_manager.get_service(service_name) {
+            return service
+                .get_conversations_count()
+                .await
+                .map_err(|e| e.to_string());
+        }
+    }
+    Ok(0)
+}
+
 // 获取对话历史
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_ai_conversation_history(

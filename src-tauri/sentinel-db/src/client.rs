@@ -99,6 +99,16 @@ impl DatabaseClient {
     ) -> Result<Vec<sentinel_core::models::database::AiConversation>> {
         self.service.get_ai_conversations().await
     }
+    pub async fn get_ai_conversations_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<sentinel_core::models::database::AiConversation>> {
+        self.service.get_ai_conversations_paginated(limit, offset).await
+    }
+    pub async fn get_ai_conversations_count(&self) -> Result<i64> {
+        self.service.get_ai_conversations_count().await
+    }
     pub async fn get_ai_conversation(
         &self,
         id: &str,

@@ -12,7 +12,11 @@ use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
     HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
+    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool,
 };
+
+use crate::terminal::server::TerminalServer;
+
 use crate::dynamic_tool::{
     DynamicTool, DynamicToolBuilder, DynamicToolDef, ToolExecutor, ToolRegistry, ToolSource,
 };
@@ -102,8 +106,8 @@ impl ToolServer {
         tracing::info!("Initializing builtin tools...");
 
         // Register port_scan tool
-        let port_scan_def = DynamicToolBuilder::new("port_scan")
-            .description("High-performance TCP port scanner with service identification")
+        let port_scan_def = DynamicToolBuilder::new(PortScanTool::NAME.to_string())
+            .description(PortScanTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -150,8 +154,8 @@ impl ToolServer {
         self.registry.register(port_scan_def).await;
 
         // Register http_request tool
-        let http_request_def = DynamicToolBuilder::new("http_request")
-            .description("Make HTTP requests to any URL with custom headers and body")
+        let http_request_def = DynamicToolBuilder::new(HttpRequestTool::NAME.to_string())
+            .description(HttpRequestTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -202,8 +206,8 @@ impl ToolServer {
         self.registry.register(http_request_def).await;
 
         // Register local_time tool
-        let local_time_def = DynamicToolBuilder::new("local_time")
-            .description("Get current local or UTC time in various formats")
+        let local_time_def = DynamicToolBuilder::new(LocalTimeTool::NAME.to_string())
+            .description(LocalTimeTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -240,8 +244,8 @@ impl ToolServer {
         self.registry.register(local_time_def).await;
 
         // Register shell tool
-        let shell_def = DynamicToolBuilder::new("shell")
-            .description("Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). NOT suitable for interactive tools like msfconsole, sqlmap, or database clients - use interactive_shell for those.")
+        let shell_def = DynamicToolBuilder::new(ShellTool::NAME.to_string())
+            .description(ShellTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -282,8 +286,8 @@ impl ToolServer {
         self.registry.register(shell_def).await;
 
         // Register subdomain_brute tool
-        let subdomain_brute_def = DynamicToolBuilder::new("subdomain_brute")
-            .description("High-performance subdomain brute-force scanner with DNS resolution and HTTP verification")
+        let subdomain_brute_def = DynamicToolBuilder::new(SubdomainBruteTool::NAME.to_string())
+            .description(SubdomainBruteTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -348,8 +352,8 @@ impl ToolServer {
         self.registry.register(subdomain_brute_def).await;
 
         // Register todos tool
-        let todos_def = DynamicToolBuilder::new("todos")
-            .description("Manage and track the agent's execution todos. Actions: add_items (append), update_status (change status), get_list (view), reset (clear all), replan (replace all items), update_item (modify description), delete_item (remove), insert_item (add at position), cleanup (remove list from memory). Mandatory for complex multi-step security tasks.")
+        let todos_def = DynamicToolBuilder::new(TodosTool::NAME.to_string())
+            .description(TodosTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -408,8 +412,8 @@ impl ToolServer {
         self.registry.register(todos_def).await;
 
         // Register memory_manager tool
-        let memory_manager_def = DynamicToolBuilder::new("memory_manager")
-            .description("Long-term memory tool. Use 'store' to save solutions, techniques, and findings after completing tasks. Use 'retrieve' to search past experiences before starting new work. Always store results after task completion to build knowledge base.")
+        let memory_manager_def = DynamicToolBuilder::new(MemoryManagerTool::NAME.to_string())
+            .description(MemoryManagerTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -456,8 +460,8 @@ impl ToolServer {
         self.registry.register(memory_manager_def).await;
 
         // Register web_search tool
-        let web_search_def = DynamicToolBuilder::new("web_search")
-            .description("Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.")
+        let web_search_def = DynamicToolBuilder::new(WebSearchTool::NAME.to_string())
+            .description(WebSearchTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -508,8 +512,8 @@ impl ToolServer {
         self.registry.register(web_search_def).await;
 
         // Register ocr tool
-        let ocr_def = DynamicToolBuilder::new("ocr")
-            .description("Extract text from an image file using OCR (Optical Character Recognition). Support local file paths.")
+        let ocr_def = DynamicToolBuilder::new(OcrTool::NAME.to_string())
+            .description(OcrTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -540,9 +544,12 @@ impl ToolServer {
 
         self.registry.register(ocr_def).await;
 
+        // Register subagent tools (spawn, wait, run)
+        self.register_subagent_tools().await;
+
         // Register tenth_man_review tool
-        let tenth_man_def = DynamicToolBuilder::new("tenth_man_review")
-            .description("Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.")
+            let tenth_man_def = DynamicToolBuilder::new(TenthManTool::NAME.to_string())
+            .description(TenthManTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -588,8 +595,8 @@ impl ToolServer {
         self.registry.register(tenth_man_def).await;
 
         // Register interactive_shell tool
-        let interactive_shell_def = DynamicToolBuilder::new("interactive_shell")
-            .description("Create persistent terminal session for tools requiring continuous interaction: REQUIRED for msfconsole, sqlmap, mysql/psql clients, Python/Node REPL, or any tool that maintains state between commands. Returns session ID for multi-turn interaction. Use this when a tool needs to stay running between commands.")
+        let interactive_shell_def = DynamicToolBuilder::new(TerminalServer::NAME.to_string())
+            .description(TerminalServer::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -605,17 +612,37 @@ impl ToolServer {
                     },
                     "command": {
                         "type": "string",
-                        "description": "Command to execute in the terminal"
+                        "description": "Command to execute in the terminal. Long-running commands like 'ping' will be auto-normalized (e.g., 'ping host' -> 'ping -c 4 host')"
                     },
                     "session_id": {
                         "type": "string",
                         "description": "Optional session ID to reuse an existing terminal session"
+                    },
+                    "wait_strategy": {
+                        "type": "string",
+                        "enum": ["auto", "prompt", "timeout", "lines"],
+                        "description": "How to wait for output: 'auto' (detect completion via prompt + idle), 'prompt' (wait for shell prompt), 'timeout' (fixed timeout), 'lines' (wait for N lines)",
+                        "default": "auto"
+                    },
+                    "wait_timeout": {
+                        "type": "integer",
+                        "description": "Maximum wait time in seconds (default: 30, max: 120)",
+                        "default": 30
+                    },
+                    "expected_lines": {
+                        "type": "integer",
+                        "description": "For 'lines' strategy: number of output lines to wait for"
+                    },
+                    "skip_normalize": {
+                        "type": "boolean",
+                        "description": "Skip auto-normalization of long-running commands (default: false)",
+                        "default": false
                     }
                 }
             }))
             .source(ToolSource::Builtin)
             .executor(|args| async move {
-                use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig};
+                use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig, WaitStrategy, normalize_command, detect_shell_prompt};
                 use tokio::sync::mpsc;
                 use tokio::time::{timeout, Duration};
                 use tracing::info;
@@ -640,6 +667,25 @@ impl ToolServer {
                 let requested_session_id = args.get("session_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                
+                // Parse wait strategy options
+                let wait_strategy = args.get("wait_strategy")
+                    .and_then(|v| v.as_str())
+                    .map(WaitStrategy::from_str)
+                    .unwrap_or_default();
+                
+                let wait_timeout_secs = args.get("wait_timeout")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(30)
+                    .min(120); // Cap at 120 seconds
+                
+                let expected_lines = args.get("expected_lines")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                
+                let skip_normalize = args.get("skip_normalize")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 
                 // 1. Try to find an existing session (prefer requested_session_id, then first active)
                 let sessions = TERMINAL_MANAGER.list_sessions().await;
@@ -703,7 +749,7 @@ impl ToolServer {
                 };
 
                 // If no command, just return session info
-                let Some(cmd) = command else {
+                let Some(original_cmd) = command else {
                     return Ok(serde_json::json!({
                         "success": true,
                         "session_id": session_id,
@@ -712,44 +758,124 @@ impl ToolServer {
                     }));
                 };
 
-                // 3. Execute the command in the session
-                // Execute the command directly (no visual prompt needed, TTY will handle it)
+                // 3. Normalize command if needed (auto-add limits to long-running commands)
+                let (cmd, was_normalized) = if skip_normalize {
+                    (original_cmd.clone(), false)
+                } else {
+                    normalize_command(&original_cmd)
+                };
+                
+                if was_normalized {
+                    info!("Command normalized: '{}' -> '{}'", original_cmd, cmd);
+                }
+
+                // 4. Execute the command in the session
                 let cmd_with_newline = format!("{}\n", cmd);
                 if let Err(e) = TERMINAL_MANAGER.write_to_session(&session_id, cmd_with_newline.into_bytes()).await {
                     return Err(format!("Failed to execute command: {}", e));
                 }
                 
-                // 4. Collect output for LLM
+                // 5. Collect output with smart waiting strategy
                 let mut output = Vec::new();
-                let collect_timeout = Duration::from_secs(10);
+                let collect_timeout = Duration::from_secs(wait_timeout_secs);
                 let start = tokio::time::Instant::now();
+                let mut line_count = 0;
+                let mut idle_count = 0;
+                let mut completed = false;
                 
                 while start.elapsed() < collect_timeout {
-                    match timeout(Duration::from_millis(500), output_rx.recv()).await {
+                    match timeout(Duration::from_millis(300), output_rx.recv()).await {
                         Ok(Some(data)) => {
+                            idle_count = 0;
+                            let text = String::from_utf8_lossy(&data);
+                            line_count += text.matches('\n').count();
                             output.extend_from_slice(&data);
+                            
+                            let current_output = String::from_utf8_lossy(&output);
+                            
+                            match wait_strategy {
+                                WaitStrategy::Prompt => {
+                                    if detect_shell_prompt(&current_output) {
+                                        completed = true;
+                                        break;
+                                    }
+                                }
+                                WaitStrategy::Lines => {
+                                    if let Some(expected) = expected_lines {
+                                        if line_count >= expected {
+                                            completed = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                WaitStrategy::Auto => {
+                                    // Check for shell prompt
+                                    if detect_shell_prompt(&current_output) {
+                                        completed = true;
+                                        break;
+                                    }
+                                }
+                                WaitStrategy::Timeout => {
+                                    // Just wait for timeout
+                                }
+                            }
                         }
-                        Ok(None) => break,
+                        Ok(None) => {
+                            completed = true;
+                            break;
+                        }
                         Err(_) => {
-                            if !output.is_empty() {
+                            // 300ms timeout - no new data
+                            idle_count += 1;
+                            
+                            if matches!(wait_strategy, WaitStrategy::Auto) && !output.is_empty() {
+                                // Auto mode: if idle for 1.5s (5 * 300ms), consider done
+                                if idle_count >= 5 {
+                                    // Double-check with prompt detection
+                                    let current_output = String::from_utf8_lossy(&output);
+                                    completed = detect_shell_prompt(&current_output);
+                                    break;
+                                }
+                            } else if matches!(wait_strategy, WaitStrategy::Timeout) {
+                                // Timeout mode: continue waiting
+                            } else if !output.is_empty() && idle_count >= 3 {
+                                // Other modes: break after 900ms idle if we have output
                                 break;
                             }
                         }
                     }
                 }
                 
+                let timed_out = start.elapsed() >= collect_timeout;
                 let output_str = String::from_utf8_lossy(&output).to_string();
                 
                 // Strip ANSI escape sequences for LLM (keep raw output for terminal display)
                 let clean_output = strip_ansi_codes(&output_str);
                 
-                let result = serde_json::json!({
+                // Build result with status info
+                let mut result = serde_json::json!({
                     "success": true,
                     "session_id": session_id,
                     "command": cmd,
                     "output": clean_output,
-                    "note": "Output is visible in the terminal panel."
+                    "completed": completed,
+                    "truncated": timed_out && !completed,
                 });
+                
+                // Add helpful hints
+                if was_normalized {
+                    result["original_command"] = serde_json::json!(original_cmd);
+                    result["note"] = serde_json::json!(format!(
+                        "Command was auto-normalized to limit output. Original: '{}'. Use skip_normalize=true to disable.",
+                        original_cmd
+                    ));
+                }
+                
+                if timed_out && !completed {
+                    result["hint"] = serde_json::json!(
+                        "Output was truncated due to timeout. The command may still be running. Consider: 1) Using 'wait_strategy: prompt' for commands that return to shell, 2) Adding flags to limit output (e.g., 'ping -c 4'), 3) Increasing 'wait_timeout'."
+                    );
+                }
                 
                 Ok(result)
             })
@@ -770,8 +896,8 @@ impl ToolServer {
         use crate::buildin_tools::browser::*;
 
         // browser_open
-        let browser_open_def = DynamicToolBuilder::new("browser_open")
-            .description("Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms. Returns page structure with refs (@e1, @e2) for interaction. URL can be provided with or without http:// prefix.")
+        let browser_open_def = DynamicToolBuilder::new(browser_constants::BROWSER_OPEN_NAME.to_string())
+            .description(browser_constants::BROWSER_OPEN_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -800,8 +926,8 @@ impl ToolServer {
         self.registry.register(browser_open_def).await;
 
         // browser_snapshot
-        let browser_snapshot_def = DynamicToolBuilder::new("browser_snapshot")
-            .description("Get current page structure as accessibility tree with refs. Each interactive element has a ref like @e1, @e2 that can be used with browser_click and browser_fill.")
+        let browser_snapshot_def = DynamicToolBuilder::new(browser_constants::BROWSER_SNAPSHOT_NAME.to_string())
+            .description(browser_constants::BROWSER_SNAPSHOT_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -832,8 +958,8 @@ impl ToolServer {
         self.registry.register(browser_snapshot_def).await;
 
         // browser_click
-        let browser_click_def = DynamicToolBuilder::new("browser_click")
-            .description("Click an element by ref (@e1) or CSS selector. Prefer using refs from browser_snapshot for reliability.")
+        let browser_click_def = DynamicToolBuilder::new(browser_constants::BROWSER_CLICK_NAME.to_string())
+            .description(browser_constants::BROWSER_CLICK_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -851,8 +977,8 @@ impl ToolServer {
         self.registry.register(browser_click_def).await;
 
         // browser_fill
-        let browser_fill_def = DynamicToolBuilder::new("browser_fill")
-            .description("Fill text into an input field by ref or selector. Clears existing content first.")
+        let browser_fill_def = DynamicToolBuilder::new(browser_constants::BROWSER_FILL_NAME.to_string())
+            .description(browser_constants::BROWSER_FILL_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -874,8 +1000,8 @@ impl ToolServer {
         self.registry.register(browser_fill_def).await;
 
         // browser_type
-        let browser_type_def = DynamicToolBuilder::new("browser_type")
-            .description("Type text character by character into an element. Useful for inputs that need keystroke events.")
+        let browser_type_def = DynamicToolBuilder::new(browser_constants::BROWSER_TYPE_NAME.to_string())
+            .description(browser_constants::BROWSER_TYPE_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -901,8 +1027,8 @@ impl ToolServer {
         self.registry.register(browser_type_def).await;
 
         // browser_select
-        let browser_select_def = DynamicToolBuilder::new("browser_select")
-            .description("Select an option from a dropdown by ref or selector.")
+        let browser_select_def = DynamicToolBuilder::new(browser_constants::BROWSER_SELECT_NAME.to_string())
+            .description(browser_constants::BROWSER_SELECT_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -924,8 +1050,8 @@ impl ToolServer {
         self.registry.register(browser_select_def).await;
 
         // browser_scroll
-        let browser_scroll_def = DynamicToolBuilder::new("browser_scroll")
-            .description("Scroll the page in a direction. Useful for loading more content or reaching elements.")
+        let browser_scroll_def = DynamicToolBuilder::new(browser_constants::BROWSER_SCROLL_NAME.to_string())
+            .description(browser_constants::BROWSER_SCROLL_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -949,8 +1075,8 @@ impl ToolServer {
         self.registry.register(browser_scroll_def).await;
 
         // browser_wait
-        let browser_wait_def = DynamicToolBuilder::new("browser_wait")
-            .description("Wait for an element to appear or for a timeout. Use after actions that trigger page changes.")
+        let browser_wait_def = DynamicToolBuilder::new(browser_constants::BROWSER_WAIT_NAME.to_string())
+            .description(browser_constants::BROWSER_WAIT_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -972,8 +1098,8 @@ impl ToolServer {
         self.registry.register(browser_wait_def).await;
 
         // browser_get_text
-        let browser_get_text_def = DynamicToolBuilder::new("browser_get_text")
-            .description("Get the text content of an element by ref or selector.")
+        let browser_get_text_def = DynamicToolBuilder::new(browser_constants::BROWSER_GET_TEXT_NAME.to_string())
+            .description(browser_constants::BROWSER_GET_TEXT_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -991,8 +1117,8 @@ impl ToolServer {
         self.registry.register(browser_get_text_def).await;
 
         // browser_screenshot
-        let browser_screenshot_def = DynamicToolBuilder::new("browser_screenshot")
-            .description("Take a screenshot of the current page. Returns base64 encoded image.")
+        let browser_screenshot_def = DynamicToolBuilder::new(browser_constants::BROWSER_SCREENSHOT_NAME.to_string())
+            .description(browser_constants::BROWSER_SCREENSHOT_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1010,8 +1136,8 @@ impl ToolServer {
         self.registry.register(browser_screenshot_def).await;
 
         // browser_back
-        let browser_back_def = DynamicToolBuilder::new("browser_back")
-            .description("Navigate back to the previous page in browser history.")
+        let browser_back_def = DynamicToolBuilder::new(browser_constants::BROWSER_BACK_NAME.to_string())
+            .description(browser_constants::BROWSER_BACK_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {}
@@ -1023,8 +1149,8 @@ impl ToolServer {
         self.registry.register(browser_back_def).await;
 
         // browser_press
-        let browser_press_def = DynamicToolBuilder::new("browser_press")
-            .description("Press a keyboard key. Useful for Enter, Tab, Escape, etc.")
+        let browser_press_def = DynamicToolBuilder::new(browser_constants::BROWSER_PRESS_NAME.to_string())
+            .description(browser_constants::BROWSER_PRESS_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1046,8 +1172,8 @@ impl ToolServer {
         self.registry.register(browser_press_def).await;
 
         // browser_hover
-        let browser_hover_def = DynamicToolBuilder::new("browser_hover")
-            .description("Hover over an element. Useful for triggering hover menus or tooltips.")
+        let browser_hover_def = DynamicToolBuilder::new(browser_constants::BROWSER_HOVER_NAME.to_string())
+            .description(browser_constants::BROWSER_HOVER_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1065,8 +1191,8 @@ impl ToolServer {
         self.registry.register(browser_hover_def).await;
 
         // browser_evaluate
-        let browser_evaluate_def = DynamicToolBuilder::new("browser_evaluate")
-            .description("Execute JavaScript code in the browser. Returns the result of the expression.")
+        let browser_evaluate_def = DynamicToolBuilder::new(browser_constants::BROWSER_EVALUATE_NAME.to_string())
+            .description(browser_constants::BROWSER_EVALUATE_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1084,8 +1210,8 @@ impl ToolServer {
         self.registry.register(browser_evaluate_def).await;
 
         // browser_get_url
-        let browser_get_url_def = DynamicToolBuilder::new("browser_get_url")
-            .description("Get the current page URL and title.")
+        let browser_get_url_def = DynamicToolBuilder::new(browser_constants::BROWSER_GET_URL_NAME.to_string())
+            .description(browser_constants::BROWSER_GET_URL_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {}
@@ -1097,8 +1223,8 @@ impl ToolServer {
         self.registry.register(browser_get_url_def).await;
 
         // browser_close
-        let browser_close_def = DynamicToolBuilder::new("browser_close")
-            .description("Close the browser. Call this when done with browser tasks to free resources.")
+        let browser_close_def = DynamicToolBuilder::new(browser_constants::BROWSER_CLOSE_NAME.to_string())
+            .description(browser_constants::BROWSER_CLOSE_DESC.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {}
@@ -1364,6 +1490,183 @@ impl ToolServer {
 impl Default for ToolServer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ToolServer {
+    /// Register all subagent tools (spawn, wait, run)
+    async fn register_subagent_tools(&self) {
+        use crate::buildin_tools::subagent_tool::{
+            SubagentSpawnTool, SubagentSpawnArgs,
+            SubagentWaitTool, SubagentWaitArgs,
+            SubagentRunTool, SubagentRunArgs,
+        };
+
+        // 1. subagent_spawn - non-blocking async start
+        let spawn_def = DynamicToolBuilder::new(SubagentSpawnTool::NAME.to_string())
+            .description(SubagentSpawnTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": {
+                        "type": "string",
+                        "description": "Parent execution ID (required)"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Task for the subagent to execute"
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "Optional role label (e.g., 'Scanner', 'Analyzer')"
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "Optional system prompt override"
+                    },
+                    "tool_config": {
+                        "type": "object",
+                        "description": "Optional tool config override"
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max iterations (default: 6)",
+                        "default": 6
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds"
+                    },
+                    "inherit_parent_llm": {
+                        "type": "boolean",
+                        "description": "Inherit LLM config from parent (default: true)",
+                        "default": true
+                    },
+                    "inherit_parent_tools": {
+                        "type": "boolean",
+                        "description": "Inherit tool config from parent (default: false)",
+                        "default": false
+                    }
+                },
+                "required": ["parent_execution_id", "task"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentSpawnArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentSpawnTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent spawn failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_spawn tool");
+        self.registry.register(spawn_def).await;
+
+        // 2. subagent_wait - blocking wait for tasks
+        let wait_def = DynamicToolBuilder::new(SubagentWaitTool::NAME.to_string())
+            .description(SubagentWaitTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": {
+                        "type": "string",
+                        "description": "Parent execution ID"
+                    },
+                    "task_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Task IDs to wait for (from subagent_spawn)"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 300)",
+                        "default": 300
+                    }
+                },
+                "required": ["parent_execution_id", "task_ids"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentWaitArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentWaitTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent wait failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_wait tool");
+        self.registry.register(wait_def).await;
+
+        // 3. subagent_run - blocking synchronous execution (legacy)
+        let run_def = DynamicToolBuilder::new(SubagentRunTool::NAME.to_string())
+            .description(SubagentRunTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": {
+                        "type": "string",
+                        "description": "Parent execution ID (required)"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Task for the subagent to execute"
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "Optional role label"
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "Optional system prompt override"
+                    },
+                    "tool_config": {
+                        "type": "object",
+                        "description": "Optional tool config override"
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max iterations (default: 6)",
+                        "default": 6
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds"
+                    },
+                    "inherit_parent_llm": {
+                        "type": "boolean",
+                        "description": "Inherit LLM config from parent (default: true)",
+                        "default": true
+                    },
+                    "inherit_parent_tools": {
+                        "type": "boolean",
+                        "description": "Inherit tool config from parent (default: false)",
+                        "default": false
+                    }
+                },
+                "required": ["parent_execution_id", "task"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentRunArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentRunTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent run failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_run tool");
+        self.registry.register(run_def).await;
+
+        tracing::info!("Registered subagent tools: spawn, wait, run");
     }
 }
 

@@ -1,6 +1,7 @@
 /**
  * Todos 状态管理 Composable
  * 监听后端 todos 更新事件，维护响应式状态
+ * 使用全局单例模式确保状态共享
  */
 
 import { ref, computed, onMounted, onUnmounted, type Ref, type ComputedRef } from 'vue'
@@ -42,16 +43,26 @@ export interface UseTodosReturn {
   stopListening: () => void
 }
 
+// Global state for todos panel (singleton pattern like useTerminal)
+const globalTodosState = ref<{
+  todos: Todo[]
+  isTodosPanelActive: boolean
+  lastExecutionId: string | undefined
+}>({
+  todos: [],
+  isTodosPanelActive: false,
+  lastExecutionId: undefined,
+})
+
+// Global unlisten function
+let globalUnlisten: UnlistenFn | null = null
+let listenerCount = 0
+
 /**
  * Todos 管理 Composable
  * @param executionId 执行 ID，用于过滤事件
  */
 export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
-  const todos = ref<Todo[]>([])
-  const isTodosPanelActive = ref(false)
-  let unlisten: UnlistenFn | null = null
-  const lastExecutionId = ref<string | undefined>(undefined)
-
   // 获取当前 executionId
   const getExecutionId = (): string | undefined => {
     if (!executionId) return undefined
@@ -59,33 +70,33 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   }
 
   // 顶级任务（无 parent_id）
-  const rootTodos = computed(() => getRootTodos(todos.value))
+  const rootTodos = computed(() => getRootTodos(globalTodosState.value.todos))
 
   // 统计信息
   const stats = computed<TodoStats>(() => ({
-    total: todos.value.length,
-    pending: todos.value.filter(t => t.status === 'pending').length,
-    in_progress: todos.value.filter(t => t.status === 'in_progress').length,
-    completed: todos.value.filter(t => t.status === 'completed').length,
+    total: globalTodosState.value.todos.length,
+    pending: globalTodosState.value.todos.filter(t => t.status === 'pending').length,
+    in_progress: globalTodosState.value.todos.filter(t => t.status === 'in_progress').length,
+    completed: globalTodosState.value.todos.filter(t => t.status === 'completed').length,
   }))
 
   // 完成进度
-  const progress = computed(() => calculateProgress(todos.value))
+  const progress = computed(() => calculateProgress(globalTodosState.value.todos))
 
   // 是否有 todos（实时数据）
-  const hasTodos = computed(() => todos.value.length > 0)
+  const hasTodos = computed(() => globalTodosState.value.todos.length > 0)
 
   // 是否有历史记录（用于判断是否可以重新打开面板）
-  const hasHistory = computed(() => todos.value.length > 0)
+  const hasHistory = computed(() => globalTodosState.value.todos.length > 0)
 
   // 当前进行中的任务
   const currentTask = computed(() => 
-    todos.value.find(t => t.status === 'in_progress')
+    globalTodosState.value.todos.find(t => t.status === 'in_progress')
   )
 
   // 获取子任务
   const getChildren = (parentId: string): Todo[] => {
-    return getChildTodos(todos.value, parentId)
+    return getChildTodos(globalTodosState.value.todos, parentId)
   }
 
   // 获取状态指示符
@@ -95,27 +106,28 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
 
   // 清空 todos
   const clearTodos = (): void => {
-    todos.value = []
+    globalTodosState.value.todos = []
   }
 
   // 打开面板
   const open = (): void => {
-    isTodosPanelActive.value = true
+    globalTodosState.value.isTodosPanelActive = true
   }
 
   // 关闭面板
   const close = (): void => {
-    isTodosPanelActive.value = false
+    globalTodosState.value.isTodosPanelActive = false
   }
 
   // 切换面板
   const toggle = (): void => {
-    isTodosPanelActive.value = !isTodosPanelActive.value
+    globalTodosState.value.isTodosPanelActive = !globalTodosState.value.isTodosPanelActive
   }
 
-  // 开始监听事件
+  // 开始监听事件（全局单例）
   const startListening = async (): Promise<void> => {
-    if (unlisten) return // 已在监听
+    listenerCount++
+    if (globalUnlisten) return // 已在监听
 
     const unlistenTodos = await listen<TodosUpdatePayload>('agent-todos-update', (event) => {
       const targetId = getExecutionId()
@@ -126,19 +138,24 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
       }
 
       // 检测新的 execution_id，清空旧数据
-      if (event.payload.execution_id !== lastExecutionId.value) {
+      if (event.payload.execution_id !== globalTodosState.value.lastExecutionId) {
         console.log('[useTodos] New execution detected, clearing old todos:', {
-          old: lastExecutionId.value,
+          old: globalTodosState.value.lastExecutionId,
           new: event.payload.execution_id
         })
-        todos.value = []
-        lastExecutionId.value = event.payload.execution_id
+        globalTodosState.value.todos = []
+        globalTodosState.value.lastExecutionId = event.payload.execution_id
       }
 
-      todos.value = event.payload.todos
-      // 当有新 todos 时自动打开面板
+      globalTodosState.value.todos = event.payload.todos
+      // 当有新 todos 时自动打开面板，同时关闭终端面板
       if (event.payload.todos.length > 0) {
-        isTodosPanelActive.value = true
+        globalTodosState.value.isTodosPanelActive = true
+        // Close terminal panel to ensure only one panel is active
+        import('@/composables/useTerminal').then(({ useTerminal }) => {
+          const terminal = useTerminal()
+          terminal.closeTerminal()
+        })
       }
     })
 
@@ -163,7 +180,7 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     })
 
     // 将所有 unlisten 函数组合
-    unlisten = () => {
+    globalUnlisten = () => {
       unlistenTodos()
       unlistenComplete()
       unlistenError()
@@ -172,9 +189,12 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
 
   // 停止监听
   const stopListening = (): void => {
-    if (unlisten) {
-      unlisten()
-      unlisten = null
+    listenerCount--
+    // Only actually stop when no more listeners
+    if (listenerCount <= 0 && globalUnlisten) {
+      globalUnlisten()
+      globalUnlisten = null
+      listenerCount = 0
     }
   }
 
@@ -188,13 +208,13 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   })
 
   return {
-    todos,
+    todos: computed(() => globalTodosState.value.todos),
     rootTodos,
     stats,
     progress,
     hasTodos,
     hasHistory,
-    isTodosPanelActive,
+    isTodosPanelActive: computed(() => globalTodosState.value.isTodosPanelActive),
     currentTask,
     getChildren,
     getIndicator,

@@ -119,6 +119,12 @@
       <div class="flex flex-1 overflow-hidden min-h-0">
         <!-- Left: Message flow + Input Area -->
         <div class="message-area flex-1 flex flex-col overflow-hidden min-h-0">
+          <SubagentPanel
+            :subagents="subagents"
+            :is-open="isSubagentPanelOpen"
+            @toggle="isSubagentPanelOpen = !isSubagentPanelOpen"
+            @view-details="handleViewSubagentDetails"
+          />
           <!-- Message flow -->
           <MessageFlow 
             ref="messageFlowRef"
@@ -221,6 +227,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onActivated, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import type { AgentMessage } from '@/types/agent'
 import { useAgentEvents } from '@/composables/useAgentEvents'
@@ -231,6 +238,7 @@ import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
 import WebExplorerPanel from './WebExplorerPanel.vue'
+import SubagentPanel from './SubagentPanel.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -251,6 +259,7 @@ interface ReferencedTraffic {
   sendType?: TrafficSendType
 }
 
+
 const props = withDefaults(defineProps<{
   executionId?: string
   showTodos?: boolean
@@ -265,8 +274,9 @@ const emit = defineEmits<{
   (e: 'error', error: string): void
 }>()
 
-// i18n
+// i18n & router
 const { t } = useI18n()
+const router = useRouter()
 
 // Refs
 const messageFlowRef = ref<InstanceType<typeof MessageFlow> | null>(null)
@@ -287,6 +297,8 @@ const pendingAttachments = ref<any[]>([])
 const pendingDocuments = ref<import('@/types/agent').PendingDocumentAttachment[]>([])
 const processedDocuments = ref<import('@/types/agent').ProcessedDocumentResult[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
+const isSubagentPanelOpen = ref(true)
+const subagents = computed(() => agentEvents.subagents.value)
 
 // Tool configuration
 const toolConfig = ref({
@@ -303,6 +315,7 @@ const messages = computed(() => agentEvents.messages.value)
 const isExecuting = computed(() => agentEvents.isExecuting.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
+
 
 // Web Explorer Events
 // Important: pass through the nullable execution id ref so Web Explorer can
@@ -640,6 +653,17 @@ const handleClearConversation = async () => {
   }
 }
 
+// Handle view subagent details - open in new conversation tab
+const handleViewSubagentDetails = (subagentId: string) => {
+  console.log('[AgentView] View subagent details:', subagentId)
+  // Navigate to the subagent's conversation
+  // The subagent has its own conversation record with the same ID as execution_id
+  router.push({
+    path: '/ai-assistant',
+    query: { conversation: subagentId }
+  })
+}
+
 // Handle stop
 const handleStop = async () => {
   console.log('[AgentView] Stop requested for conversation:', conversationId.value)
@@ -924,6 +948,9 @@ const handleSelectConversation = async (convId: string) => {
   conversationId.value = convId
   await loadConversationHistory(convId)
   
+  // Reset terminal session when switching conversations
+  terminalComposable.resetTerminal()
+  
   // Update conversation title
   try {
     const conversations = await invoke<any[]>('get_ai_conversations')
@@ -946,6 +973,9 @@ const handleCreateConversation = async (newConvId?: string) => {
     currentConversationTitle.value = t('agent.newConversationTitle')
     agentEvents.clearMessages()
     
+    // Reset terminal session for new conversation
+    terminalComposable.resetTerminal()
+    
     // Focus input after creating conversation
     nextTick(() => {
       inputAreaRef.value?.focusInput()
@@ -962,6 +992,9 @@ const handleCreateConversation = async (newConvId?: string) => {
       conversationId.value = convId
       currentConversationTitle.value = t('agent.newConversationTitle')
       agentEvents.clearMessages()
+      
+      // Reset terminal session for new conversation
+      terminalComposable.resetTerminal()
       
       // Refresh conversation list
       conversationListRef.value?.loadConversations()

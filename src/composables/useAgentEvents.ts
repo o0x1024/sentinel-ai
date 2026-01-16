@@ -117,6 +117,41 @@ interface AgentTenthManCritiqueEvent {
   message_id: string
 }
 
+interface SubagentStartEvent {
+  execution_id: string
+  parent_execution_id: string
+  role?: string
+  task: string
+}
+
+interface SubagentDoneEvent {
+  execution_id: string
+  parent_execution_id: string
+  success: boolean
+  output?: string
+}
+
+interface SubagentErrorEvent {
+  execution_id: string
+  parent_execution_id: string
+  error: string
+}
+
+type SubagentStatus = 'running' | 'queued' | 'completed' | 'failed'
+interface SubagentItem {
+  id: string
+  parentId: string
+  role?: string
+  status: SubagentStatus
+  progress?: number
+  summary?: string
+  tools?: string[]
+  task?: string
+  error?: string
+  startedAt?: number
+  duration?: number
+}
+
 // 后端发送的 OrderedMessageChunk 结构 (兼容旧格式)
 interface OrderedMessageChunk {
   execution_id: string
@@ -147,6 +182,7 @@ export interface UseAgentEventsReturn {
   currentExecutionId: Ref<string | null>
   error: Ref<string | null>
   streamingContent: Ref<string>
+  subagents: Ref<SubagentItem[]>
   hasMessages: ComputedRef<boolean>
   lastMessage: ComputedRef<AgentMessage | undefined>
   ragMetaInfo: Ref<RagMetaInfo | null>
@@ -169,6 +205,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const streamingContent = ref('')
   const contentBuffer = ref('')
   const ragMetaInfo = ref<RagMetaInfo | null>(null)
+  const subagents = ref<SubagentItem[]>([])
 
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
@@ -212,6 +249,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     isExecuting.value = false
     currentExecutionId.value = null
     ragMetaInfo.value = null
+    subagents.value = []
   }
 
   // 停止执行：清空流式内容并更新状态
@@ -302,6 +340,30 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       }
     })
     unlisteners.push(unlistenStart)
+
+    const unlistenSubagentStart = await listen<SubagentStartEvent>('subagent:start', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.parent_execution_id)) return
+
+      const existing = subagents.value.find(s => s.id === payload.execution_id)
+      if (!existing) {
+        subagents.value.unshift({
+          id: payload.execution_id,
+          parentId: payload.parent_execution_id,
+          role: payload.role,
+          status: 'running',
+          progress: 0,
+          task: payload.task,
+          startedAt: Date.now(),
+        })
+      } else {
+        existing.status = 'running'
+        existing.progress = existing.progress ?? 0
+        existing.task = payload.task
+        existing.startedAt = existing.startedAt ?? Date.now()
+      }
+    })
+    unlisteners.push(unlistenSubagentStart)
 
     // 监听 agent:iteration 事件
     const unlistenIteration = await listen<AgentIterationEvent>('agent:iteration', (event) => {
@@ -519,8 +581,14 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
             existingMsg.metadata.success = !resultContent.toLowerCase().includes('error')
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
             
-            // 如果是 interactive_shell 工具，自动打开终端面板
+            // 如果是 interactive_shell 工具，自动打开终端面板，关闭 todos 面板
             if (callInfo.tool_name === 'interactive_shell') {
+              // First close todos panel
+              import('@/composables/useTodos').then(({ useTodos }) => {
+                const todos = useTodos()
+                todos.close()
+              })
+              
               import('@/composables/useTerminal').then(({ useTerminal }) => {
                 const terminal = useTerminal()
                 
@@ -591,8 +659,14 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           matchingToolCall.metadata.success = !payload.tool_result.startsWith('Error:')
           matchingToolCall.content = `工具调用完成: ${payload.tool_name}`
           
-          // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板
+          // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭 todos 面板
           if (payload.tool_name === 'interactive_shell') {
+            // First close todos panel
+            import('@/composables/useTodos').then(({ useTodos }) => {
+              const todos = useTodos()
+              todos.close()
+            })
+            
             import('@/composables/useTerminal').then(({ useTerminal }) => {
               const terminal = useTerminal()
               
@@ -808,6 +882,29 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     })
     unlisteners.push(unlistenComplete)
 
+    const unlistenSubagentDone = await listen<SubagentDoneEvent>('subagent:done', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.parent_execution_id)) return
+
+      const now = Date.now()
+      const existing = subagents.value.find(s => s.id === payload.execution_id)
+      if (existing) {
+        existing.status = payload.success ? 'completed' : 'failed'
+        existing.progress = 100
+        existing.summary = payload.output?.slice(0, 200) || existing.summary
+        existing.duration = existing.startedAt ? now - existing.startedAt : undefined
+      } else {
+        subagents.value.unshift({
+          id: payload.execution_id,
+          parentId: payload.parent_execution_id,
+          status: payload.success ? 'completed' : 'failed',
+          progress: 100,
+          summary: payload.output?.slice(0, 200),
+        })
+      }
+    })
+    unlisteners.push(unlistenSubagentDone)
+
     // 监听 agent:error 事件
     const unlistenError = await listen<AgentErrorEvent>('agent:error', (event) => {
       const payload = event.payload
@@ -824,6 +921,29 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       })
     })
     unlisteners.push(unlistenError)
+
+    const unlistenSubagentError = await listen<SubagentErrorEvent>('subagent:error', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.parent_execution_id)) return
+
+      const now = Date.now()
+      const existing = subagents.value.find(s => s.id === payload.execution_id)
+      if (existing) {
+        existing.status = 'failed'
+        existing.progress = 100
+        existing.error = payload.error
+        existing.duration = existing.startedAt ? now - existing.startedAt : undefined
+      } else {
+        subagents.value.unshift({
+          id: payload.execution_id,
+          parentId: payload.parent_execution_id,
+          status: 'failed',
+          progress: 100,
+          error: payload.error,
+        })
+      }
+    })
+    unlisteners.push(unlistenSubagentError)
 
     // 监听 agent:segment_summary_created 事件（滑动窗口段落摘要）
     const unlistenSegmentSummary = await listen<AgentSegmentSummaryCreatedEvent>('agent:segment_summary_created', (event) => {
@@ -1146,6 +1266,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     currentExecutionId,
     error,
     streamingContent,
+    subagents,
     hasMessages,
     lastMessage,
     ragMetaInfo,

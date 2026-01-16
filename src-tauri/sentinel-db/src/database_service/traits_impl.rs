@@ -35,6 +35,12 @@ impl Database for DatabaseService {
     async fn get_ai_conversations(&self) -> Result<Vec<AiConversation>> {
         Self::get_ai_conversations_internal(self).await
     }
+    async fn get_ai_conversations_paginated(&self, limit: i64, offset: i64) -> Result<Vec<AiConversation>> {
+        Self::get_ai_conversations_paginated_internal(self, limit, offset).await
+    }
+    async fn get_ai_conversations_count(&self) -> Result<i64> {
+        Self::get_ai_conversations_count_internal(self).await
+    }
     async fn get_ai_conversation(&self, id: &str) -> Result<Option<AiConversation>> {
         Self::get_ai_conversation_internal(self, id).await
     }

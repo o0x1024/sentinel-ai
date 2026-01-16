@@ -5,9 +5,20 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+#[allow(unused_imports)]
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+
+#[allow(unused_imports)]
+use sentinel_tools::buildin_tools::{
+    HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
+    browser::constants as browser_constants, TenthManTool, SubagentTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool,
+};
+
+use crate::engines::web_explorer::WebExplorerTool;
+use sentinel_tools::terminal::server::TerminalServer;
 
 /// 工具元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +45,24 @@ pub enum ToolCategory {
     Plugin,
     Workflow,
     Browser,
+    Utility,
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolCategory::Network => write!(f, "network"),
+            ToolCategory::Security => write!(f, "security"),
+            ToolCategory::Data => write!(f, "data"),
+            ToolCategory::AI => write!(f, "ai"),
+            ToolCategory::System => write!(f, "system"),
+            ToolCategory::MCP => write!(f, "mcp"),
+            ToolCategory::Plugin => write!(f, "plugin"),
+            ToolCategory::Workflow => write!(f, "workflow"),
+            ToolCategory::Browser => write!(f, "browser"),
+            ToolCategory::Utility => write!(f, "utility"),
+        }
+    }
 }
 
 /// 工具成本估算（token 数量）
@@ -280,7 +309,7 @@ impl ToolRouter {
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
                 name: ShellTool::NAME.to_string(),
-                description: "Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). For interactive tools that require continuous input/output (like msfconsole, sqlmap, database clients, Python REPL), use interactive_shell instead.".to_string(),
+                description: ShellTool::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
                 tags: vec![
                     "shell".to_string(),
@@ -292,9 +321,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "interactive_shell".to_string(),
-                name: "interactive_shell".to_string(),
-                description: "Create persistent terminal session for tools requiring continuous interaction: REQUIRED for ssh, msfconsole, sqlmap, mysql/psql clients, Python/Node REPL, or any tool that maintains state between commands. Returns session ID for multi-turn interaction. Use this when a tool needs to stay running between commands.".to_string(),
+                id: TerminalServer::NAME.to_string(),
+                name: TerminalServer::NAME.to_string(),
+                description: TerminalServer::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
                 tags: vec![
                     "terminal".to_string(),
@@ -335,9 +364,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "web_explorer".to_string(),
-                name: "web_explorer".to_string(),
-                description: "Explore a website using ReAct architecture to discover APIs, pages, and interactive elements.".to_string(),
+                id: WebExplorerTool::NAME.to_string(),
+                name: WebExplorerTool::NAME.to_string(),
+                description: WebExplorerTool::DESCRIPTION.to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "web".to_string(),
@@ -371,9 +400,9 @@ impl ToolRouter {
             },
             // Tenth Man Review
             ToolMetadata {
-                id: "tenth_man_review".to_string(),
-                name: "tenth_man_review".to_string(),
-                description: "Get adversarial feedback on your work. Uncovers hidden problems, alternative perspectives, and potential failures. 'quick' mode: Fast risk identification. 'full' mode: Comprehensive analysis with recommendations. Perfect for validating plans, reviewing code, and avoiding costly mistakes.".to_string(),
+                id: TenthManTool::NAME.to_string(),
+                name: TenthManTool::NAME.to_string(),
+                description: TenthManTool::DESCRIPTION.to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "review".to_string(),
@@ -389,11 +418,61 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Medium,
                 always_available: true, // Default enabled - LLM can use it anytime
             },
+            // Subagent tools: spawn (async), wait, run (sync)
+            ToolMetadata {
+                id: "subagent_spawn".to_string(),
+                name: "subagent_spawn".to_string(),
+                description: "Start a subagent task asynchronously (NON-BLOCKING). Returns task_id immediately. Use for parallel execution of independent tasks.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "subagent".to_string(),
+                    "spawn".to_string(),
+                    "async".to_string(),
+                    "parallel".to_string(),
+                    "concurrent".to_string(),
+                ],
+                cost_estimate: ToolCost::High,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "subagent_wait".to_string(),
+                name: "subagent_wait".to_string(),
+                description: "Wait for spawned subagent tasks to complete. Provide task_ids from subagent_spawn.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "subagent".to_string(),
+                    "wait".to_string(),
+                    "sync".to_string(),
+                    "collect".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SubagentTool::NAME.to_string(),
+                name: SubagentTool::NAME.to_string(),
+                description: "Execute a subagent task synchronously (BLOCKING). Use for sequential dependent tasks. For parallel, use subagent_spawn + subagent_wait.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "subagent".to_string(),
+                    "delegate".to_string(),
+                    "sync".to_string(),
+                    "sequential".to_string(),
+                    "task".to_string(),
+                    "agent".to_string(),
+                    "workflow".to_string(),
+                    "multi-step".to_string(),
+                    "ctf".to_string(),
+                    "analysis".to_string(),
+                ],
+                cost_estimate: ToolCost::High,
+                always_available: false,
+            },
             // Browser automation tools
             ToolMetadata {
-                id: "browser_open".to_string(),
-                name: "browser_open".to_string(),
-                description: "Open a URL in browser and get page snapshot. Use this to start web tasks like booking tickets, searching information, or filling forms.".to_string(),
+                id: browser_constants::BROWSER_OPEN_NAME.to_string(),
+                name: browser_constants::BROWSER_OPEN_NAME.to_string(),
+                description: browser_constants::BROWSER_OPEN_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -406,9 +485,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_snapshot".to_string(),
-                name: "browser_snapshot".to_string(),
-                description: "Get current page structure as accessibility tree with refs. Each interactive element has a ref like @e1, @e2 for interaction.".to_string(),
+                id: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
+                name: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
+                description: browser_constants::BROWSER_SNAPSHOT_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -420,9 +499,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_click".to_string(),
-                name: "browser_click".to_string(),
-                description: "Click an element by ref (@e1) or CSS selector.".to_string(),
+                id: browser_constants::BROWSER_CLICK_NAME.to_string(),
+                name: browser_constants::BROWSER_CLICK_NAME.to_string(),
+                description: browser_constants::BROWSER_CLICK_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -433,9 +512,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_fill".to_string(),
-                name: "browser_fill".to_string(),
-                description: "Fill text into an input field by ref or selector.".to_string(),
+                id: browser_constants::BROWSER_FILL_NAME.to_string(),
+                name: browser_constants::BROWSER_FILL_NAME.to_string(),
+                description: browser_constants::BROWSER_FILL_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -447,9 +526,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_type".to_string(),
-                name: "browser_type".to_string(),
-                description: "Type text character by character into an element.".to_string(),
+                id: browser_constants::BROWSER_TYPE_NAME.to_string(),
+                name: browser_constants::BROWSER_TYPE_NAME.to_string(),
+                description: browser_constants::BROWSER_TYPE_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -460,9 +539,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_select".to_string(),
-                name: "browser_select".to_string(),
-                description: "Select an option from a dropdown.".to_string(),
+                id: browser_constants::BROWSER_SELECT_NAME.to_string(),
+                name: browser_constants::BROWSER_SELECT_NAME.to_string(),
+                description: browser_constants::BROWSER_SELECT_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -473,9 +552,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_scroll".to_string(),
-                name: "browser_scroll".to_string(),
-                description: "Scroll the page in a direction.".to_string(),
+                id: browser_constants::BROWSER_SCROLL_NAME.to_string(),
+                name: browser_constants::BROWSER_SCROLL_NAME.to_string(),
+                description: browser_constants::BROWSER_SCROLL_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -485,9 +564,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_wait".to_string(),
-                name: "browser_wait".to_string(),
-                description: "Wait for an element to appear or for a timeout.".to_string(),
+                id: browser_constants::BROWSER_WAIT_NAME.to_string(),
+                name: browser_constants::BROWSER_WAIT_NAME.to_string(),
+                description: browser_constants::BROWSER_WAIT_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -497,9 +576,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_get_text".to_string(),
-                name: "browser_get_text".to_string(),
-                description: "Get the text content of an element.".to_string(),
+                id: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
+                name: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
+                description: browser_constants::BROWSER_GET_TEXT_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -510,9 +589,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_screenshot".to_string(),
-                name: "browser_screenshot".to_string(),
-                description: "Take a screenshot of the current page.".to_string(),
+                id: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
+                name: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
+                description: browser_constants::BROWSER_SCREENSHOT_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -523,9 +602,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_back".to_string(),
-                name: "browser_back".to_string(),
-                description: "Navigate back to the previous page.".to_string(),
+                id: browser_constants::BROWSER_BACK_NAME.to_string(),
+                name: browser_constants::BROWSER_BACK_NAME.to_string(),
+                description: browser_constants::BROWSER_BACK_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -536,9 +615,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_press".to_string(),
-                name: "browser_press".to_string(),
-                description: "Press a keyboard key (Enter, Tab, Escape, etc.).".to_string(),
+                id: browser_constants::BROWSER_PRESS_NAME.to_string(),
+                name: browser_constants::BROWSER_PRESS_NAME.to_string(),
+                description: browser_constants::BROWSER_PRESS_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -550,9 +629,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_hover".to_string(),
-                name: "browser_hover".to_string(),
-                description: "Hover over an element.".to_string(),
+                id: browser_constants::BROWSER_HOVER_NAME.to_string(),
+                name: browser_constants::BROWSER_HOVER_NAME.to_string(),
+                description: browser_constants::BROWSER_HOVER_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -563,9 +642,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_evaluate".to_string(),
-                name: "browser_evaluate".to_string(),
-                description: "Execute JavaScript code in the browser.".to_string(),
+                id: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
+                name: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
+                description: browser_constants::BROWSER_EVALUATE_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -577,9 +656,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_get_url".to_string(),
-                name: "browser_get_url".to_string(),
-                description: "Get the current page URL and title.".to_string(),
+                id: browser_constants::BROWSER_GET_URL_NAME.to_string(),
+                name: browser_constants::BROWSER_GET_URL_NAME.to_string(),
+                description: browser_constants::BROWSER_GET_URL_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),
@@ -590,9 +669,9 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
-                id: "browser_close".to_string(),
-                name: "browser_close".to_string(),
-                description: "Close the browser.".to_string(),
+                id: browser_constants::BROWSER_CLOSE_NAME.to_string(),
+                name: browser_constants::BROWSER_CLOSE_NAME.to_string(),
+                description: browser_constants::BROWSER_CLOSE_DESC.to_string(),
                 category: ToolCategory::Browser,
                 tags: vec![
                     "browser".to_string(),

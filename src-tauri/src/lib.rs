@@ -380,6 +380,11 @@ pub fn run() {
                 crate::agents::tenth_man_executor::init_tenth_man_executor();
                 tracing::info!("Tenth Man executor initialized");
 
+                // Initialize Subagent executor
+                crate::agents::subagent_executor::set_app_handle(handle.clone());
+                crate::agents::subagent_executor::init_subagent_executor();
+                tracing::info!("Subagent executor initialized");
+
                 // Initialize tool execution tracker
                 crate::trackers::init_tracker(db_for_tracker, handle.clone());
                 tracing::info!("Tool execution tracker initialized");
@@ -538,6 +543,8 @@ pub fn run() {
             ai::save_ai_message,
             ai::cancel_ai_stream,
             ai::get_ai_conversations,
+            ai::get_ai_conversations_paginated,
+            ai::get_ai_conversations_count,
             ai::get_ai_messages_by_conversation,
             ai::clear_conversation_messages,
             ai::save_tool_config,

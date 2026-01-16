@@ -76,6 +76,34 @@ impl DatabaseService {
         Ok(rows)
     }
 
+    pub async fn get_ai_conversations_paginated_internal(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<AiConversation>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query_as::<_, AiConversation>(
+            "SELECT * FROM ai_conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn get_ai_conversations_count_internal(&self) -> Result<i64> {
+        let pool = self.get_pool()?;
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ai_conversations")
+            .fetch_one(pool)
+            .await?;
+
+        Ok(count.0)
+    }
+
     pub async fn get_ai_conversation_internal(&self, id: &str) -> Result<Option<AiConversation>> {
         let pool = self.get_pool()?;
 

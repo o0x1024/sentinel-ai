@@ -32,23 +32,28 @@
         type="text" 
         :placeholder="t('agent.searchConversations')" 
         class="input input-sm input-bordered w-full"
+        @input="handleSearch"
       />
     </div>
 
     <!-- Conversation List -->
-    <div class="flex-1 overflow-y-auto">
-      <div v-if="isLoading" class="flex items-center justify-center py-8">
+    <div 
+      ref="scrollContainer"
+      class="flex-1 overflow-y-auto"
+      @scroll="handleScroll"
+    >
+      <div v-if="isLoading && conversations.length === 0" class="flex items-center justify-center py-8">
         <span class="loading loading-spinner loading-md text-primary"></span>
       </div>
 
-      <div v-else-if="filteredConversations.length === 0" class="text-center py-8 text-base-content/50 text-sm">
+      <div v-else-if="conversations.length === 0" class="text-center py-8 text-base-content/50 text-sm">
         <i class="fas fa-inbox text-3xl mb-2 opacity-50"></i>
         <p>{{ searchQuery ? t('agent.noMatchingConversations') : t('agent.noConversations') }}</p>
       </div>
 
       <div v-else class="space-y-1 p-2">
         <div
-          v-for="conv in filteredConversations"
+          v-for="conv in conversations"
           :key="conv.id"
           :class="[
             'conversation-item group relative p-3 rounded-lg cursor-pointer transition-all',
@@ -95,13 +100,23 @@
             </div>
           </div>
         </div>
+
+        <!-- Loading more indicator -->
+        <div v-if="isLoadingMore" class="flex items-center justify-center py-4">
+          <span class="loading loading-spinner loading-sm text-primary"></span>
+        </div>
+
+        <!-- End of list indicator -->
+        <div v-else-if="hasMore" class="text-center py-2 text-xs text-base-content/50">
+          {{ t('agent.scrollToLoadMore') }}
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 
@@ -128,30 +143,103 @@ const { t } = useI18n()
 
 const conversations = ref<Conversation[]>([])
 const isLoading = ref(false)
+const isLoadingMore = ref(false)
 const searchQuery = ref('')
+const scrollContainer = ref<HTMLElement | null>(null)
 
-const filteredConversations = computed(() => {
-  if (!searchQuery.value) return conversations.value
-  
-  const query = searchQuery.value.toLowerCase()
-  return conversations.value.filter(conv => 
-    (conv.title || '').toLowerCase().includes(query) ||
-    conv.model_name.toLowerCase().includes(query)
-  )
-})
+// Pagination state
+const PAGE_SIZE = 20
+let currentOffset = 0
+let totalCount = 0
+const hasMore = ref(true)
 
-const loadConversations = async () => {
-  isLoading.value = true
+// Search debounce
+let searchTimeout: ReturnType<typeof setTimeout> | null = null
+
+const loadConversations = async (reset = false) => {
+  if (reset) {
+    currentOffset = 0
+    conversations.value = []
+    hasMore.value = true
+  }
+
+  if (isLoading.value || isLoadingMore.value) return
+  if (!reset && !hasMore.value) return
+
+  const loading = reset ? 'isLoading' : 'isLoadingMore'
+  if (reset) {
+    isLoading.value = true
+  } else {
+    isLoadingMore.value = true
+  }
+
   try {
-    const result = await invoke<Conversation[]>('get_ai_conversations')
-    conversations.value = result.sort((a, b) => 
-      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-    )
+    // Get total count on first load
+    if (currentOffset === 0) {
+      totalCount = await invoke<number>('get_ai_conversations_count')
+    }
+
+    const result = await invoke<Conversation[]>('get_ai_conversations_paginated', {
+      limit: PAGE_SIZE,
+      offset: currentOffset
+    })
+
+    if (reset) {
+      conversations.value = result
+    } else {
+      conversations.value = [...conversations.value, ...result]
+    }
+
+    currentOffset += result.length
+    hasMore.value = currentOffset < totalCount && result.length === PAGE_SIZE
   } catch (error) {
     console.error('Failed to load conversations:', error)
   } finally {
     isLoading.value = false
+    isLoadingMore.value = false
   }
+}
+
+const handleScroll = async () => {
+  if (!scrollContainer.value || !hasMore.value || isLoadingMore.value) return
+
+  const { scrollTop, scrollHeight, clientHeight } = scrollContainer.value
+  const scrollPercentage = (scrollTop + clientHeight) / scrollHeight
+
+  // Load more when scrolled to 80%
+  if (scrollPercentage > 0.8) {
+    await loadConversations(false)
+  }
+}
+
+const handleSearch = () => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout)
+  }
+
+  searchTimeout = setTimeout(async () => {
+    if (searchQuery.value.trim()) {
+      // For search, load all conversations and filter locally
+      // In production, you might want to implement server-side search
+      isLoading.value = true
+      try {
+        const allConversations = await invoke<Conversation[]>('get_ai_conversations')
+        const query = searchQuery.value.toLowerCase()
+        conversations.value = allConversations.filter(conv => 
+          (conv.title || '').toLowerCase().includes(query) ||
+          conv.model_name.toLowerCase().includes(query)
+        )
+        hasMore.value = false
+      } catch (error) {
+        console.error('Failed to search conversations:', error)
+      } finally {
+        isLoading.value = false
+      }
+    } else {
+      // Reset to paginated mode
+      await loadConversations(true)
+    }
+  }, 300)
 }
 
 const createNewConversation = async () => {
@@ -162,7 +250,7 @@ const createNewConversation = async () => {
         service_name: 'default'
       }
     })
-    await loadConversations()
+    await loadConversations(true)
     emit('create', conversationId)
   } catch (error) {
     console.error('Failed to create conversation:', error)
@@ -182,7 +270,11 @@ const renameConversation = async (conv: Conversation) => {
         title: newTitle.trim(),
         serviceName: 'default'
       })
-      await loadConversations()
+      // Update local conversation instead of reloading all
+      const index = conversations.value.findIndex(c => c.id === conv.id)
+      if (index !== -1) {
+        conversations.value[index].title = newTitle.trim()
+      }
     } catch (error) {
       console.error('Failed to rename conversation:', error)
     }
@@ -190,15 +282,17 @@ const renameConversation = async (conv: Conversation) => {
 }
 
 const deleteConversation = async (conv: Conversation) => {
-    try {
-      await invoke('delete_ai_conversation', {
-        conversationId: conv.id,
-        serviceName: 'default'
-      })
-      await loadConversations()
-    } catch (error) {
-      console.error('Failed to delete conversation:', error)
-    }
+  try {
+    await invoke('delete_ai_conversation', {
+      conversationId: conv.id,
+      serviceName: 'default'
+    })
+    // Remove from local list instead of reloading
+    conversations.value = conversations.value.filter(c => c.id !== conv.id)
+    totalCount--
+  } catch (error) {
+    console.error('Failed to delete conversation:', error)
+  }
 }
 
 const formatDate = (dateStr: string) => {
@@ -219,11 +313,11 @@ const formatDate = (dateStr: string) => {
 }
 
 onMounted(() => {
-  loadConversations()
+  loadConversations(true)
 })
 
 defineExpose({
-  loadConversations
+  loadConversations: () => loadConversations(true)
 })
 </script>
 

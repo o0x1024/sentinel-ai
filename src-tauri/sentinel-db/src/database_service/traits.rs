@@ -25,6 +25,8 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     // AI相关方法
     async fn create_ai_conversation(&self, conversation: &AiConversation) -> Result<()>;
     async fn get_ai_conversations(&self) -> Result<Vec<AiConversation>>;
+    async fn get_ai_conversations_paginated(&self, limit: i64, offset: i64) -> Result<Vec<AiConversation>>;
+    async fn get_ai_conversations_count(&self) -> Result<i64>;
     async fn get_ai_conversation(&self, id: &str) -> Result<Option<AiConversation>>;
     async fn update_ai_conversation(&self, conversation: &AiConversation) -> Result<()>;
     async fn delete_ai_conversation(&self, id: &str) -> Result<()>;
