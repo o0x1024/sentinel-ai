@@ -23,8 +23,8 @@ use sentinel_tools::buildin_tools::subagent_tool::{
 };
 
 use super::{execute_agent, ToolConfig, ToolSelectionStrategy};
-use sentinel_core::models::database::AiConversation;
-use sentinel_db::Database;
+use sentinel_core::models::database::SubagentRun;
+use sentinel_core::models::database::SubagentMessage;
 
 // ============================================================================
 // Global State
@@ -63,6 +63,7 @@ pub struct SubagentParentContext {
     pub tool_config: ToolConfig,
     pub max_iterations: usize,
     pub timeout_secs: u64,
+    pub task_context: String,
 }
 
 /// Internal task entry with completion channel
@@ -136,6 +137,22 @@ fn normalize_tool_config(mut config: ToolConfig) -> ToolConfig {
     config
 }
 
+fn build_subagent_task(parent_task: &str, subagent_task: &str) -> String {
+    let parent = parent_task.trim();
+    let subagent = subagent_task.trim();
+    if parent.is_empty() {
+        return subagent.to_string();
+    }
+    if subagent.is_empty() {
+        return parent.to_string();
+    }
+    format!(
+        "Parent task context:\n{}\n\nSubagent task:\n{}",
+        parent,
+        subagent
+    )
+}
+
 async fn get_or_create_parent_semaphore(parent_id: &str) -> Arc<Semaphore> {
     let mut sems = PARENT_SEMAPHORES.write().await;
     sems.entry(parent_id.to_string())
@@ -156,87 +173,69 @@ async fn get_parent_context(parent_id: &str) -> Result<SubagentParentContext, Su
     })
 }
 
-/// Create a temporary conversation record for subagent to satisfy FK constraint
-async fn create_subagent_conversation(
+/// Create subagent run record for traceability
+async fn create_subagent_run(
     app_handle: &tauri::AppHandle,
-    execution_id: &str,
-    parent_execution_id: &str,
-    role: Option<&str>,
-    task: &str,
-    model: &str,
-    rig_provider: &str,
-) -> Result<(), SubagentToolError> {
-    let db = app_handle
+    run: &SubagentRun,
+) {
+    if let Some(db) = app_handle
         .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
-        .map(|s| s.inner().clone());
-    
-    if let Some(db) = db {
-        let now = chrono::Utc::now();
-        // Truncate task at char boundary to avoid panic with UTF-8 strings
-        let task_preview = if task.chars().count() > 50 {
-            task.chars().take(50).collect::<String>()
-        } else {
-            task.to_string()
-        };
-        let title = format!(
-            "[Subagent{}] {}",
-            role.map(|r| format!(": {}", r)).unwrap_or_default(),
-            task_preview
-        );
-        
-        let conversation = AiConversation {
-            id: execution_id.to_string(),
-            title: Some(title),
-            service_name: "subagent".to_string(),
-            model_name: model.to_string(),
-            model_provider: Some(rig_provider.to_string()),
-            context_type: Some("subagent".to_string()),
-            project_id: None,
-            vulnerability_id: None,
-            scan_task_id: None,
-            conversation_data: Some(json!({
-                "parent_execution_id": parent_execution_id,
-                "role": role,
-                "task": task,
-            }).to_string()),
-            summary: None,
-            total_messages: 0,
-            total_tokens: 0,
-            cost: 0.0,
-            tags: Some(serde_json::to_string(&vec!["subagent"]).unwrap_or_default()),
-            tool_config: None,
-            is_archived: false,
-            created_at: now,
-            updated_at: now,
-        };
-        
-        if let Err(e) = db.create_ai_conversation(&conversation).await {
-            tracing::warn!("Failed to create subagent conversation record: {}", e);
-            // Don't fail the subagent execution, just log the warning
-        } else {
-            tracing::debug!("Created subagent conversation: {}", execution_id);
+        .map(|s| s.inner().clone())
+    {
+        if let Err(e) = db.create_subagent_run_internal(run).await {
+            tracing::warn!("Failed to create subagent run record: {}", e);
         }
     }
-    
-    Ok(())
 }
 
-/// Delete the temporary conversation record after subagent completes
-async fn cleanup_subagent_conversation(app_handle: &tauri::AppHandle, execution_id: &str) {
-    let db = app_handle
+async fn update_subagent_run_result(
+    app_handle: &tauri::AppHandle,
+    id: &str,
+    status: &str,
+    output: Option<&str>,
+    error: Option<&str>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+) {
+    if let Some(db) = app_handle
         .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
-        .map(|s| s.inner().clone());
-    
-    if let Some(db) = db {
-        // Delete messages first (due to FK constraint)
-        if let Err(e) = db.delete_ai_messages_by_conversation(execution_id).await {
-            tracing::warn!("Failed to delete subagent messages: {}", e);
+        .map(|s| s.inner().clone())
+    {
+        if let Err(e) = db
+            .update_subagent_run_result_internal(id, status, output, error, completed_at)
+            .await
+        {
+            tracing::warn!("Failed to update subagent run record: {}", e);
         }
-        // Then delete conversation
-        if let Err(e) = db.delete_ai_conversation(execution_id).await {
-            tracing::warn!("Failed to delete subagent conversation: {}", e);
-        } else {
-            tracing::debug!("Cleaned up subagent conversation: {}", execution_id);
+    }
+}
+
+async fn create_subagent_message(
+    app_handle: &tauri::AppHandle,
+    subagent_run_id: &str,
+    role: &str,
+    content: &str,
+) {
+    if content.trim().is_empty() {
+        return;
+    }
+    if let Some(db) = app_handle
+        .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+        .map(|s| s.inner().clone())
+    {
+        let msg = SubagentMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            subagent_run_id: subagent_run_id.to_string(),
+            role: role.to_string(),
+            content: content.to_string(),
+            metadata: None,
+            tool_calls: None,
+            attachments: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+            structured_data: None,
+        };
+        if let Err(e) = db.create_subagent_message_internal(&msg).await {
+            tracing::warn!("Failed to create subagent message: {}", e);
         }
     }
 }
@@ -248,6 +247,7 @@ async fn cleanup_subagent_conversation(app_handle: &tauri::AppHandle, execution_
 async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, SubagentToolError> {
     let app_handle = get_app_handle()?;
     let parent = get_parent_context(&args.parent_execution_id).await?;
+    let task_with_context = build_subagent_task(&parent.task_context, &args.task);
     
     if !args.inherit_parent_llm {
         return Err(SubagentToolError::InvalidArguments(
@@ -275,13 +275,39 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
         task_id: task_id.clone(),
         parent_execution_id: args.parent_execution_id.clone(),
         role: args.role.clone(),
-        task: args.task.clone(),
+        task: task_with_context.clone(),
         status: SubagentStatus::Pending,
         output: None,
         error: None,
         started_at: now,
         completed_at: None,
     };
+
+    let now_dt = chrono::Utc::now();
+    let run_record = SubagentRun {
+        id: task_id.clone(),
+        parent_execution_id: args.parent_execution_id.clone(),
+        role: args.role.clone(),
+        task: task_with_context.clone(),
+        status: "running".to_string(),
+        output: None,
+        error: None,
+        model_name: Some(parent.model.clone()),
+        model_provider: Some(parent.rig_provider.clone()),
+        started_at: now_dt,
+        completed_at: None,
+        created_at: now_dt,
+        updated_at: now_dt,
+    };
+    create_subagent_run(&app_handle, &run_record).await;
+
+    create_subagent_message(
+        &app_handle,
+        &task_id,
+        "user",
+        &task_with_context,
+    )
+    .await;
     
     // Register task
     {
@@ -299,7 +325,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
         "execution_id": task_id,
         "parent_execution_id": args.parent_execution_id,
         "role": args.role,
-        "task": args.task,
+        "task": task_with_context,
         "mode": "async",
     }));
     
@@ -308,27 +334,12 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
     let app_clone = app_handle.clone();
     
     // Clone values needed for the spawned task
-    let parent_model = parent.model.clone();
-    let parent_rig_provider = parent.rig_provider.clone();
-    let args_role = args.role.clone();
-    let args_task = args.task.clone();
-    let args_parent_id = args.parent_execution_id.clone();
+    let args_task = task_with_context.clone();
     
     tokio::spawn(async move {
         // Keep permits alive until task completes
         let _global = global_permit;
         let _parent = parent_permit;
-        
-        // Create temporary conversation record for FK constraint
-        let _ = create_subagent_conversation(
-            &app_clone,
-            &task_id_clone,
-            &args_parent_id,
-            args_role.as_deref(),
-            &args_task,
-            &parent_model,
-            &parent_rig_provider,
-        ).await;
         
         // Update status to running
         {
@@ -361,7 +372,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
             execution_id: task_id_clone.clone(),
             model: parent.model,
             system_prompt,
-            task: args.task,
+            task: args_task,
             rig_provider: parent.rig_provider,
             api_key: parent.api_key,
             api_base: parent.api_base,
@@ -372,6 +383,8 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
             tenth_man_config: None,
             document_attachments: None,
             image_attachments: None,
+            persist_messages: false,
+            subagent_run_id: Some(task_id_clone.clone()),
         };
         
         // Execute agent
@@ -381,6 +394,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
         // Update task registry and notify waiters
         let completion = match result {
             Ok(output) => {
+                let completed_at = chrono::Utc::now();
                 let _ = app_clone.emit("subagent:done", &json!({
                     "task_id": task_id_clone,
                     "execution_id": task_id_clone,
@@ -388,6 +402,16 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
                     "success": true,
                     "output": output,
                 }));
+
+                update_subagent_run_result(
+                    &app_clone,
+                    &task_id_clone,
+                    "completed",
+                    Some(&output),
+                    None,
+                    Some(completed_at),
+                )
+                .await;
                 
                 TaskCompletion {
                     success: true,
@@ -397,12 +421,23 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
             }
             Err(e) => {
                 let error = e.to_string();
+                let completed_at = chrono::Utc::now();
                 let _ = app_clone.emit("subagent:error", &json!({
                     "task_id": task_id_clone,
                     "execution_id": task_id_clone,
                     "parent_execution_id": args.parent_execution_id,
                     "error": error,
                 }));
+
+                update_subagent_run_result(
+                    &app_clone,
+                    &task_id_clone,
+                    "failed",
+                    None,
+                    Some(&error),
+                    Some(completed_at),
+                )
+                .await;
                 
                 TaskCompletion {
                     success: false,
@@ -554,6 +589,7 @@ async fn execute_wait(args: SubagentWaitArgs) -> Result<SubagentWaitOutput, Suba
 async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, SubagentToolError> {
     let app_handle = get_app_handle()?;
     let parent = get_parent_context(&args.parent_execution_id).await?;
+    let task_with_context = build_subagent_task(&parent.task_context, &args.task);
     
     if !args.inherit_parent_llm {
         return Err(SubagentToolError::InvalidArguments(
@@ -577,16 +613,31 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
     let max_iterations = args.max_iterations.unwrap_or(6);
     let timeout_secs = args.timeout_secs.unwrap_or(parent.timeout_secs);
     
-    // Create temporary conversation record for FK constraint
-    let _ = create_subagent_conversation(
+    let now_dt = chrono::Utc::now();
+    let run_record = SubagentRun {
+        id: execution_id.clone(),
+        parent_execution_id: args.parent_execution_id.clone(),
+        role: args.role.clone(),
+        task: task_with_context.clone(),
+        status: "running".to_string(),
+        output: None,
+        error: None,
+        model_name: Some(parent.model.clone()),
+        model_provider: Some(parent.rig_provider.clone()),
+        started_at: now_dt,
+        completed_at: None,
+        created_at: now_dt,
+        updated_at: now_dt,
+    };
+    create_subagent_run(app_handle, &run_record).await;
+
+    create_subagent_message(
         app_handle,
         &execution_id,
-        &args.parent_execution_id,
-        args.role.as_deref(),
-        &args.task,
-        &parent.model,
-        &parent.rig_provider,
-    ).await;
+        "user",
+        &task_with_context,
+    )
+    .await;
     
     // Emit start event
     let _ = app_handle.emit("subagent:start", &json!({
@@ -594,7 +645,7 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
         "execution_id": execution_id,
         "parent_execution_id": args.parent_execution_id,
         "role": args.role,
-        "task": args.task,
+        "task": task_with_context,
         "mode": "sync",
     }));
     
@@ -602,7 +653,7 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
         execution_id: execution_id.clone(),
         model: parent.model,
         system_prompt,
-        task: args.task.clone(),
+        task: task_with_context,
         rig_provider: parent.rig_provider,
         api_key: parent.api_key,
         api_base: parent.api_base,
@@ -613,10 +664,13 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
         tenth_man_config: None,
         document_attachments: None,
         image_attachments: None,
+        persist_messages: false,
+        subagent_run_id: Some(execution_id.clone()),
     };
     
     match execute_agent(app_handle, params).await {
         Ok(response) => {
+            let completed_at = chrono::Utc::now();
             let _ = app_handle.emit("subagent:done", &json!({
                 "task_id": execution_id,
                 "execution_id": execution_id,
@@ -624,6 +678,15 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
                 "success": true,
                 "output": response,
             }));
+            update_subagent_run_result(
+                app_handle,
+                &execution_id,
+                "completed",
+                Some(&response),
+                None,
+                Some(completed_at),
+            )
+            .await;
             Ok(SubagentRunOutput {
                 success: true,
                 execution_id,
@@ -633,12 +696,22 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
         }
         Err(e) => {
             let error = e.to_string();
+            let completed_at = chrono::Utc::now();
             let _ = app_handle.emit("subagent:error", &json!({
                 "task_id": execution_id,
                 "execution_id": execution_id,
                 "parent_execution_id": args.parent_execution_id,
                 "error": error,
             }));
+            update_subagent_run_result(
+                app_handle,
+                &execution_id,
+                "failed",
+                None,
+                Some(&error),
+                Some(completed_at),
+            )
+            .await;
             Err(SubagentToolError::ExecutionFailed(error))
         }
     }

@@ -10,7 +10,7 @@
         >
           {{ $t('tools.shell.reject') }}
         </button>
-        <button 
+        <button   
           @click="handleAlwaysAccept" 
           class="btn btn-sm btn-ghost text-[#a0a0a0] hover:text-white"
           :title="$t('tools.shell.alwaysAcceptHint')"
@@ -81,14 +81,6 @@
     <!-- Status Footer -->
     <div v-if="isCompleted" class="status-footer flex items-center justify-between px-3 py-1.5 bg-[#252526] border-t border-[#404040] text-xs">
       <div class="flex items-center gap-2">
-        <span v-if="success" class="text-success flex items-center gap-1">
-          <i class="fas fa-check-circle"></i>
-          {{ $t('tools.shell.success') }}
-        </span>
-        <span v-else class="text-error flex items-center gap-1">
-          <i class="fas fa-times-circle"></i>
-          {{ $t('tools.shell.failed') }}
-        </span>
         <span v-if="exitCode !== null" class="text-[#808080]">
           (exit {{ exitCode }})
         </span>

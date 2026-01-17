@@ -52,7 +52,7 @@ pub struct ShellOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
-    pub success: bool,
+    pub completed: bool,
     pub execution_time_ms: u64,
     /// Indicates if output was stored to file
     #[serde(default)]
@@ -220,6 +220,52 @@ pub async fn get_shell_config() -> ShellConfig {
 pub async fn set_shell_config(config: ShellConfig) {
     let mut c = SHELL_CONFIG.write().await;
     *c = config;
+}
+
+/// Check command permission using current shell config
+pub async fn check_shell_permission(command: &str) -> Result<(), ShellError> {
+    let config = SHELL_CONFIG.read().await;
+    check_shell_permission_with_config(command, &config).await
+}
+
+async fn check_shell_permission_with_config(command: &str, config: &ShellConfig) -> Result<(), ShellError> {
+    // Check if command is in deny list (always deny these)
+    if config.is_denied(command) {
+        return Err(ShellError::PermissionDenied(format!(
+            "Command denied by policy: {}",
+            command
+        )));
+    }
+
+    // Check if command is auto-allowed
+    if config.is_allowed(command) {
+        return Ok(());
+    }
+
+    // Check if needs confirmation based on policy
+    if config.needs_confirmation(command) {
+        return ask_permission(command).await;
+    }
+
+    Ok(())
+}
+
+async fn ask_permission(command: &str) -> Result<(), ShellError> {
+    let handler_guard = PERMISSION_HANDLER.read().await;
+    if let Some(handler) = &*handler_guard {
+        if handler.check_permission(command).await {
+            Ok(())
+        } else {
+            Err(ShellError::PermissionDenied(
+                "User rejected execution".to_string(),
+            ))
+        }
+    } else {
+        // If no handler is registered, deny by default for safety
+        Err(ShellError::PermissionDenied(
+            "No permission handler registered to ask user".to_string(),
+        ))
+    }
 }
 
 /// Shell command tool
@@ -413,38 +459,7 @@ impl ShellTool {
 
     /// Validate command permissions
     async fn check_permission(&self, cmd: &str) -> Result<(), ShellError> {
-        let config = SHELL_CONFIG.read().await;
-        
-        // Check if command is in deny list (always deny these)
-        if config.is_denied(cmd) {
-            return Err(ShellError::PermissionDenied(format!("Command denied by policy: {}", cmd)));
-        }
-        
-        // Check if command is auto-allowed
-        if config.is_allowed(cmd) {
-            return Ok(());
-        }
-        
-        // Check if needs confirmation based on policy
-        if config.needs_confirmation(cmd) {
-            return self.ask_permission(cmd).await;
-        }
-        
-        Ok(())
-    }
-
-    async fn ask_permission(&self, cmd: &str) -> Result<(), ShellError> {
-        let handler_guard = PERMISSION_HANDLER.read().await;
-        if let Some(handler) = &*handler_guard {
-            if handler.check_permission(cmd).await {
-                Ok(())
-            } else {
-                Err(ShellError::PermissionDenied("User rejected execution".to_string()))
-            }
-        } else {
-            // If no handler is registered, deny by default for safety
-            Err(ShellError::PermissionDenied("No permission handler registered to ask user".to_string()))
-        }
+        check_shell_permission(cmd).await
     }
 }
 
@@ -465,9 +480,6 @@ impl Tool for ShellTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
-
-        // Validate command permission
-        self.check_permission(&args.command).await?;
 
         // Determine execution mode
         let config = SHELL_CONFIG.read().await;
@@ -550,6 +562,9 @@ impl Tool for ShellTool {
                         // Docker execution failed, fallback to host
                         tracing::warn!("Docker execution failed ({}), falling back to host execution", e);
                         tracing::warn!("Executing command on host machine: {}", args.command);
+
+                        // Host execution requires permission check
+                        self.check_permission(&args.command).await?;
                         
                         let (stdout, stderr, exit_code) = self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?;
                         
@@ -603,6 +618,7 @@ impl Tool for ShellTool {
             }
             ShellExecutionMode::Host => {
                 tracing::warn!("Executing command on host machine: {}", args.command);
+                self.check_permission(&args.command).await?;
                 let (stdout, stderr, exit_code) = self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?;
                 
                 // For host execution, also use container storage for large outputs (unified management)
@@ -655,7 +671,6 @@ impl Tool for ShellTool {
             }
         };
 
-        let success = exit_code == 0;
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(ShellOutput {
@@ -663,7 +678,7 @@ impl Tool for ShellTool {
             stdout,
             stderr,
             exit_code: Some(exit_code),
-            success,
+            completed: true,
             execution_time_ms,
             output_stored,
         })

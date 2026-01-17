@@ -221,6 +221,13 @@
         <button @click="clearError" class="error-close bg-transparent border-none text-error cursor-pointer text-xl leading-none px-1 hover:text-base-content">×</button>
       </div>
     </div>
+
+    <!-- Subagent Detail Modal -->
+    <SubagentDetailModal
+      :visible="showSubagentDetailModal"
+      :subagent="selectedSubagent"
+      @close="showSubagentDetailModal = false"
+    />
   </div>
 </template>
 
@@ -239,6 +246,7 @@ import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
 import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
+import SubagentDetailModal from './SubagentDetailModal.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -297,8 +305,24 @@ const pendingAttachments = ref<any[]>([])
 const pendingDocuments = ref<import('@/types/agent').PendingDocumentAttachment[]>([])
 const processedDocuments = ref<import('@/types/agent').ProcessedDocumentResult[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
-const isSubagentPanelOpen = ref(true)
+const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
+
+// Subagent detail modal
+const showSubagentDetailModal = ref(false)
+const selectedSubagent = ref<{
+  id: string
+  role?: string
+  status: 'running' | 'queued' | 'completed' | 'failed'
+  progress?: number
+  tools?: string[]
+  parentId: string
+  summary?: string
+  task?: string
+  error?: string
+  startedAt?: number
+  duration?: number
+} | null>(null)
 
 // Tool configuration
 const toolConfig = ref({
@@ -653,15 +677,14 @@ const handleClearConversation = async () => {
   }
 }
 
-// Handle view subagent details - open in new conversation tab
+// Handle view subagent details - open modal to show details
 const handleViewSubagentDetails = (subagentId: string) => {
   console.log('[AgentView] View subagent details:', subagentId)
-  // Navigate to the subagent's conversation
-  // The subagent has its own conversation record with the same ID as execution_id
-  router.push({
-    path: '/ai-assistant',
-    query: { conversation: subagentId }
-  })
+  const subagent = subagents.value.find(s => s.id === subagentId)
+  if (subagent) {
+    selectedSubagent.value = subagent
+    showSubagentDetailModal.value = true
+  }
 }
 
 // Handle stop

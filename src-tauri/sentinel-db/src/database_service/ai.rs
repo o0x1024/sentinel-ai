@@ -1,11 +1,129 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use crate::core::models::ai::AiRole;
-use crate::core::models::database::{AiConversation, AiMessage};
+use crate::core::models::database::{AiConversation, AiMessage, SubagentMessage, SubagentRun};
 use crate::database_service::service::DatabaseService;
 use sqlx::Row;
 
 impl DatabaseService {
+    pub async fn create_subagent_message_internal(&self, message: &SubagentMessage) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO ai_subagent_messages (
+                id, subagent_run_id, role, content, metadata, tool_calls, attachments,
+                reasoning_content, timestamp, structured_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&message.id)
+        .bind(&message.subagent_run_id)
+        .bind(&message.role)
+        .bind(&message.content)
+        .bind(&message.metadata)
+        .bind(&message.tool_calls)
+        .bind(&message.attachments)
+        .bind(&message.reasoning_content)
+        .bind(message.timestamp)
+        .bind(&message.structured_data)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_subagent_messages_by_run_internal(
+        &self,
+        subagent_run_id: &str,
+    ) -> Result<Vec<SubagentMessage>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query_as::<_, SubagentMessage>(
+            "SELECT * FROM ai_subagent_messages WHERE subagent_run_id = ? ORDER BY timestamp ASC",
+        )
+        .bind(subagent_run_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn create_subagent_run_internal(&self, run: &SubagentRun) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO ai_subagent_runs (
+                id, parent_execution_id, role, task, status, output, error,
+                model_name, model_provider, started_at, completed_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&run.id)
+        .bind(&run.parent_execution_id)
+        .bind(&run.role)
+        .bind(&run.task)
+        .bind(&run.status)
+        .bind(&run.output)
+        .bind(&run.error)
+        .bind(&run.model_name)
+        .bind(&run.model_provider)
+        .bind(run.started_at)
+        .bind(run.completed_at)
+        .bind(run.created_at)
+        .bind(run.updated_at)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn update_subagent_run_result_internal(
+        &self,
+        id: &str,
+        status: &str,
+        output: Option<&str>,
+        error: Option<&str>,
+        completed_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        sqlx::query(
+            r#"
+            UPDATE ai_subagent_runs
+            SET status = ?, output = ?, error = ?, completed_at = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(status)
+        .bind(output)
+        .bind(error)
+        .bind(completed_at)
+        .bind(Utc::now())
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_subagent_runs_by_parent_internal(
+        &self,
+        parent_execution_id: &str,
+    ) -> Result<Vec<SubagentRun>> {
+        let pool = self.get_pool()?;
+
+        let rows = sqlx::query_as::<_, SubagentRun>(
+            "SELECT * FROM ai_subagent_runs WHERE parent_execution_id = ? ORDER BY started_at DESC",
+        )
+        .bind(parent_execution_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
     pub async fn create_ai_conversation_internal(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
 
@@ -68,7 +186,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query_as::<_, AiConversation>(
-            "SELECT * FROM ai_conversations ORDER BY updated_at DESC",
+            "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC",
         )
         .fetch_all(pool)
         .await?;
@@ -84,7 +202,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query_as::<_, AiConversation>(
-            "SELECT * FROM ai_conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent') ORDER BY updated_at DESC LIMIT ? OFFSET ?",
         )
         .bind(limit)
         .bind(offset)
@@ -97,7 +215,9 @@ impl DatabaseService {
     pub async fn get_ai_conversations_count_internal(&self) -> Result<i64> {
         let pool = self.get_pool()?;
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ai_conversations")
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM ai_conversations WHERE service_name != 'subagent' AND (context_type IS NULL OR context_type != 'subagent')"
+        )
             .fetch_one(pool)
             .await?;
 

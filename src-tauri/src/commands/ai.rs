@@ -1,7 +1,7 @@
 use sentinel_db::Database;
 use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
 use crate::commands::tool_commands;
-use crate::models::database::{AiConversation, AiMessage};
+use crate::models::database::{AiConversation, AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
 use crate::utils::ordered_message::ChunkType;
@@ -1484,6 +1484,28 @@ pub async fn get_ai_messages_by_conversation(
         })
 }
 
+#[tauri::command]
+pub async fn get_subagent_runs(
+    parent_execution_id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<SubagentRun>, String> {
+    db_service
+        .get_subagent_runs_by_parent_internal(&parent_execution_id)
+        .await
+        .map_err(|e| format!("Failed to get subagent runs for {}: {}", parent_execution_id, e))
+}
+
+#[tauri::command]
+pub async fn get_subagent_messages(
+    subagent_run_id: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<SubagentMessage>, String> {
+    db_service
+        .get_subagent_messages_by_run_internal(&subagent_run_id)
+        .await
+        .map_err(|e| format!("Failed to get subagent messages for {}: {}", subagent_run_id, e))
+}
+
 // 清空会话的所有消息
 #[tauri::command]
 pub async fn clear_conversation_messages(
@@ -2328,6 +2350,8 @@ pub async fn agent_execute(
                     tenth_man_config: config.tenth_man_config.clone(),
                     document_attachments: doc_attachments,
                     image_attachments: attachments.clone(),
+                    persist_messages: true,
+                    subagent_run_id: None,
                 };
 
                 // 调用工具支持的代理执行器

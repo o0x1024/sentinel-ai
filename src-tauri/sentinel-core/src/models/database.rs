@@ -356,6 +356,39 @@ impl AiConversation {
     }
 }
 
+/// 子代理会话记录（关联主会话）
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SubagentRun {
+    pub id: String,
+    pub parent_execution_id: String,
+    pub role: Option<String>,
+    pub task: String,
+    pub status: String,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub model_name: Option<String>,
+    pub model_provider: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 子代理会话消息（关联子代理执行记录）
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SubagentMessage {
+    pub id: String,
+    pub subagent_run_id: String,
+    pub role: String,
+    pub content: String,
+    pub metadata: Option<String>,
+    pub tool_calls: Option<String>,
+    pub attachments: Option<String>,
+    pub reasoning_content: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub structured_data: Option<String>,
+}
+
 /// AI消息
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AiMessage {

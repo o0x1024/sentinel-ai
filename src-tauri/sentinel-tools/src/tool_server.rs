@@ -642,6 +642,7 @@ impl ToolServer {
             }))
             .source(ToolSource::Builtin)
             .executor(|args| async move {
+                use crate::buildin_tools::shell::check_shell_permission;
                 use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig, WaitStrategy, normalize_command, detect_shell_prompt};
                 use tokio::sync::mpsc;
                 use tokio::time::{timeout, Duration};
@@ -715,7 +716,7 @@ impl ToolServer {
                     None
                 };
 
-                let (session_id, mut output_rx) = if let Some(session_lock) = active_session {
+                let (session_id, mut output_rx, session_use_docker) = if let Some(session_lock) = active_session {
                     let id = {
                         let session = session_lock.read().await;
                         session.id.clone()
@@ -726,10 +727,10 @@ impl ToolServer {
                     let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
                     {
                         let session = session_lock.read().await;
+                        let use_docker = session.config.use_docker;
                         session.add_subscriber_no_history(tx).await;
+                        (id, rx, use_docker)
                     }
-                    
-                    (id, rx)
                 } else {
                     // 2. Create a new persistent session if none exists
                     let config = TerminalSessionConfig {
@@ -745,14 +746,14 @@ impl ToolServer {
                     
                     let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;
                     info!("Created new persistent terminal session: {}", id);
-                    (id, rx)
+                    (id, rx, use_docker)
                 };
 
                 // If no command, just return session info
                 let Some(original_cmd) = command else {
                     return Ok(serde_json::json!({
-                        "success": true,
                         "session_id": session_id,
+                        "completed": false,
                         "message": "Connected to terminal session",
                         "instructions": "Use the Terminal panel to interact"
                     }));
@@ -769,13 +770,20 @@ impl ToolServer {
                     info!("Command normalized: '{}' -> '{}'", original_cmd, cmd);
                 }
 
-                // 4. Execute the command in the session
+                // 4. Permission check for host execution only
+                if !session_use_docker {
+                    check_shell_permission(&cmd)
+                        .await
+                        .map_err(|e| format!("Permission denied: {}", e))?;
+                }
+
+                // 5. Execute the command in the session
                 let cmd_with_newline = format!("{}\n", cmd);
                 if let Err(e) = TERMINAL_MANAGER.write_to_session(&session_id, cmd_with_newline.into_bytes()).await {
                     return Err(format!("Failed to execute command: {}", e));
                 }
                 
-                // 5. Collect output with smart waiting strategy
+                // 6. Collect output with smart waiting strategy
                 let mut output = Vec::new();
                 let collect_timeout = Duration::from_secs(wait_timeout_secs);
                 let start = tokio::time::Instant::now();
@@ -854,7 +862,6 @@ impl ToolServer {
                 
                 // Build result with status info
                 let mut result = serde_json::json!({
-                    "success": true,
                     "session_id": session_id,
                     "command": cmd,
                     "output": clean_output,

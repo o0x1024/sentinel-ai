@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use sentinel_db::Database;
-use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient, parse_image_from_json};
+use sentinel_llm::{ChatMessage, LlmConfig, StreamContent, StreamingLlmClient, parse_image_from_json};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::{get_tool_server, mcp_adapter, ToolServer};
 use serde_json::json;
@@ -44,6 +44,8 @@ pub struct AgentExecuteParams {
     pub tenth_man_config: Option<TenthManConfig>,
     pub document_attachments: Option<Vec<DocumentAttachmentInfo>>,
     pub image_attachments: Option<serde_json::Value>,
+    pub persist_messages: bool,
+    pub subagent_run_id: Option<String>,
 }
 
 /// 执行 agent 任务
@@ -76,6 +78,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         tool_config: params.tool_config.clone().unwrap_or_default(),
         max_iterations: params.max_iterations,
         timeout_secs: params.timeout_secs,
+        task_context: params.task.clone(),
     };
     super::subagent_executor::set_parent_context(execution_id.clone(), parent_context).await;
 
@@ -363,7 +366,16 @@ async fn execute_agent_simple(
             );
 
             // 保存助手消息到数据库（无工具调用）
-            save_assistant_message(app_handle, &params.execution_id, &response, None, None).await;
+            save_assistant_message(
+                app_handle,
+                &params.execution_id,
+                &response,
+                None,
+                None,
+                params.persist_messages,
+                params.subagent_run_id.as_deref(),
+            )
+            .await;
 
             // Legacy memory recording removed. Agent now consciously stores memories via tools.
 
@@ -390,12 +402,28 @@ async fn execute_agent_simple(
 
 /// 保存助手消息到数据库并发送事件
 async fn save_assistant_message(
-    app_handle: &AppHandle, 
-    conversation_id: &str, 
+    app_handle: &AppHandle,
+    conversation_id: &str,
     content: &str,
     tool_calls: Option<&[ToolCallRecord]>,
     reasoning_content: Option<String>,
+    persist_messages: bool,
+    subagent_run_id: Option<&str>,
 ) {
+    if !persist_messages {
+        if let Some(run_id) = subagent_run_id {
+            save_subagent_message(
+                app_handle,
+                run_id,
+                "assistant",
+                content,
+                tool_calls,
+                reasoning_content,
+            )
+            .await;
+        }
+        return;
+    }
     if content.trim().is_empty() && tool_calls.is_none_or(|tc| tc.is_empty()) {
         return;
     }
@@ -446,6 +474,39 @@ async fn save_assistant_message(
                     "tool_calls": tool_calls,
                 }),
             );
+        }
+    }
+}
+
+async fn save_subagent_message(
+    app_handle: &AppHandle,
+    subagent_run_id: &str,
+    role: &str,
+    content: &str,
+    tool_calls: Option<&[ToolCallRecord]>,
+    reasoning_content: Option<String>,
+) {
+    if content.trim().is_empty() && tool_calls.is_none_or(|tc| tc.is_empty()) {
+        return;
+    }
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        use sentinel_core::models::database as core_db;
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let tool_calls_json = tool_calls.map(|tc| serde_json::to_string(tc).unwrap_or_default());
+        let msg = core_db::SubagentMessage {
+            id: message_id,
+            subagent_run_id: subagent_run_id.to_string(),
+            role: role.to_string(),
+            content: content.to_string(),
+            metadata: None,
+            tool_calls: tool_calls_json,
+            attachments: None,
+            reasoning_content,
+            timestamp: chrono::Utc::now(),
+            structured_data: None,
+        };
+        if let Err(e) = db.create_subagent_message_internal(&msg).await {
+            tracing::warn!("Failed to save subagent message: {}", e);
         }
     }
 }
@@ -598,6 +659,9 @@ async fn execute_agent_with_tools(
         }
     }
 
+    // Inject task mainline summary (deduplicated)
+    final_system_prompt = inject_task_mainline_summary(final_system_prompt, &params.task);
+
     // 5. 使用 SlidingWindowManager 管理上下文和历史
     let max_context_length = get_provider_max_context_length(app_handle, &rig_provider).await.unwrap_or(128000) as usize;
     
@@ -697,6 +761,65 @@ async fn execute_agent_with_tools(
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     // 累积的助手输出（跨重试保留）
     let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let base_history_messages = history_chat_messages.clone();
+    let build_retry_history = |attempt: u32| -> Vec<ChatMessage> {
+        let mut history = base_history_messages.clone();
+        if attempt == 0 {
+            return history;
+        }
+
+        let tool_calls_snapshot = accumulated_tool_calls
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default();
+        let output_snapshot = accumulated_assistant_output
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+
+        let mut unique_calls = std::collections::HashMap::new();
+        for call in tool_calls_snapshot {
+            unique_calls.entry(call.id.clone()).or_insert(call);
+        }
+        let mut ordered_calls = unique_calls.into_values().collect::<Vec<_>>();
+        ordered_calls.sort_by_key(|c| c.sequence);
+
+        if !ordered_calls.is_empty() {
+            let tool_calls_json = serde_json::to_string(
+                &ordered_calls
+                    .iter()
+                    .map(|c| {
+                        json!({
+                            "id": c.id,
+                            "type": "function",
+                            "function": {
+                                "name": c.name,
+                                "arguments": c.arguments,
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_default();
+
+            let mut tool_calls_msg = ChatMessage::assistant("");
+            tool_calls_msg.tool_calls = Some(tool_calls_json);
+            tool_calls_msg.reasoning_content = Some(String::new());
+            history.push(tool_calls_msg);
+
+            for call in ordered_calls.iter() {
+                if let Some(result) = &call.result {
+                    history.push(ChatMessage::tool(result.clone(), call.id.clone()));
+                }
+            }
+        }
+
+        if !output_snapshot.trim().is_empty() {
+            history.push(ChatMessage::assistant(output_snapshot));
+        }
+
+        history
+    };
 
     while retries <= max_retries {
         if retries > 0 {
@@ -747,11 +870,12 @@ async fn execute_agent_with_tools(
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         }
 
+        let history_for_retry = build_retry_history(retries);
         let result = client
             .stream_chat_with_dynamic_tools(
                 final_system_prompt_content.as_deref(),
                 &params.task,
-                &history_chat_messages,
+                &history_for_retry,
                 image_attachment.as_ref(), // 传递图片附件
                 dynamic_tools.clone(),
                 |content| {
@@ -1351,44 +1475,46 @@ async fn execute_agent_with_tools(
                             Ok(critique) => {
                                 tracing::info!("Tenth Man Critique generated ({} chars)", critique.len());
                                 
-                                if let Some(db) = db_for_stream.clone() {
-                                    use sentinel_core::models::database as core_db;
-                                    let review_msg = core_db::AiMessage {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        conversation_id: params.execution_id.clone(),
-                                        role: "system".to_string(), 
-                                        content: critique.clone(),
-                                        metadata: Some(json!({
-                                            "kind": "tenth_man_critique",
-                                            "trigger": "final_review",
-                                            "mode": "system_enforced"
-                                        }).to_string()),
-                                        token_count: Some(critique.len() as i32),
-                                        cost: None,
-                                        tool_calls: None,
-                                        attachments: None,
-                                        reasoning_content: None,
-                                        timestamp: chrono::Utc::now(),
-                                        architecture_type: None,
-                                        architecture_meta: None,
-                                        structured_data: None,
-                                    };
-                                    
-                                    if let Err(e) = db.create_ai_message(&review_msg).await {
-                                        tracing::warn!("Failed to save Tenth Man critique: {}", e);
+                                if params.persist_messages {
+                                    if let Some(db) = db_for_stream.clone() {
+                                        use sentinel_core::models::database as core_db;
+                                        let review_msg = core_db::AiMessage {
+                                            id: uuid::Uuid::new_v4().to_string(),
+                                            conversation_id: params.execution_id.clone(),
+                                            role: "system".to_string(),
+                                            content: critique.clone(),
+                                            metadata: Some(json!({
+                                                "kind": "tenth_man_critique",
+                                                "trigger": "final_review",
+                                                "mode": "system_enforced"
+                                            }).to_string()),
+                                            token_count: Some(critique.len() as i32),
+                                            cost: None,
+                                            tool_calls: None,
+                                            attachments: None,
+                                            reasoning_content: None,
+                                            timestamp: chrono::Utc::now(),
+                                            architecture_type: None,
+                                            architecture_meta: None,
+                                            structured_data: None,
+                                        };
+                                        
+                                        if let Err(e) = db.create_ai_message(&review_msg).await {
+                                            tracing::warn!("Failed to save Tenth Man critique: {}", e);
+                                        }
+                                        
+                                        // Emit event to frontend
+                                        let _ = app.emit(
+                                            "agent:tenth_man_critique",
+                                            &json!({
+                                                "execution_id": params.execution_id,
+                                                "critique": critique,
+                                                "message_id": review_msg.id,
+                                                "trigger": "final_review",
+                                                "mode": "system_enforced"
+                                            })
+                                        );
                                     }
-                                    
-                                    // Emit event to frontend
-                                    let _ = app.emit(
-                                        "agent:tenth_man_critique", 
-                                        &json!({
-                                            "execution_id": params.execution_id,
-                                            "critique": critique,
-                                            "message_id": review_msg.id,
-                                            "trigger": "final_review",
-                                            "mode": "system_enforced"
-                                        })
-                                    );
                                 }
                             }
                             Err(e) => {
@@ -1677,6 +1803,23 @@ fn build_tools_description_from_definitions(
     }
 
     descriptions.join("\n\n")
+}
+
+fn inject_task_mainline_summary(mut system_prompt: String, task: &str) -> String {
+    if system_prompt.contains("[TaskMainlineSummary]") || system_prompt.contains("任务主线摘要") {
+        return system_prompt;
+    }
+
+    let task_trimmed = task.trim();
+    if task_trimmed.is_empty() {
+        return system_prompt;
+    }
+
+    system_prompt.push_str(&format!(
+        "\n\n[TaskMainlineSummary]\n任务主线摘要:\n- 当前任务: {}\n- 约束: 只围绕当前任务推进，避免无关操作。",
+        task_trimmed
+    ));
+    system_prompt
 }
 
 /// 执行内置工具（兼容旧代码）

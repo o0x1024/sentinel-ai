@@ -139,6 +139,82 @@ impl TaskToolIntegrationMigration {
     }
 }
 
+/// Database migration for subagent runs table
+pub struct SubagentRunsMigration;
+
+impl SubagentRunsMigration {
+    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+        info!("Applying subagent runs migration...");
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS ai_subagent_runs (
+                id TEXT PRIMARY KEY,
+                parent_execution_id TEXT NOT NULL,
+                role TEXT,
+                task TEXT NOT NULL,
+                status TEXT NOT NULL,
+                output TEXT,
+                error TEXT,
+                model_name TEXT,
+                model_provider TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"#
+        ).execute(pool).await?;
+
+        let indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON ai_subagent_runs(parent_execution_id)",
+            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_status ON ai_subagent_runs(status)",
+            "CREATE INDEX IF NOT EXISTS idx_subagent_runs_updated ON ai_subagent_runs(updated_at DESC)",
+        ];
+
+        for index_sql in indices {
+            sqlx::query(index_sql).execute(pool).await?;
+        }
+
+        info!("Subagent runs migration completed successfully");
+        Ok(())
+    }
+}
+
+/// Database migration for subagent messages table
+pub struct SubagentMessagesMigration;
+
+impl SubagentMessagesMigration {
+    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+        info!("Applying subagent messages migration...");
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS ai_subagent_messages (
+                id TEXT PRIMARY KEY,
+                subagent_run_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                metadata TEXT,
+                tool_calls TEXT,
+                attachments TEXT,
+                reasoning_content TEXT,
+                timestamp TEXT NOT NULL,
+                structured_data TEXT
+            )"#
+        ).execute(pool).await?;
+
+        let indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_subagent_messages_run ON ai_subagent_messages(subagent_run_id)",
+            "CREATE INDEX IF NOT EXISTS idx_subagent_messages_time ON ai_subagent_messages(timestamp DESC)",
+        ];
+
+        for index_sql in indices {
+            sqlx::query(index_sql).execute(pool).await?;
+        }
+
+        info!("Subagent messages migration completed successfully");
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -546,6 +546,8 @@ pub fn run() {
             ai::get_ai_conversations_paginated,
             ai::get_ai_conversations_count,
             ai::get_ai_messages_by_conversation,
+            ai::get_subagent_runs,
+            ai::get_subagent_messages,
             ai::clear_conversation_messages,
             ai::save_tool_config,
             ai::get_tool_config,

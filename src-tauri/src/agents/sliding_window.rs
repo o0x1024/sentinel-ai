@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -457,14 +457,25 @@ impl SlidingWindowManager {
     async fn generate_summary(&self, messages: &[ChatMessage], llm_config: &LlmConfig) -> Result<String> {
         let mut content = String::new();
         for msg in messages {
-            content.push_str(&format!("{}: {}\n", msg.role, msg.content));
+            let mut msg_content = msg.content.clone();
+            if msg.role == "tool" {
+                if let Some(condensed) = condense_tool_output(&msg.content) {
+                    msg_content = condensed;
+                } else {
+                    msg_content = trim_text(&msg.content, 12, 800);
+                }
+            } else if msg.content.len() > 1200 {
+                msg_content = trim_text(&msg.content, 12, 1200);
+            }
+
+            content.push_str(&format!("{}: {}\n", msg.role, msg_content));
             if let Some(tool_calls) = &msg.tool_calls {
                 content.push_str(&format!("[Tool Calls: {}]\n", tool_calls));
             }
         }
 
         let prompt = format!(
-            "Summarize the following conversation segment. Focus on tool actions, results, and key information:\n\n{}",
+            "Summarize the following conversation segment. Focus on task key facts, decisions, and tool results. For shell/interactive_shell, keep command, completion status, and only short output snippets; omit long logs.\n\n{}",
             content
         );
 
@@ -513,4 +524,57 @@ fn estimate_tokens(text: &str) -> usize {
         }
     }
     total_estimated.ceil() as usize
+}
+
+fn condense_tool_output(raw: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let obj = value.as_object()?;
+
+    // shell tool output
+    if obj.contains_key("command") && obj.contains_key("stdout") && obj.contains_key("stderr") {
+        let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let exit_code = obj.get("exit_code").and_then(|v| v.as_i64()).map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string());
+        let completed = obj.get("completed").and_then(|v| v.as_bool()).unwrap_or(true);
+        let output_stored = obj.get("output_stored").and_then(|v| v.as_bool()).unwrap_or(false);
+        let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+        let stdout_snip = trim_text(stdout, 8, 500);
+        let stderr_snip = trim_text(stderr, 6, 400);
+        return Some(format!(
+            "shell: command=\"{}\" exit_code={} completed={} output_stored={} stdout_snip=\"{}\" stderr_snip=\"{}\"",
+            command, exit_code, completed, output_stored, stdout_snip, stderr_snip
+        ));
+    }
+
+    // interactive_shell output
+    if obj.contains_key("session_id") && obj.contains_key("output") && obj.contains_key("completed") {
+        let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let completed = obj.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
+        let truncated = obj.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false);
+        let output = obj.get("output").and_then(|v| v.as_str()).unwrap_or("");
+        let output_snip = trim_text(output, 10, 600);
+        return Some(format!(
+            "interactive_shell: command=\"{}\" completed={} truncated={} output_snip=\"{}\"",
+            command, completed, truncated, output_snip
+        ));
+    }
+
+    None
+}
+
+fn trim_text(text: &str, max_lines: usize, max_chars: usize) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
+    if lines.len() > max_chars {
+        lines.truncate(max_chars);
+    }
+
+    if text.lines().count() > max_lines || text.len() > max_chars {
+        lines.push_str(" ...[truncated]");
+    }
+
+    lines
 }
