@@ -117,7 +117,6 @@ impl TenthManTool {
         \n\nReview modes:\
         \n- 'full_history' (default): Reviews entire conversation with smart summarization\
         \n- 'recent_messages': Reviews last N messages only (specify count)\
-        \n- 'specific_content': Reviews a specific piece of content\
         \n\nReview types:\
         \n- 'quick': Fast risk identification (1-2 sentences)\
         \n- 'full': Comprehensive analysis with detailed critique\

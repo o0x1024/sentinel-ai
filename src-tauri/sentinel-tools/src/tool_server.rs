@@ -557,22 +557,41 @@ impl ToolServer {
                         "type": "string",
                         "description": "The current execution ID"
                     },
-                    "content_to_review": {
-                        "type": "string",
-                        "description": "Content to review (e.g., current plan, proposed solution, or conclusion)"
-                    },
-                    "context_description": {
-                        "type": "string",
-                        "description": "Context description (what this review is about)"
+                    "review_mode": {
+                        "type": "object",
+                        "description": "Review mode (defaults to full_history)",
+                        "oneOf": [
+                            {
+                                "properties": {
+                                    "mode": { "const": "full_history" }
+                                },
+                                "required": ["mode"]
+                            },
+                            {
+                                "properties": {
+                                    "mode": { "const": "recent_messages" },
+                                    "count": {
+                                        "type": "integer",
+                                        "description": "Number of recent messages to review"
+                                    }
+                                },
+                                "required": ["mode", "count"]
+                            }
+                        ],
+                        "default": { "mode": "full_history" }
                     },
                     "review_type": {
                         "type": "string",
                         "description": "Type of review: 'quick' (lightweight) or 'full' (comprehensive)",
                         "default": "quick",
                         "enum": ["quick", "full"]
+                    },
+                    "focus_area": {
+                        "type": "string",
+                        "description": "Optional focus area for the review"
                     }
                 },
-                "required": ["execution_id", "content_to_review"]
+                "required": ["execution_id"]
             }))
             .source(ToolSource::Builtin)
             .executor(|args| async move {

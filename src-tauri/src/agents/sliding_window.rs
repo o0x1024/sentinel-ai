@@ -569,7 +569,11 @@ fn trim_text(text: &str, max_lines: usize, max_chars: usize) -> String {
 
     let mut lines = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
     if lines.len() > max_chars {
-        lines.truncate(max_chars);
+        let mut boundary = max_chars.min(lines.len());
+        while boundary > 0 && !lines.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        lines.truncate(boundary);
     }
 
     if text.lines().count() > max_lines || text.len() > max_chars {

@@ -94,6 +94,17 @@
             <span>{{ t('agent.todos') }}</span>
             <span v-if="todosComposable.rootTodos.value.length > 0" class="badge badge-xs badge-primary">{{ todosComposable.rootTodos.value.length }}</span>
           </button>
+          <!-- HTML Panel Button - shows when there is HTML content -->
+          <button 
+            v-if="hasHtmlPanelContent"
+            @click="handleToggleHtmlPanel()"
+            class="btn btn-sm gap-1"
+            :class="isHtmlPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="isHtmlPanelActive ? t('agent.htmlPanelOpen') : t('agent.viewHtmlPanel')"
+          >
+            <i class="fas fa-code"></i>
+            <span>{{ t('agent.htmlPanel') }}</span>
+          </button>
           <!-- Terminal Button - always visible -->
           <button 
             @click="handleToggleTerminal()"
@@ -136,6 +147,7 @@
             class="flex-1"
             @resend="handleResendMessage"
             @edit="handleEditMessage"
+            @render-html="handleRenderHtml"
           />
           
           <!-- {{ t('agent.inputArea') }} -->
@@ -167,9 +179,9 @@
           />
         </div>
         
-        <!-- Right: Side Panel (WebExplorer, Todo, or Terminal) -->
+        <!-- Right: Side Panel (WebExplorer, Todo, HTML, or Terminal) -->
         <div 
-          v-if="isWebExplorerActive || isTodosPanelActive || isTerminalActive"
+          v-if="isWebExplorerActive || isTodosPanelActive || isHtmlPanelActive || isTerminalActive"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
           :style="{ width: sidebarWidth + 'px' }"
         >
@@ -205,6 +217,13 @@
               :is-active="isTodosPanelActive"
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
               @close="handleCloseTodos"
+            />
+            <HtmlPanel
+              v-else-if="isHtmlPanelActive"
+              :html-content="htmlPanelContent"
+              :is-active="isHtmlPanelActive"
+              class="h-full p-4 overflow-y-auto border-0 bg-transparent"
+              @close="handleCloseHtmlPanel"
             />
             <InteractiveTerminal
               v-else-if="isTerminalActive"
@@ -244,6 +263,7 @@ import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
+import HtmlPanel from './HtmlPanel.vue'
 import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
@@ -353,9 +373,29 @@ const todos = computed(() => todosComposable.todos.value)
 const hasTodos = computed(() => props.showTodos && todosComposable.hasTodos.value)
 const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.value)
 
+// HTML panel - user manually triggers rendering
+const isHtmlPanelActive = ref(false)
+const htmlPanelContent = ref('')
+
+// Handle render HTML from code block
+const handleRenderHtml = (htmlContent: string) => {
+  htmlPanelContent.value = htmlContent
+  // Close other panels and open HTML panel
+  webExplorerEvents.close()
+  terminalComposable.closeTerminal()
+  todosComposable.close()
+  isHtmlPanelActive.value = true
+}
+
+const hasHtmlPanelContent = computed(() => !!htmlPanelContent.value)
+
 // Handle close todos panel
 const handleCloseTodos = () => {
   todosComposable.close()
+}
+
+const handleCloseHtmlPanel = () => {
+  isHtmlPanelActive.value = false
 }
 
 // Terminal management
@@ -376,6 +416,7 @@ const handleToggleWebExplorer = () => {
     // Close other panels
     todosComposable.close()
     terminalComposable.closeTerminal()
+    isHtmlPanelActive.value = false
     webExplorerEvents.open()
   }
 }
@@ -387,7 +428,19 @@ const handleToggleTodos = () => {
     // Close other panels
     webExplorerEvents.close()
     terminalComposable.closeTerminal()
+    isHtmlPanelActive.value = false
     todosComposable.open()
+  }
+}
+
+const handleToggleHtmlPanel = () => {
+  if (isHtmlPanelActive.value) {
+    isHtmlPanelActive.value = false
+  } else {
+    webExplorerEvents.close()
+    terminalComposable.closeTerminal()
+    todosComposable.close()
+    isHtmlPanelActive.value = true
   }
 }
 
@@ -398,6 +451,7 @@ const handleToggleTerminal = () => {
     // Close other panels
     webExplorerEvents.close()
     todosComposable.close()
+    isHtmlPanelActive.value = false
     terminalComposable.openTerminal()
   }
 }

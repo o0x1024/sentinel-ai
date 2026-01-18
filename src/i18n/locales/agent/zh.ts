@@ -13,6 +13,11 @@ export default {
   terminalPanelOpen: '终端面板已打开',
   viewTerminal: '查看交互式终端',
   terminal: '终端',
+  htmlPanel: 'HTML',
+  viewHtmlPanel: '查看 HTML 面板',
+  htmlPanelOpen: 'HTML 面板已打开',
+  noHtmlContent: '暂无 HTML 内容',
+  htmlPanelHint: 'AI 返回的 HTML 会在此处渲染展示。',
   interactiveTerminal: '交互式终端',
   knowledgeBase: '知识库',
   statusIndicator: '状态指示器',
@@ -330,11 +335,14 @@ export default {
 
   // MarkdownRenderer
   sourceCitation: '知识库引用 #{number}',
+  copyCode: '复制代码',
+  renderHtml: '渲染 HTML',
 
   // MessageBlock actions & status
   detailsInWebExplorerPanel: '详情显示在 Web Explorer 面板中',
   collapseDetails: '收起详情',
   expandDetails: '展开详情',
+  download: '下载',
   copyMessage: '复制消息',
   copy: '复制',
   editMessage: '编辑消息',

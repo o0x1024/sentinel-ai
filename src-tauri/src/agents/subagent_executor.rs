@@ -22,7 +22,7 @@ use sentinel_tools::buildin_tools::subagent_tool::{
     SubagentToolError, SubagentStatus, SubagentTaskInfo,
 };
 
-use super::{execute_agent, ToolConfig, ToolSelectionStrategy};
+use super::{condense_text, execute_agent, ContextPolicy, ToolConfig, ToolSelectionStrategy};
 use sentinel_core::models::database::SubagentRun;
 use sentinel_core::models::database::SubagentMessage;
 
@@ -146,9 +146,10 @@ fn build_subagent_task(parent_task: &str, subagent_task: &str) -> String {
     if subagent.is_empty() {
         return parent.to_string();
     }
+    let brief = condense_text(parent, ContextPolicy::subagent().task_brief_max_chars);
     format!(
         "Parent task context:\n{}\n\nSubagent task:\n{}",
-        parent,
+        brief,
         subagent
     )
 }
@@ -385,6 +386,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
             image_attachments: None,
             persist_messages: false,
             subagent_run_id: Some(task_id_clone.clone()),
+            context_policy: Some(ContextPolicy::subagent()),
         };
         
         // Execute agent
@@ -666,6 +668,7 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
         image_attachments: None,
         persist_messages: false,
         subagent_run_id: Some(execution_id.clone()),
+        context_policy: Some(ContextPolicy::subagent()),
     };
     
     match execute_agent(app_handle, params).await {

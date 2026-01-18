@@ -2324,7 +2324,7 @@ pub async fn agent_execute(
                 // 构建代理执行参数
                 // Convert document attachments to executor format
                 let doc_attachments = config.document_attachments.as_ref().map(|docs| {
-                    docs.iter().map(|d| crate::agents::executor::DocumentAttachmentInfo {
+                    docs.iter().map(|d| crate::agents::DocumentAttachmentInfo {
                         id: d.id.clone(),
                         original_filename: d.original_filename.clone(),
                         file_size: d.file_size,
@@ -2352,6 +2352,7 @@ pub async fn agent_execute(
                     image_attachments: attachments.clone(),
                     persist_messages: true,
                     subagent_run_id: None,
+                    context_policy: None,
                 };
 
                 // 调用工具支持的代理执行器

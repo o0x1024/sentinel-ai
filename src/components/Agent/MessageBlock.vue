@@ -310,7 +310,14 @@
             <i class="fas fa-external-link-alt"></i>
             <span>{{ t('agent.detailsInVisionPanel') }}</span>
           </div>
-          <MarkdownRenderer v-else :content="formattedContent" :citations="ragInfo?.citations" />
+          <MarkdownRenderer 
+            v-else
+            :content="formattedContent" 
+            :citations="ragInfo?.citations"
+            :show-table-download="showTableDownload"
+            @download-table="handleDownloadTable"
+            @render-html="(html: string) => emit('renderHtml', html)"
+          />
           
           <!-- Document attachments for user messages (shown below content) -->
           <div v-if="message.type === 'user' && documentAttachments.length > 0" class="document-attachments mt-2 pt-2 border-t border-base-300/50">
@@ -359,6 +366,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type { AgentMessage } from '@/types/agent'
 import { getMessageTypeName } from '@/types/agent'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -376,6 +385,7 @@ const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
   (e: 'edit', message: AgentMessage, newContent: string): void
   (e: 'heightChanged'): void
+  (e: 'renderHtml', htmlContent: string): void
 }>()
 
 const isExpanded = ref(false)
@@ -568,6 +578,67 @@ const isTenthManCritique = computed(() => {
 const formatNumber = (num: number | undefined) => {
   if (num === undefined) return '0'
   return num.toLocaleString()
+}
+
+const isMarkdownTableSeparator = (line: string) => {
+  const trimmed = line.trim()
+  return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(trimmed)
+}
+
+const parseMarkdownTableRow = (line: string): string[] => {
+  const trimmed = line.trim()
+  const withoutEdges = trimmed.replace(/^\|/, '').replace(/\|$/, '')
+  return withoutEdges.split('|').map(cell => cell.trim())
+}
+
+const extractMarkdownTableData = (content: string): string[][] => {
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const headerLine = lines[i]
+    const separatorLine = lines[i + 1]
+    if (!headerLine.includes('|') || !isMarkdownTableSeparator(separatorLine)) continue
+
+    const header = parseMarkdownTableRow(headerLine)
+    const rows: string[][] = []
+    let j = i + 2
+    while (j < lines.length && lines[j].includes('|')) {
+      rows.push(parseMarkdownTableRow(lines[j]))
+      j += 1
+    }
+    return [header, ...rows].filter(row => row.length > 0)
+  }
+  return []
+}
+
+const extractHtmlTableData = (html: string): string[][] => {
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    const table = doc.querySelector('table')
+    if (!table) return []
+    const rows = Array.from(table.querySelectorAll('tr'))
+    return rows.map(row => {
+      const cells = Array.from(row.querySelectorAll('th, td'))
+      return cells.map(cell => (cell.textContent || '').trim())
+    })
+  } catch {
+    return []
+  }
+}
+
+const extractHtmlBlock = (content: string): string | null => {
+  const match = content.match(/```html\s*([\s\S]*?)```/i)
+  if (match && match[1]) return match[1].trim()
+  return null
+}
+
+const extractTableDataFromContent = (content: string): string[][] => {
+  if (!content) return []
+  const htmlBlock = extractHtmlBlock(content)
+  const htmlCandidate = htmlBlock || content
+  const htmlTable = extractHtmlTableData(htmlCandidate)
+  if (htmlTable.length > 0) return htmlTable
+  return extractMarkdownTableData(content)
 }
 
 // Status icon
@@ -780,6 +851,15 @@ const formatDocSize = (bytes: number): string => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
+const looksLikeHtmlDocument = (text: string) => {
+  return /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i.test(text)
+}
+
+const wrapHtmlAsCodeBlock = (text: string, cursor: string) => {
+  if (text.includes('```') || !looksLikeHtmlDocument(text)) return text + cursor
+  return `\`\`\`html\n${text}${cursor}\n\`\`\``
+}
+
 // Format content based on message type
 const formattedContent = computed(() => {
   const { type, content, metadata } = props.message
@@ -810,10 +890,10 @@ const formattedContent = computed(() => {
       return `> **Error**\n>\n> ${content}`
     
     case 'final':
-      return content + cursor
+      return wrapHtmlAsCodeBlock(content, cursor)
     
     default:
-      return content + cursor
+      return wrapHtmlAsCodeBlock(content, cursor)
   }
 })
 
@@ -838,6 +918,114 @@ const shouldHideContent = computed(() => {
   
   return false
 })
+
+const tableData = computed(() => extractTableDataFromContent(props.message.content || ''))
+
+const showTableDownload = computed(() => {
+  if (props.message.type === 'user') return false
+  return tableData.value.length > 0
+})
+
+const escapeCsvCell = (value: string) => {
+  if (value.includes('"')) {
+    value = value.replace(/"/g, '""')
+  }
+  if (/[",\n\r]/.test(value)) {
+    return `"${value}"`
+  }
+  return value
+}
+
+const buildCsvContent = (rows: string[][]) => {
+  return rows
+    .map(row => row.map(cell => escapeCsvCell(cell ?? '')).join(','))
+    .join('\n')
+}
+
+const downloadTableAsCsv = async (data: string[][]) => {
+  if (data.length === 0) return
+  
+  const csv = buildCsvContent(data)
+  const defaultFilename = `table-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
+  
+  try {
+    // Use Tauri save dialog
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{ name: 'CSV', extensions: ['csv'] }]
+    })
+    
+    if (filePath) {
+      await writeTextFile(filePath, csv)
+      console.log('[MessageBlock] Table saved to:', filePath)
+    }
+  } catch (e) {
+    console.error('[MessageBlock] Failed to save table:', e)
+    // Fallback to browser download
+    try {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = defaultFilename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (fallbackError) {
+      console.error('[MessageBlock] Fallback download also failed:', fallbackError)
+    }
+  }
+}
+
+// Extract all tables from content
+const extractAllTablesFromContent = (content: string): string[][][] => {
+  if (!content) return []
+  const tables: string[][][] = []
+  
+  // Extract HTML tables
+  const htmlBlock = extractHtmlBlock(content)
+  const htmlCandidate = htmlBlock || content
+  const htmlTable = extractHtmlTableData(htmlCandidate)
+  if (htmlTable.length > 0) {
+    tables.push(htmlTable)
+  }
+  
+  // Extract Markdown tables
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const headerLine = lines[i]
+    const separatorLine = lines[i + 1]
+    if (!headerLine.includes('|') || !isMarkdownTableSeparator(separatorLine)) continue
+
+    const header = parseMarkdownTableRow(headerLine)
+    const rows: string[][] = []
+    let j = i + 2
+    while (j < lines.length && lines[j].includes('|')) {
+      rows.push(parseMarkdownTableRow(lines[j]))
+      j += 1
+    }
+    const tableData = [header, ...rows].filter(row => row.length > 0)
+    if (tableData.length > 0) {
+      tables.push(tableData)
+    }
+    i = j - 1 // Skip processed lines
+  }
+  
+  return tables
+}
+
+const allTables = computed(() => extractAllTablesFromContent(props.message.content || ''))
+
+const handleDownloadTable = (tableIndex: number) => {
+  const tables = allTables.value
+  if (tableIndex >= 0 && tableIndex < tables.length) {
+    downloadTableAsCsv(tables[tableIndex])
+  } else if (tables.length > 0) {
+    // Fallback to first table
+    downloadTableAsCsv(tables[0])
+  }
+}
 </script>
 
 <style scoped>
@@ -925,4 +1113,5 @@ const shouldHideContent = computed(() => {
 .tool-panel-content > div > div::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+
 </style>

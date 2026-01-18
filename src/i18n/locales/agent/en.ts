@@ -13,6 +13,11 @@ export default {
   terminalPanelOpen: 'Terminal Panel Open',
   viewTerminal: 'View Interactive Terminal',
   terminal: 'Terminal',
+  htmlPanel: 'HTML',
+  viewHtmlPanel: 'View HTML Panel',
+  htmlPanelOpen: 'HTML Panel Open',
+  noHtmlContent: 'No HTML Content',
+  htmlPanelHint: 'HTML responses from the assistant will render here.',
   interactiveTerminal: 'Interactive Terminal',
   knowledgeBase: 'Knowledge Base',
   statusIndicator: 'Status Indicator',
@@ -330,11 +335,14 @@ export default {
 
   // MarkdownRenderer
   sourceCitation: 'Source Citation #{number}',
+  copyCode: 'Copy code',
+  renderHtml: 'Render HTML',
 
   // MessageBlock actions & status
   detailsInWebExplorerPanel: 'Details are shown in the Web Explorer panel',
   collapseDetails: 'Collapse details',
   expandDetails: 'Expand details',
+  download: 'Download',
   copyMessage: 'Copy message',
   copy: 'Copy',
   editMessage: 'Edit message',

@@ -28,6 +28,7 @@
         @resend="handleResend"
         @edit="handleEdit"
         @heightChanged="handleHeightChanged"
+        @render-html="(html: string) => emit('renderHtml', html)"
       />
     </div>
     
@@ -71,6 +72,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'resend', message: AgentMessage): void
   (e: 'edit', message: AgentMessage, newContent: string): void
+  (e: 'renderHtml', htmlContent: string): void
 }>()
 
 const containerRef = ref<HTMLElement | null>(null)
