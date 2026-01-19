@@ -186,6 +186,10 @@ export interface ContextUsageInfo {
   systemPromptTokens: number
   historyTokens: number
   historyCount: number
+  summaryTokens: number
+  summaryGlobalTokens: number
+  summarySegmentTokens: number
+  summarySegmentCount: number
 }
 
 export interface UseAgentEventsReturn {
@@ -379,6 +383,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       system_prompt_tokens: number
       history_tokens: number
       history_count: number
+      summary_tokens?: number
+      summary_global_tokens?: number
+      summary_segment_tokens?: number
+      summary_segment_count?: number
     }>('agent:context_usage', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
@@ -390,6 +398,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         systemPromptTokens: payload.system_prompt_tokens,
         historyTokens: payload.history_tokens,
         historyCount: payload.history_count,
+        summaryTokens: payload.summary_tokens ?? 0,
+        summaryGlobalTokens: payload.summary_global_tokens ?? 0,
+        summarySegmentTokens: payload.summary_segment_tokens ?? 0,
+        summarySegmentCount: payload.summary_segment_count ?? 0,
       }
       console.log('[useAgentEvents] Context usage updated:', contextUsage.value)
     })
@@ -493,22 +505,30 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
             // Use the real input_tokens from LLM as used_tokens (more accurate than our estimate)
             const maxTokens = contextUsage.value.maxTokens
             const usedTokens = inputTokens + outputTokens
+            const usagePercentage = maxTokens > 0
+              ? Math.min(100, (usedTokens / maxTokens * 100))
+              : 0
             contextUsage.value = {
               ...contextUsage.value,
               usedTokens,
-              usagePercentage: maxTokens > 0 ? (usedTokens / maxTokens * 100) : 0,
+              usagePercentage,
             }
           } else {
             // If no context usage yet, create a basic one (assume 128K context)
             const maxTokens = 128000
             const usedTokens = inputTokens + outputTokens
+            const usagePercentage = Math.min(100, (usedTokens / maxTokens * 100))
             contextUsage.value = {
               usedTokens,
               maxTokens,
-              usagePercentage: (usedTokens / maxTokens * 100),
+              usagePercentage,
               systemPromptTokens: 0,
               historyTokens: inputTokens,
               historyCount: 0,
+              summaryTokens: 0,
+              summaryGlobalTokens: 0,
+              summarySegmentTokens: 0,
+              summarySegmentCount: 0,
             }
           }
         }

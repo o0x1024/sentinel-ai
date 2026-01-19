@@ -232,6 +232,10 @@ interface ContextUsageInfo {
   systemPromptTokens: number
   historyTokens: number
   historyCount: number
+  summaryTokens: number
+  summaryGlobalTokens: number
+  summarySegmentTokens: number
+  summarySegmentCount: number
 }
 
 const props = defineProps<{
@@ -360,9 +364,22 @@ const contextUsageClass = computed(() => {
 
 const contextUsageTooltip = computed(() => {
   if (!props.contextUsage) return ''
-  const { usedTokens, maxTokens, systemPromptTokens, historyTokens, historyCount } = props.contextUsage
+  const { 
+    usedTokens, 
+    maxTokens, 
+    systemPromptTokens, 
+    historyTokens, 
+    historyCount, 
+    summaryTokens, 
+    summaryGlobalTokens, 
+    summarySegmentTokens, 
+    summarySegmentCount 
+  } = props.contextUsage
   return `${t('agent.contextUsageDetails')}
 ${t('agent.systemPromptTokens')}: ${formatTokenCount(systemPromptTokens)}
+${t('agent.summaryTokens')}: ${formatTokenCount(summaryTokens)}
+${t('agent.summaryGlobalTokens')}: ${formatTokenCount(summaryGlobalTokens)}
+${t('agent.summarySegmentTokens')}: ${formatTokenCount(summarySegmentTokens)} (${t('agent.summarySegments')}: ${summarySegmentCount})
 ${t('agent.historyTokens')}: ${formatTokenCount(historyTokens)}
 ${t('agent.historyMessages')}: ${historyCount}
 ${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}`

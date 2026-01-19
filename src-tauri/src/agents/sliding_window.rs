@@ -29,6 +29,13 @@ pub struct SlidingWindowConfig {
     pub segment_summary_ratio: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SlidingWindowSummaryStats {
+    pub global_summary_tokens: usize,
+    pub segment_summary_tokens: usize,
+    pub segment_count: usize,
+}
+
 impl Default for SlidingWindowConfig {
     fn default() -> Self {
         Self {
@@ -258,6 +265,38 @@ impl SlidingWindowManager {
         context
     }
 
+    pub fn summary_stats(&self) -> SlidingWindowSummaryStats {
+        let global_summary_tokens = self
+            .global_summary
+            .as_ref()
+            .map(|summary| {
+                if summary.summary_tokens > 0 {
+                    summary.summary_tokens as usize
+                } else {
+                    estimate_tokens(&summary.summary)
+                }
+            })
+            .unwrap_or(0);
+
+        let segment_summary_tokens = self
+            .segments
+            .iter()
+            .map(|segment| {
+                if segment.summary_tokens > 0 {
+                    segment.summary_tokens as usize
+                } else {
+                    estimate_tokens(&segment.summary)
+                }
+            })
+            .sum();
+
+        SlidingWindowSummaryStats {
+            global_summary_tokens,
+            segment_summary_tokens,
+            segment_count: self.segments.len(),
+        }
+    }
+
     /// Check and compress history if needed
     /// Returns true if compression occurred
     pub async fn compress_if_needed(&mut self, llm_config: &LlmConfig) -> Result<bool> {
@@ -403,7 +442,9 @@ impl SlidingWindowManager {
             prompt.push_str(&format!("- {}\n", seg.summary));
         }
 
-        prompt.push_str("\n\nTask: Integrate the new activity segments into the global summary. Maintain a coherent narrative of the user's goals, key decisions, and progress. Remove obsolete details.");
+        prompt.push_str(
+            "\n\nTask: Integrate the new activity segments into the global summary. Maintain a coherent narrative of the user's goals, key decisions, and progress. Remove obsolete details. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section."
+        );
 
         let client = LlmClient::new(llm_config.clone());
         let new_summary_text = client.completion(
@@ -484,7 +525,7 @@ impl SlidingWindowManager {
         }
 
         let prompt = format!(
-            "Summarize the following conversation segment. Focus on task key facts, decisions, and tool results. For shell/interactive_shell, keep command, completion status, and only short output snippets; omit long logs.\n\n{}",
+            "Summarize the following conversation segment. Focus on task key facts, decisions, and tool results. For shell/interactive_shell, keep command, completion status, and only short output snippets; omit long logs. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section.\n\n{}",
             content
         );
 

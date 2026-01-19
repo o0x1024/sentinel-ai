@@ -287,6 +287,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     // Calculate context usage for frontend display
     // Include all message components: content, tool_calls, reasoning_content
     let system_prompt_tokens = estimate_tokens(&system_prompt_content);
+    let summary_stats = sliding_window.summary_stats();
+    let summary_tokens = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
     let history_tokens: usize = history_messages.iter()
         .map(|m| {
             let mut tokens = estimate_tokens(&m.content);
@@ -323,6 +325,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "system_prompt_tokens": system_prompt_tokens,
             "history_tokens": history_tokens,
             "history_count": history_messages.len(),
+            "summary_tokens": summary_tokens,
+            "summary_global_tokens": summary_stats.global_summary_tokens,
+            "summary_segment_tokens": summary_stats.segment_summary_tokens,
+            "summary_segment_count": summary_stats.segment_count,
         }),
     );
 

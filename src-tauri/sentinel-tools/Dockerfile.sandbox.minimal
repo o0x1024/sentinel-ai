@@ -3,6 +3,8 @@
 # -----------------------------------------------------------------------------
 FROM kalilinux/kali-rolling
 
+# Set TERM to fix curses/terminfo issues in non-interactive shells
+
 
 
 RUN rm -f /etc/apt/sources.list.d/* && \
@@ -129,7 +131,10 @@ RUN useradd -m -s /bin/bash sandbox && \
         cp /root/.gdbinit /home/sandbox/.gdbinit && \
         cp /root/.gdbinit-gef.py /home/sandbox/.gdbinit-gef.py && \
         chown sandbox:sandbox /home/sandbox/.gdbinit /home/sandbox/.gdbinit-gef.py
-    
+
+ENV TERM=xterm-256color
+
+
 WORKDIR /workspace
 USER sandbox
 CMD ["/bin/bash"]

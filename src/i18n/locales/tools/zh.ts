@@ -199,7 +199,7 @@ export default {
     alwaysAcceptHint: '将此命令添加到允许列表并执行',
     success: '成功',
     failed: '失败',
-    copyAll: '复制全部',
+    copyAll: '复制',
     copyAllHint: '复制命令与全部输出',
     outputTruncatedHint: '输出为性能考虑已截断，复制全部可查看完整输出。',
     noOutput: '（无输出）',
