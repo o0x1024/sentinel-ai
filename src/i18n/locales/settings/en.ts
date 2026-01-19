@@ -463,6 +463,16 @@ export default {
       dockerImagePlaceholder: 'e.g., sentinel-sandbox:latest',
       useDocker: 'Use Docker',
       useDockerDesc: 'Use Docker container as terminal environment (recommended), otherwise uses host terminal'
+    },
+    imageAttachments: {
+      title: 'Image Attachments',
+      mode: 'Processing Mode',
+      modeDesc: 'Choose how to handle image attachments when sending messages.',
+      localOcr: 'Local OCR (default)',
+      modelVision: 'Upload to model (vision)',
+      allowUpload: 'Allow uploading images to model',
+      allowUploadDesc: 'If enabled, image files may be sent to the selected AI service for vision understanding.',
+      uploadDisabledWarning: 'Uploading images to model is disabled. Switch back to local OCR or enable upload permission.'
     }
   }
 }

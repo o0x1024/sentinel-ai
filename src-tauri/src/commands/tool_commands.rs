@@ -1607,8 +1607,8 @@ pub use tool_server::{
 mod shell_permissions;
 pub use shell_permissions::PendingPermissionRequest;
 
-mod agent_config;
-pub use agent_config::AgentConfig;
+pub mod agent_config;
+pub use agent_config::{AgentConfig, init_agent_config};
 
 mod ability_groups;
 

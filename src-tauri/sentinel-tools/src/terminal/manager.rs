@@ -1,6 +1,6 @@
 //! Terminal session manager
 
-use super::session::{TerminalSession, TerminalSessionConfig, SessionState};
+use super::session::{TerminalSession, TerminalSessionConfig, SessionState, ExecutionMode};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -104,7 +104,7 @@ impl TerminalSessionManager {
                 id: id.clone(),
                 state: session.state().await,
                 last_activity: session.last_activity().await.elapsed().as_secs(),
-                use_docker: session.config.use_docker,
+                execution_mode: session.config.execution_mode,
             });
         }
 
@@ -265,5 +265,5 @@ pub struct SessionInfo {
     pub id: String,
     pub state: SessionState,
     pub last_activity: u64,
-    pub use_docker: bool,
+    pub execution_mode: ExecutionMode,
 }

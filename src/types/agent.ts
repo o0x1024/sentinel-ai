@@ -49,7 +49,21 @@ export interface MessageMetadata {
   image_attachments?: ImageAttachment[]  // 用户消息中的图片附件
 }
 
+// Image attachment structure (matches backend MessageAttachment::Image)
 export interface ImageAttachment {
+  type?: 'image'  // Optional discriminator from MessageAttachment enum
+  data: {
+    type: 'base64' | 'url'
+    data?: string  // For base64
+    url?: string   // For url
+  }
+  media_type?: string
+  filename?: string
+  detail?: string
+}
+
+// Legacy format for backward compatibility
+export interface LegacyImageAttachment {
   image: string
   filename?: string
 }

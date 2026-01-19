@@ -9,7 +9,7 @@ pub mod manager;
 
 pub use command::{normalize_command, detect_shell_prompt, WaitStrategy};
 pub use server::TerminalServer;
-pub use session::{TerminalSession, TerminalSessionConfig, SessionState};
+pub use session::{TerminalSession, TerminalSessionConfig, SessionState, ExecutionMode};
 pub use manager::{TerminalSessionManager, SessionInfo, ContainerInfo};
 
 use std::sync::Arc;

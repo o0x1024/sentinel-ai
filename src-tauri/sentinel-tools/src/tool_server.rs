@@ -619,14 +619,15 @@ impl ToolServer {
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "use_docker": {
-                        "type": "boolean",
-                        "description": "Whether to run in Docker container (recommended for security)",
-                        "default": true
+                    "execution_mode": {
+                        "type": "string",
+                        "enum": ["docker", "host"],
+                        "description": "Execution mode: 'docker' (run in container, recommended) or 'host' (run on host machine)",
+                        "default": "docker"
                     },
                     "docker_image": {
                         "type": "string",
-                        "description": "Docker image to use (default: sentinel-sandbox:latest)",
+                        "description": "Docker image to use when execution_mode is 'docker' (default: sentinel-sandbox:latest)",
                         "default": "sentinel-sandbox:latest"
                     },
                     "command": {
@@ -662,15 +663,19 @@ impl ToolServer {
             .source(ToolSource::Builtin)
             .executor(|args| async move {
                 use crate::buildin_tools::shell::check_shell_permission;
-                use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig, WaitStrategy, normalize_command, detect_shell_prompt};
+                use crate::terminal::{TERMINAL_MANAGER, TerminalSessionConfig, WaitStrategy, normalize_command, detect_shell_prompt, ExecutionMode};
                 use tokio::sync::mpsc;
                 use tokio::time::{timeout, Duration};
                 use tracing::info;
                 
                 // Parse arguments
-                let use_docker = args.get("use_docker")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let execution_mode = args.get("execution_mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| match s {
+                        "host" => ExecutionMode::Host,
+                        _ => ExecutionMode::Docker,
+                    })
+                    .unwrap_or(ExecutionMode::Docker);
                 
                 let docker_image = args.get("docker_image")
                     .and_then(|v| v.as_str())
@@ -735,7 +740,7 @@ impl ToolServer {
                     None
                 };
 
-                let (session_id, mut output_rx, session_use_docker) = if let Some(session_lock) = active_session {
+                let (session_id, mut output_rx, session_execution_mode): (String, mpsc::UnboundedReceiver<Vec<u8>>, ExecutionMode) = if let Some(session_lock) = active_session {
                     let id = {
                         let session = session_lock.read().await;
                         session.id.clone()
@@ -746,14 +751,14 @@ impl ToolServer {
                     let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
                     {
                         let session = session_lock.read().await;
-                        let use_docker = session.config.use_docker;
+                        let exec_mode = session.config.execution_mode;
                         session.add_subscriber_no_history(tx).await;
-                        (id, rx, use_docker)
+                        (id, rx, exec_mode)
                     }
                 } else {
                     // 2. Create a new persistent session if none exists
                     let config = TerminalSessionConfig {
-                        use_docker,
+                        execution_mode,
                         docker_image: docker_image.clone(),
                         working_dir: Some("/workspace".to_string()),
                         env_vars: std::collections::HashMap::new(),
@@ -765,7 +770,7 @@ impl ToolServer {
                     
                     let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;
                     info!("Created new persistent terminal session: {}", id);
-                    (id, rx, use_docker)
+                    (id, rx, execution_mode)
                 };
 
                 // If no command, just return session info
@@ -790,7 +795,7 @@ impl ToolServer {
                 }
 
                 // 4. Permission check for host execution only
-                if !session_use_docker {
+                if session_execution_mode == ExecutionMode::Host {
                     check_shell_permission(&cmd)
                         .await
                         .map_err(|e| format!("Permission denied: {}", e))?;

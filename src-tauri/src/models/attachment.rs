@@ -67,6 +67,9 @@ pub struct ImageAttachment {
     pub media_type: Option<ImageMediaType>,
     /// 文件名（可选）
     pub filename: Option<String>,
+    /// Local source path (for local OCR only; must NOT be sent to LLM or persisted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
     /// 图片详细描述级别（low, high, auto）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -80,6 +83,7 @@ impl ImageAttachment {
             data: DocumentSourceKind::base64(&base64_data),
             media_type: Some(media_type),
             filename,
+            source_path: None,
             detail: None,
         }
     }
@@ -94,6 +98,7 @@ impl ImageAttachment {
             data: DocumentSourceKind::base64(&base64_data),
             media_type: Some(media_type),
             filename,
+            source_path: None,
             detail: None,
         }
     }
@@ -104,6 +109,7 @@ impl ImageAttachment {
             data: DocumentSourceKind::url(&url),
             media_type,
             filename: None,
+            source_path: None,
             detail: None,
         }
     }
@@ -310,7 +316,9 @@ pub async fn load_image_from_path(file_path: &str) -> anyhow::Result<ImageAttach
         .and_then(|n| n.to_str())
         .map(|s| s.to_string());
 
-    Ok(ImageAttachment::from_bytes(&bytes, media_type, filename))
+    let mut att = ImageAttachment::from_bytes(&bytes, media_type, filename);
+    att.source_path = Some(file_path.to_string());
+    Ok(att)
 }
 
 #[cfg(test)]

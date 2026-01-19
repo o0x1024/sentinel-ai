@@ -1,4 +1,5 @@
 //! Todos tool for autonomous agent planning and tracking
+//! Supports database persistence for session recovery
 
 use rig::tool::Tool;
 use schemars::JsonSchema;
@@ -7,7 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use once_cell::sync::Lazy;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use sentinel_db::DatabaseService;
 
 /// Todo status
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -21,6 +23,40 @@ pub enum TodoStatus {
     Completed,
     /// Todo has failed
     Failed,
+}
+
+impl From<&str> for TodoStatus {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "pending" => TodoStatus::Pending,
+            "in_progress" => TodoStatus::InProgress,
+            "completed" => TodoStatus::Completed,
+            "failed" => TodoStatus::Failed,
+            _ => TodoStatus::Pending,
+        }
+    }
+}
+
+impl From<sentinel_db::TodoStatus> for TodoStatus {
+    fn from(status: sentinel_db::TodoStatus) -> Self {
+        match status {
+            sentinel_db::TodoStatus::Pending => TodoStatus::Pending,
+            sentinel_db::TodoStatus::InProgress => TodoStatus::InProgress,
+            sentinel_db::TodoStatus::Completed => TodoStatus::Completed,
+            sentinel_db::TodoStatus::Failed => TodoStatus::Failed,
+        }
+    }
+}
+
+impl From<TodoStatus> for sentinel_db::TodoStatus {
+    fn from(status: TodoStatus) -> Self {
+        match status {
+            TodoStatus::Pending => sentinel_db::TodoStatus::Pending,
+            TodoStatus::InProgress => sentinel_db::TodoStatus::InProgress,
+            TodoStatus::Completed => sentinel_db::TodoStatus::Completed,
+            TodoStatus::Failed => sentinel_db::TodoStatus::Failed,
+        }
+    }
 }
 
 /// A single todo item
@@ -43,16 +79,111 @@ pub struct TodosList {
     pub current_index: Option<usize>,
 }
 
-/// Global todos storage, keyed by execution_id
-static TODOS: Lazy<Arc<RwLock<HashMap<String, TodosList>>>> = Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+impl TodosList {
+    /// Calculate current_index from items
+    fn recalculate_current_index(&mut self) {
+        self.current_index = self.items.iter().position(|item| item.status == TodoStatus::InProgress);
+    }
+}
 
-/// Global AppHandle for emitting events
+/// In-memory cache for todos (synced with database)
+static TODOS_CACHE: Lazy<Arc<RwLock<HashMap<String, TodosList>>>> = Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Global AppHandle for emitting events and database access
 static APP_HANDLE: Lazy<RwLock<Option<AppHandle>>> = Lazy::new(|| RwLock::new(None));
 
 /// Set global AppHandle for todos
 pub async fn set_todos_app_handle(handle: AppHandle) {
     let mut h = APP_HANDLE.write().await;
     *h = Some(handle);
+}
+
+/// Get database service from AppHandle
+async fn get_db_service() -> Option<Arc<DatabaseService>> {
+    let handle = APP_HANDLE.read().await;
+    if let Some(ref h) = *handle {
+        h.try_state::<Arc<DatabaseService>>().map(|s| s.inner().clone())
+    } else {
+        None
+    }
+}
+
+/// Load todos from database into memory cache
+async fn load_todos_from_db(execution_id: &str) -> Option<TodosList> {
+    let db = get_db_service().await?;
+    match db.get_agent_todos(execution_id).await {
+        Ok(db_items) if !db_items.is_empty() => {
+            let items: Vec<TodoItem> = db_items.into_iter().map(|item| {
+                TodoItem {
+                    description: item.description,
+                    status: TodoStatus::from(item.status.as_str()),
+                    result: item.result,
+                }
+            }).collect();
+            
+            let mut list = TodosList { items, current_index: None };
+            list.recalculate_current_index();
+            
+            // Update cache
+            let mut cache = TODOS_CACHE.write().await;
+            cache.insert(execution_id.to_string(), list.clone());
+            
+            tracing::info!("Loaded {} todos from database for execution {}", list.items.len(), execution_id);
+            Some(list)
+        }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!("Failed to load todos from database: {}", e);
+            None
+        }
+    }
+}
+
+/// Save todos to database
+async fn save_todos_to_db(execution_id: &str, list: &TodosList) {
+    if let Some(db) = get_db_service().await {
+        let items: Vec<sentinel_db::TodoItemInput> = list.items.iter().map(|item| {
+            sentinel_db::TodoItemInput {
+                description: item.description.clone(),
+                status: item.status.clone().into(),
+                result: item.result.clone(),
+            }
+        }).collect();
+        
+        if let Err(e) = db.save_agent_todos(execution_id, &items).await {
+            tracing::warn!("Failed to save todos to database: {}", e);
+        } else {
+            tracing::debug!("Saved {} todos to database for execution {}", items.len(), execution_id);
+        }
+    }
+}
+
+/// Delete todos from database
+async fn delete_todos_from_db(execution_id: &str) {
+    if let Some(db) = get_db_service().await {
+        if let Err(e) = db.delete_agent_todos(execution_id).await {
+            tracing::warn!("Failed to delete todos from database: {}", e);
+        }
+    }
+}
+
+/// Get or load todos list for an execution
+async fn get_or_load_todos(execution_id: &str) -> TodosList {
+    // Check cache first
+    {
+        let cache = TODOS_CACHE.read().await;
+        if let Some(list) = cache.get(execution_id) {
+            return list.clone();
+        }
+    }
+    
+    // Try to load from database
+    if let Some(list) = load_todos_from_db(execution_id).await {
+        return list;
+    }
+    
+    // Return empty list
+    TodosList::default()
 }
 
 /// Todos tool arguments
@@ -103,7 +234,7 @@ impl TodosTool {
     }
     
     pub const NAME: &'static str = "todos";
-    pub const DESCRIPTION: &'static str = "Manage and track the agent's execution todos. Actions: add_items (append), update_status (change status), get_list (view), reset (clear all), replan (replace all items), update_item (modify description), delete_item (remove), insert_item (add at position), cleanup (remove list from memory). Mandatory for complex multi-step security tasks.";
+    pub const DESCRIPTION: &'static str = "Manage and track the agent's execution todos. Actions: add_items (append), update_status (change status), get_list (view existing todos), reset (clear all), replan (replace all items), update_item (modify description), delete_item (remove), insert_item (add at position), cleanup (remove list). Todos persist across sessions - use get_list first to check existing todos before creating new ones.";
 }
 
 impl Tool for TodosTool {
@@ -122,14 +253,17 @@ impl Tool for TodosTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let mut todos = TODOS.write().await;
-        let list = todos.entry(args.execution_id.clone()).or_insert_with(TodosList::default);
+        let execution_id = args.execution_id.clone();
+        
+        // Get or load todos list
+        let mut list = get_or_load_todos(&execution_id).await;
+        let mut needs_save = false;
 
         let result = match args.action.as_str() {
             "add_items" => {
                 let new_items = args.items.ok_or_else(|| TodosError::MissingParameters("add_items".to_string()))?;
                 for desc in new_items {
-                    // Avoid duplicate items by checking if description already exists
+                    // Avoid duplicate items
                     if !list.items.iter().any(|t| t.description == desc) {
                         list.items.push(TodoItem {
                             description: desc,
@@ -142,6 +276,7 @@ impl Tool for TodosTool {
                     list.current_index = Some(0);
                     list.items[0].status = TodoStatus::InProgress;
                 }
+                needs_save = true;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -170,7 +305,7 @@ impl Tool for TodosTool {
                         list.current_index = None;
                     }
                 }
-
+                needs_save = true;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -178,14 +313,27 @@ impl Tool for TodosTool {
                 })
             }
             "get_list" => {
+                // For get_list, we always try to load from database first if cache is empty
+                if list.items.is_empty() {
+                    if let Some(db_list) = load_todos_from_db(&execution_id).await {
+                        list = db_list;
+                    }
+                }
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
-                    message: "Retrieved current todos list".to_string(),
+                    message: if list.items.is_empty() {
+                        "No existing todos found".to_string()
+                    } else {
+                        format!("Retrieved {} todos", list.items.len())
+                    },
                 })
             }
             "reset" => {
-                *list = TodosList::default();
+                list = TodosList::default();
+                needs_save = true;
+                // Also delete from database
+                delete_todos_from_db(&execution_id).await;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -215,7 +363,7 @@ impl Tool for TodosTool {
                 } else {
                     list.current_index = None;
                 }
-                
+                needs_save = true;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -231,7 +379,7 @@ impl Tool for TodosTool {
                 }
                 
                 list.items[idx].description = new_desc;
-                
+                needs_save = true;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -250,7 +398,6 @@ impl Tool for TodosTool {
                 // Adjust current_index if necessary
                 if let Some(current_idx) = list.current_index {
                     if current_idx == idx {
-                        // If we deleted the current item, move to next or set to None
                         if idx < list.items.len() {
                             list.current_index = Some(idx);
                             list.items[idx].status = TodoStatus::InProgress;
@@ -260,11 +407,10 @@ impl Tool for TodosTool {
                             list.current_index = None;
                         }
                     } else if current_idx > idx {
-                        // If current item is after deleted item, decrement index
                         list.current_index = Some(current_idx - 1);
                     }
                 }
-                
+                needs_save = true;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -291,7 +437,7 @@ impl Tool for TodosTool {
                         list.current_index = Some(current_idx + 1);
                     }
                 }
-                
+                needs_save = true;
                 Ok(TodosOutput {
                     success: true,
                     list: Some(list.clone()),
@@ -299,9 +445,12 @@ impl Tool for TodosTool {
                 })
             }
             "cleanup" => {
-                // Remove list from global storage
-                let execution_id = args.execution_id.clone();
-                todos.remove(&execution_id);
+                // Remove from both cache and database
+                {
+                    let mut cache = TODOS_CACHE.write().await;
+                    cache.remove(&execution_id);
+                }
+                delete_todos_from_db(&execution_id).await;
                 
                 Ok(TodosOutput {
                     success: true,
@@ -312,6 +461,17 @@ impl Tool for TodosTool {
             _ => Err(TodosError::InternalError(format!("Unknown action: {}", args.action))),
         };
 
+        // Save to database and update cache if needed
+        if needs_save {
+            // Update cache
+            {
+                let mut cache = TODOS_CACHE.write().await;
+                cache.insert(execution_id.clone(), list.clone());
+            }
+            // Save to database
+            save_todos_to_db(&execution_id, &list).await;
+        }
+
         // Emit event if successful and not just a "get_list" action
         if let Ok(ref output) = result {
             if args.action != "get_list" {
@@ -319,7 +479,7 @@ impl Tool for TodosTool {
                     if let Some(handle) = &*APP_HANDLE.read().await {
                         // Emit legacy event for existing UI
                         let _ = handle.emit("agent:plan_updated", serde_json::json!({
-                            "execution_id": args.execution_id,
+                            "execution_id": execution_id,
                             "plan": {
                                 "tasks": list.items,
                                 "current_task_index": list.current_index
@@ -329,7 +489,7 @@ impl Tool for TodosTool {
                         // Emit agent-todos-update event for useTodos.ts
                         let todos_json: Vec<serde_json::Value> = list.items.iter().enumerate().map(|(i, item)| {
                             serde_json::json!({
-                                "id": format!("{}_{}", args.execution_id, i),
+                                "id": format!("{}_{}", execution_id, i),
                                 "content": item.description,
                                 "status": match item.status {
                                     TodoStatus::Pending => "pending",
@@ -347,7 +507,7 @@ impl Tool for TodosTool {
                         }).collect();
 
                         let _ = handle.emit("agent-todos-update", serde_json::json!({
-                            "execution_id": args.execution_id,
+                            "execution_id": execution_id,
                             "todos": todos_json,
                             "timestamp": chrono::Utc::now().timestamp_millis()
                         }));
@@ -362,18 +522,26 @@ impl Tool for TodosTool {
 
 /// Helper function to get todos list for an execution
 pub async fn get_execution_todos(execution_id: &str) -> Option<TodosList> {
-    let todos = TODOS.read().await;
-    todos.get(execution_id).cloned()
+    let list = get_or_load_todos(execution_id).await;
+    if list.items.is_empty() {
+        None
+    } else {
+        Some(list)
+    }
 }
 
 /// Helper function to cleanup todos list for an execution
 pub async fn cleanup_execution_todos(execution_id: &str) -> bool {
-    let mut todos = TODOS.write().await;
-    todos.remove(execution_id).is_some()
+    let mut cache = TODOS_CACHE.write().await;
+    let removed = cache.remove(execution_id).is_some();
+    drop(cache);
+    
+    delete_todos_from_db(execution_id).await;
+    removed
 }
 
-/// Helper function to cleanup all todos lists
+/// Helper function to cleanup all todos lists (cache only, not database)
 pub async fn cleanup_all_todos() {
-    let mut todos = TODOS.write().await;
-    todos.clear();
+    let mut cache = TODOS_CACHE.write().await;
+    cache.clear();
 }

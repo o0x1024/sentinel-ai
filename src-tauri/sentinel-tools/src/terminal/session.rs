@@ -9,12 +9,22 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
+/// Execution mode for terminal session
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    /// Execute in Docker container
+    Docker,
+    /// Execute on host machine
+    Host,
+}
+
 /// Terminal session configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalSessionConfig {
-    /// Use Docker container
-    pub use_docker: bool,
-    /// Docker image name
+    /// Execution mode (Docker or Host)
+    pub execution_mode: ExecutionMode,
+    /// Docker image name (only used when execution_mode is Docker)
     pub docker_image: String,
     /// Working directory
     pub working_dir: Option<String>,
@@ -24,19 +34,22 @@ pub struct TerminalSessionConfig {
     pub shell: String,
     /// Optional command to execute immediately after session starts
     pub initial_command: Option<String>,
-    /// Reuse existing container if available
+    /// Reuse existing container if available (only for Docker mode)
     pub reuse_container: bool,
-    /// Container name for reuse identification
+    /// Container name for reuse identification (only for Docker mode)
     pub container_name: Option<String>,
 }
 
 impl Default for TerminalSessionConfig {
     fn default() -> Self {
+        let mut env_vars = std::collections::HashMap::new();
+        env_vars.insert("TERM".to_string(), "xterm-256color".to_string());
+
         Self {
-            use_docker: true,
+            execution_mode: ExecutionMode::Docker,
             docker_image: "sentinel-sandbox:latest".to_string(),
             working_dir: Some("/workspace".to_string()),
-            env_vars: std::collections::HashMap::new(),
+            env_vars,
             shell: "bash".to_string(),
             initial_command: None,
             reuse_container: true,
@@ -138,10 +151,9 @@ impl TerminalSession {
         info!("Starting terminal session: {}", self.id);
         self.add_subscriber(output_tx).await;
 
-        if self.config.use_docker {
-            self.start_docker_session().await
-        } else {
-            self.start_host_session().await
+        match self.config.execution_mode {
+            ExecutionMode::Docker => self.start_docker_session().await,
+            ExecutionMode::Host => self.start_host_session().await,
         }
     }
 
@@ -168,6 +180,11 @@ impl TerminalSession {
         let mut cmd_builder = CommandBuilder::new("docker");
         cmd_builder.arg("exec");
         cmd_builder.arg("-it");  // ✅ Now we can use -it with PTY!
+
+        for (key, value) in &self.config.env_vars {
+            cmd_builder.arg("-e");
+            cmd_builder.arg(format!("{}={}", key, value));
+        }
         
         // For Kali images, use sandbox user
         if self.config.docker_image.contains("kali") {

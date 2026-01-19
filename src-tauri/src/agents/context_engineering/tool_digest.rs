@@ -13,10 +13,39 @@ pub struct ToolDigest {
 
 pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDigest {
     let created_at_ms = chrono::Utc::now().timestamp_millis();
-    let status = if result.to_lowercase().contains("error") {
-        "error".to_string()
-    } else {
-        "ok".to_string()
+    let status = match serde_json::from_str::<Value>(result) {
+        Ok(Value::Object(map)) => {
+            if let Some(success) = map.get("success").and_then(|v| v.as_bool()) {
+                if success {
+                    "ok".to_string()
+                } else {
+                    "error".to_string()
+                }
+            } else if let Some(exit_code) = map.get("exit_code").and_then(|v| v.as_i64()) {
+                if exit_code == 0 {
+                    "ok".to_string()
+                } else {
+                    "error".to_string()
+                }
+            } else if let Some(status_code) = map.get("status_code").and_then(|v| v.as_i64()) {
+                if (200..400).contains(&status_code) {
+                    "ok".to_string()
+                } else {
+                    "error".to_string()
+                }
+            } else if result.to_lowercase().contains("error") {
+                "error".to_string()
+            } else {
+                "ok".to_string()
+            }
+        }
+        _ => {
+            if result.to_lowercase().contains("error") {
+                "error".to_string()
+            } else {
+                "ok".to_string()
+            }
+        }
     };
 
     let summary = match serde_json::from_str::<Value>(result) {

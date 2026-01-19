@@ -163,6 +163,7 @@
             :pending-documents="pendingDocuments"
             :processed-documents="processedDocuments"
             :referenced-traffic="referencedTraffic"
+            :context-usage="contextUsage"
             @send-message="handleSubmit"
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
@@ -359,6 +360,7 @@ const messages = computed(() => agentEvents.messages.value)
 const isExecuting = computed(() => agentEvents.isExecuting.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
+const contextUsage = computed(() => agentEvents.contextUsage.value)
 
 
 // Web Explorer Events
@@ -814,6 +816,22 @@ const handleResendMessage = async (message: AgentMessage) => {
   const messagesToKeep = messages.value.slice(0, messageIndex)
   agentEvents.messages.value = messagesToKeep
 
+  // Restore image attachments (if any) into pendingAttachments so resend keeps images
+  try {
+    const raw = (message.metadata as any)?.image_attachments
+    let imgAtts: any[] | undefined
+    if (Array.isArray(raw)) {
+      imgAtts = raw
+    } else if (typeof raw === 'string') {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) imgAtts = parsed
+    }
+    pendingAttachments.value = imgAtts ? [...imgAtts] : []
+  } catch (e) {
+    console.warn('[AgentView] Failed to restore image attachments for resend:', e)
+    pendingAttachments.value = []
+  }
+
   // Set user message content to input box
   inputValue.value = message.content
 
@@ -894,6 +912,22 @@ const loadConversationHistory = async (convId: string) => {
         return Number.isFinite(ms) ? ms : Date.now()
       }
 
+      // Collect tool_call_ids from role=tool messages to avoid duplicates
+      const existingToolCallIds = new Set<string>()
+      messages.forEach((row: any) => {
+        if (row.role === 'tool') {
+          // The row.id is the tool_call_id for tool messages
+          existingToolCallIds.add(row.id)
+          // Also check metadata for tool_call_id
+          try {
+            const meta = row.metadata && typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
+            if (meta?.tool_call_id) {
+              existingToolCallIds.add(meta.tool_call_id)
+            }
+          } catch { /* ignore */ }
+        }
+      })
+
       messages.forEach((row: any) => {
         const parsedMetadata =
           row.metadata && typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
@@ -965,12 +999,17 @@ const loadConversationHistory = async (convId: string) => {
           tie: tie++,
         })
 
-        // Legacy fallback: assistant rows may contain tool_calls (older data). Keep the old behavior but don't reorder.
+        // Legacy fallback: assistant rows may contain tool_calls (older data).
+        // Skip if the tool_call already exists as a standalone role=tool message.
         if (row.role === 'assistant' && row.tool_calls) {
           try {
             const toolCalls = typeof row.tool_calls === 'string' ? JSON.parse(row.tool_calls) : row.tool_calls
             if (Array.isArray(toolCalls) && toolCalls.length > 0) {
               toolCalls.forEach((tc: any, i: number) => {
+                // Skip if this tool_call already exists as a standalone message
+                if (tc.id && existingToolCallIds.has(tc.id)) {
+                  return
+                }
                 let parsedArgs: any = {}
                 try {
                   parsedArgs = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : (tc.arguments ?? {})

@@ -16,8 +16,10 @@ interface AgentStartEvent {
 // 后端发送的 agent:chunk 事件
 interface AgentChunkEvent {
   execution_id: string
-  chunk_type: string  // 'text' | 'reasoning'
-  content: string
+  chunk_type: string  // 'text' | 'reasoning' | 'usage'
+  content?: string
+  input_tokens?: number
+  output_tokens?: number
 }
 
 // 后端发送的 agent:tool_call 事件（旧格式兼容）
@@ -176,6 +178,16 @@ interface RagMetaInfo {
   citations?: any[]
 }
 
+// Context usage info
+export interface ContextUsageInfo {
+  usedTokens: number
+  maxTokens: number
+  usagePercentage: number
+  systemPromptTokens: number
+  historyTokens: number
+  historyCount: number
+}
+
 export interface UseAgentEventsReturn {
   messages: Ref<AgentMessage[]>
   isExecuting: Ref<boolean>
@@ -186,6 +198,7 @@ export interface UseAgentEventsReturn {
   hasMessages: ComputedRef<boolean>
   lastMessage: ComputedRef<AgentMessage | undefined>
   ragMetaInfo: Ref<RagMetaInfo | null>
+  contextUsage: Ref<ContextUsageInfo | null>
   clearMessages: () => void
   stopExecution: () => void
   startListening: () => Promise<void>
@@ -206,6 +219,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const contentBuffer = ref('')
   const ragMetaInfo = ref<RagMetaInfo | null>(null)
   const subagents = ref<SubagentItem[]>([])
+  const contextUsage = ref<ContextUsageInfo | null>(null)
 
   // Thinking content buffer for incremental display
   const thinkingBuffer = ref('')
@@ -250,6 +264,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     currentExecutionId.value = null
     ragMetaInfo.value = null
     subagents.value = []
+    contextUsage.value = null
   }
 
   // 停止执行：清空流式内容并更新状态
@@ -274,6 +289,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       message_id: string
       content: string
       timestamp: number
+      document_attachments?: any[]
+      image_attachments?: any[]
     }>('agent:user_message', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
@@ -288,18 +305,30 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
 
-      // 添加用户消息，注入待处理的文档附件
-      const docAttachments = pendingDocumentAttachments.value.length > 0 
-        ? [...pendingDocumentAttachments.value] 
-        : undefined
+      // 添加用户消息，注入待处理的文档附件和图片附件
+      const docAttachments = payload.document_attachments || (
+        pendingDocumentAttachments.value.length > 0 
+          ? [...pendingDocumentAttachments.value] 
+          : undefined
+      )
+      const imgAttachments = payload.image_attachments
       pendingDocumentAttachments.value = [] // Clear after use
+      
+      // Build metadata
+      const metadata: any = {}
+      if (docAttachments) {
+        metadata.document_attachments = docAttachments
+      }
+      if (imgAttachments) {
+        metadata.image_attachments = imgAttachments
+      }
       
       messages.value.push({
         id: payload.message_id,
         type: 'user',
         content: payload.content,
         timestamp: payload.timestamp,
-        metadata: docAttachments ? { document_attachments: docAttachments } : undefined,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       })
     })
     unlisteners.push(unlistenUserMessage)
@@ -340,6 +369,31 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       }
     })
     unlisteners.push(unlistenStart)
+
+    // Listen for context usage events
+    const unlistenContextUsage = await listen<{
+      execution_id: string
+      used_tokens: number
+      max_tokens: number
+      usage_percentage: number
+      system_prompt_tokens: number
+      history_tokens: number
+      history_count: number
+    }>('agent:context_usage', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      contextUsage.value = {
+        usedTokens: payload.used_tokens,
+        maxTokens: payload.max_tokens,
+        usagePercentage: payload.usage_percentage,
+        systemPromptTokens: payload.system_prompt_tokens,
+        historyTokens: payload.history_tokens,
+        historyCount: payload.history_count,
+      }
+      console.log('[useAgentEvents] Context usage updated:', contextUsage.value)
+    })
+    unlisteners.push(unlistenContextUsage)
 
     const unlistenSubagentStart = await listen<SubagentStartEvent>('subagent:start', (event) => {
       const payload = event.payload
@@ -426,6 +480,36 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
           const existingMsg = messages.value.find(m => m.id === currentAssistantMessageId.value)
           if (existingMsg) {
             existingMsg.content = assistantSegmentBuffer.value
+          }
+        }
+      } else if (payload.chunk_type === 'usage') {
+        // Usage report from LLM API - update context usage with real token counts
+        if (payload.input_tokens !== undefined && payload.output_tokens !== undefined) {
+          const inputTokens = payload.input_tokens
+          const outputTokens = payload.output_tokens
+          
+          // Update context usage with real values from LLM
+          if (contextUsage.value) {
+            // Use the real input_tokens from LLM as used_tokens (more accurate than our estimate)
+            const maxTokens = contextUsage.value.maxTokens
+            const usedTokens = inputTokens + outputTokens
+            contextUsage.value = {
+              ...contextUsage.value,
+              usedTokens,
+              usagePercentage: maxTokens > 0 ? (usedTokens / maxTokens * 100) : 0,
+            }
+          } else {
+            // If no context usage yet, create a basic one (assume 128K context)
+            const maxTokens = 128000
+            const usedTokens = inputTokens + outputTokens
+            contextUsage.value = {
+              usedTokens,
+              maxTokens,
+              usagePercentage: (usedTokens / maxTokens * 100),
+              systemPromptTokens: 0,
+              historyTokens: inputTokens,
+              historyCount: 0,
+            }
           }
         }
       } else if (payload.chunk_type === 'reasoning') {
@@ -1270,6 +1354,7 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     hasMessages,
     lastMessage,
     ragMetaInfo,
+    contextUsage,
     clearMessages,
     stopExecution,
     startListening,

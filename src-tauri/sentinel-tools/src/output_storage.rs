@@ -191,12 +191,31 @@ All context files are in: {}
     })
 }
 
-/// Store conversation history in container
+/// Store conversation history in container (isolated by execution_id)
 pub async fn store_history_in_container(
     sandbox: &DockerSandbox,
     history_content: &str,
 ) -> anyhow::Result<String> {
-    let container_path = format!("{}/history.txt", CONTAINER_CONTEXT_DIR);
+    store_history_in_container_with_id(sandbox, history_content, None).await
+}
+
+/// Store conversation history in container with execution_id isolation
+/// Each execution gets its own history file to prevent cross-session data leakage
+pub async fn store_history_in_container_with_id(
+    sandbox: &DockerSandbox,
+    history_content: &str,
+    execution_id: Option<&str>,
+) -> anyhow::Result<String> {
+    // Use execution_id for isolation, fallback to "default" for backward compatibility
+    let history_filename = match execution_id {
+        Some(id) if !id.is_empty() => {
+            // Use first 12 chars of execution_id for filename
+            let short_id = &id[..12.min(id.len())];
+            format!("history_{}.txt", short_id)
+        }
+        _ => "history.txt".to_string(),
+    };
+    let container_path = format!("{}/{}", CONTAINER_CONTEXT_DIR, history_filename);
 
     // Create context directory
     let mkdir_cmd = format!("mkdir -p {}", CONTAINER_CONTEXT_DIR);
@@ -217,6 +236,43 @@ pub async fn store_history_in_container(
     Ok(container_path)
 }
 
+/// Store conversation history on host filesystem (isolated by execution_id)
+pub async fn store_history_on_host(
+    history_content: &str,
+    execution_id: Option<&str>,
+) -> anyhow::Result<String> {
+    let context_dir = get_host_context_dir();
+    std::fs::create_dir_all(&context_dir)
+        .map_err(|e| anyhow::anyhow!("Failed to create context directory: {}", e))?;
+
+    // Use execution_id for isolation
+    let history_filename = match execution_id {
+        Some(id) if !id.is_empty() => {
+            let short_id = &id[..12.min(id.len())];
+            format!("history_{}.txt", short_id)
+        }
+        _ => "history.txt".to_string(),
+    };
+    let host_path = context_dir.join(&history_filename);
+
+    std::fs::write(&host_path, history_content)
+        .map_err(|e| anyhow::anyhow!("Failed to write history to host file: {}", e))?;
+
+    Ok(host_path.display().to_string())
+}
+
+/// Get history file path for a given execution_id
+pub fn get_history_path(context_dir: &str, execution_id: Option<&str>) -> String {
+    let history_filename = match execution_id {
+        Some(id) if !id.is_empty() => {
+            let short_id = &id[..12.min(id.len())];
+            format!("history_{}.txt", short_id)
+        }
+        _ => "history.txt".to_string(),
+    };
+    format!("{}/{}", context_dir, history_filename)
+}
+
 /// Initialize context directory in container
 pub async fn init_container_context(sandbox: &DockerSandbox) -> anyhow::Result<()> {
     let mkdir_cmd = format!("mkdir -p {}", CONTAINER_CONTEXT_DIR);
@@ -225,28 +281,47 @@ pub async fn init_container_context(sandbox: &DockerSandbox) -> anyhow::Result<(
     Ok(())
 }
 
-/// Clean up context files in container
+/// Clean up context files in container for a specific execution
 /// Should be called when execution completes
 /// 
 /// Removes:
 /// - Tool output files: http_response_*.txt, shell_stdout_*.txt, shell_stderr_*.txt
 /// - Temporary files in /workspace root: *.py, *.js, *.php, *.txt, etc.
 /// - Temporary directories in /workspace (except context/)
+/// - The specific execution's history file (history_{execution_id}.txt)
 /// 
 /// Preserves:
-/// - /workspace/context/history.txt (conversation history for search)
+/// - Other executions' history files
 pub async fn cleanup_container_context(sandbox: &DockerSandbox) -> anyhow::Result<()> {
+    cleanup_container_context_with_id(sandbox, None).await
+}
+
+/// Clean up context files in container for a specific execution_id
+pub async fn cleanup_container_context_with_id(
+    sandbox: &DockerSandbox,
+    execution_id: Option<&str>,
+) -> anyhow::Result<()> {
     tracing::info!("Cleaning up container workspace and context directories");
     
-    // 1. Remove all tool output files in /workspace/context except history.txt
-    // This includes: http_response_*.txt, shell_stdout_*.txt, shell_stderr_*.txt
+    // 1. Remove tool output files in /workspace/context
+    // Keep all history_*.txt files (each execution has its own)
     let cleanup_context_cmd = format!(
-        "find {} -type f ! -name 'history.txt' -delete 2>/dev/null || true",
+        "find {} -type f ! -name 'history*.txt' -delete 2>/dev/null || true",
         CONTAINER_CONTEXT_DIR
     );
     
-    // 2. Clean up temporary files in /workspace root (preserve essential directories)
-    // Remove files but keep directories like /workspace/context, /workspace/src (if any)
+    // 2. If execution_id provided, also remove that specific history file
+    if let Some(id) = execution_id {
+        if !id.is_empty() {
+            let short_id = &id[..12.min(id.len())];
+            let history_file = format!("{}/history_{}.txt", CONTAINER_CONTEXT_DIR, short_id);
+            let rm_history_cmd = format!("rm -f {} 2>/dev/null || true", history_file);
+            let _ = sandbox.execute(&rm_history_cmd, 5).await;
+            tracing::info!("Removed execution-specific history file: {}", history_file);
+        }
+    }
+    
+    // 3. Clean up temporary files in /workspace root (preserve essential directories)
     let cleanup_workspace_cmd = r#"
         cd /workspace 2>/dev/null && \
         find . -maxdepth 1 -type f -delete 2>/dev/null || true && \
@@ -261,6 +336,41 @@ pub async fn cleanup_container_context(sandbox: &DockerSandbox) -> anyhow::Resul
         .map_err(|e| anyhow::anyhow!("Failed to cleanup workspace directory: {}", e))?;
     
     tracing::info!("Container workspace cleanup completed");
+    Ok(())
+}
+
+/// Clean up host context files for a specific execution
+pub fn cleanup_host_context_with_id(execution_id: Option<&str>) -> anyhow::Result<()> {
+    let context_dir = get_host_context_dir();
+    
+    if !context_dir.exists() {
+        return Ok(());
+    }
+
+    // Remove tool output files (not history files)
+    if let Ok(entries) = std::fs::read_dir(&context_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                // Skip history files unless it's for this specific execution
+                if filename.starts_with("history") {
+                    if let Some(id) = execution_id {
+                        let short_id = &id[..12.min(id.len())];
+                        let expected = format!("history_{}.txt", short_id);
+                        if filename == expected {
+                            let _ = std::fs::remove_file(&path);
+                            tracing::info!("Removed execution-specific history file: {}", path.display());
+                        }
+                    }
+                    continue;
+                }
+                // Remove other output files
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    
+    tracing::info!("Host context cleanup completed");
     Ok(())
 }
 

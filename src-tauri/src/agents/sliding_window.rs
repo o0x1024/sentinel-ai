@@ -200,11 +200,20 @@ impl SlidingWindowManager {
         // Skip already summarized ones
         // Assuming strict ordering: summarized count = after_index + 1
         let skip_count = (after_index + 1) as usize;
-        
+
         if skip_count >= chat_messages.len() {
+            if !chat_messages.is_empty() && after_index >= 0 {
+                tracing::warn!(
+                    "Sliding window skip_count {} exceeds message count {} for conversation {}, returning full history",
+                    skip_count,
+                    chat_messages.len(),
+                    conversation_id
+                );
+                return Ok(chat_messages);
+            }
             return Ok(Vec::new());
         }
-        
+
         Ok(chat_messages.into_iter().skip(skip_count).collect())
     }
 

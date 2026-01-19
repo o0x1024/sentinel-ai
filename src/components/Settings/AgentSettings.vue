@@ -20,14 +20,14 @@
               {{ t('settings.agent.terminal.dockerImage') }}
             </h4>
             
-            <!-- Use Docker Toggle -->
+            <!-- Execution Mode Toggle -->
             <div class="form-control mb-4">
               <label class="label cursor-pointer justify-start gap-4">
                 <input 
                   type="checkbox" 
                   class="toggle toggle-primary" 
-                  :checked="terminalConfig.use_docker"
-                  @change="toggleUseDocker"
+                  :checked="terminalConfig.default_execution_mode === 'docker'"
+                  @change="toggleExecutionMode"
                 />
                 <div>
                   <span class="label-text font-medium">{{ t('settings.agent.terminal.useDocker') }}</span>
@@ -39,7 +39,7 @@
             </div>
 
             <!-- Docker Image Input -->
-            <div v-if="terminalConfig.use_docker" class="form-control">
+            <div v-if="terminalConfig.default_execution_mode === 'docker'" class="form-control">
               <label class="label">
                 <span class="label-text">{{ t('settings.agent.terminal.dockerImage') }}</span>
               </label>
@@ -58,16 +58,15 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <!-- Terminal Command Auto Execution -->
-            <div class="space-y-4">
-              <h4 class="font-semibold border-b pb-2">{{ t('settings.agent.terminal.autoExecution') }}</h4>
-              <p class="text-sm text-base-content/70">
-                {{ t('settings.agent.terminal.autoExecutionDesc') }}
-              </p>
+          <!-- Terminal Command Auto Execution -->
+          <div class="mb-6">
+            <h4 class="font-semibold border-b pb-2 mb-4">{{ t('settings.agent.terminal.autoExecution') }}</h4>
+            <p class="text-sm text-base-content/70 mb-4">
+              {{ t('settings.agent.terminal.autoExecutionDesc') }}
+            </p>
+            <div class="flex gap-6">
               <div class="form-control">
-                <label class="label cursor-pointer">
-                  <span class="label-text">{{ t('settings.agent.terminal.alwaysProceed') }}</span>
+                <label class="label cursor-pointer gap-3">
                   <input 
                     type="radio" 
                     name="policy" 
@@ -75,11 +74,11 @@
                     :checked="shellConfig.default_policy === 'AlwaysProceed'"
                     @change="setDefaultPolicy('AlwaysProceed')"
                   />
+                  <span class="label-text">{{ t('settings.agent.terminal.alwaysProceed') }}</span>
                 </label>
               </div>
               <div class="form-control">
-                <label class="label cursor-pointer">
-                  <span class="label-text">{{ t('settings.agent.terminal.requestReview') }}</span>
+                <label class="label cursor-pointer gap-3">
                   <input 
                     type="radio" 
                     name="policy" 
@@ -87,13 +86,19 @@
                     :checked="shellConfig.default_policy === 'RequestReview'"
                     @change="setDefaultPolicy('RequestReview')"
                   />
+                  <span class="label-text">{{ t('settings.agent.terminal.requestReview') }}</span>
                 </label>
               </div>
             </div>
+          </div>
 
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Allow List Terminal Commands -->
             <div class="space-y-4">
-              <h4 class="font-semibold border-b pb-2">{{ t('settings.agent.terminal.allowList') }}</h4>
+              <div class="flex items-center justify-between">
+                <h4 class="font-semibold">{{ t('settings.agent.terminal.allowList') }}</h4>
+                <span class="badge badge-sm badge-ghost">{{ shellConfig.allowed_commands.length }}</span>
+              </div>
               <p class="text-sm text-base-content/70">
                 {{ t('settings.agent.terminal.allowListDesc') }}
               </p>
@@ -116,72 +121,162 @@
                 </button>
               </div>
 
-              <!-- Command list -->
-              <div class="space-y-2">
+              <!-- Virtual scrollable command list -->
+              <div 
+                class="border border-base-300 rounded-lg overflow-hidden"
+                :class="{ 'bg-base-200/30': shellConfig.allowed_commands.length === 0 }"
+              >
                 <div 
-                  v-for="(cmd, index) in shellConfig.allowed_commands" 
-                  :key="index"
-                  class="flex items-center justify-between px-3 py-2 bg-base-200 rounded-lg font-mono text-sm"
+                  v-if="shellConfig.allowed_commands.length > 0"
+                  class="virtual-list-container"
+                  style="height: 240px; overflow-y: auto;"
                 >
-                  <span>{{ cmd }}</span>
-                  <button 
-                    @click="removeAllowCommand(index)"
-                    class="btn btn-ghost btn-xs text-base-content/50 hover:text-error"
+                  <div 
+                    v-for="(cmd, index) in shellConfig.allowed_commands" 
+                    :key="index"
+                    class="flex items-center justify-between px-3 py-2 hover:bg-base-200 border-b border-base-300 last:border-b-0 font-mono text-sm transition-colors"
                   >
-                    <i class="fas fa-times"></i>
-                  </button>
+                    <span class="truncate flex-1">{{ cmd }}</span>
+                    <button 
+                      @click="removeAllowCommand(index)"
+                      class="btn btn-ghost btn-xs text-base-content/50 hover:text-error ml-2 flex-shrink-0"
+                    >
+                      <i class="fas fa-times"></i>
+                    </button>
+                  </div>
                 </div>
-                <div v-if="shellConfig.allowed_commands.length === 0" class="text-center py-4 text-base-content/50 text-sm">
+                <div v-else class="text-center py-8 text-base-content/50 text-sm">
                   {{ t('settings.agent.terminal.noAllowedCommands') }}
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Deny List Section -->
-          <div class="mt-6">
-            <h4 class="font-semibold border-b pb-2 mb-4">{{ t('settings.agent.terminal.denyList') }}</h4>
-            <p class="text-sm text-base-content/70 mb-4">
-              {{ t('settings.agent.terminal.denyListDesc') }}
-            </p>
+            <!-- Deny List Section -->
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <h4 class="font-semibold">{{ t('settings.agent.terminal.denyList') }}</h4>
+                <span class="badge badge-sm badge-ghost">{{ shellConfig.denied_commands.length }}</span>
+              </div>
+              <p class="text-sm text-base-content/70">
+                {{ t('settings.agent.terminal.denyListDesc') }}
+              </p>
 
-            <!-- Add new command input -->
-            <div class="flex gap-2 mb-4">
-              <input 
-                v-model="newDenyCommand"
-                type="text" 
-                :placeholder="t('settings.agent.terminal.enterCommand')"
-                class="input input-bordered input-sm flex-1 font-mono max-w-md"
-                @keyup.enter="addDenyCommand"
-              />
-              <button 
-                @click="addDenyCommand" 
-                class="btn btn-sm btn-primary"
-                :disabled="!newDenyCommand.trim()"
-              >
-                <i class="fas fa-plus"></i>
-              </button>
-            </div>
-
-            <!-- Command list -->
-            <div class="flex flex-wrap gap-2">
-              <div 
-                v-for="(cmd, index) in shellConfig.denied_commands" 
-                :key="index"
-                class="badge badge-lg gap-2 font-mono"
-              >
-                {{ cmd }}
+              <!-- Add new command input -->
+              <div class="flex gap-2">
+                <input 
+                  v-model="newDenyCommand"
+                  type="text" 
+                  :placeholder="t('settings.agent.terminal.enterCommand')"
+                  class="input input-bordered input-sm flex-1 font-mono"
+                  @keyup.enter="addDenyCommand"
+                />
                 <button 
-                  @click="removeDenyCommand(index)"
-                  class="btn btn-ghost btn-xs p-0 min-h-0 h-auto text-base-content/50 hover:text-error"
+                  @click="addDenyCommand" 
+                  class="btn btn-sm btn-primary"
+                  :disabled="!newDenyCommand.trim()"
                 >
-                  <i class="fas fa-times text-xs"></i>
+                  <i class="fas fa-plus"></i>
                 </button>
               </div>
-              <div v-if="shellConfig.denied_commands.length === 0" class="text-base-content/50 text-sm">
-                {{ t('settings.agent.terminal.noDeniedCommands') }}
+
+              <!-- Virtual scrollable command list -->
+              <div 
+                class="border border-base-300 rounded-lg overflow-hidden"
+                :class="{ 'bg-base-200/30': shellConfig.denied_commands.length === 0 }"
+              >
+                <div 
+                  v-if="shellConfig.denied_commands.length > 0"
+                  class="virtual-list-container"
+                  style="height: 240px; overflow-y: auto;"
+                >
+                  <div 
+                    v-for="(cmd, index) in shellConfig.denied_commands" 
+                    :key="index"
+                    class="flex items-center justify-between px-3 py-2 hover:bg-base-200 border-b border-base-300 last:border-b-0 font-mono text-sm transition-colors"
+                  >
+                    <span class="truncate flex-1">{{ cmd }}</span>
+                    <button 
+                      @click="removeDenyCommand(index)"
+                      class="btn btn-ghost btn-xs text-base-content/50 hover:text-error ml-2 flex-shrink-0"
+                    >
+                      <i class="fas fa-times"></i>
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="text-center py-8 text-base-content/50 text-sm">
+                  {{ t('settings.agent.terminal.noDeniedCommands') }}
+                </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Image Attachments Section -->
+      <div class="card bg-base-100 shadow-sm mb-6">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
+            <i class="fas fa-image"></i>
+            {{ t('settings.agent.imageAttachments.title') }}
+          </h3>
+
+          <div class="mb-6">
+            <h4 class="font-semibold border-b pb-2 mb-4">{{ t('settings.agent.imageAttachments.mode') }}</h4>
+            <p class="text-sm text-base-content/70 mb-4">
+              {{ t('settings.agent.imageAttachments.modeDesc') }}
+            </p>
+            <div class="flex gap-6 flex-wrap">
+              <div class="form-control">
+                <label class="label cursor-pointer gap-3">
+                  <input
+                    type="radio"
+                    name="imageAttachmentMode"
+                    class="radio radio-primary"
+                    :checked="imageAttachments.mode === 'local_ocr'"
+                    @change="setImageMode('local_ocr')"
+                  />
+                  <span class="label-text">{{ t('settings.agent.imageAttachments.localOcr') }}</span>
+                </label>
+              </div>
+              <div class="form-control">
+                <label class="label cursor-pointer gap-3">
+                  <input
+                    type="radio"
+                    name="imageAttachmentMode"
+                    class="radio radio-primary"
+                    :checked="imageAttachments.mode === 'model_vision'"
+                    :disabled="!imageAttachments.allow_upload_to_model"
+                    @change="setImageMode('model_vision')"
+                  />
+                  <span class="label-text">{{ t('settings.agent.imageAttachments.modelVision') }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-control mb-2">
+            <label class="label cursor-pointer justify-start gap-4">
+              <input
+                type="checkbox"
+                class="toggle toggle-primary"
+                :checked="imageAttachments.allow_upload_to_model"
+                @change="toggleAllowUploadToModel"
+              />
+              <div>
+                <span class="label-text font-medium">{{ t('settings.agent.imageAttachments.allowUpload') }}</span>
+                <p class="text-xs text-base-content/60 mt-1">
+                  {{ t('settings.agent.imageAttachments.allowUploadDesc') }}
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div
+            v-if="imageAttachments.mode === 'model_vision' && !imageAttachments.allow_upload_to_model"
+            class="alert alert-warning text-xs"
+          >
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ t('settings.agent.imageAttachments.uploadDisabledWarning') }}</span>
           </div>
         </div>
       </div>
@@ -204,14 +299,22 @@ interface ShellConfig {
   denied_commands: string[]
 }
 
+type ExecutionMode = 'docker' | 'host'
+
 interface TerminalConfig {
   docker_image: string
-  use_docker: boolean
+  default_execution_mode: ExecutionMode
+}
+
+interface ImageAttachmentsConfig {
+  mode: 'local_ocr' | 'model_vision'
+  allow_upload_to_model: boolean
 }
 
 interface AgentConfig {
   shell: ShellConfig
   terminal: TerminalConfig
+  image_attachments?: ImageAttachmentsConfig
 }
 
 const { t } = useI18n()
@@ -225,7 +328,12 @@ const shellConfig = ref<ShellConfig>({
 
 const terminalConfig = ref<TerminalConfig>({
   docker_image: 'sentinel-sandbox:latest',
-  use_docker: true
+  default_execution_mode: 'docker'
+})
+
+const imageAttachments = ref<ImageAttachmentsConfig>({
+  mode: 'local_ocr',
+  allow_upload_to_model: false
 })
 
 const newAllowCommand = ref('')
@@ -249,7 +357,13 @@ async function loadConfig() {
     if (result?.terminal) {
       terminalConfig.value = {
         docker_image: result.terminal.docker_image || 'sentinel-sandbox:latest',
-        use_docker: result.terminal.use_docker ?? true
+        default_execution_mode: result.terminal.default_execution_mode || 'docker'
+      }
+    }
+    if (result?.image_attachments) {
+      imageAttachments.value = {
+        mode: (result.image_attachments.mode as ImageAttachmentsConfig['mode']) || 'local_ocr',
+        allow_upload_to_model: !!result.image_attachments.allow_upload_to_model
       }
     }
   } catch (e) {
@@ -268,7 +382,8 @@ async function autoSaveConfig() {
     try {
       const agentConfig: AgentConfig = {
         shell: shellConfig.value,
-        terminal: terminalConfig.value
+        terminal: terminalConfig.value,
+        image_attachments: imageAttachments.value
       }
       await invoke('save_agent_config', { config: agentConfig })
       console.log('Agent config auto-saved')
@@ -279,6 +394,21 @@ async function autoSaveConfig() {
   }, 300)
 }
 
+const setImageMode = (mode: ImageAttachmentsConfig['mode']) => {
+  imageAttachments.value.mode = mode
+  autoSaveConfig()
+}
+
+const toggleAllowUploadToModel = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  imageAttachments.value.allow_upload_to_model = target.checked
+  // If user disabled upload, force mode back to local OCR (safety)
+  if (!target.checked && imageAttachments.value.mode === 'model_vision') {
+    imageAttachments.value.mode = 'local_ocr'
+  }
+  autoSaveConfig()
+}
+
 // Update docker image
 function updateDockerImage(event: Event) {
   const target = event.target as HTMLInputElement
@@ -286,9 +416,10 @@ function updateDockerImage(event: Event) {
   autoSaveConfig()
 }
 
-// Toggle use docker
-function toggleUseDocker() {
-  terminalConfig.value.use_docker = !terminalConfig.value.use_docker
+// Toggle execution mode
+function toggleExecutionMode() {
+  terminalConfig.value.default_execution_mode = 
+    terminalConfig.value.default_execution_mode === 'docker' ? 'host' : 'docker'
   autoSaveConfig()
 }
 
@@ -342,5 +473,27 @@ onMounted(() => {
 
 .card {
   @apply transition-all duration-200 hover:shadow-md;
+}
+
+.virtual-list-container {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(var(--bc) / 0.2) transparent;
+}
+
+.virtual-list-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.virtual-list-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.virtual-list-container::-webkit-scrollbar-thumb {
+  background-color: oklch(var(--bc) / 0.2);
+  border-radius: 4px;
+}
+
+.virtual-list-container::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(var(--bc) / 0.3);
 }
 </style>

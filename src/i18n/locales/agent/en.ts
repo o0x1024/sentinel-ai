@@ -187,6 +187,9 @@ export default {
   areYouSureClearStatistics: 'Are you sure you want to clear all tool usage statistics?',
   selectAll: 'Select All',
   deselectAll: 'Deselect All',
+  
+  // Attachments
+  imageAttachments: 'Image Attachments',
 
   // Tour guide
   tour: {
@@ -355,6 +358,14 @@ export default {
   statusCompleted: 'Completed',
   statusFailed: 'Failed',
   statusPending: 'Pending',
+
+  // Context usage
+  contextUsed: 'context used',
+  contextUsageDetails: 'Context Usage Details',
+  systemPromptTokens: 'System Prompt',
+  historyTokens: 'History',
+  historyMessages: 'Messages',
+  totalUsed: 'Total Used',
 
   // Document attachment
   document: {

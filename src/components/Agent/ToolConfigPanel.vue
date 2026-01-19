@@ -124,9 +124,32 @@
 
           <label class="label">
             <span class="label-text-alt text-base-content/60">
-              {{ localConfig.ability_groups?.length || 0 }} {{ t('agent.groupsSelected') }}（{{ t('agent.emptyMeansAll') }}）
+              <template v-if="!localConfig.ability_groups || localConfig.ability_groups.length === 0">
+                {{ t('agent.noGroupsSelectedDefaultAll') }}
+              </template>
+              <template v-else>
+                {{ localConfig.ability_groups.length }} {{ t('agent.groupsSelected') }}
+              </template>
             </span>
           </label>
+          
+          <!-- Quick Actions for Ability Groups -->
+          <div class="flex gap-2 mt-2">
+            <button 
+              @click="selectAllAbilityGroups"
+              class="btn btn-xs btn-outline btn-primary flex-1"
+            >
+              <i class="fas fa-check-double mr-1"></i>
+              {{ t('agent.selectAll') }}
+            </button>
+            <button 
+              @click="clearAllAbilityGroups"
+              class="btn btn-xs btn-outline btn-ghost flex-1"
+            >
+              <i class="fas fa-times mr-1"></i>
+              {{ t('agent.clearSelection') }}
+            </button>
+          </div>
         </div>
 
         <!-- Ability Group Manager Modal -->
@@ -747,11 +770,33 @@ const loadAbilityGroups = async () => {
   loadingAbilityGroups.value = true
   try {
     abilityGroups.value = await invoke<AbilityGroupSummary[]>('list_ability_groups')
+    
+    // If in Ability mode and no groups selected, default to all groups
+    if (localConfig.value.selection_strategy === 'Ability' && 
+        (!localConfig.value.ability_groups || localConfig.value.ability_groups.length === 0) &&
+        abilityGroups.value.length > 0) {
+      console.log('[ToolConfigPanel] No ability groups selected, defaulting to all groups')
+      localConfig.value.ability_groups = abilityGroups.value.map(g => g.id)
+      emitUpdate()
+    }
   } catch (error) {
     console.error('Failed to load ability groups:', error)
   } finally {
     loadingAbilityGroups.value = false
   }
+}
+
+const selectAllAbilityGroups = () => {
+  if (!localConfig.value.ability_groups) {
+    localConfig.value.ability_groups = []
+  }
+  localConfig.value.ability_groups = abilityGroups.value.map(g => g.id)
+  emitUpdate()
+}
+
+const clearAllAbilityGroups = () => {
+  localConfig.value.ability_groups = []
+  emitUpdate()
 }
 
 const loadUsageStats = async () => {
@@ -878,6 +923,13 @@ watch(() => props.config, (newConfig) => {
     selection_strategy: strategy,
     manual_tools: manualTools,
     ability_groups: abilityGroupIds,
+  }
+  
+  // If switching to Ability mode and no groups selected, default to all
+  if (strategy === 'Ability' && abilityGroupIds.length === 0 && abilityGroups.value.length > 0) {
+    console.log('[ToolConfigPanel] Switched to Ability mode with no groups, defaulting to all')
+    localConfig.value.ability_groups = abilityGroups.value.map(g => g.id)
+    emitUpdate()
   }
 }, { deep: true })
 

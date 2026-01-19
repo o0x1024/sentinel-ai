@@ -26,7 +26,7 @@ RUN apt-get update && \
         # [常用压缩/解压]
         unzip zip p7zip-full unrar-free \
         # [CTF 基础分析工具]
-        file binutils xxd bsdmainutils \
+        file binutils binutils-multiarch xxd bsdmainutils \
         procps htop tree mc \
         # [逆向与取证]
         apktool \
@@ -56,6 +56,10 @@ RUN apt-get update && \
         # [NodeJS]
         nodejs \
         npm \
+        # [Pwn 与逆向增强]
+        ruby-full patchelf strace ltrace \
+        # [终端与字符集]
+        ncurses-term \
         # [PHP]
         php-cli php-curl php-mbstring php-xml php-zip php-mysql php-sqlite3 php-bcmath \
         && \
@@ -109,7 +113,11 @@ RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple &&
         scipy \
         ROPgadget \
         one_gadget \
+        ropper \
         uncompyle6
+
+# [Ruby Gems]
+RUN gem install --no-document one_gadget seccomp-tools
     
     # -----------------------------------------------------------------------------
     # 5. User Configuration

@@ -94,9 +94,11 @@ interface Props {
   shell?: string
 }
 
+type ExecutionMode = 'docker' | 'host'
+
 interface TerminalConfig {
   docker_image: string
-  use_docker: boolean
+  default_execution_mode: ExecutionMode
 }
 
 interface AgentConfig {
@@ -111,7 +113,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 // Actual config (from settings or props)
 const actualDockerImage = ref(props.dockerImage)
-const actualUseDocker = ref(props.useDocker)
+const actualExecutionMode = ref<ExecutionMode>(props.useDocker ? 'docker' : 'host')
 
 // State
 const terminalContainer = ref<HTMLElement | null>(null)
@@ -244,8 +246,8 @@ const connect = async () => {
       const agentConfig = await invoke<AgentConfig>('get_agent_config')
       if (agentConfig?.terminal) {
         actualDockerImage.value = agentConfig.terminal.docker_image || props.dockerImage
-        actualUseDocker.value = agentConfig.terminal.use_docker ?? props.useDocker
-        console.log('[Terminal] Loaded config from settings:', actualDockerImage.value, actualUseDocker.value)
+        actualExecutionMode.value = agentConfig.terminal.default_execution_mode || (props.useDocker ? 'docker' : 'host')
+        console.log('[Terminal] Loaded config from settings:', actualDockerImage.value, actualExecutionMode.value)
       }
     } catch (e) {
       console.warn('[Terminal] Failed to load agent config, using defaults:', e)
@@ -286,9 +288,9 @@ const connect = async () => {
 
       // No session ID yet - send default config to create a new session
       // This happens when user opens terminal before any interactive_shell call
-      console.log('[Terminal] No session ID, creating new session with config:', actualDockerImage.value)
+      console.log('[Terminal] No session ID, creating new session with config:', actualDockerImage.value, actualExecutionMode.value)
       const config = {
-        use_docker: actualUseDocker.value,
+        execution_mode: actualExecutionMode.value,
         docker_image: actualDockerImage.value,
         working_dir: '/workspace',
         env_vars: {},

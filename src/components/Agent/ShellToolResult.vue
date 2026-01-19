@@ -55,7 +55,7 @@
       
       <!-- Truncation warning -->
       <div v-if="isStdoutTruncated || isStderrTruncated" class="text-warning text-[10px] mt-1 italic">
-        (Output truncated for performance. Copy command to see full output.)
+        {{ $t('tools.shell.outputTruncatedHint') }}
       </div>
       
       <!-- Error message -->
@@ -63,7 +63,7 @@
       
       <!-- No output indicator -->
       <div v-if="!stdout && !stderr && !error && isCompleted" class="no-output text-[#6a9955] italic">
-        (no output)
+        {{ $t('tools.shell.noOutput') }}
       </div>
       
       <!-- Running indicator -->
@@ -90,6 +90,14 @@
         <span v-if="executionTime" class="text-[#808080]">
           {{ executionTime }}ms
         </span>
+        <button
+          @click.stop="copyAllContent"
+          class="btn btn-ghost btn-xs text-[#808080] hover:text-white"
+          :title="$t('tools.shell.copyAllHint')"
+        >
+          <i :class="['fas', copiedAll ? 'fa-check text-success' : 'fa-copy']"></i>
+          <span class="ml-1">{{ $t('tools.shell.copyAll') }}</span>
+        </button>
         <!-- Collapse/Expand button -->
         <button 
           @click.stop="toggleExpanded"
@@ -123,6 +131,7 @@ const emit = defineEmits<{
 }>()
 
 const copied = ref(false)
+const copiedAll = ref(false)
 const pendingPermissionId = ref<string | null>(null)
 const pendingCommand = ref<string>('')
 const isExpanded = ref(false)
@@ -173,6 +182,36 @@ async function copyCommand() {
     }, 2000)
   } catch (err) {
     console.error('Failed to copy command:', err)
+  }
+}
+
+function buildCopyAllContent(): string {
+  const parts: string[] = []
+  if (command.value) {
+    parts.push(`$ ${command.value}`)
+  }
+  if (stdout.value) {
+    parts.push(stdout.value)
+  }
+  if (stderr.value) {
+    parts.push(stderr.value)
+  }
+  if (props.error) {
+    parts.push(props.error)
+  }
+  return parts.join('\n')
+}
+
+async function copyAllContent() {
+  try {
+    const content = buildCopyAllContent()
+    await navigator.clipboard.writeText(content)
+    copiedAll.value = true
+    setTimeout(() => {
+      copiedAll.value = false
+    }, 2000)
+  } catch (err) {
+    console.error('Failed to copy shell output:', err)
   }
 }
 

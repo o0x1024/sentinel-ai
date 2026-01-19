@@ -5,6 +5,7 @@ pub mod mcp_tracking;
 pub mod plugin_tracking;
 pub mod aliyun_oss;
 pub mod streaming_optimizer;
+pub mod image_ocr;
 
 // macOS 系统代理模块已移至 sentinel_traffic::system_proxy
 // 全局代理配置已移至 sentinel_core::global_proxy

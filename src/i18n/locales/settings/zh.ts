@@ -455,6 +455,16 @@ export default {
       dockerImagePlaceholder: '例如: sentinel-sandbox:latest',
       useDocker: '使用 Docker',
       useDockerDesc: '使用 Docker 容器作为终端环境（推荐），关闭后将使用主机终端'
+    },
+    imageAttachments: {
+      title: '图片附件',
+      mode: '处理方式',
+      modeDesc: '选择发送消息时如何处理图片附件。',
+      localOcr: '本地 OCR（默认）',
+      modelVision: '上传到模型（视觉）',
+      allowUpload: '允许上传图片到模型',
+      allowUploadDesc: '开启后，图片可能会被发送到所选 AI 服务用于视觉理解。',
+      uploadDisabledWarning: '当前未允许上传图片到模型，请切回本地 OCR 或开启上传权限。'
     }
   }
 }

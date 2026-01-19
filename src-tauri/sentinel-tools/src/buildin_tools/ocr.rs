@@ -9,6 +9,55 @@ use oar_ocr::prelude::*;
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use std::io::Write;
+use crate::docker_sandbox::DockerSandbox;
+use crate::buildin_tools::shell::get_shell_config;
+use sha2::Digest;
+
+async fn import_from_docker_if_needed(image_path: &str) -> Result<Option<String>, OcrError> {
+    // If the provided path is a container path (e.g. /workspace/...), try to copy it from the
+    // persistent shell container onto host filesystem so the OCR engine can read it.
+    if !image_path.starts_with("/workspace/") {
+        return Ok(None);
+    }
+    if std::path::Path::new(image_path).exists() {
+        return Ok(None);
+    }
+
+    if !DockerSandbox::is_docker_available().await {
+        return Ok(None);
+    }
+
+    let shell_cfg = get_shell_config().await;
+    let docker_cfg = shell_cfg.docker_config.unwrap_or_default();
+    let sandbox = DockerSandbox::new(docker_cfg);
+
+    let dir = dirs::data_dir()
+        .ok_or_else(|| OcrError::ModelError("Could not find data directory".to_string()))?
+        .join("sentinel-ai")
+        .join("cache")
+        .join("ocr")
+        .join("docker-imports");
+    let _ = tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| OcrError::ModelError(format!("Failed to create ocr import dir: {}", e)))?;
+
+    // Use a stable but non-sensitive filename.
+    let ext = std::path::Path::new(image_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("img");
+    let digest = sha2::Sha256::digest(image_path.as_bytes());
+    let name = format!("{:02x}{:02x}{:02x}{:02x}.{}", digest[0], digest[1], digest[2], digest[3], ext);
+    let host_path = dir.join(name);
+    let host_path_str = host_path.to_string_lossy().to_string();
+
+    sandbox
+        .copy_file_from_container(image_path, &host_path_str)
+        .await
+        .map_err(|e| OcrError::LoadError(format!("Failed to import image from docker: {}", e)))?;
+
+    Ok(Some(host_path_str))
+}
 
 /// OCR arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -207,7 +256,12 @@ impl Tool for OcrTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let image_path = args.image_path;
+        let mut image_path = args.image_path;
+
+        // If the path points to a Docker container file (e.g. /workspace/context/...), import it to host.
+        if let Ok(Some(imported)) = import_from_docker_if_needed(&image_path).await {
+            image_path = imported;
+        }
         
         // Ensure models are downloaded (async)
         let (det_path, rec_path, dict_path) = self.ensure_models().await?;

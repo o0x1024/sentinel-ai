@@ -215,6 +215,42 @@ impl SubagentMessagesMigration {
     }
 }
 
+/// Database migration for agent todos persistence
+pub struct AgentTodosMigration;
+
+impl AgentTodosMigration {
+    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+        info!("Applying agent todos migration...");
+
+        // Create agent_todos table for persistent todo storage
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_todos (
+                id TEXT PRIMARY KEY,
+                execution_id TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"#
+        ).execute(pool).await?;
+
+        let indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_agent_todos_execution ON agent_todos(execution_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_todos_execution_index ON agent_todos(execution_id, item_index)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_todos_updated ON agent_todos(updated_at DESC)",
+        ];
+
+        for index_sql in indices {
+            sqlx::query(index_sql).execute(pool).await?;
+        }
+
+        info!("Agent todos migration completed successfully");
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

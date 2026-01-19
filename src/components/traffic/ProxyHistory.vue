@@ -2387,8 +2387,6 @@ function loadFilterConfig() {
 }
 
 async function clearHistory() {
-  const confirmed = await dialog.confirm('确定要清空所有请求历史吗？此操作不可恢复。');
-  if (!confirmed) return;
 
   try {
     const response = await invoke<any>('clear_proxy_requests');

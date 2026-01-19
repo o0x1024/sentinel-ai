@@ -254,18 +254,30 @@
       </div>
       
       <!-- Image Attachments (for user messages) -->
-      <div v-if="message.type === 'user' && imageAttachments.length > 0" class="image-attachments mb-2 flex flex-wrap gap-2">
-        <div
-          v-for="(img, idx) in imageAttachments"
-          :key="idx"
-          class="image-attachment relative group"
-        >
-          <img
-            :src="getImagePreviewUrl(img)"
-            class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
-            :alt="(typeof img === 'object' && img?.filename) || 'attachment'"
-            @click="openImagePreview(getImagePreviewUrl(img))"
-          />
+      <div v-if="message.type === 'user' && imageAttachments.length > 0" class="image-attachments mb-2">
+        <div class="flex items-center gap-2 mb-2">
+          <i class="fas fa-image text-primary text-sm"></i>
+          <span class="text-xs text-base-content/60">
+            {{ t('agent.imageAttachments') }} ({{ imageAttachments.length }})
+          </span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <div
+            v-for="(img, idx) in imageAttachments"
+            :key="idx"
+            class="image-attachment relative group"
+          >
+            <img
+              :src="getImagePreviewUrl(img)"
+              class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
+              :alt="getImageFilename(img)"
+              :title="getImageFilename(img)"
+              @click="openImagePreview(getImagePreviewUrl(img))"
+            />
+            <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-1 py-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+              {{ getImageFilename(img) }}
+            </div>
+          </div>
         </div>
       </div>
       
@@ -799,10 +811,16 @@ const imageAttachments = computed(() => {
   
   // Handle both array format and single object format
   if (Array.isArray(attachments)) {
-    return attachments.map(att => {
-      // Handle MessageAttachment::Image format
-      if (att.image) return att.image
-      // Handle direct image format
+    return attachments.map((att: any) => {
+      // Handle MessageAttachment::Image format (with type discriminator)
+      if (att.type === 'image') {
+        return att
+      }
+      // Handle legacy format (has 'image' property)
+      if (att.image) {
+        return att.image
+      }
+      // Handle direct ImageAttachment format
       return att
     })
   }
@@ -813,6 +831,23 @@ const imageAttachments = computed(() => {
 // Get image preview URL from base64 data
 const getImagePreviewUrl = (img: any): string => {
   try {
+    // Handle new ImageAttachment structure
+    if (img?.data) {
+      const mediaTypeRaw: string | undefined = img.media_type
+      const mime = toMimeType(mediaTypeRaw)
+      
+      // Handle base64 data
+      if (img.data.type === 'base64' && img.data.data) {
+        return `data:${mime};base64,${img.data.data}`
+      }
+      
+      // Handle URL
+      if (img.data.type === 'url' && img.data.url) {
+        return img.data.url
+      }
+    }
+    
+    // Handle legacy format (direct base64 string in data field)
     const mediaTypeRaw: string | undefined = img?.media_type
     const mime = toMimeType(mediaTypeRaw)
     const dataField = img?.data
@@ -834,6 +869,11 @@ const toMimeType = (mediaType?: string): string => {
   if (t === 'gif') return 'image/gif'
   if (t === 'webp') return 'image/webp'
   return t.startsWith('image/') ? t : `image/${t}`
+}
+
+// Get filename from image attachment
+const getImageFilename = (img: any): string => {
+  return img?.filename || 'attachment'
 }
 
 // Open image preview (simple implementation - can be enhanced)

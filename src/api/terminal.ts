@@ -26,13 +26,18 @@ export interface TerminalServerStatus {
 export type SessionState = 'Starting' | 'Running' | 'Stopped' | 'Error'
 
 /**
+ * Execution mode for terminal session
+ */
+export type ExecutionMode = 'docker' | 'host'
+
+/**
  * Terminal session information
  */
 export interface SessionInfo {
   id: string
   state: SessionState
   last_activity: number
-  use_docker: boolean
+  execution_mode: ExecutionMode
 }
 
 /**

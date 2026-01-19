@@ -187,6 +187,9 @@ export default {
   areYouSureClearStatistics: '确定要清空所有工具使用统计吗？',
   selectAll: '全选',
   deselectAll: '取消全选',
+  
+  // Attachments
+  imageAttachments: '图片附件',
 
   // Tour guide
   tour: {
@@ -355,6 +358,14 @@ export default {
   statusCompleted: '已完成',
   statusFailed: '失败',
   statusPending: '等待中',
+
+  // Context usage
+  contextUsed: '上下文已用',
+  contextUsageDetails: '上下文使用详情',
+  systemPromptTokens: '系统提示词',
+  historyTokens: '历史消息',
+  historyMessages: '消息数量',
+  totalUsed: '总计使用',
 
   // Document attachment
   document: {

@@ -280,62 +280,8 @@ pub async fn execute_agent_with_tools(
                     match content {
                         StreamContent::Text(text) => {
                             // Accumulate assistant text into a segment buffer.
-                            let full_content = if let Ok(mut buf) = segment_buf.lock() {
-                                buf.push_str(&text);
-                                buf.clone()
-                            } else {
-                                String::new()
-                            };
-                            
-                            // Tenth Man Intervention Point 2: Conclusion Detection
-                            if params.enable_tenth_man_rule && !full_content.is_empty() {
-                                if let Some(ref _tm_config) = params.tenth_man_config {
-                                    // Check if content contains conclusion markers
-                                    if TenthMan::contains_conclusion_markers(&full_content) {
-                                        let tenth_man = TenthMan::new(&params);
-                                        let current_count = tool_counter.load(Ordering::SeqCst) as usize;
-                                        
-                                        let context = InterventionContext {
-                                            execution_id: execution_id.clone(),
-                                            task: params.task.clone(),
-                                            tool_call_count: current_count,
-                                            current_content: Some(full_content.clone()),
-                                            trigger_reason: TriggerReason::ConclusionDetected,
-                                        };
-                                        
-                                        if tenth_man.should_trigger(&context) {
-                                            let app_clone = app.clone();
-                                            let exec_id = execution_id.clone();
-                                            let task_clone = params.task.clone();
-                                            
-                                            tauri::async_runtime::spawn(async move {
-                                                match tenth_man.review(
-                                                    &task_clone,
-                                                    "Conclusion detected in assistant response",
-                                                    &full_content
-                                                ).await {
-                                                    Ok(critique) => {
-                                                        tracing::info!("Tenth Man intervention on conclusion detection");
-                                                        let _ = app_clone.emit(
-                                                            "agent:tenth_man_intervention",
-                                                            &json!({
-                                                                "execution_id": exec_id,
-                                                                "trigger": "conclusion_detected",
-                                                                "critique": critique,
-                                                                "timestamp": chrono::Utc::now().timestamp_millis(),
-                                                            })
-                                                        );
-                                                    }
-                                                    Err(e) => {
-                                                        tracing::warn!("Tenth Man review failed: {}", e);
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                            
+                            let _ = segment_buf.lock().map(|mut buf| buf.push_str(&text));
+
                             let _ = app.emit(
                                 "agent:chunk",
                                 &json!({
@@ -740,57 +686,13 @@ pub async fn execute_agent_with_tools(
                         }
                         StreamContent::Done => {
                             tracing::info!("Stream completed - execution_id: {}", execution_id);
-                            // Flush any remaining assistant segment at the end (so history shows it after the last tool call).
-                            if let Some(db) = db_for_stream.clone() {
-                                use sentinel_core::models::database as core_db;
-                                let seg = segment_buf
-                                    .lock()
-                                    .map(|mut g| std::mem::take(&mut *g))
-                                    .unwrap_or_default();
-                                let seg_trimmed = seg.trim().to_string();
-                                if !seg_trimmed.trim().is_empty() {
-                                    // Get reasoning content for final segment
-                                    // 参考：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode#tool-calls
-                                    let reasoning = reasoning_buf
-                                        .lock()
-                                        .map(|mut g| {
-                                            let r = std::mem::take(&mut *g);
-                                            // 即使为空也返回 Some("")，因为 deepseek-reasoner 要求必须有此字段
-                                            Some(if r.trim().is_empty() {
-                                                String::new()
-                                            } else {
-                                                r
-                                            })
-                                        })
-                                        .ok()
-                                        .flatten();
-
-                                    let seg_msg = core_db::AiMessage {
-                                        id: uuid::Uuid::new_v4().to_string(),
-                                        conversation_id: execution_id.clone(),
-                                        role: "assistant".to_string(),
-                                        content: seg_trimmed.clone(),
-                                        metadata: None,
-                                        token_count: Some(seg_trimmed.len() as i32),
-                                        cost: None,
-                                        tool_calls: None,
-                                        attachments: None,
-                                        reasoning_content: reasoning,
-                                        timestamp: chrono::Utc::now(),
-                                        architecture_type: None,
-                                        architecture_meta: None,
-                                        structured_data: None,
-                                    };
-                                    tauri::async_runtime::spawn(async move {
-                                        if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
-                                            tracing::warn!(
-                                                "Failed to persist final assistant segment: {}",
-                                                e
-                                            );
-                                        }
-                                    });
-                                }
-                            }
+                            // Always clear the segment buffer. Persisting the final segment here will duplicate the
+                            // assistant message because we also persist the final response in `save_assistant_message`.
+                            // The final response includes tool_calls metadata and is the canonical persisted message.
+                            let _ = segment_buf
+                                .lock()
+                                .map(|mut g| std::mem::take(&mut *g))
+                                .unwrap_or_default();
                         }
                     }
                     true
@@ -989,9 +891,17 @@ pub async fn execute_agent_with_tools(
                 };
 
                 // 检查是否是可重试的错误（主要是解析错误和网络抖动）
-                let is_retryable = !err_msg.is_empty();
+                let is_retryable = is_retryable_error(&err_msg);
+                let has_tool_activity = tool_calls_collector
+                    .lock()
+                    .map(|calls| !calls.is_empty())
+                    .unwrap_or(false)
+                    || pending_calls
+                        .lock()
+                        .map(|pending| !pending.is_empty())
+                        .unwrap_or(false);
 
-                if is_retryable && retries < max_retries {
+                if is_retryable && !has_tool_activity && retries < max_retries {
                     retries += 1;
                     last_error = Some(friendly_err);
 
@@ -1066,4 +976,21 @@ pub async fn execute_agent_with_tools(
     }
 
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries reached")))
+}
+
+fn is_retryable_error(err_msg: &str) -> bool {
+    let err_lower = err_msg.to_lowercase();
+    if err_lower.contains("error decoding response body") {
+        return true;
+    }
+    if err_lower.contains("unexpected eof") || err_lower.contains("connection closed") {
+        return true;
+    }
+    if err_lower.contains("timed out") || err_lower.contains("timeout") {
+        return true;
+    }
+    if err_lower.contains("connection reset") || err_lower.contains("network") {
+        return true;
+    }
+    false
 }

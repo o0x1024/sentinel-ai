@@ -145,6 +145,18 @@
 
           <!-- Right side icons -->
           <div class="flex items-center gap-2 shrink-0">
+            <!-- Context usage indicator -->
+            <div 
+              v-if="props.contextUsage" 
+              class="context-usage-indicator flex items-center gap-1 px-2 py-1 rounded-md text-xs cursor-default"
+              :class="contextUsageClass"
+              :title="contextUsageTooltip"
+            >
+              <span class="font-medium">{{ contextUsagePercentage }}%</span>
+              <span class="opacity-70">·</span>
+              <span class="opacity-80">{{ formatTokenCount(props.contextUsage.usedTokens) }} / {{ formatTokenCount(props.contextUsage.maxTokens) }}</span>
+              <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
+            </div>
             <!-- 未处理文档提示 -->
             <span v-if="hasUnprocessedDocuments" class="text-xs text-warning flex items-center gap-1">
               <i class="fas fa-exclamation-triangle"></i>
@@ -212,6 +224,16 @@ interface ReferencedTraffic {
   sendType?: TrafficSendType
 }
 
+// Context usage info type
+interface ContextUsageInfo {
+  usedTokens: number
+  maxTokens: number
+  usagePercentage: number
+  systemPromptTokens: number
+  historyTokens: number
+  historyCount: number
+}
+
 const props = defineProps<{
   inputMessage: string
   isLoading: boolean
@@ -223,6 +245,7 @@ const props = defineProps<{
   pendingDocuments?: PendingDocumentAttachment[]
   processedDocuments?: ProcessedDocumentResult[]
   referencedTraffic?: ReferencedTraffic[]
+  contextUsage?: ContextUsageInfo | null
 }>()
 
 const emit = defineEmits<{
@@ -320,6 +343,40 @@ const hasUnprocessedDocuments = computed(() => {
   // 检查是否有文档没有选择处理模式
   return props.pendingDocuments.some(doc => !doc.processing_mode)
 })
+
+// Context usage computed properties
+const contextUsagePercentage = computed(() => {
+  if (!props.contextUsage) return 0
+  return Math.round(props.contextUsage.usagePercentage * 10) / 10
+})
+
+const contextUsageClass = computed(() => {
+  const percentage = contextUsagePercentage.value
+  if (percentage >= 90) return 'bg-error/20 text-error border border-error/30'
+  if (percentage >= 70) return 'bg-warning/20 text-warning border border-warning/30'
+  if (percentage >= 50) return 'bg-info/20 text-info border border-info/30'
+  return 'bg-base-300/50 text-base-content/70 border border-base-300'
+})
+
+const contextUsageTooltip = computed(() => {
+  if (!props.contextUsage) return ''
+  const { usedTokens, maxTokens, systemPromptTokens, historyTokens, historyCount } = props.contextUsage
+  return `${t('agent.contextUsageDetails')}
+${t('agent.systemPromptTokens')}: ${formatTokenCount(systemPromptTokens)}
+${t('agent.historyTokens')}: ${formatTokenCount(historyTokens)}
+${t('agent.historyMessages')}: ${historyCount}
+${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}`
+})
+
+const formatTokenCount = (count: number): string => {
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(1) + 'M'
+  }
+  if (count >= 1000) {
+    return (count / 1000).toFixed(1) + 'K'
+  }
+  return count.toString()
+}
 
 // 检查是否可以发送
 const canSend = computed(() => {
@@ -893,5 +950,16 @@ defineExpose({
   color: hsl(var(--p));
   text-align: center;
   padding: 1rem;
+}
+
+/* Context usage indicator */
+.context-usage-indicator {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.context-usage-indicator:hover {
+  opacity: 0.9;
 }
 </style>

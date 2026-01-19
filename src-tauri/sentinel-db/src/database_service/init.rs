@@ -4,6 +4,7 @@ use tracing::info;
 use chrono::Utc;
 use crate::database_service::service::DatabaseService;
 use crate::database_service::migrations::{
+    AgentTodosMigration,
     SubagentMessagesMigration,
     SubagentRunsMigration,
     TaskToolIntegrationMigration,
@@ -904,6 +905,7 @@ impl DatabaseService {
         TaskToolIntegrationMigration::apply(pool).await?;
         SubagentRunsMigration::apply(pool).await?;
         SubagentMessagesMigration::apply(pool).await?;
+        AgentTodosMigration::apply(pool).await?;
         
         Ok(())
     }

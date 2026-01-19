@@ -1461,10 +1461,35 @@ pub async fn delete_ai_messages_after(
     message_id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<u64, String> {
-    db_service
+    let deleted = db_service
         .delete_ai_messages_after(&conversation_id, &message_id)
         .await
-        .map_err(|e: anyhow::Error| format!("Failed to delete messages after {}: {}", message_id, e))
+        .map_err(|e: anyhow::Error| format!("Failed to delete messages after {}: {}", message_id, e))?;
+
+    // Resend semantics delete tail messages; clear run_state to avoid stale "Recent Tool Digests".
+    if let Ok(pool) = db_service.get_pool() {
+        // Keep schema in sync with checkpoint storage.
+        if let Err(e) = sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
+                execution_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )"#,
+        )
+        .execute(pool)
+        .await
+        {
+            tracing::warn!("Failed to ensure agent_run_states table exists: {}", e);
+        } else if let Err(e) = sqlx::query("DELETE FROM agent_run_states WHERE execution_id = ?")
+            .bind(&conversation_id)
+            .execute(pool)
+            .await
+        {
+            tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
+        }
+    }
+
+    Ok(deleted)
 }
 
 // 获取会话的所有消息
@@ -1520,7 +1545,31 @@ pub async fn clear_conversation_messages(
                 "Failed to clear messages for conversation {}: {}",
                 conversation_id, e
             )
-        })
+        })?;
+
+    // Also clear agent run state to prevent cross-run leakage (tool digests, etc).
+    if let Ok(pool) = db_service.get_pool() {
+        if let Err(e) = sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
+                execution_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )"#,
+        )
+        .execute(pool)
+        .await
+        {
+            tracing::warn!("Failed to ensure agent_run_states table exists: {}", e);
+        } else if let Err(e) = sqlx::query("DELETE FROM agent_run_states WHERE execution_id = ?")
+            .bind(&conversation_id)
+            .execute(pool)
+            .await
+        {
+            tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
+        }
+    }
+
+    Ok(())
 }
 
 /// 保存全局工具配置（不与会话绑定）
@@ -1989,6 +2038,63 @@ pub struct AgentExecuteRequest {
     pub config: Option<AgentExecuteConfig>,
 }
 
+fn sanitize_image_attachments(attachments: &serde_json::Value) -> serde_json::Value {
+    fn sanitize_one(v: &mut serde_json::Value) {
+        // Expected: { type: "image", ... } or legacy { image: { ... } }
+        let img = if v.get("type").and_then(|t| t.as_str()) == Some("image") {
+            Some(v)
+        } else {
+            v.get_mut("image")
+        };
+        let Some(img) = img else { return };
+        if let Some(obj) = img.as_object_mut() {
+            obj.remove("source_path");
+        }
+    }
+
+    let mut cloned = attachments.clone();
+    if let Some(arr) = cloned.as_array_mut() {
+        for item in arr.iter_mut() {
+            sanitize_one(item);
+        }
+    } else if cloned.is_object() {
+        sanitize_one(&mut cloned);
+    }
+    cloned
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectiveImageAttachmentMode {
+    LocalOcr,
+    ModelVision,
+}
+
+async fn load_image_attachment_settings(
+    db: &crate::services::database::DatabaseService,
+) -> (EffectiveImageAttachmentMode, bool) {
+    let mode_str = db
+        .get_config("agent", "image_attachment_mode")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local_ocr".to_string());
+    let mode = if mode_str == "model_vision" {
+        EffectiveImageAttachmentMode::ModelVision
+    } else {
+        EffectiveImageAttachmentMode::LocalOcr
+    };
+
+    let allow_upload = db
+        .get_config("agent", "allow_image_upload_to_model")
+        .await
+        .ok()
+        .flatten()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    (mode, allow_upload)
+}
+
 /// Agent执行 - 统一的聊天入口，支持流式输出、联网搜索、RAG知识检索
 #[tauri::command]
 pub async fn agent_execute(
@@ -2028,7 +2134,10 @@ pub async fn agent_execute(
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let enable_rag = config.enable_rag.unwrap_or(false);
-    let attachments = config.attachments.clone();
+    let raw_attachments = config.attachments.clone();
+    let attachments_for_save = raw_attachments
+        .as_ref()
+        .map(|v| sanitize_image_attachments(v));
     let document_attachments_for_save = config.document_attachments.clone();
 
     // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
@@ -2071,6 +2180,8 @@ pub async fn agent_execute(
     dynamic_config.model = model_name.clone();
 
     let db_service = app_handle.state::<Arc<crate::services::database::DatabaseService>>();
+    let (image_mode, allow_image_upload_to_model) =
+        load_image_attachment_settings(db_service.inner()).await;
     let mut service = crate::services::ai::AiService::new(
         dynamic_config,
         db_service.inner().clone(),
@@ -2177,7 +2288,7 @@ pub async fn agent_execute(
             // Build metadata with image attachments and document_attachments
             let metadata = {
                 let mut meta = serde_json::json!({});
-                if let Some(ref atts) = attachments {
+                if let Some(ref atts) = attachments_for_save {
                     meta["image_attachments"] = atts.clone();
                 }
                 if let Some(ref doc_atts) = document_attachments_for_save {
@@ -2201,7 +2312,7 @@ pub async fn agent_execute(
                 token_count: Some(task_clone.len() as i32),
                 cost: None,
                 tool_calls: None,
-                attachments: attachments
+                attachments: attachments_for_save
                     .as_ref()
                     .and_then(|v| serde_json::to_string(v).ok()),
                 reasoning_content: None,
@@ -2222,6 +2333,7 @@ pub async fn agent_execute(
                         "content": display_text,
                         "timestamp": user_msg.timestamp.timestamp_millis(),
                         "document_attachments": document_attachments_for_save,
+                        "image_attachments": attachments_for_save,
                     }),
                 );
             }
@@ -2249,7 +2361,68 @@ pub async fn agent_execute(
             };
         }
 
-        let augmented_task = task_clone.clone();
+        // Image attachments processing (default: local OCR, do not upload images)
+        let mut augmented_task = task_clone.clone();
+
+        // If shell runs in Docker, stage images into container and expose paths to the LLM.
+        // This enables the model to access images via shell tool in container (e.g. /workspace/context/attachments/...).
+        if let Some(ref raw) = raw_attachments {
+            let shell_cfg = sentinel_tools::buildin_tools::shell::get_shell_config().await;
+            if shell_cfg.default_execution_mode == sentinel_tools::buildin_tools::shell::ShellExecutionMode::Docker {
+                match crate::utils::image_ocr::stage_images_to_docker_context(raw).await {
+                    Ok(paths) => {
+                        if !paths.is_empty() {
+                            let mut lines = Vec::new();
+                            for p in paths {
+                                let name = p
+                                    .filename
+                                    .as_deref()
+                                    .filter(|s| !s.trim().is_empty())
+                                    .unwrap_or("image");
+                                lines.push(format!("- {}: {}", name, p.container_path));
+                            }
+                            augmented_task = format!(
+                                "[Image Files in Docker]\n{}\n\n{}",
+                                lines.join("\n"),
+                                augmented_task
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to stage images to docker context: {}", e);
+                    }
+                }
+            }
+        }
+
+        let effective_mode = if image_mode == EffectiveImageAttachmentMode::ModelVision && allow_image_upload_to_model {
+            EffectiveImageAttachmentMode::ModelVision
+        } else {
+            EffectiveImageAttachmentMode::LocalOcr
+        };
+
+        let image_attachments_for_execution: Option<serde_json::Value> = match effective_mode {
+            EffectiveImageAttachmentMode::LocalOcr => {
+                if let Some(ref raw) = raw_attachments {
+                    match crate::utils::image_ocr::ocr_images_from_attachments(raw).await {
+                        Ok(results) => {
+                            let ctx = crate::utils::image_ocr::format_ocr_context(&results, 8000);
+                            if !ctx.trim().is_empty() {
+                                augmented_task = format!("[Image OCR]\n{}\n\n{}", ctx, augmented_task);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Image OCR failed: {}", e);
+                        }
+                    }
+                }
+                None
+            }
+            EffectiveImageAttachmentMode::ModelVision => {
+                // Only send sanitized attachments to model (no local path)
+                attachments_for_save.clone()
+            }
+        };
 
         // RAG 知识检索增强
         if enable_rag {
@@ -2349,7 +2522,7 @@ pub async fn agent_execute(
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
                     tenth_man_config: config.tenth_man_config.clone(),
                     document_attachments: doc_attachments,
-                    image_attachments: attachments.clone(),
+                    image_attachments: image_attachments_for_execution.clone(),
                     persist_messages: true,
                     subagent_run_id: None,
                     context_policy: None,
@@ -2398,7 +2571,7 @@ pub async fn agent_execute(
             &msg_id,
             &augmented_task,
             base_system_prompt.as_deref(),
-            attachments,
+            image_attachments_for_execution,
             true,
         )
         .await

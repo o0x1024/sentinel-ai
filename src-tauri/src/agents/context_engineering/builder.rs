@@ -1,12 +1,14 @@
 //! Context builder for agent execution.
 
 use anyhow::Result;
-use sentinel_db::Database;
+use sentinel_db::{AgentTodoItem, Database};
 use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{ChatMessage, LlmConfig};
+use sentinel_tools::output_storage::{get_host_context_dir, get_history_path, CONTAINER_CONTEXT_DIR};
+use sentinel_tools::shell::{get_shell_config, ShellExecutionMode};
 
 use crate::agents::context_engineering::checkpoint::{
     load_or_init_run_state, save_run_state, ContextRunState,
@@ -34,8 +36,77 @@ pub struct ContextBuildResult {
     pub history_messages: Vec<ChatMessage>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ExecutionEnvironment {
+    Host,
+    Docker,
+}
+
+struct ExecutionContext {
+    env: ExecutionEnvironment,
+    os_name: String,
+    context_dir: String,
+}
+
+async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
+    let shell_config = if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        crate::commands::tool_commands::agent_config::load_shell_config_from_db(&db).await
+    } else {
+        get_shell_config().await
+    };
+
+    let docker_available = sentinel_tools::DockerSandbox::is_docker_available().await;
+    let docker_enabled = shell_config.default_execution_mode == ShellExecutionMode::Docker
+        && shell_config.docker_config.is_some()
+        && docker_available;
+
+    if docker_enabled {
+        ExecutionContext {
+            env: ExecutionEnvironment::Docker,
+            os_name: "linux".to_string(),
+            context_dir: CONTAINER_CONTEXT_DIR.to_string(),
+        }
+    } else {
+        ExecutionContext {
+            env: ExecutionEnvironment::Host,
+            os_name: std::env::consts::OS.to_string(),
+            context_dir: get_host_context_dir().display().to_string(),
+        }
+    }
+}
+
+fn build_context_storage_examples(os_name: &str, context_dir: &str) -> String {
+    if os_name.eq_ignore_ascii_case("windows") {
+        format!(
+            "Examples:\n\
+            • Get-ChildItem \"{0}\"  (list all stored files)\n\
+            • Select-String -Path \"{0}\\*.txt\" -Pattern \"pattern\"  (search for pattern)\n\
+            • Get-Content \"{0}\\http_response_*.txt\" -Tail 100  (view HTTP output)\n\
+            • Get-Content \"{0}\\history.txt\"  (view conversation history)",
+            context_dir
+        )
+    } else {
+        format!(
+            "Examples:\n\
+            • ls -lh \"{0}\"  (list all stored files)\n\
+            • grep -ri \"pattern\" \"{0}\"/*.txt  (search for pattern)\n\
+            • tail -n 100 \"{0}\"/http_response_*.txt  (view HTTP output)\n\
+            • cat \"{0}\"/history.txt  (view conversation history)",
+            context_dir
+        )
+    }
+}
+
+fn env_label(env: ExecutionEnvironment) -> &'static str {
+    match env {
+        ExecutionEnvironment::Host => "host",
+        ExecutionEnvironment::Docker => "docker",
+    }
+}
+
 pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResult> {
     let mut system_prompt = input.base_system_prompt;
+    let execution_context = resolve_execution_context(&input.app_handle).await;
 
     if input.policy.include_ability_instructions {
         if let Some(injected) = input.injected_ability_prompt {
@@ -67,47 +138,67 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         state.selected_tools = input.selected_tool_ids.clone();
         state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
         save_run_state(&input.app_handle, &input.execution_id, &state).await?;
+        let todos = load_execution_todos(&input.app_handle, &input.execution_id).await;
+        if let Some(ref items) = todos {
+            if !items.is_empty() {
+                system_prompt.push_str(&build_todos_context(items, input.policy.run_state_max_chars));
+            }
+        }
         system_prompt.push_str(&format!(
             "\n\n[RunState]\n{}",
-            render_run_state(&state, &input.policy)
+            render_run_state(&state, &input.policy, todos.as_deref())
         ));
     }
 
     if input.policy.include_working_dir {
         if let Some(db) = input.app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
-            if let Ok(Some(working_dir)) = db.get_config("ai", "working_directory").await {
-                if !working_dir.is_empty() {
-                    system_prompt.push_str(&format!(
-                        "\n\n[Working Directory: Your working directory is '{}'. When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
-                        working_dir
-                    ));
-                    tracing::info!("Injected working directory into system prompt: {}", working_dir);
-                }
-            }
+            let configured_dir = db
+                .get_config("ai", "working_directory")
+                .await
+                .ok()
+                .flatten()
+                .filter(|dir| !dir.trim().is_empty());
+            let working_dir = configured_dir
+                .unwrap_or_else(|| execution_context.context_dir.clone());
+
+            system_prompt.push_str(&format!(
+                "\n\n[Execution Environment]\n\
+                - Environment: {}\n\
+                - OS: {}\n\
+                - Working Directory: {}\n\
+                \n\
+                [Working Directory Note: When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
+                env_label(execution_context.env),
+                execution_context.os_name,
+                working_dir
+            ));
+            tracing::info!("Injected working directory into system prompt: {}", working_dir);
         }
     }
 
     if input.policy.include_context_storage {
+        // Use execution_id for history file isolation
+        let history_path = get_history_path(&execution_context.context_dir, Some(&input.execution_id));
+        let examples = build_context_storage_examples(&execution_context.os_name, &execution_context.context_dir);
         system_prompt.push_str(&format!(
-            "\n\n[Context Storage]: All large tool outputs are automatically stored in Docker container at '{}'.\n\
+            "\n\n[Context Storage]\n\
+            - Environment: {} ({})\n\
+            - Execution ID: {}\n\
+            - All large tool outputs are stored at '{}'\n\
             - Tool outputs exceeding threshold are saved as files (not truncated)\n\
             - Applies to: shell commands, HTTP responses, and other tools\n\
-            - Your conversation history is at '{}/history.txt'\n\
-            - Use shell tool with grep/tail/head/cat to access these files\n\
+            - Your conversation history is at '{}' (isolated per execution)\n\
             \n\
-            Examples:\n\
-            • shell(command=\"ls -lh {}\")  (list all stored files)\n\
-            • shell(command=\"grep -i 'pattern' {}/*.txt\")  (search across files)\n\
-            • shell(command=\"tail -n 100 {}/http_response_*.txt\")  (view HTTP output)\n\
-            • shell(command=\"cat {}/history.txt | grep 'keyword'\")  (search history)\n\
+            {}\n\
             \n\
-            All files are centralized in one directory for easy management and search.",
-            sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
-            sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
-            sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
-            sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
-            sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR,
-            sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR
+            All files are centralized in one directory for easy management and search.\n\
+            Note: Each execution has its own history file to prevent cross-session data leakage.",
+            env_label(execution_context.env),
+            execution_context.os_name,
+            input.execution_id,
+            execution_context.context_dir,
+            history_path,
+            examples
         ));
     }
 
@@ -147,19 +238,41 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if input.policy.scope == ContextScope::Agent {
         if let Ok(history_content) = sliding_window.export_history().await {
-            use sentinel_tools::shell::get_shell_config;
-            let shell_config = get_shell_config().await;
-            if let Some(docker_config) = shell_config.docker_config {
-                let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
-                if let Err(e) =
-                    sentinel_tools::store_history_in_container(&sandbox, &history_content).await
-                {
-                    tracing::warn!("Failed to store history in container: {}", e);
-                } else {
-                    tracing::info!(
-                        "Conversation history exported to container: {}/history.txt",
-                        sentinel_tools::output_storage::CONTAINER_CONTEXT_DIR
-                    );
+            // Store history based on execution environment with execution_id isolation
+            match execution_context.env {
+                ExecutionEnvironment::Docker => {
+                    use sentinel_tools::shell::get_shell_config;
+                    let shell_config = get_shell_config().await;
+                    if let Some(docker_config) = shell_config.docker_config {
+                        let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
+                        let history_path = get_history_path(CONTAINER_CONTEXT_DIR, Some(&input.execution_id));
+                        if let Err(e) = sentinel_tools::output_storage::store_history_in_container_with_id(
+                            &sandbox,
+                            &history_content,
+                            Some(&input.execution_id),
+                        ).await {
+                            tracing::warn!("Failed to store history in container: {}", e);
+                        } else {
+                            tracing::info!(
+                                "Conversation history exported to container: {}",
+                                history_path
+                            );
+                        }
+                    }
+                }
+                ExecutionEnvironment::Host => {
+                    let history_path = get_history_path(&execution_context.context_dir, Some(&input.execution_id));
+                    if let Err(e) = sentinel_tools::output_storage::store_history_on_host(
+                        &history_content,
+                        Some(&input.execution_id),
+                    ).await {
+                        tracing::warn!("Failed to store history on host: {}", e);
+                    } else {
+                        tracing::info!(
+                            "Conversation history exported to host: {}",
+                            history_path
+                        );
+                    }
                 }
             }
         }
@@ -169,6 +282,48 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let (system_prompt_content, history_messages) = split_context_messages(
         &system_prompt,
         context_messages,
+    );
+
+    // Calculate context usage for frontend display
+    // Include all message components: content, tool_calls, reasoning_content
+    let system_prompt_tokens = estimate_tokens(&system_prompt_content);
+    let history_tokens: usize = history_messages.iter()
+        .map(|m| {
+            let mut tokens = estimate_tokens(&m.content);
+            // Include tool_calls if present
+            if let Some(ref tc) = m.tool_calls {
+                tokens += estimate_tokens(tc);
+            }
+            // Include reasoning_content if present
+            if let Some(ref rc) = m.reasoning_content {
+                tokens += estimate_tokens(rc);
+            }
+            // Include tool_call_id if present (small but should be counted)
+            if let Some(ref tid) = m.tool_call_id {
+                tokens += estimate_tokens(tid);
+            }
+            tokens
+        })
+        .sum();
+    let used_tokens = system_prompt_tokens + history_tokens;
+    let max_tokens = max_context_length as usize;
+    let usage_percentage = if max_tokens > 0 {
+        (used_tokens as f64 / max_tokens as f64 * 100.0).min(100.0)
+    } else {
+        0.0
+    };
+
+    let _ = input.app_handle.emit(
+        "agent:context_usage",
+        &json!({
+            "execution_id": input.execution_id,
+            "used_tokens": used_tokens,
+            "max_tokens": max_tokens,
+            "usage_percentage": usage_percentage,
+            "system_prompt_tokens": system_prompt_tokens,
+            "history_tokens": history_tokens,
+            "history_count": history_messages.len(),
+        }),
     );
 
     let _ = input.app_handle.emit(
@@ -206,8 +361,31 @@ fn trim_layer(text: String, max_chars: usize) -> String {
     condense_text(&text, max_chars)
 }
 
-fn render_run_state(state: &ContextRunState, policy: &ContextPolicy) -> String {
+fn render_run_state(
+    state: &ContextRunState,
+    policy: &ContextPolicy,
+    todos: Option<&[AgentTodoItem]>,
+) -> String {
     let mut out = String::new();
+    if let Some(items) = todos {
+        if !items.is_empty() {
+            out.push_str("Todos Summary:\n");
+            for item in items.iter().take(8) {
+                out.push_str(&format!(
+                    "- [{}] {}",
+                    item.status,
+                    item.description.trim()
+                ));
+                if let Some(result) = item.result.as_ref().filter(|r| !r.trim().is_empty()) {
+                    out.push_str(&format!(" (result: {})", condense_text(result, 120)));
+                }
+                out.push('\n');
+            }
+            if items.len() > 8 {
+                out.push_str("- ...<truncated>...\n");
+            }
+        }
+    }
     out.push_str(&format!("Task Brief: {}\n", state.task_brief));
     if !state.selected_tools.is_empty() {
         out.push_str(&format!(
@@ -226,6 +404,41 @@ fn render_run_state(state: &ContextRunState, policy: &ContextPolicy) -> String {
     }
     let trimmed = condense_text(&out, policy.run_state_max_chars);
     trimmed
+}
+
+fn build_todos_context(items: &[AgentTodoItem], max_chars: usize) -> String {
+    let mut out = String::new();
+    out.push_str("\n\n[Todos]\n");
+    for item in items.iter().take(20) {
+        out.push_str(&format!(
+            "- [{}] {}",
+            item.status,
+            item.description.trim()
+        ));
+        if let Some(result) = item.result.as_ref().filter(|r| !r.trim().is_empty()) {
+            out.push_str(&format!(" (result: {})", condense_text(result, 160)));
+        }
+        out.push('\n');
+    }
+    if items.len() > 20 {
+        out.push_str("- ...<truncated>...\n");
+    }
+    condense_text(&out, max_chars)
+}
+
+async fn load_execution_todos(
+    app_handle: &AppHandle,
+    execution_id: &str,
+) -> Option<Vec<AgentTodoItem>> {
+    let db = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()?;
+    match db.get_agent_todos(execution_id).await {
+        Ok(items) if !items.is_empty() => Some(items),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!("Failed to load todos for run state: {}", e);
+            None
+        }
+    }
 }
 
 fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) -> String {
@@ -273,6 +486,22 @@ fn inject_task_mainline_summary(mut system_prompt: String, task: &str) -> String
         task_trimmed
     ));
     system_prompt
+}
+
+/// Estimate token count for text (simple heuristic)
+fn estimate_tokens(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let mut total: f64 = 0.0;
+    for c in text.chars() {
+        if c.is_ascii() {
+            total += 0.25;
+        } else {
+            total += 1.0;
+        }
+    }
+    total.ceil() as usize
 }
 
 async fn get_provider_max_context_length(

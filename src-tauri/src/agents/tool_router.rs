@@ -181,7 +181,7 @@ impl Default for ToolConfig {
         Self {
             selection_strategy: ToolSelectionStrategy::Keyword,
             max_tools: 5,
-            fixed_tools: vec!["local_time".to_string(), "todos".to_string()],
+            fixed_tools: vec![], // No default tools, fully user-controlled
             disabled_tools: vec![],
             enabled: false, // 默认关闭，避免意外消耗
         }
@@ -304,7 +304,7 @@ impl ToolRouter {
                 category: ToolCategory::System,
                 tags: vec!["time".to_string(), "date".to_string(), "clock".to_string()],
                 cost_estimate: ToolCost::Low,
-                always_available: true,
+                always_available: false,
             },
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
@@ -345,7 +345,7 @@ impl ToolRouter {
                 category: ToolCategory::System,
                 tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string(), "todos".to_string()],
                 cost_estimate: ToolCost::Low,
-                always_available: true,
+                always_available: false,
             },
             // AI工具
             ToolMetadata {
@@ -396,7 +396,7 @@ impl ToolRouter {
                     "title".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
-                always_available: true,
+                always_available: false,
             },
             // Tenth Man Review
             ToolMetadata {
@@ -416,7 +416,7 @@ impl ToolRouter {
                     "security".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
-                always_available: true, // Default enabled - LLM can use it anytime
+                always_available: false,
             },
             // Subagent tools: spawn (async), wait, run (sync)
             ToolMetadata {
@@ -703,6 +703,7 @@ impl ToolRouter {
             }
             ToolSelectionStrategy::Manual(tools) => {
                 let all_tools = self.get_all_available_tools();
+                let mut unknown_tools = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 let result: Vec<String> = tools
                     .iter()
@@ -711,26 +712,28 @@ impl ToolRouter {
                         let tool_id = {
                             // 1. Exact match
                             if let Some(found) = all_tools.iter().find(|meta| &meta.id == t) {
-                                found.id.clone()
+                                Some(found.id.clone())
                             } else {
                                 // 2. Legacy :: to __ match
                                 let replaced = t.replace("::", "__");
                                 if let Some(found) = all_tools.iter().find(|meta| meta.id == replaced) {
-                                    found.id.clone()
+                                    Some(found.id.clone())
                                 } else {
                                     // 3. Strict sanitization match (for plugins etc)
                                     let sanitized =
                                         replaced.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
                                     if let Some(found) = all_tools.iter().find(|meta| meta.id == sanitized) {
-                                        found.id.clone()
+                                        Some(found.id.clone())
                                     } else {
-                                        // Fallback
-                                        replaced
+                                        None
                                     }
                                 }
                             }
                         };
-                        // Deduplicate: only include if not seen before
+                        let Some(tool_id) = tool_id else {
+                            unknown_tools.push(t.clone());
+                            return None;
+                        };
                         if seen.insert(tool_id.clone()) {
                             Some(tool_id)
                         } else {
@@ -738,6 +741,12 @@ impl ToolRouter {
                         }
                     })
                     .collect();
+                if !unknown_tools.is_empty() {
+                    tracing::warn!(
+                        "Manual tool selection requested unknown tools: {:?}",
+                        unknown_tools
+                    );
+                }
                 Ok(result)
             }
             ToolSelectionStrategy::Keyword => self.select_by_keywords(task, config),
@@ -1649,18 +1658,12 @@ Return ONLY the ability group name (one line, no explanation)."#,
             final_tools.truncate(config.max_tools);
         }
 
-        // Warn if no tools available
+        // Log if no tools available (this is valid - ability group may not need tools)
         if final_tools.is_empty() {
-            tracing::warn!(
-                "Ability group '{}' has no available tools after filtering, falling back to Keyword",
+            tracing::info!(
+                "Ability group '{}' has no tools configured, proceeding without tools",
                 full_group.name
             );
-            let tool_ids = self.select_by_keywords(task, config)?;
-            return Ok(ToolSelectionPlan {
-                tool_ids,
-                injected_system_prompt: None,
-                selected_ability_group: None,
-            });
         }
 
         // Build injected system prompt

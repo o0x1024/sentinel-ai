@@ -202,6 +202,11 @@ pub fn run() {
                 }
                 let db_service = Arc::new(db_service);
 
+                // Initialize agent configuration from database
+                if let Err(e) = tool_commands::init_agent_config(&db_service).await {
+                    tracing::error!("Failed to initialize agent config: {}", e);
+                }
+
                 if let Err(e) =
                     crate::commands::rag_commands::initialize_global_rag_service(db_service.clone())
                         .await
