@@ -386,17 +386,21 @@ impl LlmClient {
         M: rig::completion::CompletionModel + 'static,
         M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
     {
+        // Get max_turns from config
+        let max_turns = self.config.get_max_turns();
+        info!("Using max_turns: {}", max_turns);
+
         // 根据是否有历史消息选择调用方式
         let stream_result = if chat_history.is_empty() {
             tokio::time::timeout(
                 timeout,
-                agent.stream_prompt(user_message).multi_turn(100),
+                agent.stream_prompt(user_message).multi_turn(max_turns),
             )
             .await
         } else {
             tokio::time::timeout(
                 timeout,
-                agent.stream_chat(user_message, chat_history).multi_turn(100),
+                agent.stream_chat(user_message, chat_history).multi_turn(max_turns),
             )
             .await
         };

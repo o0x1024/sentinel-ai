@@ -608,12 +608,16 @@ impl AiService {
         M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
         F: FnMut(StreamChunk) -> bool,
     {
+        // Get max_turns from config
+        let max_turns = self.config.max_turns.unwrap_or(100);
+        info!("Using max_turns: {}", max_turns);
+
         // 流式调用
         let stream_result = tokio::time::timeout(
             timeout,
             agent
                 .stream_chat(user_message, chat_history)
-                .multi_turn(100),
+                .multi_turn(max_turns),
         )
         .await;
 
