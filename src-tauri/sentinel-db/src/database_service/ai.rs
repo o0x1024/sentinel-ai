@@ -124,6 +124,85 @@ impl DatabaseService {
         Ok(rows)
     }
 
+    /// Delete subagent runs that started after a specific timestamp
+    pub async fn delete_subagent_runs_after_internal(
+        &self,
+        parent_execution_id: &str,
+        after_timestamp: DateTime<Utc>,
+    ) -> Result<u64> {
+        let pool = self.get_pool()?;
+
+        // First get the IDs of runs to delete (for deleting related messages)
+        let run_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM ai_subagent_runs WHERE parent_execution_id = ? AND started_at > ?"
+        )
+        .bind(parent_execution_id)
+        .bind(after_timestamp)
+        .fetch_all(pool)
+        .await?;
+
+        if run_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Delete related messages first
+        for run_id in &run_ids {
+            sqlx::query("DELETE FROM ai_subagent_messages WHERE subagent_run_id = ?")
+                .bind(run_id)
+                .execute(pool)
+                .await?;
+        }
+
+        // Delete the runs
+        let result = sqlx::query(
+            "DELETE FROM ai_subagent_runs WHERE parent_execution_id = ? AND started_at > ?"
+        )
+        .bind(parent_execution_id)
+        .bind(after_timestamp)
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete all subagent runs for a parent execution
+    pub async fn delete_subagent_runs_by_parent_internal(
+        &self,
+        parent_execution_id: &str,
+    ) -> Result<u64> {
+        let pool = self.get_pool()?;
+
+        // First get the IDs of runs to delete (for deleting related messages)
+        let run_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM ai_subagent_runs WHERE parent_execution_id = ?"
+        )
+        .bind(parent_execution_id)
+        .fetch_all(pool)
+        .await?;
+
+        if run_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Delete related messages first
+        for run_id in &run_ids {
+            sqlx::query("DELETE FROM ai_subagent_messages WHERE subagent_run_id = ?")
+                .bind(run_id)
+                .execute(pool)
+                .await?;
+        }
+
+        // Delete the runs
+        let result = sqlx::query(
+            "DELETE FROM ai_subagent_runs WHERE parent_execution_id = ?"
+        )
+        .bind(parent_execution_id)
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     pub async fn create_ai_conversation_internal(&self, conversation: &AiConversation) -> Result<()> {
         let pool = self.get_pool()?;
 

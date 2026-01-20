@@ -74,7 +74,12 @@ export default {
     selectRun: '请选择一条执行记录查看详情',
     loadingMessages: '加载会话详情中...',
     noMessages: '暂无会话详情',
+    noTask: '暂无任务描述',
   },
+  user: '用户',
+  assistant: '助手',
+  toolResult: '工具结果',
+  justNow: '刚刚',
 
   // Tenth Man
   tenthManCritique: '第十人审查',
@@ -132,7 +137,6 @@ export default {
   delete: '删除',
   enterNewConversationName: '请输入新的会话名称:',
   scrollToLoadMore: '向下滚动加载更多',
-  justNow: '刚刚',
   minutesAgo: '分钟前',
   hoursAgo: '小时前',
   daysAgo: '天前',

@@ -553,6 +553,7 @@ pub fn run() {
             ai::get_ai_messages_by_conversation,
             ai::get_subagent_runs,
             ai::get_subagent_messages,
+            ai::delete_subagent_runs_after,
             ai::clear_conversation_messages,
             ai::save_tool_config,
             ai::get_tool_config,

@@ -43,6 +43,20 @@ pub struct TerminalConfig {
     pub docker_image: String,
     /// Default execution mode (Docker or Host)
     pub default_execution_mode: ExecutionMode,
+    /// Docker container memory limit (e.g., "512m", "2g")
+    #[serde(default = "default_docker_memory_limit")]
+    pub docker_memory_limit: String,
+    /// Docker container CPU limit (e.g., "1.0", "4.0")
+    #[serde(default = "default_docker_cpu_limit")]
+    pub docker_cpu_limit: String,
+}
+
+fn default_docker_memory_limit() -> String {
+    "2g".to_string()
+}
+
+fn default_docker_cpu_limit() -> String {
+    "4.0".to_string()
 }
 
 impl Default for TerminalConfig {
@@ -50,6 +64,8 @@ impl Default for TerminalConfig {
         Self {
             docker_image: "sentinel-sandbox:latest".to_string(),
             default_execution_mode: ExecutionMode::Docker,
+            docker_memory_limit: default_docker_memory_limit(),
+            docker_cpu_limit: default_docker_cpu_limit(),
         }
     }
 }
@@ -82,6 +98,26 @@ impl Default for ImageAttachmentConfig {
     }
 }
 
+/// Subagent configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentConfig {
+    /// Default timeout for subagent tasks in seconds (default: 600 = 10 minutes)
+    #[serde(default = "default_subagent_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_subagent_timeout_secs() -> u64 {
+    600 // 10 minutes
+}
+
+impl Default for SubagentConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: default_subagent_timeout_secs(),
+        }
+    }
+}
+
 /// Agent configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(Default)]
@@ -94,6 +130,9 @@ pub struct AgentConfig {
     /// Image attachment configuration
     #[serde(default)]
     pub image_attachments: ImageAttachmentConfig,
+    /// Subagent configuration
+    #[serde(default)]
+    pub subagent: SubagentConfig,
 }
 
 /// Get agent configuration
@@ -106,11 +145,14 @@ pub async fn get_agent_config(
     let terminal_config = load_terminal_config_from_db(db_service.inner()).await;
     // Load image attachment config from database
     let image_config = load_image_attachment_config_from_db(db_service.inner()).await;
+    // Load subagent config from database
+    let subagent_config = load_subagent_config_from_db(db_service.inner()).await;
 
     Ok(AgentConfig { 
         shell: shell_config,
         terminal: terminal_config,
         image_attachments: image_config,
+        subagent: subagent_config,
     })
 }
 
@@ -125,6 +167,8 @@ pub async fn save_agent_config(
     save_terminal_config_to_db(&config.terminal, db_service.inner()).await?;
     // Save image attachment config to database
     save_image_attachment_config_to_db(&config.image_attachments, db_service.inner()).await?;
+    // Save subagent config to database
+    save_subagent_config_to_db(&config.subagent, db_service.inner()).await?;
 
     // Update in-memory config
     // Important: frontend may omit docker_config; keep a valid docker_config so docker mode works.
@@ -137,8 +181,13 @@ pub async fn save_agent_config(
     }
     if let Some(ref mut docker_cfg) = shell_cfg.docker_config {
         docker_cfg.image = config.terminal.docker_image.clone();
+        docker_cfg.memory_limit = config.terminal.docker_memory_limit.clone();
+        docker_cfg.cpu_limit = config.terminal.docker_cpu_limit.clone();
     }
     set_shell_config(shell_cfg).await;
+
+    // Update global subagent timeout
+    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(config.subagent.timeout_secs);
 
     tracing::info!("Agent config saved successfully");
     Ok(())
@@ -148,19 +197,26 @@ pub async fn save_agent_config(
 pub async fn init_agent_config(db: &sentinel_db::DatabaseService) -> Result<(), String> {
     let mut shell_cfg = load_shell_config_from_db(db).await;
     let terminal_config = load_terminal_config_from_db(db).await;
+    let subagent_config = load_subagent_config_from_db(db).await;
 
     // Unify execution mode with terminal setting.
     shell_cfg.default_execution_mode = terminal_config.default_execution_mode.into();
     
-    // Ensure docker_config exists and matches selected docker image.
+    // Ensure docker_config exists and matches selected docker image/resources.
     if shell_cfg.docker_config.is_none() {
         shell_cfg.docker_config = Some(DockerSandboxConfig::default());
     }
     if let Some(ref mut docker_cfg) = shell_cfg.docker_config {
         docker_cfg.image = terminal_config.docker_image.clone();
+        docker_cfg.memory_limit = terminal_config.docker_memory_limit.clone();
+        docker_cfg.cpu_limit = terminal_config.docker_cpu_limit.clone();
     }
     
     set_shell_config(shell_cfg).await;
+    
+    // Set global subagent timeout
+    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(subagent_config.timeout_secs);
+    
     tracing::info!("Agent configuration initialized from database");
     Ok(())
 }
@@ -274,6 +330,16 @@ pub async fn load_terminal_config_from_db(db: &sentinel_db::DatabaseService) -> 
         };
     }
 
+    // Load docker_memory_limit
+    if let Ok(Some(value)) = db.get_config("agent", "docker_memory_limit").await {
+        config.docker_memory_limit = value;
+    }
+
+    // Load docker_cpu_limit
+    if let Ok(Some(value)) = db.get_config("agent", "docker_cpu_limit").await {
+        config.docker_cpu_limit = value;
+    }
+
     config
 }
 
@@ -354,11 +420,65 @@ async fn save_terminal_config_to_db(
     .await
     .map_err(|e| e.to_string())?;
 
+    // Save docker memory limit
+    db.set_config(
+        "agent",
+        "docker_memory_limit",
+        &config.docker_memory_limit,
+        Some("Docker container memory limit (e.g., 512m, 2g)"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Save docker cpu limit
+    db.set_config(
+        "agent",
+        "docker_cpu_limit",
+        &config.docker_cpu_limit,
+        Some("Docker container CPU limit (e.g., 1.0, 4.0)"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     tracing::info!(
-        "Terminal config saved: execution_mode={:?}, docker_image={}",
+        "Terminal config saved: execution_mode={:?}, docker_image={}, memory={}, cpu={}",
         config.default_execution_mode,
-        config.docker_image
+        config.docker_image,
+        config.docker_memory_limit,
+        config.docker_cpu_limit
     );
+
+    Ok(())
+}
+
+/// Load subagent config from database
+pub async fn load_subagent_config_from_db(db: &sentinel_db::DatabaseService) -> SubagentConfig {
+    let mut config = SubagentConfig::default();
+
+    if let Ok(Some(value)) = db.get_config("agent", "subagent_timeout_secs").await {
+        if let Ok(timeout) = value.parse::<u64>() {
+            config.timeout_secs = timeout;
+        }
+    }
+
+    config
+}
+
+/// Save subagent config to database
+async fn save_subagent_config_to_db(
+    config: &SubagentConfig,
+    db: &sentinel_db::DatabaseService,
+) -> Result<(), String> {
+    db.set_config(
+        "agent",
+        "subagent_timeout_secs",
+        &config.timeout_secs.to_string(),
+        Some("Default timeout for subagent tasks in seconds"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tracing::info!("Subagent config saved: timeout_secs={}", config.timeout_secs);
 
     Ok(())
 }

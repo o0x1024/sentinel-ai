@@ -462,7 +462,13 @@ export default {
       dockerImageDesc: 'Docker image used for interactive terminal',
       dockerImagePlaceholder: 'e.g., sentinel-sandbox:latest',
       useDocker: 'Use Docker',
-      useDockerDesc: 'Use Docker container as terminal environment (recommended), otherwise uses host terminal'
+      useDockerDesc: 'Use Docker container as terminal environment (recommended), otherwise uses host terminal',
+      memoryLimit: 'Memory Limit',
+      memoryLimitDesc: 'Container memory limit, e.g., 512m, 1g, 2g',
+      memoryLimitPlaceholder: 'e.g., 2g',
+      cpuLimit: 'CPU Limit',
+      cpuLimitDesc: 'Container CPU cores limit, e.g., 1.0, 2.0, 4.0',
+      cpuLimitPlaceholder: 'e.g., 4.0'
     },
     imageAttachments: {
       title: 'Image Attachments',
@@ -473,6 +479,12 @@ export default {
       allowUpload: 'Allow uploading images to model',
       allowUploadDesc: 'If enabled, image files may be sent to the selected AI service for vision understanding.',
       uploadDisabledWarning: 'Uploading images to model is disabled. Switch back to local OCR or enable upload permission.'
+    },
+    subagent: {
+      title: 'Subagent Settings',
+      timeout: 'Task Timeout',
+      timeoutDesc: 'Maximum time to wait for a subagent task to complete (60-7200 seconds)',
+      seconds: 'seconds'
     }
   }
 }

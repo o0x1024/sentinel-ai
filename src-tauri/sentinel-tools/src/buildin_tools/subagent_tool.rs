@@ -8,6 +8,20 @@
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Global default timeout for subagent tasks (in seconds)
+static DEFAULT_SUBAGENT_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(600); // 10 minutes
+
+/// Set the default timeout for subagent tasks
+pub fn set_default_subagent_timeout(timeout_secs: u64) {
+    DEFAULT_SUBAGENT_TIMEOUT_SECS.store(timeout_secs, Ordering::SeqCst);
+}
+
+/// Get the default timeout for subagent tasks
+pub fn get_default_subagent_timeout() -> u64 {
+    DEFAULT_SUBAGENT_TIMEOUT_SECS.load(Ordering::SeqCst)
+}
 
 // ============================================================================
 // Type Definitions
@@ -224,7 +238,7 @@ pub struct SubagentWaitArgs {
     pub timeout_secs: u64,
 }
 
-fn default_timeout() -> u64 { 300 }
+fn default_timeout() -> u64 { get_default_subagent_timeout() }
 
 /// Single task result
 #[derive(Debug, Clone, Serialize)]

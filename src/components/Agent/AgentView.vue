@@ -362,6 +362,75 @@ const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvent
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
 
+type SubagentRunRecord = {
+  id: string
+  parent_execution_id: string
+  role?: string | null
+  task: string
+  status: 'running' | 'queued' | 'completed' | 'failed'
+  output?: string | null
+  error?: string | null
+  started_at: string
+  completed_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+const loadSubagentRuns = async (parentExecutionId: string) => {
+  try {
+    const runs = await invoke<SubagentRunRecord[]>('get_subagent_runs', {
+      parentExecutionId,
+    })
+
+    const toMillis = (v: any) => {
+      const ms = new Date(v).getTime()
+      return Number.isFinite(ms) ? ms : undefined
+    }
+
+    const mapped = (runs || []).map(r => {
+      const startedAt = toMillis(r.started_at)
+      const completedAt = toMillis(r.completed_at)
+      const duration = startedAt !== undefined && completedAt !== undefined
+        ? Math.max(0, completedAt - startedAt)
+        : undefined
+
+      const summary = (r.output || '').trim()
+      return {
+        id: r.id,
+        parentId: r.parent_execution_id,
+        role: r.role || undefined,
+        status: r.status,
+        progress: r.status === 'running' || r.status === 'queued' ? 0 : 100,
+        task: r.task,
+        summary: summary.length > 0 ? summary.slice(0, 200) : undefined,
+        error: r.error || undefined,
+        startedAt,
+        duration,
+      }
+    })
+
+    // Merge by id (do not drop live in-memory updates)
+    const existing = agentEvents.subagents.value
+    const byId = new Map<string, any>()
+    existing.forEach(s => byId.set(s.id, s))
+    mapped.forEach(s => {
+      const prev = byId.get(s.id)
+      byId.set(s.id, prev ? { ...s, ...prev } : s)
+    })
+
+    // Prefer newest first (startedAt desc), fallback by id
+    agentEvents.subagents.value = [...byId.values()].sort((a: any, b: any) => {
+      const at = a.startedAt ?? 0
+      const bt = b.startedAt ?? 0
+      if (bt !== at) return bt - at
+      return String(b.id).localeCompare(String(a.id))
+    })
+  } catch (e) {
+    console.error('[AgentView] Failed to load subagent runs:', e)
+    // Keep existing in-memory list if any
+  }
+}
+
 
 // Web Explorer Events
 // Important: pass through the nullable execution id ref so Web Explorer can
@@ -791,6 +860,9 @@ const handleResendMessage = async (message: AgentMessage) => {
     return
   }
 
+  // Get the timestamp of the message for filtering subagents
+  const messageTimestamp = message.timestamp || Date.now()
+
   // Delete this message and all messages after it from database
   if (conversationId.value) {
     try {
@@ -806,6 +878,13 @@ const handleResendMessage = async (message: AgentMessage) => {
         messageId: message.id
       })
       console.log(`[AgentView] Deleted the original message from database`)
+
+      // Delete subagent runs that started after this message
+      const deletedSubagents = await invoke<number>('delete_subagent_runs_after', {
+        parentExecutionId: conversationId.value,
+        afterTimestampMs: messageTimestamp
+      })
+      console.log(`[AgentView] Deleted ${deletedSubagents} subagent runs from database`)
     } catch (e) {
       console.error('[AgentView] Failed to delete messages from database:', e)
       // Continue anyway to update frontend
@@ -815,6 +894,11 @@ const handleResendMessage = async (message: AgentMessage) => {
   // Delete this message and all messages after it from frontend
   const messagesToKeep = messages.value.slice(0, messageIndex)
   agentEvents.messages.value = messagesToKeep
+
+  // Remove subagents that started after this message from frontend
+  agentEvents.subagents.value = agentEvents.subagents.value.filter(s => {
+    return !s.startedAt || s.startedAt <= messageTimestamp
+  })
 
   // Restore image attachments (if any) into pendingAttachments so resend keeps images
   try {
@@ -855,6 +939,9 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
     return
   }
 
+  // Get the timestamp of the message for filtering subagents
+  const messageTimestamp = message.timestamp || Date.now()
+
   // Delete this message and all messages after it from database
   if (conversationId.value) {
     try {
@@ -870,6 +957,13 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
         messageId: message.id
       })
       console.log(`[AgentView] Deleted the edited message from database`)
+
+      // Delete subagent runs that started after this message
+      const deletedSubagents = await invoke<number>('delete_subagent_runs_after', {
+        parentExecutionId: conversationId.value,
+        afterTimestampMs: messageTimestamp
+      })
+      console.log(`[AgentView] Deleted ${deletedSubagents} subagent runs from database`)
     } catch (e) {
       console.error('[AgentView] Failed to delete messages from database:', e)
       // Continue anyway to update frontend
@@ -879,6 +973,11 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
   // Delete this message and all messages after it from frontend
   const messagesToKeep = messages.value.slice(0, messageIndex)
   agentEvents.messages.value = messagesToKeep
+
+  // Remove subagents that started after this message from frontend
+  agentEvents.subagents.value = agentEvents.subagents.value.filter(s => {
+    return !s.startedAt || s.startedAt <= messageTimestamp
+  })
 
   // Set edited content to input box
   inputValue.value = newContent
@@ -899,6 +998,8 @@ const loadConversationHistory = async (convId: string) => {
     
     // Clear current messages
     agentEvents.clearMessages()
+    // Restore subagent list from persistent storage
+    await loadSubagentRuns(convId)
 
     if (messages && messages.length > 0) {
       // DB already returns messages ordered by timestamp ASC.

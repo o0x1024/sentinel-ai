@@ -495,6 +495,14 @@ impl TerminalSession {
             // If not reusing, use --rm
             args.push("--rm");
         }
+
+        // Relax permissions for tools like nmap that need raw sockets / elevated exec behavior.
+        args.extend_from_slice(&[
+            "--cap-add=NET_RAW",
+            "--cap-add=NET_ADMIN",
+            "--security-opt",
+            "no-new-privileges=false",
+        ]);
         
         // Add working directory mount if specified
         if let Some(ref wd) = self.config.working_dir {

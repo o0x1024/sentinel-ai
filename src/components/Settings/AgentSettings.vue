@@ -56,6 +56,47 @@
                 </span>
               </label>
             </div>
+
+            <!-- Docker Resource Limits -->
+            <div v-if="terminalConfig.default_execution_mode === 'docker'" class="grid grid-cols-2 gap-4 mt-4">
+              <!-- Memory Limit -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.agent.terminal.memoryLimit') }}</span>
+                </label>
+                <input 
+                  type="text" 
+                  :value="terminalConfig.docker_memory_limit"
+                  @input="updateDockerMemoryLimit"
+                  :placeholder="t('settings.agent.terminal.memoryLimitPlaceholder')"
+                  class="input input-bordered w-full font-mono"
+                />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.agent.terminal.memoryLimitDesc') }}
+                  </span>
+                </label>
+              </div>
+
+              <!-- CPU Limit -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.agent.terminal.cpuLimit') }}</span>
+                </label>
+                <input 
+                  type="text" 
+                  :value="terminalConfig.docker_cpu_limit"
+                  @input="updateDockerCpuLimit"
+                  :placeholder="t('settings.agent.terminal.cpuLimitPlaceholder')"
+                  class="input input-bordered w-full font-mono"
+                />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.agent.terminal.cpuLimitDesc') }}
+                  </span>
+                </label>
+              </div>
+            </div>
           </div>
 
           <!-- Terminal Command Auto Execution -->
@@ -281,6 +322,61 @@
         </div>
       </div>
 
+      <!-- Subagent Settings Section -->
+      <div class="card bg-base-100 shadow-sm mb-6">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
+            <i class="fas fa-users-cog"></i>
+            {{ t('settings.agent.subagent.title') }}
+          </h3>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ t('settings.agent.subagent.timeout') }}</span>
+            </label>
+            <div class="join">
+              <input 
+                type="number" 
+                :value="subagentConfig.timeout_secs"
+                @input="updateSubagentTimeout"
+                min="60"
+                max="7200"
+                step="60"
+                class="input input-bordered join-item w-32 font-mono"
+              />
+              <span class="btn btn-disabled join-item">{{ t('settings.agent.subagent.seconds') }}</span>
+            </div>
+            <label class="label">
+              <span class="label-text-alt text-base-content/60">
+                {{ t('settings.agent.subagent.timeoutDesc') }}
+              </span>
+            </label>
+            <div class="flex gap-2 mt-2">
+              <button 
+                class="btn btn-xs btn-outline"
+                :class="{ 'btn-primary': subagentConfig.timeout_secs === 300 }"
+                @click="subagentConfig.timeout_secs = 300; autoSaveConfig()"
+              >5 min</button>
+              <button 
+                class="btn btn-xs btn-outline"
+                :class="{ 'btn-primary': subagentConfig.timeout_secs === 600 }"
+                @click="subagentConfig.timeout_secs = 600; autoSaveConfig()"
+              >10 min</button>
+              <button 
+                class="btn btn-xs btn-outline"
+                :class="{ 'btn-primary': subagentConfig.timeout_secs === 1800 }"
+                @click="subagentConfig.timeout_secs = 1800; autoSaveConfig()"
+              >30 min</button>
+              <button 
+                class="btn btn-xs btn-outline"
+                :class="{ 'btn-primary': subagentConfig.timeout_secs === 3600 }"
+                @click="subagentConfig.timeout_secs = 3600; autoSaveConfig()"
+              >1 hour</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Future sections can be added here -->
       <!-- Example: Tool Settings, Memory Settings, etc. -->
     </template>
@@ -304,6 +400,8 @@ type ExecutionMode = 'docker' | 'host'
 interface TerminalConfig {
   docker_image: string
   default_execution_mode: ExecutionMode
+  docker_memory_limit: string
+  docker_cpu_limit: string
 }
 
 interface ImageAttachmentsConfig {
@@ -311,10 +409,15 @@ interface ImageAttachmentsConfig {
   allow_upload_to_model: boolean
 }
 
+interface SubagentConfig {
+  timeout_secs: number
+}
+
 interface AgentConfig {
   shell: ShellConfig
   terminal: TerminalConfig
   image_attachments?: ImageAttachmentsConfig
+  subagent?: SubagentConfig
 }
 
 const { t } = useI18n()
@@ -328,12 +431,18 @@ const shellConfig = ref<ShellConfig>({
 
 const terminalConfig = ref<TerminalConfig>({
   docker_image: 'sentinel-sandbox:latest',
-  default_execution_mode: 'docker'
+  default_execution_mode: 'docker',
+  docker_memory_limit: '2g',
+  docker_cpu_limit: '4.0'
 })
 
 const imageAttachments = ref<ImageAttachmentsConfig>({
   mode: 'local_ocr',
   allow_upload_to_model: false
+})
+
+const subagentConfig = ref<SubagentConfig>({
+  timeout_secs: 600 // 10 minutes default
 })
 
 const newAllowCommand = ref('')
@@ -357,13 +466,20 @@ async function loadConfig() {
     if (result?.terminal) {
       terminalConfig.value = {
         docker_image: result.terminal.docker_image || 'sentinel-sandbox:latest',
-        default_execution_mode: result.terminal.default_execution_mode || 'docker'
+        default_execution_mode: result.terminal.default_execution_mode || 'docker',
+        docker_memory_limit: result.terminal.docker_memory_limit || '2g',
+        docker_cpu_limit: result.terminal.docker_cpu_limit || '4.0'
       }
     }
     if (result?.image_attachments) {
       imageAttachments.value = {
         mode: (result.image_attachments.mode as ImageAttachmentsConfig['mode']) || 'local_ocr',
         allow_upload_to_model: !!result.image_attachments.allow_upload_to_model
+      }
+    }
+    if (result?.subagent) {
+      subagentConfig.value = {
+        timeout_secs: result.subagent.timeout_secs || 600
       }
     }
   } catch (e) {
@@ -383,7 +499,8 @@ async function autoSaveConfig() {
       const agentConfig: AgentConfig = {
         shell: shellConfig.value,
         terminal: terminalConfig.value,
-        image_attachments: imageAttachments.value
+        image_attachments: imageAttachments.value,
+        subagent: subagentConfig.value
       }
       await invoke('save_agent_config', { config: agentConfig })
       console.log('Agent config auto-saved')
@@ -414,6 +531,30 @@ function updateDockerImage(event: Event) {
   const target = event.target as HTMLInputElement
   terminalConfig.value.docker_image = target.value
   autoSaveConfig()
+}
+
+// Update docker memory limit
+function updateDockerMemoryLimit(event: Event) {
+  const target = event.target as HTMLInputElement
+  terminalConfig.value.docker_memory_limit = target.value
+  autoSaveConfig()
+}
+
+// Update docker cpu limit
+function updateDockerCpuLimit(event: Event) {
+  const target = event.target as HTMLInputElement
+  terminalConfig.value.docker_cpu_limit = target.value
+  autoSaveConfig()
+}
+
+// Update subagent timeout
+function updateSubagentTimeout(event: Event) {
+  const target = event.target as HTMLInputElement
+  const value = parseInt(target.value, 10)
+  if (!isNaN(value) && value > 0) {
+    subagentConfig.value.timeout_secs = value
+    autoSaveConfig()
+  }
 }
 
 // Toggle execution mode

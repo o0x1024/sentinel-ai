@@ -74,7 +74,12 @@ export default {
     selectRun: 'Select a run to view details',
     loadingMessages: 'Loading session details...',
     noMessages: 'No session details',
+    noTask: 'No task description',
   },
+  user: 'User',
+  assistant: 'Assistant',
+  toolResult: 'Tool Result',
+  justNow: 'Just now',
 
   // Tenth Man
   tenthManCritique: 'Tenth Man Critique',
@@ -132,7 +137,6 @@ export default {
   delete: 'Delete',
   enterNewConversationName: 'Please enter new conversation name:',
   scrollToLoadMore: 'Scroll to load more',
-  justNow: 'Just now',
   minutesAgo: 'minutes ago',
   hoursAgo: 'hours ago',
   daysAgo: 'days ago',

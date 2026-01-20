@@ -38,8 +38,8 @@ impl Default for DockerSandboxConfig {
     fn default() -> Self {
         Self {
             image: "sentinel-sandbox:latest".to_string(),
-            memory_limit: "512m".to_string(),
-            cpu_limit: "1.0".to_string(),
+            memory_limit: "2g".to_string(),
+            cpu_limit: "4.0".to_string(),
             network_mode: "bridge".to_string(),
             read_only_rootfs: false,
             volumes: HashMap::new(),
@@ -266,6 +266,15 @@ impl ContainerPool {
             &config.network_mode,
         ]);
 
+        // Relax sandbox permissions for security tools that require raw sockets / capabilities.
+        // This is needed for tools like nmap (e.g. ping scan) inside hardened runtimes.
+        args.extend_from_slice(&[
+            "--cap-add=NET_RAW",
+            "--cap-add=NET_ADMIN",
+            "--security-opt",
+            "no-new-privileges=false",
+        ]);
+
         if config.read_only_rootfs {
             args.push("--read-only");
         }
@@ -462,12 +471,12 @@ impl DockerSandbox {
 
         debug!("Executing command in container {}: {}", container_id, command);
 
-        // Execute command in container
+        // Execute command in container as root (for tools like nmap -sS that require privileges)
         let timeout_duration = Duration::from_secs(timeout_secs);
         let result = timeout(
             timeout_duration,
             Command::new("docker")
-                .args(&["exec", &container_id, "bash", "-c", command])
+                .args(&["exec", "--user", "root", &container_id, "bash", "-c", command])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),

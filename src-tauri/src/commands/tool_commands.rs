@@ -1608,7 +1608,7 @@ mod shell_permissions;
 pub use shell_permissions::PendingPermissionRequest;
 
 pub mod agent_config;
-pub use agent_config::{AgentConfig, init_agent_config};
+pub use agent_config::{AgentConfig, SubagentConfig, init_agent_config, load_subagent_config_from_db};
 
 mod ability_groups;
 

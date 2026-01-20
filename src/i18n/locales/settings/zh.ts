@@ -454,7 +454,13 @@ export default {
       dockerImageDesc: '交互式终端使用的 Docker 镜像',
       dockerImagePlaceholder: '例如: sentinel-sandbox:latest',
       useDocker: '使用 Docker',
-      useDockerDesc: '使用 Docker 容器作为终端环境（推荐），关闭后将使用主机终端'
+      useDockerDesc: '使用 Docker 容器作为终端环境（推荐），关闭后将使用主机终端',
+      memoryLimit: '内存限制',
+      memoryLimitDesc: '容器内存限制，例如 512m、1g、2g',
+      memoryLimitPlaceholder: '例如: 2g',
+      cpuLimit: 'CPU 限制',
+      cpuLimitDesc: '容器 CPU 核心数限制，例如 1.0、2.0、4.0',
+      cpuLimitPlaceholder: '例如: 4.0'
     },
     imageAttachments: {
       title: '图片附件',
@@ -465,6 +471,12 @@ export default {
       allowUpload: '允许上传图片到模型',
       allowUploadDesc: '开启后，图片可能会被发送到所选 AI 服务用于视觉理解。',
       uploadDisabledWarning: '当前未允许上传图片到模型，请切回本地 OCR 或开启上传权限。'
+    },
+    subagent: {
+      title: '子 Agent 设置',
+      timeout: '任务超时时间',
+      timeoutDesc: '等待子 Agent 任务完成的最大时间（60-7200 秒）',
+      seconds: '秒'
     }
   }
 }

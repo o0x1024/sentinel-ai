@@ -1531,6 +1531,23 @@ pub async fn get_subagent_messages(
         .map_err(|e| format!("Failed to get subagent messages for {}: {}", subagent_run_id, e))
 }
 
+#[tauri::command]
+pub async fn delete_subagent_runs_after(
+    parent_execution_id: String,
+    after_timestamp_ms: i64,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<u64, String> {
+    use chrono::{TimeZone, Utc};
+    let timestamp = Utc.timestamp_millis_opt(after_timestamp_ms)
+        .single()
+        .ok_or_else(|| "Invalid timestamp".to_string())?;
+    
+    db_service
+        .delete_subagent_runs_after_internal(&parent_execution_id, timestamp)
+        .await
+        .map_err(|e| format!("Failed to delete subagent runs: {}", e))
+}
+
 // 清空会话的所有消息
 #[tauri::command]
 pub async fn clear_conversation_messages(

@@ -96,20 +96,35 @@ async fn save_subagent_message(
         use sentinel_core::models::database as core_db;
         let message_id = uuid::Uuid::new_v4().to_string();
         let tool_calls_json = tool_calls.map(|tc| serde_json::to_string(tc).unwrap_or_default());
+        let timestamp = chrono::Utc::now();
         let msg = core_db::SubagentMessage {
-            id: message_id,
+            id: message_id.clone(),
             subagent_run_id: subagent_run_id.to_string(),
             role: role.to_string(),
             content: content.to_string(),
             metadata: None,
-            tool_calls: tool_calls_json,
+            tool_calls: tool_calls_json.clone(),
             attachments: None,
-            reasoning_content,
-            timestamp: chrono::Utc::now(),
+            reasoning_content: reasoning_content.clone(),
+            timestamp,
             structured_data: None,
         };
         if let Err(e) = db.create_subagent_message_internal(&msg).await {
             tracing::warn!("Failed to save subagent message: {}", e);
+        } else {
+            // Emit event for real-time update
+            let _ = app_handle.emit(
+                "subagent:message",
+                &serde_json::json!({
+                    "subagent_run_id": subagent_run_id,
+                    "message_id": message_id,
+                    "role": role,
+                    "content": content,
+                    "tool_calls": tool_calls_json,
+                    "reasoning_content": reasoning_content,
+                    "timestamp": timestamp.to_rfc3339(),
+                }),
+            );
         }
     }
 }

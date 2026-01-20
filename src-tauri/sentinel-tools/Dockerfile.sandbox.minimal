@@ -14,6 +14,7 @@ RUN rm -f /etc/apt/sources.list.d/* && \
     apt-get update --fix-missing || true
         
 
+
 RUN apt-get update && \
         apt-get install -y --no-install-recommends --fix-missing\
         # [基础网络与下载工具]
@@ -32,7 +33,6 @@ RUN apt-get update && \
         procps htop tree mc \
         # [逆向与取证]
         apktool \
-        binwalk \
         steghide \
         exiftool \
         foremost \
@@ -58,6 +58,8 @@ RUN apt-get update && \
         # [NodeJS]
         nodejs \
         npm \
+        upx-ucl \
+        wine \
         # [Pwn 与逆向增强]
         ruby-full patchelf strace ltrace \
         # [终端与字符集]
@@ -68,6 +70,12 @@ RUN apt-get update && \
         apt-get clean && \
         rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
     
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    cargo pkg-config libssl-dev \
+    wget curl ca-certificates \
+    build-essential cmake clang
+
 
     # [Pwn 增强: GDB GEF]
 RUN wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py && \
@@ -121,20 +129,67 @@ RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple &&
 # [Ruby Gems]
 RUN gem install --no-document one_gadget seccomp-tools
     
-    # -----------------------------------------------------------------------------
+# RUN mkdir -p /root/.cargo/bin
+# ENV PATH="/root/.cargo/bin:$PATH"
+# ENV CARGO_TARGET_DIR="/root/.cargo/bin"
+# RUN cargo install --git https://github.com/ReFirmLabs/binwalk.git binwalk
+
+
+# RUN cargo install binwalk
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends  --fix-missing\
+    sudo \
+    nano \
+    vim && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+    
+RUN git clone https://github.com/ReFirmLabs/binwalk  && \
+    export PATH=/root/.cargo/bin:$PATH && \
+    cd binwalk && \
+    cargo build --release &&  \
+    mv /binwalk/target/release/binwalk /bin && \
+    rm -rf /binwalk
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends  --fix-missing\
+    masscan \
+    golang-go  \
+    john \
+    hydra &&\
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+
+    RUN export GOPATH=/tmp/go && \
+    go install github.com/ffuf/ffuf/v2@latest && \
+    go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
+    go install github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install github.com/projectdiscovery/katana/cmd/katana@latest && \
+    go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest && \
+    go install github.com/tomnomnom/waybackurls@latest && \
+    go install github.com/tomnomnom/gf@latest && \
+    go install github.com/tomnomnom/httprobe@latest && \
+    go install github.com/lc/gau/v2/cmd/gau@latest && \
+    go install github.com/OJ/gobuster/v3@latest && \
+    mv /tmp/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
+    rm -rf /tmp/go
+    #-----------------------------------------------------------------------------
     # 5. User Configuration
     # -----------------------------------------------------------------------------
-RUN useradd -m -s /bin/bash sandbox && \
-        mkdir -p /workspace && \
-        chown sandbox:sandbox /workspace && \
-        # 配置 GEF 给 sandbox 用户
-        cp /root/.gdbinit /home/sandbox/.gdbinit && \
-        cp /root/.gdbinit-gef.py /home/sandbox/.gdbinit-gef.py && \
-        chown sandbox:sandbox /home/sandbox/.gdbinit /home/sandbox/.gdbinit-gef.py
+# RUN useradd -m -s /bin/bash sandbox && \
+#         mkdir -p /workspace && \
+#         chown sandbox:sandbox /workspace && \
+#         # 配置 GEF 给 sandbox 用户
+#         cp /root/.gdbinit /home/sandbox/.gdbinit && \
+#         cp /root/.gdbinit-gef.py /home/sandbox/.gdbinit-gef.py && \
+#         chown sandbox:sandbox /home/sandbox/.gdbinit /home/sandbox/.gdbinit-gef.py
+
+RUN mkdir -p /workspace
 
 ENV TERM=xterm-256color
 
 
 WORKDIR /workspace
-USER sandbox
+USER root
 CMD ["/bin/bash"]
