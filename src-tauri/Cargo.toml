@@ -34,6 +34,7 @@ sentinel-notify = { path = "sentinel-notify" }
 sentinel-llm = { path = "sentinel-llm" }
 sentinel-license = { path = "sentinel-license" }
 sentinel-plugins = { path = "sentinel-plugins" }
+sentinel-bounty = { path = "sentinel-bounty" }
 
 html2text = "0.15.5"
 urlencoding = "2.1.3"
@@ -261,6 +262,7 @@ members = [
     "sentinel-workflow",
     "sentinel-llm",
     "sentinel-license",
+    "sentinel-bounty",
 ]
 resolver = "2"
 

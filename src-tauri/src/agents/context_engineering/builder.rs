@@ -279,10 +279,68 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     let context_messages = sliding_window.build_context(&system_prompt);
-    let (system_prompt_content, history_messages) = split_context_messages(
+    let (system_prompt_content, mut history_messages) = split_context_messages(
         &system_prompt,
         context_messages,
     );
+
+    // Enforce context limit: truncate history if total exceeds max_context_length
+    // Reserve 15% for model output and safety margin
+    let safe_limit = (max_context_length as f64 * 0.85) as usize;
+    let system_tokens = estimate_tokens(&system_prompt_content);
+    let available_for_history = safe_limit.saturating_sub(system_tokens);
+    
+    // Truncate history from oldest messages if needed
+    let mut history_tokens: usize = history_messages.iter()
+        .map(|m| {
+            let mut tokens = estimate_tokens(&m.content);
+            if let Some(ref tc) = m.tool_calls {
+                tokens += estimate_tokens(tc);
+            }
+            if let Some(ref rc) = m.reasoning_content {
+                tokens += estimate_tokens(rc);
+            }
+            if let Some(ref tid) = m.tool_call_id {
+                tokens += estimate_tokens(tid);
+            }
+            tokens
+        })
+        .sum();
+    
+    if history_tokens > available_for_history {
+        tracing::warn!(
+            "Context overflow detected: history_tokens={}, available={}, truncating oldest messages",
+            history_tokens,
+            available_for_history
+        );
+        
+        // Remove oldest messages until we're under the limit
+        while history_tokens > available_for_history && !history_messages.is_empty() {
+            if let Some(removed) = history_messages.first() {
+                let removed_tokens = {
+                    let mut tokens = estimate_tokens(&removed.content);
+                    if let Some(ref tc) = removed.tool_calls {
+                        tokens += estimate_tokens(tc);
+                    }
+                    if let Some(ref rc) = removed.reasoning_content {
+                        tokens += estimate_tokens(rc);
+                    }
+                    if let Some(ref tid) = removed.tool_call_id {
+                        tokens += estimate_tokens(tid);
+                    }
+                    tokens
+                };
+                history_tokens = history_tokens.saturating_sub(removed_tokens);
+                history_messages.remove(0);
+            }
+        }
+        
+        tracing::info!(
+            "After truncation: history_messages={}, history_tokens={}",
+            history_messages.len(),
+            history_tokens
+        );
+    }
 
     // Calculate context usage for frontend display
     // Include all message components: content, tool_calls, reasoning_content
@@ -494,7 +552,8 @@ fn inject_task_mainline_summary(mut system_prompt: String, task: &str) -> String
     system_prompt
 }
 
-/// Estimate token count for text (simple heuristic)
+/// Estimate token count for text (improved heuristic)
+/// Uses a more conservative estimate to avoid context overflow
 fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() {
         return 0;
@@ -502,12 +561,15 @@ fn estimate_tokens(text: &str) -> usize {
     let mut total: f64 = 0.0;
     for c in text.chars() {
         if c.is_ascii() {
-            total += 0.25;
+            // More conservative: ~0.3 tokens per ASCII char (accounts for subword tokenization)
+            total += 0.35;
         } else {
-            total += 1.0;
+            // CJK and other non-ASCII: ~1.5 tokens per char (more conservative)
+            total += 1.5;
         }
     }
-    total.ceil() as usize
+    // Add 10% safety margin
+    (total * 1.1).ceil() as usize
 }
 
 async fn get_provider_max_context_length(

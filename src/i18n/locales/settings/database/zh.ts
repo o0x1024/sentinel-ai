@@ -47,6 +47,7 @@ export default {
   restoreBackup: '恢复备份',
   exportData: '导出数据',
   importData: '导入数据',
+  migrateDatabase: '数据库迁移',
   dataManagement: '数据管理',
   cleanupSettings: '清理设置',
   autoCleanup: '自动清理',

@@ -47,6 +47,7 @@ export default {
   restoreBackup: 'Restore Backup',
   exportData: 'Export Data',
   importData: 'Import Data',
+  migrateDatabase: 'Migrate Database',
   dataManagement: 'Data Management',
   cleanupSettings: 'Cleanup Settings',
   autoCleanup: 'Auto Cleanup',

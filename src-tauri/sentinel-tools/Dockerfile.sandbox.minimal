@@ -160,7 +160,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
-    RUN export GOPATH=/tmp/go && \
+RUN export GOPATH=/tmp/go && \
     go install github.com/ffuf/ffuf/v2@latest && \
     go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
     go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
@@ -174,6 +174,12 @@ RUN apt-get update && \
     go install github.com/OJ/gobuster/v3@latest && \
     mv /tmp/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
     rm -rf /tmp/go
+
+RUN apt-get update && \
+    apt-get install -y net-tools iproute2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
     #-----------------------------------------------------------------------------
     # 5. User Configuration
     # -----------------------------------------------------------------------------

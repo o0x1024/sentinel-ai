@@ -96,6 +96,7 @@
                           @selectBackupFile="selectBackupFile"
                           @exportData="exportData"
                           @importData="importData"
+                          @migrateDatabase="migrateDatabase"
                           @cleanupNow="cleanupNow"
                           @optimizeDatabase="optimizeDatabase"
                           @rebuildIndexes="rebuildIndexes"
@@ -435,6 +436,28 @@ const availableProviders = computed(() => {
 // 方法
 const loadSettings = async () => {
   try {
+    // Load database configuration from persistent file first
+    try {
+      const dbConfig = await invoke('load_db_config') as DatabaseConfig | null
+      if (dbConfig) {
+        console.log('Loaded saved database config:', dbConfig)
+        settings.value.database.type = dbConfig.db_type
+        settings.value.database.path = dbConfig.path || ''
+        settings.value.database.host = dbConfig.host || 'localhost'
+        settings.value.database.port = dbConfig.port || 5432
+        settings.value.database.name = dbConfig.database || 'sentinel_ai'
+        settings.value.database.username = dbConfig.username || ''
+        settings.value.database.password = dbConfig.password || ''
+        settings.value.database.enableWAL = dbConfig.enable_wal
+        settings.value.database.enableSSL = dbConfig.enable_ssl
+        settings.value.database.maxConnections = dbConfig.max_connections
+        settings.value.database.queryTimeout = dbConfig.query_timeout
+      }
+    } catch (dbConfigError) {
+      console.error('Failed to load database config:', dbConfigError)
+      // Continue with default SQLite config
+    }
+
     // 先加载AI配置
     const aiConfigData = await invoke('get_ai_config')
     aiConfig.value = aiConfigData as any
@@ -1070,7 +1093,22 @@ const selectBackupPath = async () => {
 const testDatabaseConnection = async () => {
   dialog.toast.info('正在测试数据库连接...')
   try {
-    const result = await invoke('test_database_connection')
+    // Build database config from settings
+    const dbConfig = {
+      db_type: settings.value.database.type,
+      path: settings.value.database.type === 'sqlite' ? settings.value.database.path : null,
+      enable_wal: settings.value.database.enableWAL,
+      host: settings.value.database.type !== 'sqlite' ? settings.value.database.host : null,
+      port: settings.value.database.type !== 'sqlite' ? settings.value.database.port : null,
+      database: settings.value.database.type !== 'sqlite' ? settings.value.database.name : null,
+      username: settings.value.database.type !== 'sqlite' ? settings.value.database.username : null,
+      password: settings.value.database.type !== 'sqlite' ? settings.value.database.password : null,
+      enable_ssl: settings.value.database.enableSSL,
+      max_connections: settings.value.database.maxConnections,
+      query_timeout: settings.value.database.queryTimeout,
+    }
+    
+    const result = await invoke('test_db_connection', { config: dbConfig })
     if (result) {
       dialog.toast.success('数据库连接正常')
     } else {
@@ -1127,15 +1165,35 @@ const selectBackupFile = async () => {
 const exportData = async () => {
   try {
     const { save } = await import('@tauri-apps/plugin-dialog')
+    
+    // Ask user to choose export format
+    const format = await dialog.confirm({
+      title: '选择导出格式',
+      message: '请选择导出格式:\n\nJSON - 完整的数据结构\nSQL - SQL脚本文件',
+      okLabel: 'JSON',
+      cancelLabel: 'SQL'
+    })
+    
+    const extension = format ? 'json' : 'sql'
+    const filterName = format ? 'JSON' : 'SQL'
+    
     const selected = await save({
-      defaultPath: `sentinel_export_${new Date().toISOString().split('T')[0]}.json`,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      defaultPath: `sentinel_export_${new Date().toISOString().split('T')[0]}.${extension}`,
+      filters: [{ name: filterName, extensions: [extension] }],
       title: '导出数据'
     })
+    
     if (selected) {
       dialog.toast.info('正在导出数据...')
-      const tables = ['scan_tasks', 'vulnerabilities', 'assets', 'ai_conversations']
-      await invoke('export_database_json', { tables, outputPath: selected })
+      
+      if (format) {
+        // Export as JSON
+        await invoke('export_db_to_json', { outputPath: selected })
+      } else {
+        // Export as SQL
+        await invoke('export_db_to_sql', { outputPath: selected })
+      }
+      
       dialog.toast.success(`数据已导出到: ${selected}`)
     }
   } catch (error) {
@@ -1150,7 +1208,10 @@ const importData = async () => {
     const selected = await open({
       directory: false,
       multiple: false,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
       title: '选择要导入的数据文件'
     })
     if (selected) {
@@ -1161,13 +1222,69 @@ const importData = async () => {
       })
       if (confirmed) {
         dialog.toast.info('正在导入数据...')
-        const result = await invoke('import_database_json', { inputPath: selected as string }) as string
+        const result = await invoke('import_db_from_json', { inputPath: selected as string }) as string
         dialog.toast.success(result)
       }
     }
   } catch (error) {
     console.error('Failed to import data:', error)
-    dialog.toast.error(`导入数据失败: ${error}`)
+    dialog.toast.error(`导出数据失败: ${error}`)
+  }
+}
+
+const migrateDatabase = async () => {
+  try {
+    const confirmed = await dialog.confirm({
+      title: '数据库迁移',
+      message: '此操作将把当前数据库的所有数据迁移到目标数据库。请确保:\n\n1. 目标数据库已创建并可访问\n2. 目标数据库的表结构已初始化\n3. 已备份源数据库\n\n是否继续?',
+      variant: 'warning'
+    })
+    
+    if (!confirmed) return
+    
+    // Build target database config
+    const targetConfig = {
+      db_type: settings.value.database.type,
+      path: settings.value.database.type === 'sqlite' ? settings.value.database.path : null,
+      enable_wal: settings.value.database.enableWAL,
+      host: settings.value.database.type !== 'sqlite' ? settings.value.database.host : null,
+      port: settings.value.database.type !== 'sqlite' ? settings.value.database.port : null,
+      database: settings.value.database.type !== 'sqlite' ? settings.value.database.name : null,
+      username: settings.value.database.type !== 'sqlite' ? settings.value.database.username : null,
+      password: settings.value.database.type !== 'sqlite' ? settings.value.database.password : null,
+      enable_ssl: settings.value.database.enableSSL,
+      max_connections: settings.value.database.maxConnections,
+      query_timeout: settings.value.database.queryTimeout,
+    }
+    
+    dialog.toast.info('正在迁移数据库...')
+    const result = await invoke('migrate_database', { targetConfig }) as string
+    dialog.toast.success(result)
+
+    // Save database config to a persistent configuration file
+    dialog.toast.info('正在保存数据库配置...')
+    try {
+      await invoke('save_db_config', { config: targetConfig })
+      dialog.toast.success('数据库配置已保存')
+    } catch (saveError) {
+      console.error('Failed to save database config:', saveError)
+      dialog.toast.error(`保存数据库配置失败: ${saveError}`)
+    }
+
+    // Show restart prompt
+    const restart = await dialog.confirm({
+      title: '迁移完成',
+      message: '数据库迁移已完成。需要重启应用以使用新数据库。\n\n是否立即重启?',
+      variant: 'info'
+    })
+
+    if (restart) {
+      // Restart the application
+      window.location.reload()
+    }
+  } catch (error) {
+    console.error('Failed to migrate database:', error)
+    dialog.toast.error(`数据库迁移失败: ${error}`)
   }
 }
 

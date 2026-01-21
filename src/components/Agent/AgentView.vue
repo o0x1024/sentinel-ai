@@ -838,6 +838,9 @@ const handleStop = async () => {
       webExplorerEvents.stop()
     }
     
+    // Clear todos when user stops execution
+    todosComposable.clearTodos()
+    
   } catch (e) {
     console.error('[AgentView] Failed to stop execution:', e)
     localError.value = t('agent.failedToStopExecution') + ': ' + e
@@ -916,6 +919,9 @@ const handleResendMessage = async (message: AgentMessage) => {
     pendingAttachments.value = []
   }
 
+  // Clear todos before resending
+  todosComposable.clearTodos()
+
   // Set user message content to input box
   inputValue.value = message.content
 
@@ -978,6 +984,9 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
   agentEvents.subagents.value = agentEvents.subagents.value.filter(s => {
     return !s.startedAt || s.startedAt <= messageTimestamp
   })
+
+  // Clear todos before resending edited message
+  todosComposable.clearTodos()
 
   // Set edited content to input box
   inputValue.value = newContent

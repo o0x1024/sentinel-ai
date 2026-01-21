@@ -43,8 +43,10 @@ impl Default for SlidingWindowConfig {
             recent_message_count: 20,
             max_segment_summaries: 10,
             max_context_tokens: 128000,
-            global_summary_ratio: 0.1,  // 10%
-            segment_summary_ratio: 0.3, // 30%
+            global_summary_ratio: 0.08,  // 8% for global summary
+            segment_summary_ratio: 0.15, // 15% for segment summaries
+            // Remaining ~77% for history, but we reserve 30% for system prompt + tools
+            // So effective history budget is ~47% of max_context_tokens
         }
     }
 }
@@ -300,12 +302,24 @@ impl SlidingWindowManager {
     /// Check and compress history if needed
     /// Returns true if compression occurred
     pub async fn compress_if_needed(&mut self, llm_config: &LlmConfig) -> Result<bool> {
-        // Calculate tokens
+        // Calculate tokens for all message components
         let recent_tokens: usize = self.recent_messages.iter()
-            .map(|m| estimate_tokens(&m.content))
+            .map(|m| {
+                let mut tokens = estimate_tokens(&m.content);
+                if let Some(ref tc) = m.tool_calls {
+                    tokens += estimate_tokens(tc);
+                }
+                if let Some(ref rc) = m.reasoning_content {
+                    tokens += estimate_tokens(rc);
+                }
+                tokens
+            })
             .sum();
-            
-        let threshold_tokens = (self.config.max_context_tokens as f64 * (1.0 - self.config.global_summary_ratio - self.config.segment_summary_ratio)) as usize;
+        
+        // Reserve 30% for system prompt + tool definitions + safety margin
+        // History can use at most 70% minus summary allocations
+        let history_ratio = 1.0 - self.config.global_summary_ratio - self.config.segment_summary_ratio - 0.30;
+        let threshold_tokens = (self.config.max_context_tokens as f64 * history_ratio.max(0.3)) as usize;
         
         let should_segment = self.recent_messages.len() > self.config.recent_message_count 
             || recent_tokens > threshold_tokens;
@@ -560,20 +574,24 @@ impl SlidingWindowManager {
     }
 }
 
-// Helper: Estimate tokens (duplicated from executor.rs, strictly we should share this)
+/// Estimate token count for text (improved heuristic)
+/// Uses a more conservative estimate to avoid context overflow
 fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() {
         return 0;
     }
-    let mut total_estimated: f64 = 0.0;
+    let mut total: f64 = 0.0;
     for c in text.chars() {
         if c.is_ascii() {
-            total_estimated += 0.25;
+            // More conservative: ~0.35 tokens per ASCII char
+            total += 0.35;
         } else {
-            total_estimated += 1.0;
+            // CJK and other non-ASCII: ~1.5 tokens per char
+            total += 1.5;
         }
     }
-    total_estimated.ceil() as usize
+    // Add 10% safety margin
+    (total * 1.1).ceil() as usize
 }
 
 fn condense_tool_output(raw: &str) -> Option<String> {

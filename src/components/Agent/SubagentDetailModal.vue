@@ -93,7 +93,7 @@
                 ref="messageFlowRef"
                 :messages="displayMessages"
                 :is-loading="messagesLoading"
-                :is-streaming="subagent?.status === 'running'"
+                :is-streaming="subagent?.status === 'running' && !streamingContent && !streamingReasoningContent"
                 class="flex-1 p-4"
               />
             </div>
@@ -196,6 +196,10 @@ const messagesLoading = ref(false)
 const todos = ref<Todo[]>([])
 const showTodos = ref(false)
 
+// Streaming state for real-time display
+const streamingContent = ref('')
+const streamingReasoningContent = ref('')
+
 // Event listeners
 const unlisteners: UnlistenFn[] = []
 
@@ -227,9 +231,9 @@ const statusIconClass = computed(() => {
 // Has todos
 const hasTodos = computed(() => todos.value.length > 0)
 
-// Convert messages to SimpleMessage format
+// Convert messages to SimpleMessage format, including streaming content
 const displayMessages = computed<SimpleMessage[]>(() => {
-  return messages.value.map(msg => ({
+  const result: SimpleMessage[] = messages.value.map(msg => ({
     id: msg.id,
     role: msg.role as 'user' | 'assistant' | 'tool' | 'system',
     content: msg.content,
@@ -238,6 +242,21 @@ const displayMessages = computed<SimpleMessage[]>(() => {
     timestamp: msg.timestamp,
     metadata: msg.metadata ? tryParseJson(msg.metadata) : undefined,
   }))
+  
+  // If there's streaming content and subagent is running, add a temporary streaming message
+  if (props.subagent?.status === 'running' && (streamingContent.value || streamingReasoningContent.value)) {
+    result.push({
+      id: 'streaming-' + Date.now(),
+      role: 'assistant',
+      content: streamingContent.value || null,
+      reasoning_content: streamingReasoningContent.value || null,
+      tool_calls: null,
+      timestamp: new Date().toISOString(),
+      metadata: undefined,
+    })
+  }
+  
+  return result
 })
 
 // Try parse JSON safely
@@ -310,7 +329,34 @@ const loadMessages = async () => {
 
 // Start listening for real-time events
 const startListening = async () => {
-  // Listen for new subagent messages
+  // Listen for streaming chunks (agent:chunk) - this is how subagent streams content
+  const unlistenChunk = await listen<{
+    execution_id: string
+    chunk_type: string
+    content?: string
+  }>('agent:chunk', (event) => {
+    const payload = event.payload
+    const subagentId = props.subagent?.id
+    
+    // Only process if this chunk belongs to the current subagent
+    if (!subagentId || payload.execution_id !== subagentId) return
+    
+    if (payload.chunk_type === 'text' && payload.content) {
+      streamingContent.value += payload.content
+      // Scroll to bottom on new content
+      nextTick(() => {
+        messageFlowRef.value?.scrollToBottom()
+      })
+    } else if (payload.chunk_type === 'reasoning' && payload.content) {
+      streamingReasoningContent.value += payload.content
+      nextTick(() => {
+        messageFlowRef.value?.scrollToBottom()
+      })
+    }
+  })
+  unlisteners.push(unlistenChunk)
+
+  // Listen for new subagent messages (persisted messages)
   const unlistenMessage = await listen<{
     subagent_run_id: string
     message_id: string
@@ -328,6 +374,12 @@ const startListening = async () => {
     // Check if message already exists
     const exists = messages.value.some(m => m.id === payload.message_id)
     if (exists) return
+    
+    // Clear streaming content when a persisted message arrives (it replaces the streaming)
+    if (payload.role === 'assistant') {
+      streamingContent.value = ''
+      streamingReasoningContent.value = ''
+    }
     
     // Add new message
     messages.value.push({
@@ -349,6 +401,131 @@ const startListening = async () => {
     })
   })
   unlisteners.push(unlistenMessage)
+
+  // Listen for tool call events
+  const unlistenToolCall = await listen<{
+    execution_id: string
+    tool_call_id: string
+    tool_name: string
+    arguments?: string
+  }>('agent:tool_call_complete', (event) => {
+    const payload = event.payload
+    const subagentId = props.subagent?.id
+    
+    if (!subagentId || payload.execution_id !== subagentId) return
+    
+    // Clear streaming content before tool call (tool calls interrupt text streaming)
+    if (streamingContent.value) {
+      // Save current streaming content as a message before tool call
+      const tempId = 'stream-' + Date.now()
+      messages.value.push({
+        id: tempId,
+        subagent_run_id: subagentId,
+        role: 'assistant',
+        content: streamingContent.value || null,
+        tool_calls: null,
+        reasoning_content: streamingReasoningContent.value || null,
+        timestamp: new Date().toISOString(),
+        metadata: null,
+        attachments: null,
+        structured_data: null,
+      })
+      streamingContent.value = ''
+      streamingReasoningContent.value = ''
+    }
+    
+    // Add tool call message
+    const toolCallId = 'toolcall-' + payload.tool_call_id
+    if (!messages.value.some(m => m.id === toolCallId)) {
+      messages.value.push({
+        id: toolCallId,
+        subagent_run_id: subagentId,
+        role: 'tool',
+        content: `Calling: ${payload.tool_name}`,
+        tool_calls: null,
+        reasoning_content: null,
+        timestamp: new Date().toISOString(),
+        metadata: JSON.stringify({
+          tool_name: payload.tool_name,
+          tool_args: payload.arguments ? tryParseJson(payload.arguments) : {},
+          tool_call_id: payload.tool_call_id,
+          status: 'running',
+        }),
+        attachments: null,
+        structured_data: null,
+      })
+    }
+    
+    nextTick(() => {
+      messageFlowRef.value?.scrollToBottom()
+    })
+  })
+  unlisteners.push(unlistenToolCall)
+
+  // Listen for tool result events
+  const unlistenToolResult = await listen<{
+    execution_id: string
+    tool_call_id: string
+    result: string
+  }>('agent:tool_result', (event) => {
+    const payload = event.payload
+    const subagentId = props.subagent?.id
+    
+    if (!subagentId || payload.execution_id !== subagentId) return
+    
+    // Update the tool call message with result
+    const toolCallId = 'toolcall-' + payload.tool_call_id
+    const existingMsg = messages.value.find(m => m.id === toolCallId)
+    if (existingMsg) {
+      const meta = existingMsg.metadata ? tryParseJson(existingMsg.metadata) : {}
+      meta.status = 'completed'
+      meta.tool_result = payload.result
+      existingMsg.metadata = JSON.stringify(meta)
+      existingMsg.content = `Completed: ${meta.tool_name || 'tool'}`
+    }
+    
+    nextTick(() => {
+      messageFlowRef.value?.scrollToBottom()
+    })
+  })
+  unlisteners.push(unlistenToolResult)
+
+  // Listen for subagent completion
+  const unlistenDone = await listen<{
+    execution_id: string
+    parent_execution_id: string
+    success: boolean
+    output?: string
+  }>('subagent:done', (event) => {
+    const payload = event.payload
+    const subagentId = props.subagent?.id
+    
+    if (!subagentId || payload.execution_id !== subagentId) return
+    
+    // If there's remaining streaming content, save it as a final message
+    if (streamingContent.value || streamingReasoningContent.value) {
+      const tempId = 'final-' + Date.now()
+      messages.value.push({
+        id: tempId,
+        subagent_run_id: subagentId,
+        role: 'assistant',
+        content: streamingContent.value || payload.output || null,
+        tool_calls: null,
+        reasoning_content: streamingReasoningContent.value || null,
+        timestamp: new Date().toISOString(),
+        metadata: null,
+        attachments: null,
+        structured_data: null,
+      })
+      streamingContent.value = ''
+      streamingReasoningContent.value = ''
+    }
+    
+    nextTick(() => {
+      messageFlowRef.value?.scrollToBottom()
+    })
+  })
+  unlisteners.push(unlistenDone)
 
   // Listen for todos update (filter by subagent execution_id)
   const unlistenTodos = await listen<{
@@ -382,11 +559,15 @@ watch(
   ([visible, subagentId]) => {
     if (visible && subagentId) {
       loadMessages()
-      // Clear todos when switching subagent
+      // Clear streaming state and todos when switching subagent
+      streamingContent.value = ''
+      streamingReasoningContent.value = ''
       todos.value = []
       showTodos.value = false
     } else {
       messages.value = []
+      streamingContent.value = ''
+      streamingReasoningContent.value = ''
       todos.value = []
     }
   },

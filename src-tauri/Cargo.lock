@@ -11741,6 +11741,7 @@ dependencies = [
  "rustls 0.23.28",
  "rustscan",
  "semaphore",
+ "sentinel-bounty",
  "sentinel-core",
  "sentinel-db",
  "sentinel-license",
@@ -11788,6 +11789,25 @@ dependencies = [
  "uuid",
  "walkdir",
  "which 8.0.0",
+]
+
+[[package]]
+name = "sentinel-bounty"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "regex",
+ "sentinel-core",
+ "sentinel-db",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]

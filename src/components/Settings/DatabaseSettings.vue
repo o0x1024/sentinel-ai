@@ -285,6 +285,14 @@
                 {{ t('settings.database.importData') }}
               </button>
             </div>
+            
+            <!-- 数据库迁移 -->
+            <div class="form-control">
+              <button class="btn btn-info" @click="migrateDatabase">
+                <i class="fas fa-exchange-alt"></i>
+                {{ t('settings.database.migrateDatabase') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -430,6 +438,7 @@ interface Emits {
   'selectBackupFile': []
   'exportData': []
   'importData': []
+  'migrateDatabase': []
   'cleanupNow': []
   'optimizeDatabase': []
   'rebuildIndexes': []
@@ -485,6 +494,10 @@ const exportData = () => {
 
 const importData = () => {
   emit('importData')
+}
+
+const migrateDatabase = () => {
+  emit('migrateDatabase')
 }
 
 const cleanupNow = () => {

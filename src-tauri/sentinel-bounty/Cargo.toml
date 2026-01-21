@@ -1,0 +1,37 @@
+[package]
+name = "sentinel-bounty"
+version = "0.1.0"
+edition = "2021"
+description = "Bug Bounty and SRC vulnerability hunting module for Sentinel AI"
+
+[dependencies]
+# Workspace members
+sentinel-core = { path = "../sentinel-core" }
+sentinel-db = { path = "../sentinel-db" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# URL parsing
+url = "2.4"
+
+# Regex for scope matching
+regex = "1"

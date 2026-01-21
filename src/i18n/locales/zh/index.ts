@@ -26,6 +26,7 @@ import ragManagement from '../rag/zh'
 import notifications from '../notifications/zh'
 import aiAssistant from '../aiAssistant/zh'
 import agent from '../agent/zh'
+import bugBounty from '../bugBounty/zh'
 
 // Import other modules as needed
 // For now, we'll include the basic structure and add more as we extract them
@@ -62,6 +63,7 @@ export default {
   notifications,
   aiAssistant,
   agent,
+  bugBounty,
 
   // Top-level aliases for sidebar navigation
   rag: {

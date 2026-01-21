@@ -1034,6 +1034,8 @@ export default {
       editMetadataTooltip: 'Edit workflow metadata'
     },
     toolbar: {
+      workflowList: 'Workflows',
+      workflowListTooltip: 'Open workflow list',
       load: 'Load',
       loadTooltip: 'Load workflow',
       templates: 'Templates',
@@ -1123,6 +1125,23 @@ export default {
       updated: 'Updated: {date}',
       deleteTooltip: 'Delete',
       close: 'Close'
+    },
+    workflowListPanel: {
+      title: 'Workflow Management',
+      myWorkflows: 'My Workflows',
+      templates: 'Templates',
+      searchPlaceholder: 'Search workflows or templates...',
+      emptyWorkflows: 'No saved workflows',
+      emptyTemplates: 'No templates',
+      aiTool: 'AI Tool',
+      duplicate: 'Duplicate',
+      delete: 'Delete',
+      templateBadge: 'Template',
+      nodeCount: '{count} nodes',
+      useTemplate: 'Use template',
+      deleteTemplate: 'Delete template',
+      newWorkflow: 'New Workflow',
+      saveAsTemplate: 'Save as Template'
     },
     templateMarket: {
       title: 'Workflow Template Market',
@@ -1257,7 +1276,8 @@ export default {
       weeklyAt: 'Weekly on {weekdays} at {time}'
     },
     confirm: {
-      deleteWorkflow: 'Are you sure you want to delete this workflow?'
+      deleteWorkflow: 'Are you sure you want to delete this workflow?',
+      deleteTemplate: 'Are you sure you want to delete this template?'
     },
     toasts: {
       enterWorkflowName: 'Please enter a workflow name first',
@@ -1287,7 +1307,13 @@ export default {
       importFailed: 'Import failed: {message}',
       imageExportRequiresHtml2Canvas: 'Image export requires the html2canvas library',
       templateSaved: 'Template saved',
-      templateSaveFailed: 'Failed to save template: {error}'
+      templateSaveFailed: 'Failed to save template: {error}',
+      workflowDuplicated: 'Workflow duplicated',
+      duplicateFailed: 'Duplicate failed: {error}',
+      templateDeleted: 'Template deleted',
+      deleteTemplateFailed: 'Failed to delete template: {error}',
+      templateApplied: 'Template applied',
+      applyTemplateFailed: 'Failed to apply template: {error}'
     },
     flowchart: {
       toolbar: {

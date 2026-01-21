@@ -178,6 +178,13 @@ const mainMenuItems = computed(() => [
     icon: 'fas fa-project-diagram',
     badge: null,
     badgeClass: ''
+  },
+  {
+    path: '/bug-bounty',
+    name: t('sidebar.bugBounty', 'Bug Bounty'),
+    icon: 'fas fa-trophy',
+    badge: null,
+    badgeClass: ''
   }
 ])
 

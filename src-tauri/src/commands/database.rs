@@ -2,6 +2,7 @@
 
 use crate::services::database::DatabaseService;
 use sentinel_db::Database;
+use sentinel_db::database_service::{DatabaseConfig, DatabasePool, DatabaseMigration};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -546,4 +547,157 @@ fn format_file_size(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+// New database migration commands
+
+/// Test database connection with given config
+#[tauri::command]
+pub async fn test_db_connection(config: DatabaseConfig) -> Result<bool, String> {
+    let pool = DatabasePool::connect(&config)
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+    
+    pool.test_connection()
+        .await
+        .map_err(|e| format!("Connection test failed: {}", e))?;
+    
+    Ok(true)
+}
+
+/// Export database to JSON file
+#[tauri::command]
+pub async fn export_db_to_json(
+    output_path: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    // Get current SQLite pool
+    let pool = db_service.get_sqlite_pool()
+        .map_err(|e| format!("Failed to get database pool: {}", e))?;
+    
+    let db_pool = DatabasePool::SQLite(pool.clone());
+    let migration = DatabaseMigration::new(db_pool);
+    
+    migration.export_to_json(&output_path)
+        .await
+        .map_err(|e| format!("Export failed: {}", e))?;
+    
+    Ok(output_path)
+}
+
+/// Export database to SQL file
+#[tauri::command]
+pub async fn export_db_to_sql(
+    output_path: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    let pool = db_service.get_sqlite_pool()
+        .map_err(|e| format!("Failed to get database pool: {}", e))?;
+    
+    let db_pool = DatabasePool::SQLite(pool.clone());
+    let migration = DatabaseMigration::new(db_pool);
+    
+    migration.export_to_sql(&output_path)
+        .await
+        .map_err(|e| format!("Export failed: {}", e))?;
+    
+    Ok(output_path)
+}
+
+/// Import database from JSON file
+#[tauri::command]
+pub async fn import_db_from_json(
+    input_path: String,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    let pool = db_service.get_sqlite_pool()
+        .map_err(|e| format!("Failed to get database pool: {}", e))?;
+    
+    let db_pool = DatabasePool::SQLite(pool.clone());
+    let migration = DatabaseMigration::new(db_pool);
+    
+    migration.import_from_json(&input_path)
+        .await
+        .map_err(|e| format!("Import failed: {}", e))?;
+    
+    Ok("Import completed successfully".to_string())
+}
+
+/// Migrate database to another database type
+#[tauri::command]
+pub async fn migrate_database(
+    target_config: DatabaseConfig,
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
+    // Get current SQLite pool
+    let source_pool = db_service.get_sqlite_pool()
+        .map_err(|e| format!("Failed to get source database pool: {}", e))?;
+    
+    // Connect to target database
+    let target_pool = DatabasePool::connect(&target_config)
+        .await
+        .map_err(|e| format!("Failed to connect to target database: {}", e))?;
+    
+    // Perform migration
+    let source_db_pool = DatabasePool::SQLite(source_pool.clone());
+    let migration = DatabaseMigration::new(source_db_pool)
+        .with_target(target_pool);
+    
+    migration.migrate()
+        .await
+        .map_err(|e| format!("Migration failed: {}", e))?;
+    
+    Ok(format!("Migration to {:?} completed successfully", target_config.db_type))
+}
+
+/// Save database configuration to a persistent file
+#[tauri::command]
+pub async fn save_db_config(config: DatabaseConfig) -> Result<String, String> {
+    use std::fs;
+
+    // Save config to a JSON file in the app data directory
+    let config_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sentinel-ai")
+        .join("db_config.json");
+
+    // Ensure the directory exists
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    // Serialize and write config
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    fs::write(&config_path, config_json)
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    Ok(format!("Database config saved to {:?}", config_path))
+}
+
+/// Load database configuration from the persistent file
+#[tauri::command]
+pub async fn load_db_config() -> Result<Option<DatabaseConfig>, String> {
+    use std::fs;
+
+    let config_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sentinel-ai")
+        .join("db_config.json");
+
+    // Check if config file exists
+    if !config_path.exists() {
+        return Ok(None);
+    }
+
+    // Read and parse config
+    let config_json = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let config: DatabaseConfig = serde_json::from_str(&config_json)
+        .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    Ok(Some(config))
 }

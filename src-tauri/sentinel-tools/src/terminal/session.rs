@@ -577,7 +577,7 @@ impl TerminalSession {
             
             for cmd in setup_commands {
                 let result = Command::new("docker")
-                    .args(&["exec", container_id, "bash", "-c", cmd])
+                    .args(&["exec", "--user", "root", container_id, "bash", "-c", cmd])
                     .output()
                     .await;
                 

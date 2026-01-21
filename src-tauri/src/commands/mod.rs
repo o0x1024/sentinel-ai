@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod aisettings;
 pub mod asset;
+pub mod bounty_commands;
 pub mod cache_commands;
 pub mod config;
 pub mod config_commands;
@@ -37,6 +38,7 @@ pub mod window;
 pub use ai::*;
 pub use aisettings::*;
 pub use asset::*;
+pub use bounty_commands::*;
 pub use cache_commands::*;
 pub use config::*;
 pub use config_commands::*;

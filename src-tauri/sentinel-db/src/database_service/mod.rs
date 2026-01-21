@@ -19,6 +19,10 @@ pub mod ability;
 pub mod scan_session;
 pub mod traffic;
 pub mod repeater;
+pub mod db_config;
+pub mod connection_manager;
+pub mod migration;
+pub mod bounty;
 
 #[allow(unused_imports)]
 pub use agent::*;
@@ -56,3 +60,11 @@ pub use scan_session::*;
 pub use traffic::*;
 #[allow(unused_imports)]
 pub use todos::*;
+#[allow(unused_imports)]
+pub use db_config::*;
+#[allow(unused_imports)]
+pub use connection_manager::*;
+#[allow(unused_imports)]
+pub use migration::*;
+#[allow(unused_imports)]
+pub use bounty::*;

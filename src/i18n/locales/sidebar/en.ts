@@ -21,6 +21,7 @@ export default {
   performance: 'Performance Monitor',
   workflowStudio: 'Workflow Studio',
   notifications: 'Notifications',
+  bugBounty: 'Bug Bounty',
   
   // Sidebar section titles
   coreFeatures: 'Core Features',

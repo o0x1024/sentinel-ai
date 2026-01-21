@@ -992,6 +992,8 @@ export default {
       editMetadataTooltip: '编辑工作流元数据'
     },
     toolbar: {
+      workflowList: '工作流',
+      workflowListTooltip: '打开工作流列表',
       load: '加载',
       loadTooltip: '加载工作流',
       templates: '模板',
@@ -1081,6 +1083,23 @@ export default {
       updated: '更新: {date}',
       deleteTooltip: '删除',
       close: '关闭'
+    },
+    workflowListPanel: {
+      title: '工作流管理',
+      myWorkflows: '我的工作流',
+      templates: '模板',
+      searchPlaceholder: '搜索工作流或模板...',
+      emptyWorkflows: '暂无已保存的工作流',
+      emptyTemplates: '暂无模板',
+      aiTool: 'AI工具',
+      duplicate: '复制',
+      delete: '删除',
+      templateBadge: '模板',
+      nodeCount: '{count} 个节点',
+      useTemplate: '使用模板',
+      deleteTemplate: '删除模板',
+      newWorkflow: '新建工作流',
+      saveAsTemplate: '保存为模板'
     },
     templateMarket: {
       title: '工作流模板市场',
@@ -1215,7 +1234,8 @@ export default {
       weeklyAt: '每周 {weekdays} {time}'
     },
     confirm: {
-      deleteWorkflow: '确定要删除这个工作流吗？'
+      deleteWorkflow: '确定要删除这个工作流吗？',
+      deleteTemplate: '确定要删除这个模板吗？'
     },
     toasts: {
       enterWorkflowName: '请先输入工作流名称',
@@ -1245,7 +1265,13 @@ export default {
       importFailed: '导入失败：{message}',
       imageExportRequiresHtml2Canvas: '图片导出功能需要安装html2canvas库',
       templateSaved: '已保存为模板',
-      templateSaveFailed: '保存模板失败：{error}'
+      templateSaveFailed: '保存模板失败：{error}',
+      workflowDuplicated: '工作流已复制',
+      duplicateFailed: '复制失败：{error}',
+      templateDeleted: '模板已删除',
+      deleteTemplateFailed: '删除模板失败：{error}',
+      templateApplied: '模板已应用',
+      applyTemplateFailed: '应用模板失败：{error}'
     },
     flowchart: {
       toolbar: {

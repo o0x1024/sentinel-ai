@@ -16,7 +16,7 @@
 
     <!-- Tab 导航 -->
     <div class="tabs tabs-boxed bg-base-100 shadow-sm">
-    <a 
+      <a 
         class="tab" 
         :class="{ 'tab-active': activeTab === 'vulnerabilities' }"
         @click="activeTab = 'vulnerabilities'"
@@ -36,25 +36,12 @@
         </svg>
         {{ $t('securityCenter.tabs.scanTasks') }}
       </a>
-
-      <a 
-        class="tab" 
-        :class="{ 'tab-active': activeTab === 'assets' }"
-        @click="activeTab = 'assets'"
-      >
-        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path>
-        </svg>
-        {{ $t('securityCenter.tabs.assets') }}
-      </a>
     </div>
 
-      <!-- 扫描任务 Tab -->
-        <ScanTasksPanel  @stats-updated="updateScanStats"  v-if="activeTab === 'scan'"/>
-      <!-- 漏洞管理 Tab -->
-        <VulnerabilitiesPanel @stats-updated="updateVulnStats" v-if="activeTab === 'vulnerabilities'"/>
-      <!-- 资产管理 Tab -->
-        <AssetsPanel @stats-updated="updateAssetStats" v-if="activeTab === 'assets'"/>
+    <!-- 扫描任务 Tab -->
+    <ScanTasksPanel @stats-updated="updateScanStats" v-if="activeTab === 'scan'"/>
+    <!-- 漏洞管理 Tab -->
+    <VulnerabilitiesPanel @stats-updated="updateVulnStats" v-if="activeTab === 'vulnerabilities'"/>
   </div>
 </template>
 
@@ -64,14 +51,13 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import ScanTasksPanel from '../components/SecurityCenter/ScanTasksPanel.vue';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
-import AssetsPanel from '../components/SecurityCenter/AssetsPanel.vue';
 
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 
 // 当前激活的 Tab
-const activeTab = ref<'scan' | 'vulnerabilities' | 'assets'>('vulnerabilities');
+const activeTab = ref<'scan' | 'vulnerabilities'>('vulnerabilities');
 
 // 统计数据
 const overviewStats = ref({
@@ -87,8 +73,8 @@ const overviewStats = ref({
 // 从 URL 参数读取初始 Tab
 onMounted(() => {
   const tab = route.query.tab as string;
-  if (tab && ['scan', 'vulnerabilities', 'assets'].includes(tab)) {
-    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'assets';
+  if (tab && ['scan', 'vulnerabilities'].includes(tab)) {
+    activeTab.value = tab as 'scan' | 'vulnerabilities';
   }
 });
 

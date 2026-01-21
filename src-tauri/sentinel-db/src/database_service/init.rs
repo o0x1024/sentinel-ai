@@ -899,6 +899,292 @@ impl DatabaseService {
                 .await?;
         }
 
+        // Bug Bounty tables
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_programs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                organization TEXT NOT NULL,
+                platform TEXT NOT NULL DEFAULT 'private',
+                platform_handle TEXT,
+                url TEXT,
+                program_type TEXT NOT NULL DEFAULT 'public',
+                status TEXT NOT NULL DEFAULT 'active',
+                description TEXT,
+                rewards_json TEXT,
+                response_sla_days INTEGER,
+                resolution_sla_days INTEGER,
+                rules_json TEXT,
+                tags_json TEXT,
+                metadata_json TEXT,
+                priority_score REAL DEFAULT 0.0,
+                total_submissions INTEGER DEFAULT 0,
+                accepted_submissions INTEGER DEFAULT 0,
+                total_earnings REAL DEFAULT 0.0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_activity_at TEXT
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_scopes (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                scope_type TEXT NOT NULL DEFAULT 'in_scope',
+                target_type TEXT NOT NULL,
+                target TEXT NOT NULL,
+                description TEXT,
+                allowed_tests_json TEXT,
+                instructions_json TEXT,
+                requires_auth BOOLEAN DEFAULT 0,
+                test_accounts_json TEXT,
+                asset_count INTEGER DEFAULT 0,
+                finding_count INTEGER DEFAULT 0,
+                priority REAL DEFAULT 0.0,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_findings (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                scope_id TEXT,
+                asset_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                finding_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'medium',
+                status TEXT NOT NULL DEFAULT 'new',
+                confidence TEXT NOT NULL DEFAULT 'medium',
+                cvss_score REAL,
+                cwe_id TEXT,
+                affected_url TEXT,
+                affected_parameter TEXT,
+                reproduction_steps_json TEXT,
+                impact TEXT,
+                remediation TEXT,
+                evidence_ids_json TEXT,
+                tags_json TEXT,
+                metadata_json TEXT,
+                fingerprint TEXT NOT NULL,
+                duplicate_of TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                verified_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_submissions (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                finding_id TEXT NOT NULL,
+                platform_submission_id TEXT,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft',
+                priority TEXT NOT NULL DEFAULT 'medium',
+                vulnerability_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'medium',
+                cvss_score REAL,
+                cwe_id TEXT,
+                description TEXT NOT NULL,
+                reproduction_steps_json TEXT,
+                impact TEXT NOT NULL,
+                remediation TEXT,
+                evidence_ids_json TEXT,
+                platform_url TEXT,
+                reward_amount REAL,
+                reward_currency TEXT,
+                bonus_amount REAL,
+                response_time_hours INTEGER,
+                resolution_time_hours INTEGER,
+                requires_retest BOOLEAN DEFAULT 0,
+                retest_at TEXT,
+                last_retest_at TEXT,
+                communications_json TEXT,
+                timeline_json TEXT,
+                tags_json TEXT,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                submitted_at TEXT,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT,
+                created_by TEXT NOT NULL,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY(finding_id) REFERENCES bounty_findings(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_evidence (
+                id TEXT PRIMARY KEY,
+                finding_id TEXT NOT NULL,
+                evidence_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                file_path TEXT,
+                file_url TEXT,
+                content TEXT,
+                mime_type TEXT,
+                file_size INTEGER,
+                http_request_json TEXT,
+                http_response_json TEXT,
+                diff TEXT,
+                tags_json TEXT,
+                metadata_json TEXT,
+                display_order INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(finding_id) REFERENCES bounty_findings(id) ON DELETE CASCADE
+            )"#
+        ).execute(pool).await?;
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_change_events (
+                id TEXT PRIMARY KEY,
+                program_id TEXT,
+                asset_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'medium',
+                status TEXT NOT NULL DEFAULT 'new',
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                diff TEXT,
+                affected_scope TEXT,
+                detection_method TEXT NOT NULL,
+                triggered_workflows_json TEXT,
+                generated_findings_json TEXT,
+                tags_json TEXT,
+                metadata_json TEXT,
+                risk_score REAL DEFAULT 0.0,
+                auto_trigger_enabled BOOLEAN DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                resolved_at TEXT,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE SET NULL
+            )"#
+        ).execute(pool).await?;
+
+        // Bounty assets table (P1-B3: Asset consolidation)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_assets (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                scope_id TEXT,
+                asset_type TEXT NOT NULL DEFAULT 'url',
+                canonical_url TEXT NOT NULL,
+                original_urls_json TEXT,
+                hostname TEXT,
+                port INTEGER,
+                path TEXT,
+                protocol TEXT DEFAULT 'https',
+                ip_addresses_json TEXT,
+                dns_records_json TEXT,
+                tech_stack_json TEXT,
+                fingerprint TEXT,
+                tags_json TEXT,
+                labels_json TEXT,
+                priority_score REAL DEFAULT 0.0,
+                risk_score REAL DEFAULT 0.0,
+                is_alive BOOLEAN DEFAULT 1,
+                last_checked_at TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                findings_count INTEGER DEFAULT 0,
+                change_events_count INTEGER DEFAULT 0,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL
+            )"#
+        ).execute(pool).await?;
+
+        // Bounty workflow templates (built-in for bug bounty)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_workflow_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                category TEXT NOT NULL DEFAULT 'recon',
+                workflow_definition_id TEXT,
+                steps_json TEXT NOT NULL,
+                input_schema_json TEXT,
+                output_schema_json TEXT,
+                tags_json TEXT,
+                is_built_in BOOLEAN DEFAULT 0,
+                estimated_duration_mins INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"#
+        ).execute(pool).await?;
+
+        // Bounty workflow bindings (link templates to programs/scopes)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS bounty_workflow_bindings (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                scope_id TEXT,
+                workflow_template_id TEXT NOT NULL,
+                is_enabled BOOLEAN DEFAULT 1,
+                auto_run_on_change BOOLEAN DEFAULT 0,
+                trigger_conditions_json TEXT,
+                schedule_cron TEXT,
+                last_run_at TEXT,
+                last_run_status TEXT,
+                run_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
+                FOREIGN KEY(workflow_template_id) REFERENCES bounty_workflow_templates(id)
+            )"#
+        ).execute(pool).await?;
+
+        // Bug Bounty indices
+        let bounty_indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_bounty_programs_platform ON bounty_programs(platform)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_programs_status ON bounty_programs(status)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_programs_priority ON bounty_programs(priority_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_scopes_program ON bounty_scopes(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_scopes_type ON bounty_scopes(scope_type)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program ON bounty_findings(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_status ON bounty_findings(status)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_severity ON bounty_findings(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_fingerprint ON bounty_findings(fingerprint)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program ON bounty_submissions(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_status ON bounty_submissions(status)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_finding ON bounty_submissions(finding_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_evidence_finding ON bounty_evidence(finding_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program ON bounty_change_events(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_status ON bounty_change_events(status)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_severity ON bounty_change_events(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_templates_category ON bounty_workflow_templates(category)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_bindings_program ON bounty_workflow_bindings(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_bindings_template ON bounty_workflow_bindings(workflow_template_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_program ON bounty_assets(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_scope ON bounty_assets(scope_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_hostname ON bounty_assets(hostname)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_canonical_url ON bounty_assets(canonical_url)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_fingerprint ON bounty_assets(fingerprint)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_priority ON bounty_assets(priority_score DESC)",
+        ];
+
+        for index_sql in bounty_indices {
+            sqlx::query(index_sql).execute(pool).await?;
+        }
+
         info!("Database schema creation completed");
         
         // Run task-tool integration migration

@@ -40,6 +40,10 @@ impl DatabaseService {
     pub fn pool(&self) -> &SqlitePool {
         self.pool.as_ref().expect("Database not initialized")
     }
+    
+    pub fn get_sqlite_pool(&self) -> Result<&SqlitePool> {
+        self.get_pool()
+    }
 
     pub fn get_db(&self) -> Result<crate::client::DatabaseClient> {
         let pool = self.get_pool()?.clone();

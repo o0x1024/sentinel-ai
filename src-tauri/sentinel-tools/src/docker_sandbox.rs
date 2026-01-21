@@ -40,7 +40,7 @@ impl Default for DockerSandboxConfig {
             image: "sentinel-sandbox:latest".to_string(),
             memory_limit: "2g".to_string(),
             cpu_limit: "4.0".to_string(),
-            network_mode: "bridge".to_string(),
+            network_mode: "host".to_string(),
             read_only_rootfs: false,
             volumes: HashMap::new(),
             env_vars: HashMap::new(),

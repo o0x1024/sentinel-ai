@@ -1,6 +1,6 @@
 <template>
-  <div class="p-4 space-y-4">
-      <div class="flex items-center justify-between">
+  <div class="p-4 space-y-4 h-full flex flex-col">
+      <div class="flex items-center justify-between flex-shrink-0">
         <div class="flex items-center gap-3">
         <h1 class="text-2xl font-bold">{{ t('trafficAnalysis.workflowStudio.title') }}</h1>
           <input v-model="workflow_name" class="input input-bordered input-sm w-48" :placeholder="t('trafficAnalysis.workflowStudio.header.namePlaceholder')" />
@@ -24,17 +24,16 @@
           </div>
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-sm btn-outline" @click="show_load_dialog = true" :title="t('trafficAnalysis.workflowStudio.toolbar.loadTooltip')">
+          <button 
+            class="btn btn-sm" 
+            :class="show_workflow_list_panel ? 'btn-primary' : 'btn-outline'" 
+            @click="toggle_workflow_list_panel" 
+            :title="t('trafficAnalysis.workflowStudio.toolbar.workflowListTooltip')"
+          >
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
             </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.load') }}
-          </button>
-          <button class="btn btn-sm btn-outline" @click="show_template_dialog = true" :title="t('trafficAnalysis.workflowStudio.toolbar.templateMarketTooltip')">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.templates') }}
+            {{ t('trafficAnalysis.workflowStudio.toolbar.workflowList') }}
           </button>
           <button class="btn btn-sm btn-primary" @click="on_save_workflow_click" :disabled="!workflow_name.trim()" :title="t('trafficAnalysis.workflowStudio.toolbar.saveTooltip')">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -150,70 +149,258 @@
         </div>
       </div>
 
-    <div class="grid grid-cols-12 gap-4">
-      <div :class="sidebar_collapsed ? 'col-span-1' : 'col-span-3'" class="transition-all duration-300">
-        <div class="card bg-base-100 shadow-xl h-full">
-          <div class="card-body p-3">
-            <div class="flex items-center justify-between mb-2">
-              <h2 v-if="!sidebar_collapsed" class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.sidebar.nodeLibrary') }}</h2>
-              <button class="btn btn-xs btn-ghost" @click="sidebar_collapsed = !sidebar_collapsed" :title="sidebar_collapsed ? t('trafficAnalysis.workflowStudio.sidebar.expandSidebar') : t('trafficAnalysis.workflowStudio.sidebar.collapseSidebar')">
-                <svg v-if="sidebar_collapsed" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                </svg>
-                <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+    <div class="flex-1 flex gap-4 min-h-0 overflow-hidden relative">
+      <!-- 工作流列表抽屉 -->
+      <Transition name="drawer">
+        <div 
+          v-if="show_workflow_list_panel" 
+          class="absolute top-0 left-0 bottom-0 w-[300px] bg-base-100 shadow-xl border-r border-base-300 z-20 flex flex-col"
+        >
+          <div class="p-3 flex items-center justify-between border-b border-base-300 flex-shrink-0">
+            <h2 class="text-sm font-semibold">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.title') }}</h2>
+            <button class="btn btn-xs btn-ghost" @click="show_workflow_list_panel = false">✕</button>
+          </div>
+          
+          <!-- Tab 切换 -->
+          <div class="tabs tabs-boxed mx-3 mt-3 flex-shrink-0">
+            <a 
+              class="tab tab-xs flex-1" 
+              :class="{ 'tab-active': workflow_list_tab === 'workflows' }"
+              @click="switch_workflow_list_tab('workflows')"
+            >{{ t('trafficAnalysis.workflowStudio.workflowListPanel.myWorkflows') }}</a>
+            <a 
+              class="tab tab-xs flex-1" 
+              :class="{ 'tab-active': workflow_list_tab === 'templates' }"
+              @click="switch_workflow_list_tab('templates')"
+            >{{ t('trafficAnalysis.workflowStudio.workflowListPanel.templates') }}</a>
+          </div>
+          
+          <!-- 搜索框 -->
+          <div class="px-3 pt-3 flex-shrink-0">
+            <div class="relative">
+              <input 
+                v-model="workflow_list_search" 
+                class="input input-bordered input-xs w-full pr-7" 
+                :placeholder="t('trafficAnalysis.workflowStudio.workflowListPanel.searchPlaceholder')" 
+              />
+              <button 
+                v-if="workflow_list_search" 
+                class="btn btn-xs btn-ghost absolute right-0.5 top-1/2 -translate-y-1/2 h-5 w-5 min-h-0 p-0" 
+                @click="workflow_list_search = ''"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
-            <div v-if="!sidebar_collapsed">
-              <div class="relative mb-2">
-                <input v-model="search_query" class="input input-bordered input-sm w-full pr-16" :placeholder="t('trafficAnalysis.workflowStudio.sidebar.searchPlaceholder')" @input="on_search_change" />
-                <button v-if="search_query" class="btn btn-xs btn-ghost absolute right-8 top-1/2 -translate-y-1/2" @click="clear_search" :title="t('trafficAnalysis.workflowStudio.sidebar.clearSearchTooltip')">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-                <button class="btn btn-xs btn-ghost absolute right-1 top-1" @click="search_in_canvas" :title="t('trafficAnalysis.workflowStudio.sidebar.searchInCanvasTooltip')" :disabled="!search_query">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </button>
+          </div>
+          
+          <!-- 列表内容 -->
+          <div class="flex-1 overflow-y-auto p-3 space-y-2">
+            <!-- 工作流列表 -->
+            <template v-if="workflow_list_tab === 'workflows'">
+              <div v-if="filtered_workflow_list.length === 0" class="text-center text-base-content/60 py-6">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p class="text-xs">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.emptyWorkflows') }}</p>
               </div>
-              <div class="form-control mb-2">
-                <label class="label cursor-pointer py-1">
-                  <span class="label-text text-xs">{{ t('trafficAnalysis.workflowStudio.sidebar.favoritesOnly') }}</span>
-                  <input type="checkbox" v-model="show_favorites_only" class="checkbox checkbox-xs" />
-                </label>
-              </div>
-              <div class="space-y-2 overflow-y-auto" style="max-height: calc(100vh - 250px)">
-                <div v-if="filtered_groups.length === 0" class="text-center text-sm text-base-content/60 py-4">
-                  {{ t('trafficAnalysis.workflowStudio.sidebar.noMatchingNodes') }}
-                </div>
-              <div v-for="group in filtered_groups" :key="group.name" class="collapse collapse-arrow bg-base-200">
-                  <input type="checkbox" :checked="group.name === 'tool'" />
-                  <div class="collapse-title text-sm font-medium py-2">
-                    {{ group.label }} ({{ group.items.length }})
-                  </div>
-                <div class="collapse-content">
-                  <!-- MCP/Plugin 单列显示，其他双列 -->
-                  <div :class="['mcp', 'plugin'].includes(group.name) ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-2'">
-                    <button
-                      v-for="item in group.items"
-                      :key="item.node_type"
-                        class="btn btn-xs relative text-left justify-start"
-                      @click="add_node(item)"
-                        :title="item.node_type"
+              <div 
+                v-for="wf in filtered_workflow_list" 
+                :key="wf.id" 
+                class="card bg-base-200 hover:bg-base-300 cursor-pointer transition-colors"
+                :class="{ 'ring-2 ring-primary': wf.id === workflow_id }"
+                @click="load_workflow_from_panel(wf.id)"
+              >
+                <div class="card-body p-2">
+                  <div class="flex items-start justify-between gap-1">
+                    <div class="flex-1 min-w-0">
+                      <h4 class="font-semibold text-xs truncate">{{ wf.name }}</h4>
+                      <p v-if="wf.description" class="text-xs text-base-content/70 mt-0.5 line-clamp-1">{{ wf.description }}</p>
+                      <div class="flex flex-wrap gap-1 mt-1 text-xs text-base-content/60">
+                        <span class="badge badge-xs badge-ghost">{{ wf.version }}</span>
+                        <span v-if="wf.is_tool" class="badge badge-xs badge-secondary">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.aiTool') }}</span>
+                      </div>
+                    </div>
+                    <div class="flex gap-0.5">
+                      <button 
+                        class="btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0" 
+                        @click.stop="duplicate_workflow(wf.id)" 
+                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.duplicate')"
                       >
-                        <span class="truncate flex-1">{{ item.label }}</span>
-                        <button 
-                          class="btn btn-ghost btn-xs p-0 w-4 h-4 ml-1 flex-shrink-0"
-                          @click.stop="toggle_favorite(item.node_type)"
-                          :title="is_favorite(item.node_type) ? t('trafficAnalysis.workflowStudio.sidebar.unfavorite') : t('trafficAnalysis.workflowStudio.sidebar.favorite')"
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                      <button 
+                        class="btn btn-xs btn-ghost text-error h-6 w-6 min-h-0 p-0" 
+                        @click.stop="delete_workflow(wf.id)" 
+                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.delete')"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+            
+            <!-- 模板列表 -->
+            <template v-else>
+              <div v-if="filtered_template_list.length === 0" class="text-center text-base-content/60 py-6">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <p class="text-xs">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.emptyTemplates') }}</p>
+              </div>
+              <div 
+                v-for="tpl in filtered_template_list" 
+                :key="tpl.id" 
+                class="card bg-base-200 hover:bg-base-300 cursor-pointer transition-colors"
+              >
+                <div class="card-body p-2">
+                  <div class="flex items-start justify-between gap-1">
+                    <div class="flex-1 min-w-0">
+                      <h4 class="font-semibold text-xs truncate flex items-center gap-1">
+                        {{ tpl.name }}
+                        <span class="badge badge-primary badge-xs">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.templateBadge') }}</span>
+                      </h4>
+                      <p v-if="tpl.description" class="text-xs text-base-content/70 mt-0.5 line-clamp-1">{{ tpl.description }}</p>
+                      <div class="flex flex-wrap gap-1 mt-1 text-xs text-base-content/60">
+                        <span>{{ t('trafficAnalysis.workflowStudio.workflowListPanel.nodeCount', { count: tpl.node_count || 0 }) }}</span>
+                      </div>
+                    </div>
+                    <div class="flex gap-0.5">
+                      <button 
+                        class="btn btn-xs btn-primary h-6 w-6 min-h-0 p-0" 
+                        @click.stop="use_template(tpl.id)" 
+                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.useTemplate')"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                        </svg>
+                      </button>
+                      <button 
+                        class="btn btn-xs btn-ghost text-error h-6 w-6 min-h-0 p-0" 
+                        @click.stop="delete_template(tpl.id)" 
+                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.deleteTemplate')"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+          
+          <!-- 底部操作 -->
+          <div class="p-3 border-t border-base-300 flex-shrink-0">
+            <button 
+              v-if="workflow_list_tab === 'workflows'"
+              class="btn btn-xs btn-primary w-full" 
+              @click="create_new_workflow"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              {{ t('trafficAnalysis.workflowStudio.workflowListPanel.newWorkflow') }}
+            </button>
+            <button 
+              v-if="workflow_list_tab === 'templates'"
+              class="btn btn-xs btn-primary w-full" 
+              @click="save_current_as_template"
+              :disabled="!workflow_name.trim()"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              {{ t('trafficAnalysis.workflowStudio.workflowListPanel.saveAsTemplate') }}
+            </button>
+          </div>
+        </div>
+      </Transition>
+      
+      <!-- 抽屉遮罩 -->
+      <Transition name="fade">
+        <div 
+          v-if="show_workflow_list_panel" 
+          class="absolute inset-0 bg-black/20 z-10"
+          @click="show_workflow_list_panel = false"
+        ></div>
+      </Transition>
+      
+      <!-- 主内容区域 -->
+      <div class="flex-1 flex gap-4 min-w-0">
+        <!-- 节点库侧边栏 -->
+        <div :class="sidebar_collapsed ? 'w-12' : 'w-84'" class="transition-all duration-300 flex-shrink-0 flex flex-col">
+          <div class="card bg-base-100 shadow-xl flex-1 flex flex-col overflow-hidden">
+            <div class="card-body p-3 flex flex-col flex-1 overflow-hidden">
+              <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                <h2 v-if="!sidebar_collapsed" class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.sidebar.nodeLibrary') }}</h2>
+                <button class="btn btn-xs btn-ghost" @click="sidebar_collapsed = !sidebar_collapsed" :title="sidebar_collapsed ? t('trafficAnalysis.workflowStudio.sidebar.expandSidebar') : t('trafficAnalysis.workflowStudio.sidebar.collapseSidebar')">
+                  <svg v-if="sidebar_collapsed" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                  <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
+              <div v-if="!sidebar_collapsed" class="flex flex-col flex-1 overflow-hidden">
+                <div class="relative mb-2 flex-shrink-0">
+                  <input v-model="search_query" class="input input-bordered input-sm w-full pr-16" :placeholder="t('trafficAnalysis.workflowStudio.sidebar.searchPlaceholder')" @input="on_search_change" />
+                  <button v-if="search_query" class="btn btn-xs btn-ghost absolute right-8 top-1/2 -translate-y-1/2" @click="clear_search" :title="t('trafficAnalysis.workflowStudio.sidebar.clearSearchTooltip')">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                  <button class="btn btn-xs btn-ghost absolute right-1 top-1" @click="search_in_canvas" :title="t('trafficAnalysis.workflowStudio.sidebar.searchInCanvasTooltip')" :disabled="!search_query">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="form-control mb-2 flex-shrink-0">
+                  <label class="label cursor-pointer py-1">
+                    <span class="label-text text-xs">{{ t('trafficAnalysis.workflowStudio.sidebar.favoritesOnly') }}</span>
+                    <input type="checkbox" v-model="show_favorites_only" class="checkbox checkbox-xs" />
+                  </label>
+                </div>
+                <div class="space-y-2 overflow-y-auto flex-1">
+                  <div v-if="filtered_groups.length === 0" class="text-center text-sm text-base-content/60 py-4">
+                    {{ t('trafficAnalysis.workflowStudio.sidebar.noMatchingNodes') }}
+                  </div>
+                  <div v-for="group in filtered_groups" :key="group.name" class="collapse collapse-arrow bg-base-200">
+                    <input type="checkbox" :checked="group.name === 'tool'" />
+                    <div class="collapse-title text-sm font-medium py-2">
+                      {{ group.label }} ({{ group.items.length }})
+                    </div>
+                    <div class="collapse-content">
+                      <!-- MCP/Plugin 单列显示，其他双列 -->
+                      <div :class="['mcp', 'plugin'].includes(group.name) ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-2'">
+                        <button
+                          v-for="item in group.items"
+                          :key="item.node_type"
+                          class="btn btn-xs relative text-left justify-start"
+                          @click="add_node(item)"
+                          :title="item.node_type"
                         >
-                          <span v-if="is_favorite(item.node_type)">⭐</span>
-                          <span v-else class="opacity-40">☆</span>
+                          <span class="truncate flex-1">{{ item.label }}</span>
+                          <button 
+                            class="btn btn-ghost btn-xs p-0 w-4 h-4 ml-1 flex-shrink-0"
+                            @click.stop="toggle_favorite(item.node_type)"
+                            :title="is_favorite(item.node_type) ? t('trafficAnalysis.workflowStudio.sidebar.unfavorite') : t('trafficAnalysis.workflowStudio.sidebar.favorite')"
+                          >
+                            <span v-if="is_favorite(item.node_type)">⭐</span>
+                            <span v-else class="opacity-40">☆</span>
+                          </button>
                         </button>
-                    </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -221,15 +408,16 @@
             </div>
           </div>
         </div>
-      </div>
 
-      <div :class="sidebar_collapsed ? 'col-span-11' : 'col-span-9'" class="transition-all duration-300">
-        <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" @newWorkflow="on_new_workflow" @change="on_flowchart_change" :highlightedNodes="highlighted_nodes" />
+        <!-- 画布区域 -->
+        <div class="flex-1 min-w-0">
+          <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" @newWorkflow="on_new_workflow" @change="on_flowchart_change" :highlightedNodes="highlighted_nodes" />
+        </div>
       </div>
     </div>
 
     <!-- 执行日志面板 -->
-    <div v-if="show_logs" class="card bg-base-100 shadow-xl mt-4">
+    <div v-if="show_logs" class="card bg-base-100 shadow-xl mt-4 flex-shrink-0">
       <div class="card-body p-3">
         <div class="flex items-center justify-between mb-2">
           <h2 class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.logs.title') }}</h2>
@@ -261,95 +449,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 加载工作流对话框 -->
-    <dialog :open="show_load_dialog" class="modal" @click.self="show_load_dialog = false">
-      <div class="modal-box max-w-2xl">
-        <h3 class="font-bold text-lg mb-4">{{ t('trafficAnalysis.workflowStudio.loadDialog.title') }}</h3>
-        <div class="space-y-2 max-h-96 overflow-y-auto">
-          <div v-if="workflow_list.length === 0" class="text-center text-base-content/60 py-8">
-            {{ t('trafficAnalysis.workflowStudio.loadDialog.empty') }}
-          </div>
-          <div 
-            v-for="wf in workflow_list" 
-            :key="wf.id" 
-            class="card bg-base-200 hover:bg-base-300 cursor-pointer transition-colors"
-            @click="load_workflow(wf.id)"
-          >
-            <div class="card-body p-3">
-              <div class="flex items-start justify-between">
-                <div class="flex-1">
-                  <h4 class="font-semibold">{{ wf.name }}</h4>
-                  <p v-if="wf.description" class="text-sm text-base-content/70 mt-1">{{ wf.description }}</p>
-                  <div class="flex gap-2 mt-2 text-xs text-base-content/60">
-                    <span>{{ t('trafficAnalysis.workflowStudio.loadDialog.version', { version: wf.version }) }}</span>
-                    <span>{{ t('trafficAnalysis.workflowStudio.loadDialog.updated', { date: format_date(wf.updated_at) }) }}</span>
-                    <span v-if="wf.tags" class="badge badge-xs">{{ wf.tags }}</span>
-                  </div>
-                </div>
-                <button class="btn btn-xs btn-error btn-ghost" @click.stop="delete_workflow(wf.id)" :title="t('trafficAnalysis.workflowStudio.loadDialog.deleteTooltip')">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="modal-action">
-          <button class="btn btn-sm" @click="show_load_dialog = false">{{ t('trafficAnalysis.workflowStudio.loadDialog.close') }}</button>
-        </div>
-      </div>
-    </dialog>
-
-    <!-- 模板市场对话框 -->
-    <dialog :open="show_template_dialog" class="modal" @click.self="show_template_dialog = false">
-      <div class="modal-box max-w-4xl">
-        <h3 class="font-bold text-lg mb-4">{{ t('trafficAnalysis.workflowStudio.templateMarket.title') }}</h3>
-        
-        <div class="tabs tabs-boxed mb-4">
-          <a class="tab tab-active">{{ t('trafficAnalysis.workflowStudio.templateMarket.recommended') }}</a>
-          <a class="tab" @click="load_my_templates">{{ t('trafficAnalysis.workflowStudio.templateMarket.myTemplates') }}</a>
-        </div>
-        
-        <div class="grid grid-cols-2 gap-4 max-h-96 overflow-y-auto">
-          <div v-if="template_list.length === 0" class="col-span-2 text-center text-base-content/60 py-8">
-            {{ t('trafficAnalysis.workflowStudio.templateMarket.empty') }}
-          </div>
-          
-          <div 
-            v-for="tpl in template_list" 
-            :key="tpl.id" 
-            class="card bg-base-200 hover:bg-base-300 cursor-pointer transition-colors"
-          >
-            <div class="card-body p-4">
-              <div class="flex items-start justify-between">
-                <div class="flex-1">
-                  <h4 class="font-semibold flex items-center gap-2">
-                    {{ tpl.name }}
-                    <span v-if="tpl.is_template" class="badge badge-primary badge-xs">{{ t('trafficAnalysis.workflowStudio.templateMarket.templateBadge') }}</span>
-                  </h4>
-                  <p v-if="tpl.description" class="text-sm text-base-content/70 mt-1 line-clamp-2">{{ tpl.description }}</p>
-                  <div class="flex gap-2 mt-2 text-xs text-base-content/60">
-                    <span>{{ t('trafficAnalysis.workflowStudio.templateMarket.nodeCount', { count: tpl.node_count || 0 }) }}</span>
-                    <span v-if="tpl.tags" class="badge badge-xs">{{ tpl.tags }}</span>
-                  </div>
-                </div>
-              </div>
-              <div class="card-actions justify-end mt-2">
-                <button class="btn btn-xs btn-primary" @click="use_template(tpl.id)">{{ t('trafficAnalysis.workflowStudio.templateMarket.useTemplate') }}</button>
-                <button v-if="!tpl.is_builtin" class="btn btn-xs btn-outline" @click="save_current_as_template">{{ t('trafficAnalysis.workflowStudio.templateMarket.saveAsTemplate') }}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="modal-action">
-          <button class="btn btn-sm btn-primary" @click="save_current_as_template">{{ t('trafficAnalysis.workflowStudio.templateMarket.saveCurrentAsTemplate') }}</button>
-          <button class="btn btn-sm" @click="show_template_dialog = false">{{ t('trafficAnalysis.workflowStudio.templateMarket.close') }}</button>
-        </div>
-      </div>
-    </dialog>
 
     <!-- 新建工作流确认对话框 -->
     <dialog :open="show_new_workflow_confirm" class="modal">
@@ -910,9 +1009,7 @@ const detail_dialog_ref = ref<HTMLElement | null>(null)
 const ignore_execution_history_close_once = ref(false)
 const sidebar_collapsed = ref(false)
 const show_logs = ref(true) // 默认显示日志
-const show_load_dialog = ref(false)
 const show_meta_dialog = ref(false)
-const show_template_dialog = ref(false)
 const show_new_workflow_confirm = ref(false)
 const template_list = ref<any[]>([])
 const workflow_name = ref(t('trafficAnalysis.workflowStudio.defaults.unnamedWorkflow'))
@@ -922,6 +1019,10 @@ const workflow_tags = ref('')
 const workflow_version = ref('v1.0.0')
 const workflow_is_tool = ref(false) // 是否设为AI工具
 const workflow_list = ref<any[]>([])
+// 工作流列表面板
+const show_workflow_list_panel = ref(false)
+const workflow_list_tab = ref<'workflows' | 'templates'>('workflows')
+const workflow_list_search = ref('')
 const schedule_running = ref(false) // 定时调度是否运行中
 const schedule_info = ref<any>(null) // 当前调度信息
 const workflow_running = ref(false) // 工作流是否正在运行
@@ -2011,7 +2112,6 @@ const load_workflow = async (id: string) => {
       })
       
       add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.workflowLoaded', { name: workflow_name.value }))
-      show_load_dialog.value = false
       
       // 加载该工作流的执行历史
       load_execution_history()
@@ -2039,10 +2139,102 @@ const delete_workflow = async (id: string) => {
 
 const load_workflow_list = async () => {
   try {
-    workflow_list.value = await invoke<any[]>('list_workflow_definitions', { isTemplate: null })
+    workflow_list.value = await invoke<any[]>('list_workflow_definitions', { isTemplate: false })
   } catch (e) {
     console.error('Failed to load workflow list:', e)
   }
+}
+
+// 过滤后的工作流列表
+const filtered_workflow_list = computed(() => {
+  const search = workflow_list_search.value.toLowerCase().trim()
+  if (!search) return workflow_list.value
+  return workflow_list.value.filter(wf => 
+    wf.name?.toLowerCase().includes(search) ||
+    wf.description?.toLowerCase().includes(search) ||
+    wf.tags?.toLowerCase().includes(search)
+  )
+})
+
+// 过滤后的模板列表
+const filtered_template_list = computed(() => {
+  const search = workflow_list_search.value.toLowerCase().trim()
+  if (!search) return template_list.value
+  return template_list.value.filter(tpl => 
+    tpl.name?.toLowerCase().includes(search) ||
+    tpl.description?.toLowerCase().includes(search) ||
+    tpl.tags?.toLowerCase().includes(search)
+  )
+})
+
+// 切换工作流列表面板
+const toggle_workflow_list_panel = () => {
+  show_workflow_list_panel.value = !show_workflow_list_panel.value
+  if (show_workflow_list_panel.value) {
+    if (workflow_list_tab.value === 'workflows') {
+      load_workflow_list()
+    } else {
+      load_template_list()
+    }
+  }
+}
+
+// 切换 tab
+const switch_workflow_list_tab = (tab: 'workflows' | 'templates') => {
+  workflow_list_tab.value = tab
+  workflow_list_search.value = ''
+  if (tab === 'workflows') {
+    load_workflow_list()
+  } else {
+    load_template_list()
+  }
+}
+
+// 从面板加载工作流
+const load_workflow_from_panel = async (id: string) => {
+  await load_workflow(id)
+}
+
+// 复制工作流
+const duplicate_workflow = async (id: string) => {
+  const toast = useToast()
+  try {
+    await load_workflow(id)
+    workflow_id.value = `wf_${Date.now()}`
+    workflow_name.value = t('trafficAnalysis.workflowStudio.defaults.duplicateWorkflowName', { name: workflow_name.value })
+    has_unsaved_changes.value = true
+    toast.success(t('trafficAnalysis.workflowStudio.toasts.workflowDuplicated'))
+  } catch (e: any) {
+    toast.error(t('trafficAnalysis.workflowStudio.toasts.duplicateFailed', { error: String(e) }))
+  }
+}
+
+// 删除模板
+const delete_template = async (id: string) => {
+  const toast = useToast()
+  if (!confirm(t('trafficAnalysis.workflowStudio.confirm.deleteTemplate'))) return
+  
+  try {
+    await invoke('delete_workflow_definition', { id })
+    template_list.value = template_list.value.filter(tpl => tpl.id !== id)
+    toast.success(t('trafficAnalysis.workflowStudio.toasts.templateDeleted'))
+  } catch (e: any) {
+    toast.error(t('trafficAnalysis.workflowStudio.toasts.deleteTemplateFailed', { error: String(e) }))
+  }
+}
+
+// 新建工作流
+const create_new_workflow = () => {
+  if (has_unsaved_changes.value && workflow_name.value.trim()) {
+    show_new_workflow_confirm.value = true
+  } else {
+    do_create_new_workflow()
+  }
+}
+
+const do_create_new_workflow = () => {
+  do_new_workflow()
+  has_unsaved_changes.value = false
 }
 
 const toggle_favorite = (node_type: string) => {
@@ -2406,11 +2598,17 @@ const load_my_templates = async () => {
 
 // 使用模板
 const use_template = async (id: string) => {
-  await load_workflow(id)
-  // 重新生成ID，避免覆盖模板
-  workflow_id.value = `wf_${Date.now()}`
-  workflow_name.value = t('trafficAnalysis.workflowStudio.defaults.duplicateWorkflowName', { name: workflow_name.value })
-  show_template_dialog.value = false
+  const toast = useToast()
+  try {
+    await load_workflow(id)
+    // 重新生成ID，避免覆盖模板
+    workflow_id.value = `wf_${Date.now()}`
+    workflow_name.value = t('trafficAnalysis.workflowStudio.defaults.duplicateWorkflowName', { name: workflow_name.value })
+    show_workflow_list_panel.value = false
+    toast.success(t('trafficAnalysis.workflowStudio.toasts.templateApplied'))
+  } catch (e: any) {
+    toast.error(t('trafficAnalysis.workflowStudio.toasts.applyTemplateFailed', { error: String(e) }))
+  }
 }
 
 // 保存当前工作流为模板
@@ -2487,20 +2685,6 @@ const toggle_tool_selection = (key: string, toolName: string) => {
     arr.splice(idx, 1)
   }
 }
-
-// 监听show_load_dialog变化，加载工作流列表
-watch(show_load_dialog, (newVal) => {
-  if (newVal) {
-    load_workflow_list()
-  }
-})
-
-// 监听show_template_dialog变化，加载模板列表
-watch(show_template_dialog, (newVal) => {
-  if (newVal) {
-    load_template_list()
-  }
-})
 
 // 监听工作流元数据变化，触发自动保存
 watch([workflow_name, workflow_description, workflow_tags, workflow_version, workflow_is_tool], () => {
@@ -2656,4 +2840,25 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 抽屉滑入滑出动画 */
+.drawer-enter-active,
+.drawer-leave-active {
+  transition: transform 0.25s ease;
+}
+
+.drawer-enter-from,
+.drawer-leave-to {
+  transform: translateX(-100%);
+}
+
+/* 遮罩淡入淡出动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 </style>

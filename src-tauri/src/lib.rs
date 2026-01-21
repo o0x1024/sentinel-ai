@@ -195,6 +195,39 @@ pub fn run() {
             }
 
             tauri::async_runtime::block_on(async move {
+                // Try to load database configuration from file
+                use sentinel_db::database_service::DatabaseConfig;
+                use std::fs;
+
+                let config_path = dirs::data_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("sentinel-ai")
+                    .join("db_config.json");
+
+                let _db_config: Option<DatabaseConfig> = if config_path.exists() {
+                    match fs::read_to_string(&config_path) {
+                        Ok(config_json) => {
+                            match serde_json::from_str(&config_json) {
+                                Ok(config) => {
+                                    tracing::info!("Loaded database config from file: {:?}", config_path);
+                                    Some(config)
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to parse database config: {}, using default SQLite", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to read database config file: {}, using default SQLite", e);
+                            None
+                        }
+                    }
+                } else {
+                    tracing::info!("No database config file found, using default SQLite");
+                    None
+                };
+
                 let mut db_service = DatabaseService::new();
                 if let Err(e) = db_service.initialize().await {
                     tracing::error!("Database initialize failed: {:#}", e);
@@ -610,6 +643,13 @@ pub fn run() {
             db_commands::import_database_json,
             db_commands::get_database_statistics,
             db_commands::reset_database,
+            db_commands::test_db_connection,
+            db_commands::export_db_to_json,
+            db_commands::export_db_to_sql,
+            db_commands::import_db_from_json,
+            db_commands::migrate_database,
+            db_commands::save_db_config,
+            db_commands::load_db_config,
             // Cache commands
             get_cache,
             set_cache,
@@ -617,7 +657,6 @@ pub fn run() {
             cleanup_expired_cache,
             get_all_cache_keys,
             // Asset commands
-
             asset::init_asset_service,
             asset::create_asset,
             asset::get_asset_detail,
@@ -636,6 +675,88 @@ pub fn run() {
             asset::get_risk_levels,
             asset::get_asset_statuses,
             asset::get_relationship_types,
+            // Bug Bounty commands
+            commands::bounty_create_program,
+            commands::bounty_get_program,
+            commands::bounty_update_program,
+            commands::bounty_delete_program,
+            commands::bounty_list_programs,
+            commands::bounty_get_program_stats,
+            commands::bounty_create_scope,
+            commands::bounty_get_scope,
+            commands::bounty_update_scope,
+            commands::bounty_delete_scope,
+            commands::bounty_list_scopes,
+            commands::bounty_validate_scope,
+            // Bug Bounty Finding commands
+            commands::bounty_create_finding,
+            commands::bounty_get_finding,
+            commands::bounty_update_finding,
+            commands::bounty_delete_finding,
+            commands::bounty_list_findings,
+            commands::bounty_get_finding_stats,
+            // Bug Bounty Evidence commands
+            commands::bounty_create_evidence,
+            commands::bounty_get_evidence,
+            commands::bounty_update_evidence,
+            commands::bounty_delete_evidence,
+            commands::bounty_list_evidence,
+            // Bug Bounty Submission commands
+            commands::bounty_create_submission,
+            commands::bounty_get_submission,
+            commands::bounty_update_submission,
+            commands::bounty_delete_submission,
+            commands::bounty_list_submissions,
+            commands::bounty_get_submission_stats,
+            // Bug Bounty Change Event commands
+            commands::bounty_create_change_event,
+            commands::bounty_get_change_event,
+            commands::bounty_update_change_event,
+            commands::bounty_delete_change_event,
+            commands::bounty_list_change_events,
+            commands::bounty_get_change_event_stats,
+            commands::bounty_update_change_event_status,
+            commands::bounty_add_triggered_workflow,
+            commands::bounty_add_generated_finding,
+            commands::bounty_import_traffic_finding,
+            commands::bounty_batch_import_traffic_findings,
+            commands::bounty_export_report,
+            // Bug Bounty Workflow Template commands
+            commands::bounty_create_workflow_template,
+            commands::bounty_get_workflow_template,
+            commands::bounty_list_workflow_templates,
+            commands::bounty_delete_workflow_template,
+            commands::bounty_create_workflow_binding,
+            commands::bounty_list_workflow_bindings,
+            commands::bounty_delete_workflow_binding,
+            commands::bounty_init_builtin_templates,
+            commands::bounty_sink_workflow_outputs,
+            commands::bounty_get_triggered_workflows,
+            commands::bounty_trigger_workflows_for_event,
+            // Bug Bounty Asset commands
+            commands::bounty_create_asset,
+            commands::bounty_get_asset,
+            commands::bounty_list_assets,
+            commands::bounty_delete_asset,
+            commands::bounty_get_asset_stats,
+            commands::bounty_get_top_priority_assets,
+            commands::bounty_import_assets_from_scope,
+            // Bug Bounty Asset Fingerprint & Labels (P1-B4)
+            commands::bounty_update_asset_fingerprint,
+            commands::bounty_add_asset_labels,
+            commands::bounty_get_high_value_labels,
+            commands::bounty_get_assets_by_label,
+            commands::bounty_get_assets_by_tech,
+            // Bug Bounty Priority Scoring (P1-B5)
+            commands::bounty_recalculate_asset_priority,
+            commands::bounty_recalculate_all_asset_priorities,
+            commands::bounty_get_priority_queue,
+            // Bug Bounty Submission Operations (D3)
+            commands::bounty_add_submission_timeline_event,
+            commands::bounty_get_submission_with_timeline,
+            commands::bounty_get_submissions_needing_followup,
+            commands::bounty_schedule_retest,
+            commands::bounty_record_retest_result,
             // Config commands
             config::save_config,
             config::get_config,

@@ -74,6 +74,7 @@ const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue');
 const PluginManagement = () => import('./views/PluginManagement.vue');
+const BugBounty = () => import('./views/BugBounty.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -151,6 +152,12 @@ const routes = [
     name: 'PluginManagement',
     component: PluginManagement,
     meta: { title: '插件管理' }
+  },
+  {
+    path: '/bug-bounty',
+    name: 'BugBounty',
+    component: BugBounty,
+    meta: { title: 'Bug Bounty' }
   },
   {
     path: '/settings',

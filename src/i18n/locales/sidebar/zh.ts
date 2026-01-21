@@ -18,6 +18,7 @@ export default {
   ragManagement: '知识库管理',
   Tools: '应用工具',
   performance: '性能监控',
+  bugBounty: 'Bug Bounty',
 
   // Settings submenu
   aiSettings: 'AI服务',
