@@ -639,6 +639,61 @@ if (typeof get_metadata === 'function') {
         }))
     }
 
+    /// 获取插件的输出参数 Schema（运行时调用插件的 get_output_schema 函数）
+    ///
+    /// 插件需要导出一个 `get_output_schema()` 函数，返回 JSON Schema 对象。
+    /// 如果插件没有该函数，返回默认的空 schema。
+    pub async fn get_output_schema(&mut self) -> Result<serde_json::Value> {
+        let call_script = r#"
+            (function() {
+                let schema = null;
+                
+                // 优先尝试 get_output_schema
+                if (typeof globalThis.get_output_schema === 'function') {
+                    schema = globalThis.get_output_schema();
+                }
+                // 兼容 getOutputSchema (camelCase)
+                else if (typeof globalThis.getOutputSchema === 'function') {
+                    schema = globalThis.getOutputSchema();
+                }
+                
+                // 通过 op_plugin_return 存储结果
+                if (schema !== null) {
+                    try { Deno.core.ops.op_plugin_return(schema); } catch (_e) {}
+                }
+                
+                return schema !== null;
+            })();
+        "#;
+
+        self.runtime
+            .execute_script("get_output_schema", FastString::from(call_script.to_string()))
+            .map_err(|e| PluginError::Execution(format!("Failed to call get_output_schema: {}", e)))?;
+
+        // 从 PluginContext 获取结果
+        let result = {
+            let op_state = self.runtime.op_state();
+            let op_state_borrow = op_state.borrow();
+            let plugin_ctx = op_state_borrow.borrow::<PluginContext>();
+            plugin_ctx.take_last_result()
+        };
+
+        // 如果插件返回了 schema，使用它
+        if let Some(schema) = result {
+            return Ok(schema);
+        }
+
+        // 插件未定义 output schema，返回默认值
+        Ok(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "data": {"type": "object"},
+                "error": {"type": "string"}
+            }
+        }))
+    }
+
     /// 调用插件函数（通用）
     ///
     /// 插件通过 Sentinel.emitFinding() 发送漏洞，而不是返回值

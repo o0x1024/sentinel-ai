@@ -1854,7 +1854,20 @@ export default {
     errorInfo: '错误信息',
     unknownError: '未知错误',
     referToAi: '引用到AI助手',
-    testResultAdded: '已添加测试结果到AI助手'
+    testResultAdded: '已添加测试结果到AI助手',
+    // Agent plugin subcategories
+    agentCategories: {
+      recon: '信息收集',
+      discovery: '目标发现',
+      vuln: '漏洞扫描',
+      exploit: '漏洞利用',
+      monitor: '变更监控',
+      utility: '实用工具',
+      scanner: '扫描工具',
+      analyzer: '分析工具',
+      reporter: '报告工具',
+      custom: '自定义'
+    }
   },
   license: {
     title: '软件激活',

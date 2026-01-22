@@ -501,3 +501,30 @@ pub async fn get_input_schema_from_code(
 
     Ok(schema)
 }
+
+/// 从插件代码直接获取 output schema（无需先注册到 PluginManager）
+///
+/// 用于工作流编辑器获取插件输出结构，辅助配置数据流映射。
+pub async fn get_output_schema_from_code(
+    code: &str,
+    metadata: PluginMetadata,
+) -> Result<serde_json::Value> {
+    let code = code.to_string();
+
+    let schema = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| PluginError::Execution(format!("Failed to build runtime: {}", e)))?;
+
+        rt.block_on(async move {
+            let mut engine = PluginEngine::new()?;
+            engine.load_plugin_with_metadata(&code, metadata).await?;
+            engine.get_output_schema().await
+        })
+    })
+    .await
+    .map_err(|e| PluginError::Execution(format!("Task join error: {}", e)))??;
+
+    Ok(schema)
+}

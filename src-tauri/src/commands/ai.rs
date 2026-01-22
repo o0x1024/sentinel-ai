@@ -1672,7 +1672,7 @@ pub async fn generate_workflow_from_nl(
     };
 
     let system_prompt = format!(
-        r#"you are a workflow design assistant for Sentinel AI.
+        r#"You are a workflow design assistant for Sentinel AI.
 Based on the user's natural language description, output a WorkflowGraph that strictly conforms to the following JSON Schema.
 Only output JSON, do not explain, do not include Markdown.
 
@@ -1694,23 +1694,44 @@ Schema:
       "node_name": "string",
       "x": number,
       "y": number,
-      "params": object,
-      "input_ports": [{{"id":"string","name":"string","port_type":"String|Integer|Float|Boolean|Json|Array|Object|Artifact","required":boolean}}],
-      "output_ports": [{{"id":"string","name":"string","port_type":"String|Integer|Float|Boolean|Json|Array|Object|Artifact","required":boolean}}]
+      "params": {{...actual parameters for this node type...}},
+      "input_ports": [{{"id":"in","name":"输入","port_type":"String","required":false}}],
+      "output_ports": [{{"id":"out","name":"输出","port_type":"String","required":false}}]
     }}
   ],
   "edges": [
-    {{"id":"string","from_node":"string","from_port":"string","to_node":"string","to_port":"string"}}
+    {{"id":"string","from_node":"string","from_port":"out","to_node":"string","to_port":"in"}}
   ],
   "variables": [],
   "credentials": []
 }}
 
-规则：
-1) Use a concise node_type, use "tool::<name>" if it corresponds to a built-in tool, use "llm::completion" if it needs AI reasoning.
-2) For each node, give node_name and a brief params.description.
-3) At least one entry node (node_type can be "start").
-4) Give a reasonable x/y layout (from left to right).
+CRITICAL RULES:
+1) node_type selection:
+   - Use "trigger_schedule" for scheduled/timed triggers
+   - Use "tool::browser" for opening URLs and web scraping
+   - Use "tool::http_request" for HTTP API calls
+   - Use "ai_chat" for AI text generation/summarization
+   - Use "notify" for sending notifications/emails
+   - Use "start" for manual trigger entry point
+
+2) params MUST contain actual values extracted from user description:
+   - For "trigger_schedule": {{"trigger_type":"daily","hour":8,"minute":0,"second":0,"weekdays":"1,2,3,4,5"}}
+   - For "tool::browser": {{"url":"https://example.com","action":"navigate","wait_until":"networkidle"}}
+   - For "tool::http_request": {{"url":"https://api.example.com","method":"GET"}}
+   - For "ai_chat": {{"prompt":"Summarize the following content: {{{{input}}}}","system_prompt":"You are a helpful assistant"}}
+   - For "notify": {{"title":"Notification","content":"{{{{input}}}}","use_input_as_content":true}}
+
+3) Extract specific values from user description:
+   - Times like "8点" -> hour:8, minute:0
+   - URLs mentioned -> put in url parameter
+   - Email/notification requirements -> use notify node
+
+4) Layout: x increases left-to-right (0, 250, 500...), y for parallel branches
+
+5) Keep variables and credentials as empty arrays []
+
+6) Every node MUST have meaningful params filled based on its purpose in the workflow
 "#,
         tools_summary, catalog_summary
     );

@@ -248,9 +248,30 @@ pub async fn execute_workflow_steps(
                         tool_name = stripped.to_string();
                     }
 
-                    // 使用 rig-core ToolSet 调用工具
+                    // 先尝试使用 rig-core ToolSet 调用工具
                     let params_json = serde_json::to_string(&step_def.inputs).unwrap_or_default();
-                    match toolset_clone.call(&tool_name, params_json).await {
+                    let toolset_result = toolset_clone.call(&tool_name, params_json.clone()).await;
+                    
+                    // 如果 ToolSet 找不到工具，回退到 ToolServer（包含 browser 等动态工具）
+                    let tool_result: Result<String, String> = match &toolset_result {
+                        Err(e) if e.to_string().contains("ToolNotFoundError") => {
+                            tracing::info!("Tool '{}' not in ToolSet, trying ToolServer...", tool_name);
+                            let tool_server = sentinel_tools::get_tool_server();
+                            // Ensure builtin tools are initialized
+                            tool_server.init_builtin_tools().await;
+                            let params: serde_json::Value = serde_json::from_str(&params_json).unwrap_or_default();
+                            let result = tool_server.execute(&tool_name, params).await;
+                            if result.success {
+                                Ok(serde_json::to_string(&result.output).unwrap_or_default())
+                            } else {
+                                Err(result.error.unwrap_or_else(|| format!("Tool '{}' execution failed", tool_name)))
+                            }
+                        }
+                        Ok(result) => Ok(result.clone()),
+                        Err(e) => Err(e.to_string()),
+                    };
+                    
+                    match tool_result {
                         Ok(result) => {
                             let result_value = serde_json::from_str(&result).unwrap_or(serde_json::json!({"result": result}));
                             engine_clone
@@ -640,6 +661,11 @@ pub async fn execute_workflow_steps(
                         }
                         wrote_result = true;
                     }
+                } else if action.starts_with("trigger_") {
+                    // Trigger nodes (trigger_schedule, trigger_manual, trigger_webhook, etc.)
+                    // These are entry points and don't need execution, just mark as completed
+                    tracing::debug!("Trigger node '{}' with action '{}', marking as completed", node_id, action);
+                    wrote_result = true;
                 } else if action == "ai_chat" || action == "ai_agent" {
                     // AI Chat / AI Agent 节点执行
                     tracing::info!("Executing AI node '{}' with action '{}', inputs: {:?}", node_id, action, step_def.inputs);
@@ -684,7 +710,16 @@ pub async fn execute_workflow_steps(
                         prompt_template
                     };
                     
-                    tracing::info!("AI node '{}' prompt: '{}'", node_id, if prompt.len() > 100 { &prompt[..100] } else { &prompt });
+                    // Safe truncation for UTF-8 strings
+                    let prompt_preview: &str = if prompt.len() > 100 {
+                        match prompt.char_indices().nth(100) {
+                            Some((idx, _)) => &prompt[..idx],
+                            None => &prompt,
+                        }
+                    } else {
+                        &prompt
+                    };
+                    tracing::info!("AI node '{}' prompt: '{}'", node_id, prompt_preview);
                     
                     // 获取其他参数
                     let system_prompt = step_def.inputs.get("system_prompt").and_then(|v| v.as_str()).map(|s| s.to_string());

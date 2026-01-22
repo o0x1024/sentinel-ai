@@ -231,6 +231,12 @@ extension!(
         op_copy_file,
         op_remove,
         op_make_temp_file,
+        // Dictionary operations
+        op_get_dictionary,
+        op_get_dictionary_words,
+        op_list_dictionaries,
+        // JavaScript AST parsing
+        op_parse_js,
     ],
     esm_entry_point = "ext:sentinel_plugin_ext/plugin_bootstrap.js",
     esm = [ dir "src", "plugin_bootstrap.js" ],
@@ -562,6 +568,633 @@ async fn op_make_temp_file(
     std::fs::File::create(&temp_path)?;
     
     Ok(temp_path.to_string_lossy().to_string())
+}
+
+// ============================================================
+// JavaScript AST Parsing Operations
+// ============================================================
+
+use oxc_allocator::Allocator;
+use oxc_ast::ast::*;
+use oxc_parser::Parser;
+use oxc_span::SourceType;
+
+/// String literal extracted from JavaScript AST
+#[derive(Debug, Clone, Serialize)]
+struct JsStringLiteral {
+    value: String,
+    line: u32,
+    column: u32,
+    #[serde(rename = "type")]
+    literal_type: String, // "string", "template", "regex"
+}
+
+/// AST parsing result
+#[derive(Debug, Clone, Serialize)]
+struct JsParseResult {
+    success: bool,
+    literals: Vec<JsStringLiteral>,
+    errors: Vec<String>,
+}
+
+/// Op: Parse JavaScript code and extract all string literals using oxc_parser
+#[op2]
+#[serde]
+fn op_parse_js(#[string] code: String, #[string] filename: Option<String>) -> JsParseResult {
+    let allocator = Allocator::default();
+    let source_type = SourceType::from_path(filename.as_deref().unwrap_or("script.js"))
+        .unwrap_or_default();
+    
+    let parser_ret = Parser::new(&allocator, &code, source_type).parse();
+    
+    let mut literals = Vec::new();
+    let mut errors = Vec::new();
+    
+    // Collect parse errors
+    for error in parser_ret.errors.iter() {
+        errors.push(format!("{}", error));
+    }
+    
+    // Extract literals from AST
+    extract_literals_from_program(&parser_ret.program, &code, &mut literals);
+    
+    JsParseResult {
+        success: parser_ret.errors.is_empty(),
+        literals,
+        errors,
+    }
+}
+
+/// Extract all string literals from the AST program
+fn extract_literals_from_program(
+    program: &Program,
+    source: &str,
+    literals: &mut Vec<JsStringLiteral>,
+) {
+    // Walk through all statements
+    for stmt in &program.body {
+        extract_literals_from_statement(stmt, source, literals);
+    }
+}
+
+/// Extract literals from a statement
+fn extract_literals_from_statement(
+    stmt: &Statement,
+    source: &str,
+    literals: &mut Vec<JsStringLiteral>,
+) {
+    match stmt {
+        Statement::ExpressionStatement(expr_stmt) => {
+            extract_literals_from_expression(&expr_stmt.expression, source, literals);
+        }
+        Statement::BlockStatement(block) => {
+            for s in &block.body {
+                extract_literals_from_statement(s, source, literals);
+            }
+        }
+        Statement::IfStatement(if_stmt) => {
+            extract_literals_from_expression(&if_stmt.test, source, literals);
+            extract_literals_from_statement(&if_stmt.consequent, source, literals);
+            if let Some(alt) = &if_stmt.alternate {
+                extract_literals_from_statement(alt, source, literals);
+            }
+        }
+        Statement::WhileStatement(while_stmt) => {
+            extract_literals_from_expression(&while_stmt.test, source, literals);
+            extract_literals_from_statement(&while_stmt.body, source, literals);
+        }
+        Statement::DoWhileStatement(do_while) => {
+            extract_literals_from_statement(&do_while.body, source, literals);
+            extract_literals_from_expression(&do_while.test, source, literals);
+        }
+        Statement::ForStatement(for_stmt) => {
+            if let Some(init) = &for_stmt.init {
+                match init {
+                    ForStatementInit::VariableDeclaration(decl) => {
+                        extract_literals_from_var_decl(decl, source, literals);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(test) = &for_stmt.test {
+                extract_literals_from_expression(test, source, literals);
+            }
+            if let Some(update) = &for_stmt.update {
+                extract_literals_from_expression(update, source, literals);
+            }
+            extract_literals_from_statement(&for_stmt.body, source, literals);
+        }
+        Statement::ForInStatement(for_in) => {
+            extract_literals_from_expression(&for_in.right, source, literals);
+            extract_literals_from_statement(&for_in.body, source, literals);
+        }
+        Statement::ForOfStatement(for_of) => {
+            extract_literals_from_expression(&for_of.right, source, literals);
+            extract_literals_from_statement(&for_of.body, source, literals);
+        }
+        Statement::ReturnStatement(ret) => {
+            if let Some(arg) = &ret.argument {
+                extract_literals_from_expression(arg, source, literals);
+            }
+        }
+        Statement::ThrowStatement(throw) => {
+            extract_literals_from_expression(&throw.argument, source, literals);
+        }
+        Statement::TryStatement(try_stmt) => {
+            for s in &try_stmt.block.body {
+                extract_literals_from_statement(s, source, literals);
+            }
+            if let Some(handler) = &try_stmt.handler {
+                for s in &handler.body.body {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                for s in &finalizer.body {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+        }
+        Statement::SwitchStatement(switch) => {
+            extract_literals_from_expression(&switch.discriminant, source, literals);
+            for case in &switch.cases {
+                if let Some(test) = &case.test {
+                    extract_literals_from_expression(test, source, literals);
+                }
+                for s in &case.consequent {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+        }
+        Statement::VariableDeclaration(decl) => {
+            extract_literals_from_var_decl(decl, source, literals);
+        }
+        Statement::FunctionDeclaration(func) => {
+            if let Some(body) = &func.body {
+                for s in &body.statements {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+        }
+        Statement::ClassDeclaration(class) => {
+            extract_literals_from_class(&class.body, source, literals);
+        }
+        Statement::ExportDefaultDeclaration(export) => {
+            match &export.declaration {
+                ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
+                    if let Some(body) = &func.body {
+                        for s in &body.statements {
+                            extract_literals_from_statement(s, source, literals);
+                        }
+                    }
+                }
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                    extract_literals_from_class(&class.body, source, literals);
+                }
+                _ => {}
+            }
+        }
+        Statement::ExportNamedDeclaration(export) => {
+            if let Some(decl) = &export.declaration {
+                extract_literals_from_declaration(decl, source, literals);
+            }
+        }
+        Statement::LabeledStatement(labeled) => {
+            extract_literals_from_statement(&labeled.body, source, literals);
+        }
+        Statement::WithStatement(with_stmt) => {
+            extract_literals_from_expression(&with_stmt.object, source, literals);
+            extract_literals_from_statement(&with_stmt.body, source, literals);
+        }
+        _ => {}
+    }
+}
+
+/// Extract literals from a declaration
+fn extract_literals_from_declaration(
+    decl: &Declaration,
+    source: &str,
+    literals: &mut Vec<JsStringLiteral>,
+) {
+    match decl {
+        Declaration::VariableDeclaration(var_decl) => {
+            extract_literals_from_var_decl(var_decl, source, literals);
+        }
+        Declaration::FunctionDeclaration(func) => {
+            if let Some(body) = &func.body {
+                for s in &body.statements {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+        }
+        Declaration::ClassDeclaration(class) => {
+            extract_literals_from_class(&class.body, source, literals);
+        }
+        _ => {}
+    }
+}
+
+/// Extract literals from variable declaration
+fn extract_literals_from_var_decl(
+    decl: &VariableDeclaration,
+    source: &str,
+    literals: &mut Vec<JsStringLiteral>,
+) {
+    for declarator in &decl.declarations {
+        if let Some(init) = &declarator.init {
+            extract_literals_from_expression(init, source, literals);
+        }
+    }
+}
+
+/// Extract literals from class body
+fn extract_literals_from_class(
+    body: &ClassBody,
+    source: &str,
+    literals: &mut Vec<JsStringLiteral>,
+) {
+    for element in &body.body {
+        match element {
+            ClassElement::MethodDefinition(method) => {
+                if let Some(func_body) = &method.value.body {
+                    for s in &func_body.statements {
+                        extract_literals_from_statement(s, source, literals);
+                    }
+                }
+            }
+            ClassElement::PropertyDefinition(prop) => {
+                if let Some(value) = &prop.value {
+                    extract_literals_from_expression(value, source, literals);
+                }
+            }
+            ClassElement::StaticBlock(block) => {
+                for s in &block.body {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Extract literals from an expression
+fn extract_literals_from_expression(
+    expr: &Expression,
+    source: &str,
+    literals: &mut Vec<JsStringLiteral>,
+) {
+    match expr {
+        Expression::StringLiteral(lit) => {
+            let (line, col) = get_line_col(source, lit.span.start as usize);
+            if lit.value.len() >= 3 {
+                literals.push(JsStringLiteral {
+                    value: lit.value.to_string(),
+                    line,
+                    column: col,
+                    literal_type: "string".to_string(),
+                });
+            }
+        }
+        Expression::TemplateLiteral(template) => {
+            for quasi in &template.quasis {
+                let value = quasi.value.cooked.as_ref().map(|s| s.as_str()).unwrap_or("");
+                if value.len() >= 3 {
+                    let (line, col) = get_line_col(source, quasi.span.start as usize);
+                    literals.push(JsStringLiteral {
+                        value: value.to_string(),
+                        line,
+                        column: col,
+                        literal_type: "template".to_string(),
+                    });
+                }
+            }
+            for expr in &template.expressions {
+                extract_literals_from_expression(expr, source, literals);
+            }
+        }
+        Expression::RegExpLiteral(regex) => {
+            let (line, col) = get_line_col(source, regex.span.start as usize);
+            let pattern_str = regex.regex.pattern.text.as_str();
+            if pattern_str.len() >= 3 {
+                literals.push(JsStringLiteral {
+                    value: pattern_str.to_string(),
+                    line,
+                    column: col,
+                    literal_type: "regex".to_string(),
+                });
+            }
+        }
+        Expression::ArrayExpression(arr) => {
+            for elem in &arr.elements {
+                if let ArrayExpressionElement::SpreadElement(spread) = elem {
+                    extract_literals_from_expression(&spread.argument, source, literals);
+                } else if let ArrayExpressionElement::Elision(_) = elem {
+                    // Skip elision
+                } else {
+                    // Expression
+                    if let Some(expr) = elem.as_expression() {
+                        extract_literals_from_expression(expr, source, literals);
+                    }
+                }
+            }
+        }
+        Expression::ObjectExpression(obj) => {
+            for prop in &obj.properties {
+                match prop {
+                    ObjectPropertyKind::ObjectProperty(p) => {
+                        extract_literals_from_expression(&p.value, source, literals);
+                        if let PropertyKey::StringLiteral(key) = &p.key {
+                            let (line, col) = get_line_col(source, key.span.start as usize);
+                            if key.value.len() >= 3 {
+                                literals.push(JsStringLiteral {
+                                    value: key.value.to_string(),
+                                    line,
+                                    column: col,
+                                    literal_type: "string".to_string(),
+                                });
+                            }
+                        }
+                    }
+                    ObjectPropertyKind::SpreadProperty(spread) => {
+                        extract_literals_from_expression(&spread.argument, source, literals);
+                    }
+                }
+            }
+        }
+        Expression::CallExpression(call) => {
+            extract_literals_from_expression(&call.callee, source, literals);
+            for arg in &call.arguments {
+                if let Argument::SpreadElement(spread) = arg {
+                    extract_literals_from_expression(&spread.argument, source, literals);
+                } else if let Some(expr) = arg.as_expression() {
+                    extract_literals_from_expression(expr, source, literals);
+                }
+            }
+        }
+        Expression::NewExpression(new_expr) => {
+            extract_literals_from_expression(&new_expr.callee, source, literals);
+            for arg in &new_expr.arguments {
+                if let Argument::SpreadElement(spread) = arg {
+                    extract_literals_from_expression(&spread.argument, source, literals);
+                } else if let Some(expr) = arg.as_expression() {
+                    extract_literals_from_expression(expr, source, literals);
+                }
+            }
+        }
+        Expression::ComputedMemberExpression(computed) => {
+            extract_literals_from_expression(&computed.object, source, literals);
+            extract_literals_from_expression(&computed.expression, source, literals);
+        }
+        Expression::StaticMemberExpression(static_member) => {
+            extract_literals_from_expression(&static_member.object, source, literals);
+        }
+        Expression::PrivateFieldExpression(private) => {
+            extract_literals_from_expression(&private.object, source, literals);
+        }
+        Expression::BinaryExpression(binary) => {
+            extract_literals_from_expression(&binary.left, source, literals);
+            extract_literals_from_expression(&binary.right, source, literals);
+        }
+        Expression::LogicalExpression(logical) => {
+            extract_literals_from_expression(&logical.left, source, literals);
+            extract_literals_from_expression(&logical.right, source, literals);
+        }
+        Expression::UnaryExpression(unary) => {
+            extract_literals_from_expression(&unary.argument, source, literals);
+        }
+        Expression::ConditionalExpression(cond) => {
+            extract_literals_from_expression(&cond.test, source, literals);
+            extract_literals_from_expression(&cond.consequent, source, literals);
+            extract_literals_from_expression(&cond.alternate, source, literals);
+        }
+        Expression::AssignmentExpression(assign) => {
+            extract_literals_from_expression(&assign.right, source, literals);
+        }
+        Expression::SequenceExpression(seq) => {
+            for expr in &seq.expressions {
+                extract_literals_from_expression(expr, source, literals);
+            }
+        }
+        Expression::ArrowFunctionExpression(arrow) => {
+            // arrow.body is now FunctionBody directly
+            for s in &arrow.body.statements {
+                extract_literals_from_statement(s, source, literals);
+            }
+        }
+        Expression::FunctionExpression(func) => {
+            if let Some(body) = &func.body {
+                for s in &body.statements {
+                    extract_literals_from_statement(s, source, literals);
+                }
+            }
+        }
+        Expression::ClassExpression(class) => {
+            extract_literals_from_class(&class.body, source, literals);
+        }
+        Expression::TaggedTemplateExpression(tagged) => {
+            extract_literals_from_expression(&tagged.tag, source, literals);
+            // Template literals
+            for quasi in &tagged.quasi.quasis {
+                let value = quasi.value.cooked.as_ref().map(|s| s.as_str()).unwrap_or("");
+                if value.len() >= 3 {
+                    let (line, col) = get_line_col(source, quasi.span.start as usize);
+                    literals.push(JsStringLiteral {
+                        value: value.to_string(),
+                        line,
+                        column: col,
+                        literal_type: "template".to_string(),
+                    });
+                }
+            }
+            for expr in &tagged.quasi.expressions {
+                extract_literals_from_expression(expr, source, literals);
+            }
+        }
+        Expression::AwaitExpression(await_expr) => {
+            extract_literals_from_expression(&await_expr.argument, source, literals);
+        }
+        Expression::YieldExpression(yield_expr) => {
+            if let Some(arg) = &yield_expr.argument {
+                extract_literals_from_expression(arg, source, literals);
+            }
+        }
+        Expression::ParenthesizedExpression(paren) => {
+            extract_literals_from_expression(&paren.expression, source, literals);
+        }
+        _ => {}
+    }
+}
+
+/// Get line and column from byte offset
+fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
+    let mut line = 1u32;
+    let mut col = 1u32;
+    
+    for (i, ch) in source.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    
+    (line, col)
+}
+
+// ============================================================
+// Dictionary Operations
+// ============================================================
+
+use std::sync::OnceLock;
+use sqlx::SqlitePool;
+
+/// Global database pool for dictionary operations
+static DICTIONARY_POOL: OnceLock<SqlitePool> = OnceLock::new();
+
+/// Initialize dictionary database pool (call from main app)
+pub fn init_dictionary_pool(pool: SqlitePool) {
+    let _ = DICTIONARY_POOL.set(pool);
+}
+
+/// Get dictionary pool
+fn get_dictionary_pool() -> Option<&'static SqlitePool> {
+    DICTIONARY_POOL.get()
+}
+
+/// Dictionary info returned to JavaScript
+#[derive(Serialize)]
+struct JsDictionary {
+    id: String,
+    name: String,
+    description: Option<String>,
+    dict_type: String,
+    service_type: Option<String>,
+    category: Option<String>,
+    word_count: i64,
+    tags: Option<String>,
+}
+
+/// Get dictionary by ID or name
+#[op2(async)]
+#[serde]
+async fn op_get_dictionary(
+    #[string] id_or_name: String,
+) -> Result<Option<JsDictionary>, deno_error::JsErrorBox> {
+    let pool = get_dictionary_pool()
+        .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
+    
+    // Try by ID first
+    let dict: Option<(String, String, Option<String>, String, Option<String>, Option<String>, i64, Option<String>)> = 
+        sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = ? OR name = ?")
+            .bind(&id_or_name)
+            .bind(&id_or_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+    
+    Ok(dict.map(|(id, name, description, dict_type, service_type, category, word_count, tags)| {
+        JsDictionary {
+            id,
+            name,
+            description,
+            dict_type,
+            service_type,
+            category,
+            word_count,
+            tags,
+        }
+    }))
+}
+
+/// Get words from a dictionary by ID or name
+#[op2(async)]
+#[serde]
+async fn op_get_dictionary_words(
+    #[string] id_or_name: String,
+    #[smi] limit: Option<i32>,
+) -> Result<Vec<String>, deno_error::JsErrorBox> {
+    let pool = get_dictionary_pool()
+        .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
+    
+    // First get dictionary ID
+    let dict_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM dictionaries WHERE id = ? OR name = ?"
+    )
+        .bind(&id_or_name)
+        .bind(&id_or_name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+    
+    let dict_id = match dict_id {
+        Some(id) => id,
+        None => return Ok(vec![]),
+    };
+    
+    // Get words
+    let limit_val = limit.unwrap_or(10000) as i64;
+    let words: Vec<String> = sqlx::query_scalar(
+        "SELECT word FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?"
+    )
+        .bind(&dict_id)
+        .bind(limit_val)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+    
+    Ok(words)
+}
+
+/// List dictionaries with optional filter
+#[op2(async)]
+#[serde]
+async fn op_list_dictionaries(
+    #[string] dict_type: Option<String>,
+    #[string] category: Option<String>,
+) -> Result<Vec<JsDictionary>, deno_error::JsErrorBox> {
+    let pool = get_dictionary_pool()
+        .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
+    
+    let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
+    
+    if dict_type.is_some() {
+        query.push_str(" AND dict_type = ?");
+    }
+    if category.is_some() {
+        query.push_str(" AND category = ?");
+    }
+    query.push_str(" ORDER BY name ASC");
+    
+    let mut sql_query = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, Option<String>, i64, Option<String>)>(&query);
+    
+    if let Some(ref dt) = dict_type {
+        sql_query = sql_query.bind(dt);
+    }
+    if let Some(ref cat) = category {
+        sql_query = sql_query.bind(cat);
+    }
+    
+    let rows = sql_query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+    
+    Ok(rows.into_iter().map(|(id, name, description, dict_type, service_type, category, word_count, tags)| {
+        JsDictionary {
+            id,
+            name,
+            description,
+            dict_type,
+            service_type,
+            category,
+            word_count,
+            tags,
+        }
+    }).collect())
 }
 
 // ============================================================

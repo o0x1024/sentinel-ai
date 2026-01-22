@@ -69,6 +69,121 @@ globalThis.Sentinel = {
   log: (level, message) => {
     Deno.core.ops.op_plugin_log(level, message)
   },
+  
+  // JavaScript AST parsing API (powered by oxc_parser)
+  AST: {
+    /**
+     * Parse JavaScript code and extract all string literals using oxc_parser
+     * @param {string} code - JavaScript source code to parse
+     * @param {string} [filename] - Optional filename for source type detection (e.g., 'script.js', 'module.mjs', 'code.ts')
+     * @returns {{success: boolean, literals: Array<{value: string, line: number, column: number, type: string}>, errors: string[]}}
+     */
+    parse: (code, filename) => {
+      return Deno.core.ops.op_parse_js(code, filename || null)
+    },
+    
+    /**
+     * Extract string literals from JavaScript code (convenience method)
+     * @param {string} code - JavaScript source code
+     * @param {object} [options] - Options
+     * @param {number} [options.minLength=3] - Minimum string length to include
+     * @param {string[]} [options.types] - Filter by literal types: 'string', 'template', 'regex'
+     * @returns {Array<{value: string, line: number, column: number, type: string}>}
+     */
+    extractLiterals: (code, options = {}) => {
+      const result = Deno.core.ops.op_parse_js(code, null)
+      if (!result.success && result.literals.length === 0) {
+        return []
+      }
+      
+      let literals = result.literals
+      const minLength = options.minLength || 3
+      const types = options.types
+      
+      // Filter by minimum length
+      literals = literals.filter(lit => lit.value.length >= minLength)
+      
+      // Filter by types
+      if (types && types.length > 0) {
+        literals = literals.filter(lit => types.includes(lit.type))
+      }
+      
+      return literals
+    },
+    
+    /**
+     * Extract unique string values from JavaScript code
+     * @param {string} code - JavaScript source code
+     * @param {object} [options] - Options
+     * @param {number} [options.minLength=3] - Minimum string length
+     * @returns {string[]} - Array of unique string values
+     */
+    extractUniqueStrings: (code, options = {}) => {
+      const result = Deno.core.ops.op_parse_js(code, null)
+      if (!result.success && result.literals.length === 0) {
+        return []
+      }
+      
+      const minLength = options.minLength || 3
+      const values = new Set()
+      
+      for (const lit of result.literals) {
+        if (lit.value.length >= minLength) {
+          values.add(lit.value)
+        }
+      }
+      
+      return Array.from(values)
+    },
+  },
+  
+  // Dictionary API for plugins
+  Dictionary: {
+    /**
+     * Get dictionary info by ID or name
+     * @param {string} idOrName - Dictionary ID or name
+     * @returns {Promise<{id: string, name: string, description?: string, dict_type: string, service_type?: string, category?: string, word_count: number, tags?: string} | null>}
+     */
+    get: async (idOrName) => {
+      return await Deno.core.ops.op_get_dictionary(idOrName)
+    },
+    
+    /**
+     * Get words from a dictionary
+     * @param {string} idOrName - Dictionary ID or name
+     * @param {number} [limit=10000] - Maximum number of words to return
+     * @returns {Promise<string[]>}
+     */
+    getWords: async (idOrName, limit) => {
+      return await Deno.core.ops.op_get_dictionary_words(idOrName, limit || null)
+    },
+    
+    /**
+     * List all dictionaries with optional filter
+     * @param {object} [filter] - Filter options
+     * @param {string} [filter.dictType] - Filter by dictionary type (e.g., 'directory', 'subdomain', 'password')
+     * @param {string} [filter.category] - Filter by category
+     * @returns {Promise<Array<{id: string, name: string, description?: string, dict_type: string, service_type?: string, category?: string, word_count: number, tags?: string}>>}
+     */
+    list: async (filter = {}) => {
+      return await Deno.core.ops.op_list_dictionaries(filter.dictType || null, filter.category || null)
+    },
+    
+    /**
+     * Get words from multiple dictionaries and merge them
+     * @param {string[]} idsOrNames - Array of dictionary IDs or names
+     * @param {boolean} [deduplicate=true] - Whether to remove duplicates
+     * @returns {Promise<string[]>}
+     */
+    getMergedWords: async (idsOrNames, deduplicate = true) => {
+      const allWords = []
+      for (const idOrName of idsOrNames) {
+        const words = await Deno.core.ops.op_get_dictionary_words(idOrName, null)
+        allWords.push(...words)
+      }
+      return deduplicate ? [...new Set(allWords)] : allWords
+    },
+  },
 }
 
 // Install Web APIs on globalThis (deno_web provides implementations but does not

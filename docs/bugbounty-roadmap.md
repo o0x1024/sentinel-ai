@@ -102,6 +102,66 @@
 
 ---
 
+## P0: 数据流编排与产物协议 ✅ (2026-01-22)
+
+### P0-1. 统一工作流产物协议 ✅
+- [x] ArtifactType 枚举（Finding/Evidence/Asset/Subdomains/LiveHosts/Technologies/Endpoints/Secrets/Directories/RawData）
+- [x] WorkflowArtifact 标准结构（id/step_id/execution_id/type/data/metadata）
+- [x] ArtifactExtractor 自动类型检测与提取
+- [x] 各类产物的标准化数据结构（FindingArtifact/SubdomainsArtifact/LiveHostsArtifact 等）
+
+### P0-2. 数据流编排 ✅
+- [x] PluginPortRegistry 插件端口注册表
+- [x] DataFlowResolver 上下游数据自动传递
+- [x] 支持 JSON Path 提取（如 `subdomains[*].subdomain`）
+- [x] 自动填充下游步骤的输入参数
+
+### P0-3. 失败重试与限流 ✅
+- [x] RetryConfig 统一重试配置
+- [x] BackoffStrategy 支持 Fixed/Linear/Exponential
+- [x] RateLimiter 全局+每主机并发控制
+- [x] RetryExecutor 统一执行器
+
+### P0-4. 编排集成 ✅
+- [x] WorkflowOrchestrator 编排器
+- [x] bounty_resolve_step_inputs 命令
+- [x] bounty_process_step_output 命令
+- [x] bounty_sink_artifacts 命令（自动落库）
+- [x] bounty_get_plugin_ports / bounty_list_plugin_ports 命令
+
+---
+
+## P1: 前端编排可视化 ✅ (2026-01-22)
+
+### P1-1. 插件端口可视化 ✅
+- [x] WorkflowStepDetail 组件 - 步骤详情展示
+- [x] 输入端口展示（参数名/期望类型/必填标识）
+- [x] 输出端口展示（端口名/产物类型）
+- [x] 端口类型颜色编码（不同产物类型不同颜色）
+
+### P1-2. 数据流连线可视化 ✅
+- [x] WorkflowDataFlow 组件 - 数据流图
+- [x] 步骤分层布局（按依赖关系自动分层）
+- [x] 上下游连接指示器
+- [x] 数据传递路径展示（JSON Path 提取）
+
+### P1-3. 产物预览面板 ✅
+- [x] 产物类型检测与图标
+- [x] Subdomains 列表预览
+- [x] Live Hosts 状态码展示
+- [x] Finding 严重级别展示
+- [x] 步骤配置折叠展示
+
+### P1-4. 执行状态实时展示 ✅
+- [x] WorkflowExecutionPanel 组件
+- [x] 进度条与步骤计数
+- [x] 限流器状态（全局/单主机并发）
+- [x] 重试状态统计
+- [x] 产物汇总统计
+- [x] 执行日志流
+
+---
+
 ## 进度追踪
 
 | 模块 | 状态 | 开始时间 | 完成时间 |
@@ -117,3 +177,11 @@
 | P1-B4 指纹标签 | ✅ 完成 | 2026-01-21 | 2026-01-21 |
 | P1-B5 优先级评分 | ✅ 完成 | 2026-01-21 | 2026-01-21 |
 | D3 提交复测运营 | ✅ 完成 | 2026-01-21 | 2026-01-21 |
+| P0-1 产物协议 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P0-2 数据流编排 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P0-3 重试限流 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P0-4 编排集成 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P1-1 端口可视化 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P1-2 数据流连线 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P1-3 产物预览 | ✅ 完成 | 2026-01-22 | 2026-01-22 |
+| P1-4 执行状态 | ✅ 完成 | 2026-01-22 | 2026-01-22 |

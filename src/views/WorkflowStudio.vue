@@ -426,7 +426,7 @@
             <button class="btn btn-xs btn-ghost" @click="show_logs = false">✕</button>
           </div>
         </div>
-        <div class="overflow-y-auto bg-base-200 rounded p-2 font-mono text-xs" style="max-height: 300px">
+        <div class="overflow-y-auto bg-base-200 rounded p-2 font-mono text-xs" style="max-height: 120px">
           <div v-if="execution_logs.length === 0" class="text-center text-base-content/60 py-4">
             {{ t('trafficAnalysis.workflowStudio.logs.empty') }}
           </div>
@@ -528,7 +528,14 @@
       </div>
     </dialog>
 
-    <div v-if="drawer_open" ref="drawer_ref" class="fixed inset-y-0 right-0 w-[350px] bg-base-100 shadow-xl border-l border-base-300 z-50">
+    <!-- 参数编辑抽屉遮罩 -->
+    <Transition name="fade">
+      <div v-if="drawer_open" class="fixed inset-0 bg-black/20 z-40" @click="close_drawer"></div>
+    </Transition>
+    
+    <!-- 参数编辑抽屉 -->
+    <Transition name="drawer-right">
+      <div v-if="drawer_open" ref="drawer_ref" class="fixed inset-y-0 right-0 w-[350px] bg-base-100 shadow-xl border-l border-base-300 z-50">
       <div class="p-3 flex items-center justify-between border-b border-base-300">
         <h2 class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.paramsEditor.title') }}</h2>
         <button class="btn btn-xs btn-ghost" @click="close_drawer">✕</button>
@@ -732,6 +739,7 @@
         <button class="btn btn-outline btn-sm" @click="close_drawer">{{ t('trafficAnalysis.workflowStudio.paramsEditor.cancel') }}</button>
       </div>
     </div>
+    </Transition>
 
     <!-- 执行历史面板 -->
     <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[700px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col" @click.stop>
@@ -2781,15 +2789,8 @@ const handle_global_click = (e: MouseEvent) => {
   }
 }
 
-const handle_global_mousedown = (e: MouseEvent) => {
-  // 处理参数编辑抽屉的关闭 (使用 mousedown 以避免选中文本拖拽到外部时意外关闭)
-  if (drawer_open.value) {
-    const drawer = drawer_ref.value
-    // 检查点击是否在抽屉内部
-    if (!drawer || !drawer.contains(e.target as Node)) {
-      drawer_open.value = false
-    }
-  }
+const handle_global_mousedown = (_e: MouseEvent) => {
+  // 抽屉关闭已通过遮罩层点击处理
 }
 
 onMounted(async () => {
@@ -2840,7 +2841,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 抽屉滑入滑出动画 */
+/* 左侧抽屉滑入滑出动画 */
 .drawer-enter-active,
 .drawer-leave-active {
   transition: transform 0.25s ease;
@@ -2849,6 +2850,17 @@ onUnmounted(() => {
 .drawer-enter-from,
 .drawer-leave-to {
   transform: translateX(-100%);
+}
+
+/* 右侧抽屉滑入滑出动画 */
+.drawer-right-enter-active,
+.drawer-right-leave-active {
+  transition: transform 0.25s ease;
+}
+
+.drawer-right-enter-from,
+.drawer-right-leave-to {
+  transform: translateX(100%);
 }
 
 /* 遮罩淡入淡出动画 */

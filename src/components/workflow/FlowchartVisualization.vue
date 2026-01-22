@@ -51,9 +51,25 @@
                             </svg>
                         </button>
 
+                        <!-- 适应视图 -->
+                        <button class="btn btn-sm btn-outline" @click="fitToView" :title="t('trafficAnalysis.workflowStudio.flowchart.toolbar.fitToViewTooltip')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                            </svg>
+                        </button>
+
                         <!-- 重置视图 -->
-                        <button class="btn btn-sm btn-outline" @click="resetView">
-                            {{ t('trafficAnalysis.workflowStudio.flowchart.toolbar.resetView') }}
+                        <button class="btn btn-sm btn-outline" @click="resetCanvasView" :title="t('trafficAnalysis.workflowStudio.flowchart.toolbar.resetViewTooltip')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                            </svg>
+                        </button>
+
+                        <!-- 小地图切换 -->
+                        <button class="btn btn-sm" :class="showMinimap ? 'btn-primary' : 'btn-outline'" @click="showMinimap = !showMinimap" :title="t('trafficAnalysis.workflowStudio.flowchart.toolbar.minimapTooltip')">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                            </svg>
                         </button>
 
                         <!-- 一键整理节点 -->
@@ -90,11 +106,16 @@
         <!-- 流程图容器 -->
         <div class="card bg-base-100 shadow-xl relative" :class="{ 'fullscreen': isFullscreen }">
 
-            <!-- 流程图容器 -->
+            <!-- 流程图容器 - 无限画布 -->
             <div ref="flowchartContainer"
-                class="flowchart-container bg-base-200 rounded-lg p-4 min-h-[80vh] relative overflow-auto"
-                :class="{ 'cursor-grab': !isDragging && !isPanningCanvas, 'cursor-grabbing': isPanningCanvas }"
-                @pointerdown="on_pointer_down" @pointermove="on_pointer_move" @pointerup="on_pointer_up">
+                class="flowchart-container bg-base-200 rounded-lg min-h-[80vh] relative overflow-hidden"
+                :class="{ 
+                    'cursor-grab': !isDragging && !isPanningCanvas && !isSpacePressed, 
+                    'cursor-grabbing': isPanningCanvas || isSpacePressed,
+                    'cursor-move': isSpacePressed && !isPanningCanvas
+                }"
+                @pointerdown="on_pointer_down" @pointermove="on_pointer_move" @pointerup="on_pointer_up"
+                @wheel="onWheel">
                 
                 <!-- 空状态提示 -->
                 <div v-if="nodes.length === 0" class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -110,7 +131,8 @@
                 
                 <div class="flowchart-content" :style="contentStyle">
                     <svg class="absolute inset-0 w-full h-full pointer-events-none"
-                        :viewBox="`0 0 ${containerSize.width} ${containerSize.height}`">
+                        :viewBox="`0 0 ${containerSize.width} ${containerSize.height}`"
+                        :width="containerSize.width" :height="containerSize.height">
                         <defs>
                             <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                                 <polygon points="0 0, 10 3.5, 0 7" class="fill-primary" />
@@ -134,6 +156,14 @@
                               :d="tempConnectionPath" 
                               class="stroke-2 fill-none stroke-primary stroke-dasharray-4 opacity-70"
                               marker-end="url(#arrowhead)" />
+                        
+                        <!-- 框选框 -->
+                        <rect v-if="isSelecting" 
+                              :x="Math.min(selectionBox.startX, selectionBox.endX)"
+                              :y="Math.min(selectionBox.startY, selectionBox.endY)"
+                              :width="Math.abs(selectionBox.endX - selectionBox.startX)"
+                              :height="Math.abs(selectionBox.endY - selectionBox.startY)"
+                              class="fill-primary/10 stroke-primary stroke-1 stroke-dasharray-4" />
                     </svg>
 
                     <div v-for="node in nodes" :key="node.id" 
@@ -227,6 +257,37 @@
 
 
             </div>
+            <!-- 小地图 -->
+            <div v-if="showMinimap && nodes.length > 0" 
+                class="absolute bottom-4 right-4 w-48 h-32 bg-base-100/90 border border-base-300 rounded-lg shadow-lg overflow-hidden z-20"
+                @pointerdown.stop="onMinimapClick">
+                <div class="absolute inset-0 p-1">
+                    <svg class="w-full h-full" :viewBox="minimapViewBox">
+                        <!-- 节点 -->
+                        <rect v-for="node in nodes" :key="'minimap-' + node.id"
+                            :x="node.x" :y="node.y" 
+                            width="180" height="80"
+                            class="fill-primary/30 stroke-primary stroke-1" rx="4" />
+                        <!-- 视口框 -->
+                        <rect :x="minimapViewportRect.x" :y="minimapViewportRect.y"
+                            :width="minimapViewportRect.width" :height="minimapViewportRect.height"
+                            class="fill-none stroke-error stroke-2" rx="2" />
+                    </svg>
+                </div>
+                <button class="absolute top-1 right-1 btn btn-xs btn-ghost" @click.stop="showMinimap = false">✕</button>
+            </div>
+
+            <!-- 画布控制提示 -->
+            <div class="absolute bottom-4 left-4 text-xs text-base-content/50 bg-base-100/80 px-2 py-1 rounded z-20">
+                <span v-if="selectedNodes.size > 0" class="mr-3 text-primary font-medium">
+                    {{ t('trafficAnalysis.workflowStudio.flowchart.canvasHints.selected', { count: selectedNodes.size }) }}
+                </span>
+                <span class="mr-3">{{ t('trafficAnalysis.workflowStudio.flowchart.canvasHints.space') }}</span>
+                <span class="mr-3">{{ t('trafficAnalysis.workflowStudio.flowchart.canvasHints.scroll') }}</span>
+                <span class="mr-3">{{ t('trafficAnalysis.workflowStudio.flowchart.canvasHints.drag') }}</span>
+                <span>Ctrl+A: {{ t('trafficAnalysis.workflowStudio.flowchart.canvasHints.selectAll') }}</span>
+            </div>
+
             <button v-if="isFullscreen" class="btn btn-sm btn-outline absolute top-2 right-2" @click="toggleFullscreen">{{ t('trafficAnalysis.workflowStudio.flowchart.toolbar.exitFullscreen') }}</button>
         </div>
 
@@ -368,10 +429,21 @@ const isPanningCanvas = ref(false)
 const panStart = reactive({ x: 0, y: 0 })
 const panOffset = reactive({ x: 0, y: 0 })
 
+// 空格键状态
+const isSpacePressed = ref(false)
+
+// 小地图
+const showMinimap = ref(true)
+
 // 多选功能
 const selectedNodes = ref<Set<string>>(new Set())
 const isSelecting = ref(false)
 const selectionBox = reactive({ startX: 0, startY: 0, endX: 0, endY: 0 })
+
+// 多选拖拽
+const isDraggingSelection = ref(false)
+const selectionDragStart = reactive({ x: 0, y: 0 })
+const nodeStartPositions = ref<Map<string, { x: number, y: number }>>(new Map())
 
 // 拖拽连接
 const isDraggingConnection = ref(false)
@@ -406,28 +478,65 @@ const MAX_HISTORY = 50
 const canUndo = computed(() => historyIndex.value > 0)
 const canRedo = computed(() => historyIndex.value < history.value.length - 1)
 
-const containerSize = reactive({
-    width: 800,
-    height: 600
+// 无限画布 - 动态计算内容边界
+const CANVAS_PADDING = 200
+const MIN_CANVAS_SIZE = 2000
+
+const canvasBounds = computed(() => {
+    if (nodes.value.length === 0) {
+        return { minX: 0, minY: 0, maxX: MIN_CANVAS_SIZE, maxY: MIN_CANVAS_SIZE }
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    const NODE_WIDTH = 180
+    const NODE_HEIGHT = 80
+    nodes.value.forEach(n => {
+        minX = Math.min(minX, n.x)
+        minY = Math.min(minY, n.y)
+        maxX = Math.max(maxX, n.x + NODE_WIDTH)
+        maxY = Math.max(maxY, n.y + NODE_HEIGHT)
+    })
+    return {
+        minX: Math.min(minX - CANVAS_PADDING, 0),
+        minY: Math.min(minY - CANVAS_PADDING, 0),
+        maxX: Math.max(maxX + CANVAS_PADDING, MIN_CANVAS_SIZE),
+        maxY: Math.max(maxY + CANVAS_PADDING, MIN_CANVAS_SIZE)
+    }
 })
+
+const containerSize = computed(() => ({
+    width: canvasBounds.value.maxX - canvasBounds.value.minX,
+    height: canvasBounds.value.maxY - canvasBounds.value.minY
+}))
+
 const viewportSize = reactive({
     width: 800,
     height: 600
 })
-const viewportScale = computed(() => {
-    const sx = viewportSize.width / containerSize.width
-    const sy = viewportSize.height / containerSize.height
-    return Math.min(sx, sy)
-})
 
 const contentStyle = computed<CSSProperties>(() => ({
-    transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel.value * viewportScale.value})`,
+    transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel.value})`,
     transformOrigin: 'top left',
-    width: containerSize.width + 'px',
-    height: containerSize.height + 'px',
+    width: containerSize.value.width + 'px',
+    height: containerSize.value.height + 'px',
     position: 'relative',
     transition: isPanningCanvas.value ? 'none' : 'transform 0.1s ease-out'
 }))
+
+// 小地图相关计算
+const minimapViewBox = computed(() => {
+    const b = canvasBounds.value
+    return `${b.minX} ${b.minY} ${b.maxX - b.minX} ${b.maxY - b.minY}`
+})
+
+const minimapViewportRect = computed(() => {
+    const scale = zoomLevel.value
+    return {
+        x: -panOffset.x / scale,
+        y: -panOffset.y / scale,
+        width: viewportSize.width / scale,
+        height: viewportSize.height / scale
+    }
+})
 
 const saveHistory = () => {
   const state: HistoryState = {
@@ -754,6 +863,91 @@ const resetView = () => {
     initializeFlowchart()
 }
 
+// 重置画布视图（不清空节点）
+const resetCanvasView = () => {
+    panOffset.x = 0
+    panOffset.y = 0
+    zoomLevel.value = 1
+}
+
+// 适应视图 - 缩放并平移以显示所有节点
+const fitToView = () => {
+    if (nodes.value.length === 0) {
+        resetCanvasView()
+        return
+    }
+    
+    const NODE_WIDTH = 180
+    const NODE_HEIGHT = 80
+    const PADDING = 50
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    nodes.value.forEach(n => {
+        minX = Math.min(minX, n.x)
+        minY = Math.min(minY, n.y)
+        maxX = Math.max(maxX, n.x + NODE_WIDTH)
+        maxY = Math.max(maxY, n.y + NODE_HEIGHT)
+    })
+    
+    const contentWidth = maxX - minX + PADDING * 2
+    const contentHeight = maxY - minY + PADDING * 2
+    
+    const scaleX = viewportSize.width / contentWidth
+    const scaleY = viewportSize.height / contentHeight
+    const newZoom = Math.min(scaleX, scaleY, 1.5) // 最大1.5倍
+    
+    zoomLevel.value = Math.max(0.1, newZoom)
+    
+    // 居中显示
+    const centerX = (minX + maxX) / 2
+    const centerY = (minY + maxY) / 2
+    panOffset.x = viewportSize.width / 2 - centerX * zoomLevel.value
+    panOffset.y = viewportSize.height / 2 - centerY * zoomLevel.value
+}
+
+// 滚轮缩放
+const onWheel = (event: WheelEvent) => {
+    event.preventDefault()
+    
+    const rect = flowchartContainer.value?.getBoundingClientRect()
+    if (!rect) return
+    
+    // 鼠标相对于容器的位置
+    const mouseX = event.clientX - rect.left
+    const mouseY = event.clientY - rect.top
+    
+    // 缩放前鼠标对应的画布坐标
+    const beforeX = (mouseX - panOffset.x) / zoomLevel.value
+    const beforeY = (mouseY - panOffset.y) / zoomLevel.value
+    
+    // 计算新的缩放级别
+    const delta = event.deltaY > 0 ? 0.9 : 1.1
+    const newZoom = Math.max(0.1, Math.min(3, zoomLevel.value * delta))
+    zoomLevel.value = newZoom
+    
+    // 缩放后保持鼠标位置不变
+    panOffset.x = mouseX - beforeX * newZoom
+    panOffset.y = mouseY - beforeY * newZoom
+}
+
+// 小地图点击导航
+const onMinimapClick = (event: PointerEvent) => {
+    const target = event.currentTarget as HTMLElement
+    const rect = target.getBoundingClientRect()
+    const bounds = canvasBounds.value
+    
+    // 计算点击位置对应的画布坐标
+    const relX = (event.clientX - rect.left) / rect.width
+    const relY = (event.clientY - rect.top) / rect.height
+    
+    const canvasX = bounds.minX + relX * (bounds.maxX - bounds.minX)
+    const canvasY = bounds.minY + relY * (bounds.maxY - bounds.minY)
+    
+    // 将该位置移动到视口中心
+    panOffset.x = viewportSize.width / 2 - canvasX * zoomLevel.value
+    panOffset.y = viewportSize.height / 2 - canvasY * zoomLevel.value
+}
+
 const arrangeNodes = () => {
     const list = nodes.value
     if (!list.length) return
@@ -857,24 +1051,59 @@ const on_node_pointer_down = (event: PointerEvent, node: FlowchartNode) => {
     dragMoved.value = false
     
     // 如果是Shift+点击，不拖拽节点，而是画布平移
-    if (event.shiftKey) {
+    if (event.shiftKey && !selectedNodes.value.has(node.id)) {
         return
     }
     
-    draggedNode.value = node
-    isDragging.value = true
     const rect = flowchartContainer.value?.getBoundingClientRect()
-    if (rect) {
-        drag_ctx.rect_left = rect.left
-        drag_ctx.rect_top = rect.top
-        drag_ctx.scale = zoomLevel.value * viewportScale.value
-        drag_ctx.startX = event.clientX
-        drag_ctx.startY = event.clientY
-        const localX = (event.clientX - drag_ctx.rect_left) / drag_ctx.scale
-        const localY = (event.clientY - drag_ctx.rect_top) / drag_ctx.scale
+    if (!rect) return
+    
+    drag_ctx.rect_left = rect.left
+    drag_ctx.rect_top = rect.top
+    drag_ctx.scale = zoomLevel.value
+    drag_ctx.startX = event.clientX
+    drag_ctx.startY = event.clientY
+    
+    const localX = (event.clientX - drag_ctx.rect_left - panOffset.x) / drag_ctx.scale
+    const localY = (event.clientY - drag_ctx.rect_top - panOffset.y) / drag_ctx.scale
+    
+    // 如果点击的节点在选中集合中，整体拖动选中的节点
+    if (selectedNodes.value.has(node.id) && selectedNodes.value.size > 1) {
+        isDraggingSelection.value = true
+        selectionDragStart.x = localX
+        selectionDragStart.y = localY
+        // 记录所有选中节点的初始位置
+        nodeStartPositions.value.clear()
+        selectedNodes.value.forEach(nodeId => {
+            const n = nodes.value.find(x => x.id === nodeId)
+            if (n) {
+                nodeStartPositions.value.set(nodeId, { x: n.x, y: n.y })
+            }
+        })
+    } else {
+        // 单节点拖拽
+        // Ctrl/Cmd+点击切换选中状态
+        if (event.ctrlKey || event.metaKey) {
+            if (selectedNodes.value.has(node.id)) {
+                selectedNodes.value.delete(node.id)
+            } else {
+                selectedNodes.value.add(node.id)
+            }
+            return
+        }
+        
+        // 普通点击，清除其他选中，只选中当前节点
+        if (!selectedNodes.value.has(node.id)) {
+            selectedNodes.value.clear()
+            selectedNodes.value.add(node.id)
+        }
+        
+        draggedNode.value = node
+        isDragging.value = true
         dragOffset.x = localX - node.x
         dragOffset.y = localY - node.y
     }
+    
     if (flowchartContainer.value && (flowchartContainer.value as any).setPointerCapture) {
         (flowchartContainer.value as any).setPointerCapture(event.pointerId)
     }
@@ -884,13 +1113,33 @@ const on_pointer_down = (event: PointerEvent) => {
     // 右键点击不处理，让其触发 contextmenu
     if (event.button === 2) return
 
-    if (event.target === flowchartContainer.value || (event.target as HTMLElement).closest('.flowchart-content')) {
-        // 空白区域：开始画布拖拽（按住空格键或中键）
-        if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
+    const isOnCanvas = event.target === flowchartContainer.value || 
+        ((event.target as HTMLElement).closest('.flowchart-content') && 
+         !(event.target as HTMLElement).closest('.flowchart-node'))
+    
+    if (isOnCanvas) {
+        // 空白区域左键拖拽：直接移动画布
+        // Shift+拖拽或中键：也是移动画布
+        // Ctrl/Cmd+拖拽：框选
+        if (event.button === 1 || (event.button === 0 && !event.ctrlKey && !event.metaKey)) {
             event.preventDefault()
             isPanningCanvas.value = true
             panStart.x = event.clientX - panOffset.x
             panStart.y = event.clientY - panOffset.y
+        } else if (event.button === 0 && (event.ctrlKey || event.metaKey)) {
+            // Ctrl/Cmd+左键在空白区域：开始框选
+            event.preventDefault()
+            const rect = flowchartContainer.value?.getBoundingClientRect()
+            if (rect) {
+                const scale = zoomLevel.value
+                const localX = (event.clientX - rect.left - panOffset.x) / scale
+                const localY = (event.clientY - rect.top - panOffset.y) / scale
+                isSelecting.value = true
+                selectionBox.startX = localX
+                selectionBox.startY = localY
+                selectionBox.endX = localX
+                selectionBox.endY = localY
+            }
         }
         draggedNode.value = null
     }
@@ -900,12 +1149,45 @@ const on_pointer_down = (event: PointerEvent) => {
 }
 
     const on_pointer_move = (event: PointerEvent) => {
+    // 框选
+    if (isSelecting.value) {
+        event.preventDefault()
+        const rect = flowchartContainer.value?.getBoundingClientRect()
+        if (rect) {
+            const scale = zoomLevel.value
+            selectionBox.endX = (event.clientX - rect.left - panOffset.x) / scale
+            selectionBox.endY = (event.clientY - rect.top - panOffset.y) / scale
+            
+            // 实时更新选中的节点
+            const minX = Math.min(selectionBox.startX, selectionBox.endX)
+            const maxX = Math.max(selectionBox.startX, selectionBox.endX)
+            const minY = Math.min(selectionBox.startY, selectionBox.endY)
+            const maxY = Math.max(selectionBox.startY, selectionBox.endY)
+            
+            const NODE_WIDTH = 180
+            const NODE_HEIGHT = 80
+            
+            // 框选时清除之前的选择，重新计算
+            selectedNodes.value.clear()
+            nodes.value.forEach(node => {
+                const nodeRight = node.x + NODE_WIDTH
+                const nodeBottom = node.y + NODE_HEIGHT
+                // 检查节点是否与选择框相交
+                const intersects = !(node.x > maxX || nodeRight < minX || node.y > maxY || nodeBottom < minY)
+                if (intersects) {
+                    selectedNodes.value.add(node.id)
+                }
+            })
+        }
+        return
+    }
+    
     // 拖拽连接线
     if (isDraggingConnection.value) {
         event.preventDefault()
         const rect = flowchartContainer.value?.getBoundingClientRect()
         if (rect) {
-            const scale = zoomLevel.value * viewportScale.value
+            const scale = zoomLevel.value
             
             // 检查是否有吸附目标
             if (hover_port.value && hover_port.value.type === 'input') {
@@ -918,13 +1200,13 @@ const on_pointer_down = (event: PointerEvent) => {
                     dragConnectionEnd.y = node.y + NODE_HEIGHT / 2
                 } else {
                     // 节点未找到（异常情况），回退到鼠标位置
-                    dragConnectionEnd.x = (event.clientX - rect.left) / scale
-                    dragConnectionEnd.y = (event.clientY - rect.top) / scale
+                    dragConnectionEnd.x = (event.clientX - rect.left - panOffset.x) / scale
+                    dragConnectionEnd.y = (event.clientY - rect.top - panOffset.y) / scale
                 }
             } else {
                 // 无吸附目标，跟随鼠标
-                dragConnectionEnd.x = (event.clientX - rect.left) / scale
-                dragConnectionEnd.y = (event.clientY - rect.top) / scale
+                dragConnectionEnd.x = (event.clientX - rect.left - panOffset.x) / scale
+                dragConnectionEnd.y = (event.clientY - rect.top - panOffset.y) / scale
             }
             
             updateTempConnectionPath()
@@ -940,7 +1222,35 @@ const on_pointer_down = (event: PointerEvent) => {
         return
     }
     
-    // 节点拖拽
+    // 多选节点整体拖拽
+    if (isDraggingSelection.value) {
+        event.preventDefault()
+        
+        const deltaX = Math.abs(event.clientX - drag_ctx.startX)
+        const deltaY = Math.abs(event.clientY - drag_ctx.startY)
+        if (deltaX > DRAG_THRESHOLD || deltaY > DRAG_THRESHOLD) {
+            dragMoved.value = true
+        }
+        
+        const localX = (event.clientX - drag_ctx.rect_left - panOffset.x) / drag_ctx.scale
+        const localY = (event.clientY - drag_ctx.rect_top - panOffset.y) / drag_ctx.scale
+        const dx = localX - selectionDragStart.x
+        const dy = localY - selectionDragStart.y
+        
+        // 移动所有选中的节点
+        selectedNodes.value.forEach(nodeId => {
+            const node = nodes.value.find(n => n.id === nodeId)
+            const startPos = nodeStartPositions.value.get(nodeId)
+            if (node && startPos) {
+                node.x = startPos.x + dx
+                node.y = startPos.y + dy
+            }
+        })
+        scheduleConnectionsUpdate()
+        return
+    }
+    
+    // 单节点拖拽
     if (isDragging.value && draggedNode.value) {
         event.preventDefault()
         
@@ -951,17 +1261,22 @@ const on_pointer_down = (event: PointerEvent) => {
             dragMoved.value = true
         }
         
-        const localX = (event.clientX - drag_ctx.rect_left) / drag_ctx.scale
-        const localY = (event.clientY - drag_ctx.rect_top) / drag_ctx.scale
+        const localX = (event.clientX - drag_ctx.rect_left - panOffset.x) / drag_ctx.scale
+        const localY = (event.clientY - drag_ctx.rect_top - panOffset.y) / drag_ctx.scale
         draggedNode.value.x = localX - dragOffset.x
         draggedNode.value.y = localY - dragOffset.y
-        draggedNode.value.x = Math.max(0, Math.min(draggedNode.value.x, containerSize.width - 200))
-        draggedNode.value.y = Math.max(0, Math.min(draggedNode.value.y, containerSize.height - 100))
+        // 无限画布：不限制节点位置
         scheduleConnectionsUpdate()
     }
 }
 
 const on_pointer_up = (event: PointerEvent) => {
+    // 框选结束
+    if (isSelecting.value) {
+        isSelecting.value = false
+        return
+    }
+    
     // 拖拽连接结束 - 延迟处理以便端口的pointerup先触发
     if (isDraggingConnection.value) {
         setTimeout(() => {
@@ -977,6 +1292,18 @@ const on_pointer_up = (event: PointerEvent) => {
     
     if (isPanningCanvas.value) {
         isPanningCanvas.value = false
+        return
+    }
+    
+    // 多选拖拽结束
+    if (isDraggingSelection.value) {
+        if (dragMoved.value) {
+            saveHistory()
+            emit('change')
+        }
+        isDraggingSelection.value = false
+        nodeStartPositions.value.clear()
+        updateConnections()
         return
     }
     
@@ -1057,6 +1384,20 @@ onMounted(() => {
     }
     
     const onKeyDown = (e: KeyboardEvent) => {
+        // 空格键按下 - 启用画布拖拽模式
+        if (e.code === 'Space' && !e.repeat) {
+            const activeEl = document.activeElement
+            const isInInput = activeEl && (
+                activeEl.tagName === 'INPUT' || 
+                activeEl.tagName === 'TEXTAREA' || 
+                (activeEl as HTMLElement).isContentEditable
+            )
+            if (!isInInput) {
+                e.preventDefault()
+                isSpacePressed.value = true
+            }
+        }
+        
         // ESC 关闭右键菜单或全屏
         if (e.key === 'Escape') {
             if (contextMenu.visible) {
@@ -1100,6 +1441,30 @@ onMounted(() => {
             e.preventDefault()
             selectAllNodes()
         }
+        
+        // 适应视图快捷键
+        if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+            if (isInInput) return
+            e.preventDefault()
+            fitToView()
+        }
+        
+        // 重置视图快捷键
+        if ((e.ctrlKey || e.metaKey) && e.key === '1') {
+            if (isInInput) return
+            e.preventDefault()
+            resetCanvasView()
+        }
+    }
+    
+    const onKeyUp = (e: KeyboardEvent) => {
+        // 空格键释放 - 退出画布拖拽模式
+        if (e.code === 'Space') {
+            isSpacePressed.value = false
+            if (isPanningCanvas.value) {
+                isPanningCanvas.value = false
+            }
+        }
     }
     
     // 点击其他地方关闭右键菜单
@@ -1110,9 +1475,11 @@ onMounted(() => {
     }
     
     window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
     window.addEventListener('click', onClickOutside)
     onUnmounted(() => {
         window.removeEventListener('keydown', onKeyDown)
+        window.removeEventListener('keyup', onKeyUp)
         window.removeEventListener('click', onClickOutside)
         if (flowchartContainer.value) {
             flowchartContainer.value.removeEventListener('contextmenu', handleContextMenu)

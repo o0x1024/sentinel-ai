@@ -421,13 +421,16 @@ const subCategories = computed<SubCategory[]>(() => {
     ]
   } else if (store.newPluginMetadata.mainCategory === 'agent') {
     return [
-      { value: 'scanner', label: '扫描工具', icon: 'fas fa-radar' },
-      { value: 'analyzer', label: '分析工具', icon: 'fas fa-microscope' },
-      { value: 'reporter', label: '报告工具', icon: 'fas fa-file-alt' },
-      { value: 'recon', label: '信息收集', icon: 'fas fa-search' },
-      { value: 'exploit', label: '漏洞利用', icon: 'fas fa-bomb' },
-      { value: 'utility', label: '实用工具', icon: 'fas fa-toolbox' },
-      { value: 'custom', label: '自定义', icon: 'fas fa-wrench' }
+      { value: 'recon', label: t('plugins.agentCategories.recon', '信息收集'), icon: 'fas fa-search' },
+      { value: 'discovery', label: t('plugins.agentCategories.discovery', '目标发现'), icon: 'fas fa-compass' },
+      { value: 'vuln', label: t('plugins.agentCategories.vuln', '漏洞扫描'), icon: 'fas fa-bug' },
+      { value: 'exploit', label: t('plugins.agentCategories.exploit', '漏洞利用'), icon: 'fas fa-bomb' },
+      { value: 'monitor', label: t('plugins.agentCategories.monitor', '变更监控'), icon: 'fas fa-eye' },
+      { value: 'utility', label: t('plugins.agentCategories.utility', '实用工具'), icon: 'fas fa-toolbox' },
+      { value: 'scanner', label: t('plugins.agentCategories.scanner', '扫描工具'), icon: 'fas fa-radar' },
+      { value: 'analyzer', label: t('plugins.agentCategories.analyzer', '分析工具'), icon: 'fas fa-microscope' },
+      { value: 'reporter', label: t('plugins.agentCategories.reporter', '报告工具'), icon: 'fas fa-file-alt' },
+      { value: 'custom', label: t('plugins.agentCategories.custom', '自定义'), icon: 'fas fa-wrench' }
     ]
   }
   return []

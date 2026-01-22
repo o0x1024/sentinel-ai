@@ -1322,7 +1322,9 @@ export default {
         newWorkflowTooltip: 'Create new workflow',
         aiGenerate: 'AI Generate',
         aiGenerateTooltip: 'Generate workflow from natural language description',
-        resetView: 'Reset view',
+        fitToViewTooltip: 'Fit to view (Ctrl+0)',
+        resetViewTooltip: 'Reset view (Ctrl+1)',
+        minimapTooltip: 'Minimap',
         arrangeNodes: 'Arrange nodes',
         arrangeNodesTooltip: 'Automatically arrange node layout',
         undoTooltip: 'Undo (Ctrl+Z)',
@@ -1334,7 +1336,14 @@ export default {
       emptyState: {
         title: 'Canvas is empty',
         description: 'Drag nodes from the node library on the left to start building a workflow',
-        tip: 'Tip: hold Shift while dragging to pan the canvas'
+        tip: 'Tip: drag on blank area to pan, scroll to zoom, Ctrl+drag to select'
+      },
+      canvasHints: {
+        space: 'Drag blank: Pan',
+        scroll: 'Scroll: Zoom',
+        drag: 'Ctrl+drag: Select',
+        selectAll: 'Select all',
+        selected: '{count} nodes selected'
       },
       ports: {
         input: 'Input',

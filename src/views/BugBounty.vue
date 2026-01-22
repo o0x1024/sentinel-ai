@@ -184,6 +184,7 @@
         v-if="activeTab === 'workflows'"
         :programs="programs"
         :selected-program="selectedProgram"
+        @view="viewWorkflowTemplate"
       />
     </div>
 
@@ -244,6 +245,14 @@
       @updated="onChangeEventUpdated"
       @trigger-workflow="triggerWorkflowFromEvent"
     />
+
+    <WorkflowTemplateDetailModal
+      v-if="showWorkflowTemplateDetailModal && selectedWorkflowTemplate"
+      :template="selectedWorkflowTemplate"
+      :programs="programs"
+      @close="showWorkflowTemplateDetailModal = false"
+      @updated="onWorkflowTemplateUpdated"
+    />
   </div>
 </template>
 
@@ -260,6 +269,7 @@ import {
   ChangeEventsPanel,
   ChangeEventDetailModal,
   WorkflowTemplatesPanel,
+  WorkflowTemplateDetailModal,
   StatisticsPanel,
   ImportExportPanel,
   ReportTemplatesPanel,
@@ -289,11 +299,13 @@ const showProgramDetailModal = ref(false)
 const showFindingDetailModal = ref(false)
 const showSubmissionDetailModal = ref(false)
 const showChangeEventDetailModal = ref(false)
+const showWorkflowTemplateDetailModal = ref(false)
 const submissionInitialData = ref<any>(null)
 const selectedProgram = ref<any>(null)
 const selectedFinding = ref<any>(null)
 const selectedSubmission = ref<any>(null)
 const selectedChangeEvent = ref<any>(null)
+const selectedWorkflowTemplate = ref<any>(null)
 
 // Data
 const programs = ref<any[]>([])
@@ -715,6 +727,16 @@ const triggerWorkflowFromEvent = async (event: any) => {
 
 const onChangeEventUpdated = async () => {
   await loadChangeEventStats()
+}
+
+// Workflow Template
+const viewWorkflowTemplate = (template: any) => {
+  selectedWorkflowTemplate.value = template
+  showWorkflowTemplateDetailModal.value = true
+}
+
+const onWorkflowTemplateUpdated = async () => {
+  // Refresh if needed
 }
 
 // Batch operations

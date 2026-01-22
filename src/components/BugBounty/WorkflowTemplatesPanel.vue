@@ -155,6 +155,79 @@
       </div>
     </div>
 
+    <!-- Create Template Modal -->
+    <div v-if="showCreateModal" class="modal modal-open">
+      <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.workflowTemplates.createTitle') }}</h3>
+        
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.templateName') }}</span></label>
+          <input 
+            v-model="createForm.name" 
+            type="text" 
+            class="input input-bordered" 
+            :placeholder="t('bugBounty.workflowTemplates.templateNamePlaceholder')"
+          />
+        </div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.category') }}</span></label>
+          <select v-model="createForm.category" class="select select-bordered">
+            <option value="recon">{{ t('bugBounty.workflowTemplates.categories.recon') }}</option>
+            <option value="discovery">{{ t('bugBounty.workflowTemplates.categories.discovery') }}</option>
+            <option value="vuln">{{ t('bugBounty.workflowTemplates.categories.vuln') }}</option>
+            <option value="api">{{ t('bugBounty.workflowTemplates.categories.api') }}</option>
+          </select>
+        </div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.description') }}</span></label>
+          <textarea 
+            v-model="createForm.description" 
+            class="textarea textarea-bordered h-20" 
+            :placeholder="t('bugBounty.workflowTemplates.descriptionPlaceholder')"
+          ></textarea>
+        </div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.tags') }}</span></label>
+          <input 
+            v-model="createForm.tags" 
+            type="text" 
+            class="input input-bordered" 
+            :placeholder="t('bugBounty.workflowTemplates.tagsPlaceholder')"
+          />
+          <label class="label">
+            <span class="label-text-alt text-base-content/60">{{ t('bugBounty.workflowTemplates.tagsHint') }}</span>
+          </label>
+        </div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.estimatedDuration') }}</span></label>
+          <input 
+            v-model.number="createForm.estimated_duration_mins" 
+            type="number" 
+            class="input input-bordered w-32" 
+            min="1"
+            :placeholder="t('bugBounty.workflowTemplates.minutes')"
+          />
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeCreateModal">{{ t('common.cancel') }}</button>
+          <button 
+            class="btn btn-primary" 
+            @click="createTemplate" 
+            :disabled="!createForm.name || createLoading"
+          >
+            <span v-if="createLoading" class="loading loading-spinner loading-sm mr-2"></span>
+            {{ t('common.create') }}
+          </button>
+        </div>
+      </div>
+      <div class="modal-backdrop" @click="closeCreateModal"></div>
+    </div>
+
     <!-- Bind to Program Modal -->
     <div v-if="showBindModal" class="modal modal-open">
       <div class="modal-box">
@@ -182,6 +255,7 @@
           </button>
         </div>
       </div>
+      <div class="modal-backdrop" @click="showBindModal = false"></div>
     </div>
   </div>
 </template>
@@ -215,6 +289,16 @@ const selectedTemplate = ref<any>(null)
 const filter = reactive({
   category: '',
 })
+
+const createForm = reactive({
+  name: '',
+  category: 'recon',
+  description: '',
+  tags: '',
+  estimated_duration_mins: 10,
+})
+
+const createLoading = ref(false)
 
 const bindForm = reactive({
   program_id: '',
@@ -267,6 +351,51 @@ const initBuiltinTemplates = async () => {
 
 const viewTemplate = (template: any) => {
   emit('view', template)
+}
+
+const closeCreateModal = () => {
+  showCreateModal.value = false
+  resetCreateForm()
+}
+
+const resetCreateForm = () => {
+  createForm.name = ''
+  createForm.category = 'recon'
+  createForm.description = ''
+  createForm.tags = ''
+  createForm.estimated_duration_mins = 10
+}
+
+const createTemplate = async () => {
+  if (!createForm.name.trim()) return
+  
+  try {
+    createLoading.value = true
+    const tagsArray = createForm.tags
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0)
+    
+    await invoke('bounty_create_workflow_template', {
+      request: {
+        name: createForm.name.trim(),
+        category: createForm.category,
+        description: createForm.description.trim() || null,
+        steps: [],
+        tags: tagsArray.length > 0 ? tagsArray : null,
+        estimated_duration_mins: createForm.estimated_duration_mins || null,
+      }
+    })
+    
+    toast.success(t('bugBounty.workflowTemplates.createSuccess'))
+    closeCreateModal()
+    await loadTemplates()
+  } catch (error) {
+    console.error('Failed to create template:', error)
+    toast.error(t('bugBounty.errors.createFailed'))
+  } finally {
+    createLoading.value = false
+  }
 }
 
 const deleteTemplate = async (template: any) => {

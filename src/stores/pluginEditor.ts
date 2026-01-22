@@ -148,7 +148,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
       // 重置为新插件
       newPluginMetadata.value = {
         id: '', name: '', version: '1.0.0', author: '',
-        mainCategory: 'traffic', category: 'vulnerability',
+        mainCategory: 'agent', category: 'vulnerability',
         default_severity: 'medium', description: '', tagsString: ''
       }
       aiChatMessages.value = []

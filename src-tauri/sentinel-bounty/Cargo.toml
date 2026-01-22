@@ -35,3 +35,6 @@ url = "2.4"
 
 # Regex for scope matching
 regex = "1"
+
+# Random (for jitter)
+rand = "0.8"

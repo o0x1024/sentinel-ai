@@ -3360,6 +3360,77 @@ pub async fn get_plugin_input_schema(
     Ok(CommandResponse::ok(schema))
 }
 
+/// 获取插件输出参数 Schema
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_plugin_output_schema(
+    state: State<'_, TrafficAnalysisState>,
+    plugin_id: String,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    let db = state.get_db_service();
+
+    // 获取插件代码
+    let code: Option<String> =
+        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin code: {}", e))?
+            .flatten();
+
+    let code = match code {
+        Some(c) => c,
+        None => {
+            return Ok(CommandResponse::ok(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "success": {"type": "boolean"},
+                    "data": {"type": "object"},
+                    "error": {"type": "string"}
+                }
+            })));
+        }
+    };
+
+    // 获取插件名称
+    let plugin_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
+            .bind(&plugin_id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| format!("Failed to query plugin name: {}", e))?
+            .flatten();
+
+    // 使用运行时调用获取 output_schema
+    let metadata = sentinel_plugins::PluginMetadata {
+        id: plugin_id.clone(),
+        name: plugin_name.unwrap_or_else(|| plugin_id.clone()),
+        version: "1.0.0".to_string(),
+        author: None,
+        main_category: "agent".to_string(),
+        category: "tool".to_string(),
+        default_severity: sentinel_plugins::Severity::Medium,
+        tags: vec![],
+        description: None,
+    };
+    
+    let schema = match sentinel_plugins::get_output_schema_from_code(&code, metadata).await {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Failed to get output schema for plugin {}: {}", plugin_id, e);
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "success": {"type": "boolean"},
+                    "data": {"type": "object"},
+                    "error": {"type": "string"}
+                }
+            })
+        }
+    };
+
+    Ok(CommandResponse::ok(schema))
+}
+
 /// 删除插件
 #[tauri::command]
 pub async fn delete_plugin(
@@ -4898,19 +4969,26 @@ pub async fn fetch_store_plugins(
                         let mut plugins = Vec::new();
                         
                         if let Some(plugin_list) = manifest.get("plugins").and_then(|v| v.as_array()) {
-                            for plugin_value in plugin_list {
-                                if let Ok(mut plugin) = serde_json::from_value::<StorePluginInfo>(plugin_value.clone()) {
-                                    // Build download URL if not provided
-                                    if plugin.download_url.is_empty() {
-                                        plugin.download_url = format!(
-                                            "https://raw.githubusercontent.com/{}/{}/main/plugins/{}.ts",
-                                            owner, repo, plugin.id
-                                        );
-                                    }
-                                    plugins.push(plugin);
-                                }
-                            }
-                        }
+                                            tracing::info!("Found {} plugins in manifest", plugin_list.len());
+                                            for plugin_value in plugin_list {
+                                                match serde_json::from_value::<StorePluginInfo>(plugin_value.clone()) {
+                                                    Ok(mut plugin) => {
+                                                        // Build download URL if not provided
+                                                        if plugin.download_url.is_empty() {
+                                                            plugin.download_url = format!(
+                                                                "https://raw.githubusercontent.com/{}/{}/main/plugins/{}.ts",
+                                                                owner, repo, plugin.id
+                                                            );
+                                                        }
+                                                        plugins.push(plugin);
+                                                    }
+                                                    Err(e) => {
+                                                        let plugin_id = plugin_value.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                                        tracing::warn!("Failed to parse plugin '{}': {}", plugin_id, e);
+                                                    }
+                                                }
+                                            }
+                                        }
                         
                         tracing::info!("Fetched {} plugins from store", plugins.len());
                         

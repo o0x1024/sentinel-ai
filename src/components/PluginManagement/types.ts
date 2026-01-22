@@ -150,7 +150,16 @@ export const trafficCategories = [
 
 // Agent plugin subcategories
 export const agentsCategories = [
-  'scanner', 'analyzer', 'reporter', 'recon', 'exploit', 'utility', 'custom'
+  'recon',      // Reconnaissance
+  'discovery',  // Discovery & Enumeration
+  'vuln',       // Vulnerability Scanning
+  'exploit',    // Exploitation
+  'monitor',    // Monitoring & Change Detection
+  'utility',    // Utilities & Tools
+  'scanner',    // General Scanners (legacy)
+  'analyzer',   // Analysis Tools (legacy)
+  'reporter',   // Reporting (legacy)
+  'custom'      // Custom
 ]
 
 // Code reference type for AI assistant

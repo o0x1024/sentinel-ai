@@ -235,6 +235,12 @@ pub fn run() {
                 }
                 let db_service = Arc::new(db_service);
 
+                // Initialize dictionary pool for plugins
+                if let Ok(pool) = db_service.get_pool() {
+                    sentinel_plugins::init_dictionary_pool(pool.clone());
+                    tracing::info!("Dictionary pool initialized for plugins");
+                }
+
                 // Initialize agent configuration from database
                 if let Err(e) = tool_commands::init_agent_config(&db_service).await {
                     tracing::error!("Failed to initialize agent config: {}", e);
@@ -726,6 +732,8 @@ pub fn run() {
             commands::bounty_get_workflow_template,
             commands::bounty_list_workflow_templates,
             commands::bounty_delete_workflow_template,
+            commands::bounty_update_workflow_template,
+            commands::bounty_run_workflow_template,
             commands::bounty_create_workflow_binding,
             commands::bounty_list_workflow_bindings,
             commands::bounty_delete_workflow_binding,
@@ -757,6 +765,14 @@ pub fn run() {
             commands::bounty_get_submissions_needing_followup,
             commands::bounty_schedule_retest,
             commands::bounty_record_retest_result,
+            // Bug Bounty Workflow Orchestration (P0)
+            commands::bounty_resolve_step_inputs,
+            commands::bounty_process_step_output,
+            commands::bounty_sink_artifacts,
+            commands::bounty_get_default_retry_config,
+            commands::bounty_get_rate_limiter_stats,
+            commands::bounty_get_plugin_ports,
+            commands::bounty_list_plugin_ports,
             // Config commands
             config::save_config,
             config::get_config,
@@ -908,6 +924,7 @@ pub fn run() {
             traffic_analysis_commands::test_plugin_advanced,
             traffic_analysis_commands::test_agent_plugin,
             traffic_analysis_commands::get_plugin_input_schema,
+            traffic_analysis_commands::get_plugin_output_schema,
             traffic_analysis_commands::start_proxy_listener,
             traffic_analysis_commands::stop_proxy_listener,
             traffic_analysis_commands::save_proxy_config,

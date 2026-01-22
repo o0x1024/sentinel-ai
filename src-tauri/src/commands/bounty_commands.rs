@@ -1,16 +1,18 @@
 //! Bug Bounty commands for Tauri
 
 use sentinel_db::{
-    DatabaseService, BountyProgramRow, ProgramScopeRow,
+    Database, DatabaseService, BountyProgramRow, ProgramScopeRow,
     BountyFindingRow, BountyEvidenceRow, BountySubmissionRow,
     BountyFindingStats, BountySubmissionStats,
     BountyChangeEventRow, BountyChangeEventStats,
     BountyWorkflowTemplateRow, BountyWorkflowBindingRow,
     BountyAssetRow, BountyAssetStats,
 };
+use sentinel_traffic::PluginManager;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State, Emitter};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -1859,6 +1861,20 @@ pub struct CreateWorkflowTemplateRequest {
     pub estimated_duration_mins: Option<i32>,
 }
 
+/// Input mapping for workflow step - defines how to get data from upstream steps
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputMapping {
+    /// Target field name in current step's input (e.g., "targets")
+    pub target_field: String,
+    /// Source step ID (e.g., "step_subdomain_enum")
+    pub source_step_id: String,
+    /// JSONPath expression to extract data (e.g., "$.data.subdomains")
+    pub source_path: String,
+    /// Optional transform: "first", "flatten", "map:fieldName"
+    #[serde(default)]
+    pub transform: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStepDefinition {
     pub id: String,
@@ -1868,6 +1884,9 @@ pub struct WorkflowStepDefinition {
     pub plugin_id: Option<String>,
     pub config: serde_json::Value,
     pub depends_on: Vec<String>,
+    /// Explicit input mappings from upstream steps
+    #[serde(default)]
+    pub input_mappings: Vec<InputMapping>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1938,6 +1957,608 @@ pub async fn bounty_delete_workflow_template(
     db_service.delete_bounty_workflow_template(&id).await.map_err(|e| e.to_string())
 }
 
+/// Update a workflow template
+#[tauri::command]
+pub async fn bounty_update_workflow_template(
+    db_service: State<'_, Arc<DatabaseService>>,
+    id: String,
+    request: CreateWorkflowTemplateRequest,
+) -> Result<BountyWorkflowTemplateRow, String> {
+    let existing = db_service.get_bounty_workflow_template(&id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Template not found".to_string())?;
+    
+    let now = Utc::now().to_rfc3339();
+    
+    let template = BountyWorkflowTemplateRow {
+        id: existing.id,
+        name: request.name,
+        description: request.description,
+        category: request.category,
+        workflow_definition_id: request.workflow_definition_id,
+        steps_json: serde_json::to_string(&request.steps).unwrap_or_default(),
+        input_schema_json: request.input_schema.map(|s| serde_json::to_string(&s).unwrap_or_default()),
+        output_schema_json: request.output_schema.map(|s| serde_json::to_string(&s).unwrap_or_default()),
+        tags_json: request.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
+        is_built_in: existing.is_built_in,
+        estimated_duration_mins: request.estimated_duration_mins,
+        created_at: existing.created_at,
+        updated_at: now,
+    };
+    
+    db_service.update_bounty_workflow_template(&template).await.map_err(|e| e.to_string())?;
+    Ok(template)
+}
+
+/// Run a workflow template
+#[tauri::command]
+pub async fn bounty_run_workflow_template(
+    app_handle: AppHandle,
+    db_service: State<'_, Arc<DatabaseService>>,
+    plugin_manager: State<'_, Arc<PluginManager>>,
+    template_id: String,
+    program_id: Option<String>,
+    inputs: serde_json::Value,
+) -> Result<String, String> {
+    let template = db_service.get_bounty_workflow_template(&template_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Template not found".to_string())?;
+    
+    let steps: Vec<WorkflowStepDefinition> = serde_json::from_str(&template.steps_json)
+        .map_err(|e| format!("Invalid steps: {}", e))?;
+    
+    if steps.is_empty() {
+        return Err("Template has no steps".to_string());
+    }
+    
+    // Generate execution ID
+    let execution_id = Uuid::new_v4().to_string();
+    
+    log::info!("Starting workflow execution {} for template {}", execution_id, template_id);
+    log::info!("Inputs: {:?}", inputs);
+    log::info!("Steps: {}", steps.len());
+    
+    // Clone for async task
+    let exec_id = execution_id.clone();
+    let db = db_service.inner().clone();
+    let pm = plugin_manager.inner().clone();
+    let app = app_handle.clone();
+    let initial_inputs = inputs.clone();
+    
+    // Spawn async task to execute workflow
+    tokio::spawn(async move {
+        execute_workflow_steps(
+            exec_id,
+            steps,
+            initial_inputs,
+            program_id,
+            db,
+            pm,
+            app,
+        ).await;
+    });
+    
+    Ok(execution_id)
+}
+
+/// Execute workflow steps asynchronously
+async fn execute_workflow_steps(
+    execution_id: String,
+    steps: Vec<WorkflowStepDefinition>,
+    initial_inputs: serde_json::Value,
+    program_id: Option<String>,
+    db: Arc<DatabaseService>,
+    plugin_manager: Arc<PluginManager>,
+    app_handle: AppHandle,
+) {
+    let total_steps = steps.len();
+    let mut completed_steps = 0;
+    let mut step_results: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    
+    // Build dependency graph
+    let step_map: HashMap<String, &WorkflowStepDefinition> = steps.iter()
+        .map(|s| (s.id.clone(), s))
+        .collect();
+    
+    // Topological sort - execute in dependency order
+    let execution_order = topological_sort_steps(&steps);
+    
+    for step_id in execution_order {
+        let step = match step_map.get(&step_id) {
+            Some(s) => *s,
+            None => continue,
+        };
+        
+        log::info!("Executing step: {} ({})", step.name, step.id);
+        
+        // Resolve inputs from dependencies and initial inputs
+        let resolved_inputs = resolve_step_inputs(step, &step_results, &initial_inputs);
+        
+        // Execute step
+        let result = execute_single_step(
+            step,
+            &resolved_inputs,
+            &plugin_manager,
+            &db,
+            program_id.as_deref(),
+        ).await;
+        
+        match result {
+            Ok(output) => {
+                step_results.insert(step.id.clone(), output.clone());
+                completed_steps += 1;
+                
+                // Emit step complete event
+                let _ = app_handle.emit("workflow:step-complete", &serde_json::json!({
+                    "execution_id": execution_id,
+                    "step_id": step.id,
+                    "step_name": step.name,
+                    "result": output,
+                    "success": true
+                }));
+            }
+            Err(e) => {
+                log::error!("Step {} failed: {}", step.id, e);
+                errors.push(serde_json::json!({
+                    "step_id": step.id,
+                    "step_name": step.name,
+                    "error": e
+                }));
+                
+                // Mark as failed but continue with other steps
+                step_results.insert(step.id.clone(), serde_json::json!({
+                    "success": false,
+                    "error": e
+                }));
+                completed_steps += 1;
+                
+                let _ = app_handle.emit("workflow:step-complete", &serde_json::json!({
+                    "execution_id": execution_id,
+                    "step_id": step.id,
+                    "step_name": step.name,
+                    "error": e,
+                    "success": false
+                }));
+            }
+        }
+        
+        // Emit progress event
+        let progress = ((completed_steps as f32 / total_steps as f32) * 100.0) as u32;
+        let _ = app_handle.emit("workflow:progress", &serde_json::json!({
+            "execution_id": execution_id,
+            "progress": progress,
+            "completed_steps": completed_steps,
+            "total_steps": total_steps
+        }));
+    }
+    
+    // Emit completion event
+    let status = if errors.is_empty() { "completed" } else { "completed_with_errors" };
+    let _ = app_handle.emit("workflow:run-complete", &serde_json::json!({
+        "execution_id": execution_id,
+        "status": status,
+        "total_steps": total_steps,
+        "completed_steps": completed_steps,
+        "errors": errors,
+        "results": step_results
+    }));
+    
+    log::info!("Workflow execution {} completed with status: {}", execution_id, status);
+}
+
+/// Topological sort for step execution order
+fn topological_sort_steps(steps: &[WorkflowStepDefinition]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut visited: HashMap<String, bool> = HashMap::new();
+    let step_map: HashMap<String, &WorkflowStepDefinition> = steps.iter()
+        .map(|s| (s.id.clone(), s))
+        .collect();
+    
+    fn visit(
+        step_id: &str,
+        step_map: &HashMap<String, &WorkflowStepDefinition>,
+        visited: &mut HashMap<String, bool>,
+        result: &mut Vec<String>,
+    ) {
+        if visited.get(step_id).copied().unwrap_or(false) {
+            return;
+        }
+        visited.insert(step_id.to_string(), true);
+        
+        if let Some(step) = step_map.get(step_id) {
+            for dep in &step.depends_on {
+                visit(dep, step_map, visited, result);
+            }
+        }
+        result.push(step_id.to_string());
+    }
+    
+    for step in steps {
+        visit(&step.id, &step_map, &mut visited, &mut result);
+    }
+    
+    result
+}
+
+/// Resolve step inputs from dependencies and initial inputs using explicit mappings
+fn resolve_step_inputs(
+    step: &WorkflowStepDefinition,
+    step_results: &HashMap<String, serde_json::Value>,
+    initial_inputs: &serde_json::Value,
+) -> serde_json::Value {
+    let mut resolved = step.config.clone();
+    
+    // 1. Merge initial inputs (lowest priority)
+    if let (Some(config_obj), Some(initial_obj)) = (resolved.as_object_mut(), initial_inputs.as_object()) {
+        for (key, value) in initial_obj {
+            if !config_obj.contains_key(key) || is_empty_value(config_obj.get(key).unwrap()) {
+                config_obj.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    
+    // 2. Apply explicit input mappings (highest priority)
+    for mapping in &step.input_mappings {
+        if let Some(source_result) = step_results.get(&mapping.source_step_id) {
+            if let Some(value) = extract_by_jsonpath(source_result, &mapping.source_path) {
+                let transformed = apply_transform(value, mapping.transform.as_deref());
+                if let Some(obj) = resolved.as_object_mut() {
+                    log::info!(
+                        "Applied mapping: {}.{} -> {} (transform: {:?})",
+                        mapping.source_step_id,
+                        mapping.source_path,
+                        mapping.target_field,
+                        mapping.transform
+                    );
+                    obj.insert(mapping.target_field.clone(), transformed);
+                }
+            } else {
+                log::warn!(
+                    "Failed to extract value from path '{}' in step '{}'",
+                    mapping.source_path,
+                    mapping.source_step_id
+                );
+            }
+        } else {
+            log::warn!(
+                "Source step '{}' not found in results for mapping to '{}'",
+                mapping.source_step_id,
+                mapping.target_field
+            );
+        }
+    }
+    
+    // 3. Auto-resolve common fields if no explicit mappings (fallback for backward compatibility)
+    if step.input_mappings.is_empty() {
+        for dep_id in &step.depends_on {
+            if let Some(dep_result) = step_results.get(dep_id) {
+                if let Some(config_obj) = resolved.as_object_mut() {
+                    let output_data = dep_result.get("output")
+                        .or_else(|| dep_result.get("data"))
+                        .unwrap_or(dep_result);
+                    
+                    // Auto-resolve subdomains -> targets
+                    if let Some(subdomains) = output_data.get("subdomains") {
+                        if !config_obj.contains_key("targets") || is_empty_value(config_obj.get("targets").unwrap()) {
+                            if let Some(arr) = subdomains.as_array() {
+                                let targets: Vec<String> = arr.iter()
+                                    .filter_map(|s| s.as_str().map(|s| s.to_string())
+                                        .or_else(|| s.get("subdomain").and_then(|v| v.as_str()).map(|s| s.to_string())))
+                                    .collect();
+                                if !targets.is_empty() {
+                                    log::info!("Auto-resolved {} subdomains as targets", targets.len());
+                                    config_obj.insert("targets".to_string(), serde_json::json!(targets));
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Auto-resolve results[*].url -> urls
+                    if let Some(results) = output_data.get("results") {
+                        if !config_obj.contains_key("urls") || is_empty_value(config_obj.get("urls").unwrap()) {
+                            if let Some(arr) = results.as_array() {
+                                let urls: Vec<String> = arr.iter()
+                                    .filter_map(|r| r.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                                    .collect();
+                                if !urls.is_empty() {
+                                    log::info!("Auto-resolved {} results as urls", urls.len());
+                                    config_obj.insert("urls".to_string(), serde_json::json!(urls));
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Auto-resolve domain/url
+                    if let Some(url) = output_data.get("url").and_then(|v| v.as_str()) {
+                        if !config_obj.contains_key("url") || is_empty_value(config_obj.get("url").unwrap()) {
+                            config_obj.insert("url".to_string(), serde_json::json!(url));
+                        }
+                    }
+                    if let Some(domain) = output_data.get("domain").and_then(|v| v.as_str()) {
+                        if !config_obj.contains_key("domain") || is_empty_value(config_obj.get("domain").unwrap()) {
+                            config_obj.insert("domain".to_string(), serde_json::json!(domain));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    resolved
+}
+
+/// Extract value from JSON data using JSONPath expression
+/// Supports: $.field, $.field.subfield, $.field[0], $.field[*].name
+fn extract_by_jsonpath(data: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
+    // Remove leading "$." if present
+    let path = path.strip_prefix("$.").unwrap_or(path);
+    let path = path.strip_prefix("$").unwrap_or(path);
+    let path = path.trim_start_matches('.');
+    
+    if path.is_empty() {
+        return Some(data.clone());
+    }
+    
+    let parts: Vec<&str> = split_jsonpath(path);
+    extract_recursive(data, &parts)
+}
+
+/// Split JSONPath into parts, handling brackets correctly
+fn split_jsonpath(path: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut in_bracket = false;
+    
+    for (i, c) in path.char_indices() {
+        match c {
+            '[' => in_bracket = true,
+            ']' => in_bracket = false,
+            '.' if !in_bracket => {
+                if i > start {
+                    parts.push(&path[start..i]);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    
+    if start < path.len() {
+        parts.push(&path[start..]);
+    }
+    
+    parts
+}
+
+/// Recursively extract value from JSON
+fn extract_recursive(data: &serde_json::Value, parts: &[&str]) -> Option<serde_json::Value> {
+    if parts.is_empty() {
+        return Some(data.clone());
+    }
+    
+    let part = parts[0];
+    let remaining = &parts[1..];
+    
+    // Handle array wildcard: field[*]
+    if part.ends_with("[*]") {
+        let field = &part[..part.len() - 3];
+        let arr = if field.is_empty() {
+            data.as_array()?
+        } else {
+            data.get(field)?.as_array()?
+        };
+        
+        if remaining.is_empty() {
+            return Some(serde_json::Value::Array(arr.clone()));
+        }
+        
+        let mapped: Vec<serde_json::Value> = arr
+            .iter()
+            .filter_map(|item| extract_recursive(item, remaining))
+            .collect();
+        
+        return Some(serde_json::Value::Array(mapped));
+    }
+    
+    // Handle array index: field[0]
+    if let Some(bracket_pos) = part.find('[') {
+        if part.ends_with(']') {
+            let field = &part[..bracket_pos];
+            let idx_str = &part[bracket_pos + 1..part.len() - 1];
+            
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                let arr = if field.is_empty() {
+                    data.as_array()?
+                } else {
+                    data.get(field)?.as_array()?
+                };
+                return extract_recursive(arr.get(idx)?, remaining);
+            }
+        }
+    }
+    
+    // Regular field access
+    extract_recursive(data.get(part)?, remaining)
+}
+
+/// Apply transform to extracted value
+fn apply_transform(value: serde_json::Value, transform: Option<&str>) -> serde_json::Value {
+    match transform {
+        None => value,
+        Some("first") => {
+            // Get first element of array
+            value
+                .as_array()
+                .and_then(|a| a.first().cloned())
+                .unwrap_or(value)
+        }
+        Some("flatten") => {
+            // Flatten nested arrays
+            if let Some(arr) = value.as_array() {
+                let flat: Vec<serde_json::Value> = arr
+                    .iter()
+                    .flat_map(|v| {
+                        v.as_array()
+                            .cloned()
+                            .unwrap_or_else(|| vec![v.clone()])
+                    })
+                    .collect();
+                serde_json::Value::Array(flat)
+            } else {
+                value
+            }
+        }
+        Some(t) if t.starts_with("map:") => {
+            // Extract field from each object in array: map:fieldName
+            let field = &t[4..];
+            if let Some(arr) = value.as_array() {
+                let mapped: Vec<serde_json::Value> = arr
+                    .iter()
+                    .filter_map(|item| item.get(field).cloned())
+                    .collect();
+                serde_json::Value::Array(mapped)
+            } else {
+                value
+            }
+        }
+        Some(unknown) => {
+            log::warn!("Unknown transform: {}", unknown);
+            value
+        }
+    }
+}
+
+fn is_empty_value(val: &serde_json::Value) -> bool {
+    match val {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(s) => s.is_empty(),
+        serde_json::Value::Array(arr) => arr.is_empty(),
+        serde_json::Value::Object(obj) => obj.is_empty(),
+        _ => false,
+    }
+}
+
+/// Execute a single workflow step
+async fn execute_single_step(
+    step: &WorkflowStepDefinition,
+    inputs: &serde_json::Value,
+    plugin_manager: &Arc<PluginManager>,
+    db: &Arc<DatabaseService>,
+    program_id: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let plugin_id = step.plugin_id.as_deref()
+        .or(step.tool_name.as_deref())
+        .ok_or_else(|| "Step has no plugin_id or tool_name".to_string())?;
+    
+    log::info!("Executing plugin '{}' with inputs: {:?}", plugin_id, inputs);
+    
+    // Ensure plugin is loaded
+    if plugin_manager.get_plugin(plugin_id).await.is_none() {
+        log::info!("Plugin '{}' not in memory, loading from database...", plugin_id);
+        
+        if let Ok(Some(plugin_data)) = db.get_plugin_from_registry(plugin_id).await {
+            let metadata = sentinel_traffic::PluginMetadata {
+                id: plugin_id.to_string(),
+                name: plugin_data.metadata.name.clone(),
+                version: plugin_data.metadata.version.clone(),
+                author: plugin_data.metadata.author.clone(),
+                main_category: plugin_data.metadata.main_category.clone(),
+                category: plugin_data.metadata.category.clone(),
+                description: plugin_data.metadata.description.clone(),
+                default_severity: sentinel_traffic::types::Severity::Medium,
+                tags: plugin_data.metadata.tags.clone(),
+            };
+            
+            let code = db.get_plugin_code(plugin_id).await.ok().flatten().unwrap_or_default();
+            // Register as enabled for workflow execution
+            let _ = plugin_manager.register_plugin(plugin_id.to_string(), metadata, true).await;
+            let _ = plugin_manager.set_plugin_code(plugin_id.to_string(), code).await;
+            log::info!("Plugin '{}' loaded from database and enabled", plugin_id);
+        } else {
+            return Err(format!("Plugin '{}' not found in database", plugin_id));
+        }
+    } else {
+        // Plugin exists in memory, ensure it's enabled for execution
+        if let Err(e) = plugin_manager.enable_plugin(plugin_id).await {
+            log::warn!("Failed to enable plugin '{}': {}", plugin_id, e);
+        }
+    }
+    
+    // Execute plugin
+    match plugin_manager.execute_agent(plugin_id, inputs).await {
+        Ok((findings, output)) => {
+            let result = serde_json::json!({
+                "success": true,
+                "plugin_id": plugin_id,
+                "findings_count": findings.len(),
+                "findings": findings,
+                "output": output
+            });
+            
+            // Auto-sink findings to database if program_id is provided
+            if let Some(pid) = program_id {
+                for finding in &findings {
+                    if let Err(e) = auto_sink_finding(db, pid, finding).await {
+                        log::warn!("Failed to auto-sink finding: {}", e);
+                    }
+                }
+            }
+            
+            Ok(result)
+        }
+        Err(e) => {
+            Err(format!("Plugin execution failed: {}", e))
+        }
+    }
+}
+
+/// Auto-sink finding to database
+async fn auto_sink_finding(
+    db: &Arc<DatabaseService>,
+    program_id: &str,
+    finding: &sentinel_plugins::Finding,
+) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    
+    // Calculate fingerprint for deduplication
+    let fingerprint = finding.calculate_signature();
+    
+    let finding_row = BountyFindingRow {
+        id: Uuid::new_v4().to_string(),
+        program_id: program_id.to_string(),
+        scope_id: None,
+        asset_id: None,
+        title: finding.title.clone(),
+        description: finding.description.clone(),
+        finding_type: finding.vuln_type.clone(),
+        severity: format!("{:?}", finding.severity).to_lowercase(),
+        status: "new".to_string(),
+        confidence: format!("{:?}", finding.confidence).to_lowercase(),
+        cvss_score: None,
+        cwe_id: finding.cwe.clone(),
+        affected_url: Some(finding.url.clone()),
+        affected_parameter: Some(finding.location.clone()),
+        reproduction_steps_json: None,
+        impact: None,
+        remediation: finding.remediation.clone(),
+        evidence_ids_json: None,
+        tags_json: None,
+        metadata_json: None,
+        fingerprint,
+        duplicate_of: None,
+        first_seen_at: now.clone(),
+        last_seen_at: now.clone(),
+        verified_at: None,
+        created_at: now.clone(),
+        updated_at: now,
+        created_by: "workflow".to_string(),
+    };
+    
+    db.create_bounty_finding(&finding_row).await.map_err(|e| e.to_string())?;
+    log::info!("Auto-sinked finding: {}", finding_row.title);
+    
+    Ok(())
+}
+
 /// Create a workflow binding
 #[tauri::command]
 pub async fn bounty_create_workflow_binding(
@@ -1990,241 +2611,13 @@ pub async fn bounty_delete_workflow_binding(
     db_service.delete_bounty_workflow_binding(&id).await.map_err(|e| e.to_string())
 }
 
-/// Initialize built-in workflow templates
+/// Initialize built-in workflow templates (disabled - no built-in templates)
 #[tauri::command]
 pub async fn bounty_init_builtin_templates(
-    db_service: State<'_, Arc<DatabaseService>>,
+    _db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<BountyWorkflowTemplateRow>, String> {
-    let now = Utc::now().to_rfc3339();
-    let mut templates = Vec::new();
-    
-    // Template 1: Subdomain Recon Pipeline
-    let subdomain_recon = BountyWorkflowTemplateRow {
-        id: "builtin-subdomain-recon".to_string(),
-        name: "Subdomain Recon Pipeline".to_string(),
-        description: Some("Discover subdomains, check liveness, and fingerprint technologies".to_string()),
-        category: "recon".to_string(),
-        workflow_definition_id: None,
-        steps_json: serde_json::to_string(&vec![
-            serde_json::json!({
-                "id": "step-1",
-                "name": "Subdomain Enumeration",
-                "step_type": "tool",
-                "tool_name": "subdomain_enum",
-                "config": {"sources": ["crt.sh", "hackertarget", "rapiddns"]},
-                "depends_on": []
-            }),
-            serde_json::json!({
-                "id": "step-2",
-                "name": "DNS Resolution",
-                "step_type": "tool",
-                "tool_name": "dns_resolve",
-                "config": {"resolvers": ["8.8.8.8", "1.1.1.1"]},
-                "depends_on": ["step-1"]
-            }),
-            serde_json::json!({
-                "id": "step-3",
-                "name": "HTTP Probe",
-                "step_type": "tool",
-                "tool_name": "http_probe",
-                "config": {"ports": [80, 443, 8080, 8443]},
-                "depends_on": ["step-2"]
-            }),
-            serde_json::json!({
-                "id": "step-4",
-                "name": "Tech Fingerprint",
-                "step_type": "tool",
-                "tool_name": "wappalyzer",
-                "config": {},
-                "depends_on": ["step-3"]
-            })
-        ]).unwrap_or_default(),
-        input_schema_json: Some(r#"{"domain": "string"}"#.to_string()),
-        output_schema_json: Some(r#"{"subdomains": "array", "live_hosts": "array", "technologies": "object"}"#.to_string()),
-        tags_json: Some(serde_json::to_string(&vec!["recon", "subdomain", "fingerprint"]).unwrap_or_default()),
-        is_built_in: true,
-        estimated_duration_mins: Some(15),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
-    
-    // Template 2: Directory Bruteforce
-    let dir_brute = BountyWorkflowTemplateRow {
-        id: "builtin-dir-brute".to_string(),
-        name: "Directory Discovery".to_string(),
-        description: Some("Discover hidden directories and files".to_string()),
-        category: "discovery".to_string(),
-        workflow_definition_id: None,
-        steps_json: serde_json::to_string(&vec![
-            serde_json::json!({
-                "id": "step-1",
-                "name": "Directory Bruteforce",
-                "step_type": "tool",
-                "tool_name": "dirsearch",
-                "config": {"wordlist": "common.txt", "extensions": ["php", "asp", "aspx", "jsp", "html"]},
-                "depends_on": []
-            }),
-            serde_json::json!({
-                "id": "step-2",
-                "name": "Interesting Files Check",
-                "step_type": "tool",
-                "tool_name": "file_check",
-                "config": {"files": [".git/config", ".env", "robots.txt", "sitemap.xml"]},
-                "depends_on": []
-            })
-        ]).unwrap_or_default(),
-        input_schema_json: Some(r#"{"url": "string"}"#.to_string()),
-        output_schema_json: Some(r#"{"directories": "array", "files": "array"}"#.to_string()),
-        tags_json: Some(serde_json::to_string(&vec!["discovery", "directory", "files"]).unwrap_or_default()),
-        is_built_in: true,
-        estimated_duration_mins: Some(30),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
-
-    // Template 3: Basic Vuln Scan
-    let vuln_scan = BountyWorkflowTemplateRow {
-        id: "builtin-basic-vuln-scan".to_string(),
-        name: "Basic Vulnerability Scan".to_string(),
-        description: Some("Run common vulnerability checks".to_string()),
-        category: "vuln".to_string(),
-        workflow_definition_id: None,
-        steps_json: serde_json::to_string(&vec![
-            serde_json::json!({
-                "id": "step-1",
-                "name": "XSS Check",
-                "step_type": "plugin",
-                "plugin_id": "xss_detector",
-                "config": {},
-                "depends_on": []
-            }),
-            serde_json::json!({
-                "id": "step-2",
-                "name": "SQLi Check",
-                "step_type": "plugin",
-                "plugin_id": "sql_injection_detector",
-                "config": {},
-                "depends_on": []
-            }),
-            serde_json::json!({
-                "id": "step-3",
-                "name": "Sensitive Info Check",
-                "step_type": "plugin",
-                "plugin_id": "sensitive_info_detector",
-                "config": {},
-                "depends_on": []
-            })
-        ]).unwrap_or_default(),
-        input_schema_json: Some(r#"{"url": "string"}"#.to_string()),
-        output_schema_json: Some(r#"{"findings": "array"}"#.to_string()),
-        tags_json: Some(serde_json::to_string(&vec!["vuln", "xss", "sqli"]).unwrap_or_default()),
-        is_built_in: true,
-        estimated_duration_mins: Some(10),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
-
-    // Template 4: API Endpoint Discovery
-    let api_discovery = BountyWorkflowTemplateRow {
-        id: "builtin-api-discovery".to_string(),
-        name: "API Endpoint Discovery".to_string(),
-        description: Some("Discover and document API endpoints".to_string()),
-        category: "api".to_string(),
-        workflow_definition_id: None,
-        steps_json: serde_json::to_string(&vec![
-            serde_json::json!({
-                "id": "step-1",
-                "name": "Swagger/OpenAPI Check",
-                "step_type": "tool",
-                "tool_name": "api_docs_check",
-                "config": {"paths": ["/swagger.json", "/openapi.json", "/api-docs", "/v1/docs"]},
-                "depends_on": []
-            }),
-            serde_json::json!({
-                "id": "step-2",
-                "name": "API Endpoint Fuzzing",
-                "step_type": "tool",
-                "tool_name": "api_fuzz",
-                "config": {"wordlist": "api-endpoints.txt"},
-                "depends_on": []
-            })
-        ]).unwrap_or_default(),
-        input_schema_json: Some(r#"{"base_url": "string"}"#.to_string()),
-        output_schema_json: Some(r#"{"endpoints": "array", "docs_found": "boolean"}"#.to_string()),
-        tags_json: Some(serde_json::to_string(&vec!["api", "discovery", "swagger"]).unwrap_or_default()),
-        is_built_in: true,
-        estimated_duration_mins: Some(20),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
-
-    // Template 5: Full Recon Pipeline
-    let full_recon = BountyWorkflowTemplateRow {
-        id: "builtin-full-recon".to_string(),
-        name: "Full Recon Pipeline".to_string(),
-        description: Some("Complete reconnaissance: subdomain → liveness → fingerprint → directory → vuln scan".to_string()),
-        category: "recon".to_string(),
-        workflow_definition_id: None,
-        steps_json: serde_json::to_string(&vec![
-            serde_json::json!({
-                "id": "step-1",
-                "name": "Subdomain Enumeration",
-                "step_type": "tool",
-                "tool_name": "subdomain_enum",
-                "config": {},
-                "depends_on": []
-            }),
-            serde_json::json!({
-                "id": "step-2",
-                "name": "HTTP Probe",
-                "step_type": "tool",
-                "tool_name": "http_probe",
-                "config": {},
-                "depends_on": ["step-1"]
-            }),
-            serde_json::json!({
-                "id": "step-3",
-                "name": "Tech Fingerprint",
-                "step_type": "tool",
-                "tool_name": "wappalyzer",
-                "config": {},
-                "depends_on": ["step-2"]
-            }),
-            serde_json::json!({
-                "id": "step-4",
-                "name": "Directory Discovery",
-                "step_type": "tool",
-                "tool_name": "dirsearch",
-                "config": {},
-                "depends_on": ["step-2"]
-            }),
-            serde_json::json!({
-                "id": "step-5",
-                "name": "Basic Vuln Scan",
-                "step_type": "plugin",
-                "plugin_id": "vuln_scanner",
-                "config": {},
-                "depends_on": ["step-3", "step-4"]
-            })
-        ]).unwrap_or_default(),
-        input_schema_json: Some(r#"{"domain": "string"}"#.to_string()),
-        output_schema_json: Some(r#"{"subdomains": "array", "live_hosts": "array", "technologies": "object", "directories": "array", "findings": "array"}"#.to_string()),
-        tags_json: Some(serde_json::to_string(&vec!["recon", "full", "automated"]).unwrap_or_default()),
-        is_built_in: true,
-        estimated_duration_mins: Some(60),
-        created_at: now.clone(),
-        updated_at: now,
-    };
-
-    // Insert templates (skip if exists)
-    for template in [subdomain_recon, dir_brute, vuln_scan, api_discovery, full_recon] {
-        if db_service.get_bounty_workflow_template(&template.id).await.map_err(|e| e.to_string())?.is_none() {
-            db_service.create_bounty_workflow_template(&template).await.map_err(|e| e.to_string())?;
-            templates.push(template);
-        }
-    }
-    
-    Ok(templates)
+    // Built-in templates have been removed. Users should create their own templates.
+    Ok(Vec::new())
 }
 
 // ============================================================================
@@ -3681,4 +4074,577 @@ pub async fn bounty_record_retest_result(
         notes,
         workflow_run_id: None,
     })
+}
+
+// ============================================================================
+// Workflow Orchestration Commands (P0)
+// ============================================================================
+
+/// Workflow step input resolution request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveStepInputsRequest {
+    pub step_id: String,
+    pub step_name: String,
+    pub plugin_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub config: serde_json::Value,
+    pub depends_on: Vec<String>,
+    pub upstream_results: std::collections::HashMap<String, serde_json::Value>,
+    pub initial_inputs: serde_json::Value,
+}
+
+/// Resolved step inputs response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveStepInputsResponse {
+    pub resolved_config: serde_json::Value,
+    pub resolved_from_upstream: Vec<String>,
+}
+
+/// Resolve workflow step inputs from upstream outputs
+#[tauri::command]
+pub async fn bounty_resolve_step_inputs(
+    request: ResolveStepInputsRequest,
+) -> Result<ResolveStepInputsResponse, String> {
+    use sentinel_bounty::services::{WorkflowOrchestrator, StepContext};
+    
+    let orchestrator = WorkflowOrchestrator::new();
+    
+    let step = StepContext {
+        step_id: request.step_id,
+        step_name: request.step_name,
+        plugin_id: request.plugin_id,
+        tool_name: request.tool_name,
+        config: request.config.clone(),
+        depends_on: request.depends_on,
+        retry_config: None,
+        target_host: None,
+    };
+    
+    let resolved = orchestrator.resolve_step_inputs(
+        &step,
+        &request.upstream_results,
+        &request.initial_inputs,
+    );
+    
+    // Identify which params were resolved from upstream
+    let mut resolved_from_upstream = Vec::new();
+    if let (Some(orig_obj), Some(resolved_obj)) = (request.config.as_object(), resolved.as_object()) {
+        for (key, resolved_val) in resolved_obj {
+            let orig_val = orig_obj.get(key);
+            let was_empty = orig_val.map(|v| is_value_empty(v)).unwrap_or(true);
+            let is_now_filled = !is_value_empty(resolved_val);
+            if was_empty && is_now_filled {
+                resolved_from_upstream.push(key.clone());
+            }
+        }
+    }
+    
+    Ok(ResolveStepInputsResponse {
+        resolved_config: resolved,
+        resolved_from_upstream,
+    })
+}
+
+fn is_value_empty(val: &serde_json::Value) -> bool {
+    match val {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(s) => s.is_empty(),
+        serde_json::Value::Array(arr) => arr.is_empty(),
+        serde_json::Value::Object(obj) => obj.is_empty(),
+        _ => false,
+    }
+}
+
+/// Process step output request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessStepOutputRequest {
+    pub execution_id: String,
+    pub step_id: String,
+    pub step_name: String,
+    pub plugin_id: Option<String>,
+    pub raw_output: serde_json::Value,
+}
+
+/// Processed artifact
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessedArtifact {
+    pub id: String,
+    pub step_id: String,
+    pub artifact_type: String,
+    pub data: serde_json::Value,
+    pub count: Option<usize>,
+    pub source: Option<String>,
+}
+
+/// Process step output response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessStepOutputResponse {
+    pub artifacts: Vec<ProcessedArtifact>,
+    pub summary: ArtifactSummaryResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ArtifactSummaryResponse {
+    pub findings: usize,
+    pub subdomains: usize,
+    pub live_hosts: usize,
+    pub technologies: usize,
+    pub endpoints: usize,
+    pub secrets: usize,
+    pub directories: usize,
+}
+
+/// Process workflow step output into typed artifacts
+#[tauri::command]
+pub async fn bounty_process_step_output(
+    request: ProcessStepOutputRequest,
+) -> Result<ProcessStepOutputResponse, String> {
+    use sentinel_bounty::services::{WorkflowOrchestrator, StepContext, ArtifactType};
+    
+    let orchestrator = WorkflowOrchestrator::new();
+    
+    let step = StepContext {
+        step_id: request.step_id,
+        step_name: request.step_name,
+        plugin_id: request.plugin_id.clone(),
+        tool_name: None,
+        config: serde_json::json!({}),
+        depends_on: vec![],
+        retry_config: None,
+        target_host: None,
+    };
+    
+    let artifacts = orchestrator.process_step_output(&step, &request.execution_id, &request.raw_output);
+    
+    let mut summary = ArtifactSummaryResponse::default();
+    let processed: Vec<ProcessedArtifact> = artifacts.iter().map(|a| {
+        // Update summary
+        match a.artifact_type {
+            ArtifactType::Finding => summary.findings += a.metadata.count.unwrap_or(1),
+            ArtifactType::Subdomains => summary.subdomains += a.metadata.count.unwrap_or(0),
+            ArtifactType::LiveHosts => summary.live_hosts += a.metadata.count.unwrap_or(0),
+            ArtifactType::Technologies => summary.technologies += a.metadata.count.unwrap_or(0),
+            ArtifactType::Endpoints => summary.endpoints += a.metadata.count.unwrap_or(0),
+            ArtifactType::Secrets => summary.secrets += a.metadata.count.unwrap_or(0),
+            ArtifactType::Directories => summary.directories += a.metadata.count.unwrap_or(0),
+            _ => {}
+        }
+        
+        ProcessedArtifact {
+            id: a.id.clone(),
+            step_id: a.step_id.clone(),
+            artifact_type: a.artifact_type.as_str().to_string(),
+            data: a.data.clone(),
+            count: a.metadata.count,
+            source: a.metadata.source.clone(),
+        }
+    }).collect();
+    
+    Ok(ProcessStepOutputResponse {
+        artifacts: processed,
+        summary,
+    })
+}
+
+/// Sink artifacts request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SinkArtifactsRequest {
+    pub program_id: String,
+    pub scope_id: Option<String>,
+    pub execution_id: String,
+    pub artifacts: Vec<ProcessedArtifact>,
+    pub auto_create_findings: Option<bool>,
+    pub auto_update_assets: Option<bool>,
+    pub deduplicate: Option<bool>,
+}
+
+/// Sink artifacts response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SinkArtifactsResponse {
+    pub findings_created: Vec<String>,
+    pub assets_created: Vec<String>,
+    pub assets_updated: Vec<String>,
+    pub subdomains_imported: usize,
+    pub live_hosts_imported: usize,
+    pub skipped_duplicates: usize,
+    pub errors: Vec<String>,
+}
+
+/// Sink workflow artifacts to database
+#[tauri::command]
+pub async fn bounty_sink_artifacts(
+    db_service: State<'_, Arc<DatabaseService>>,
+    request: SinkArtifactsRequest,
+) -> Result<SinkArtifactsResponse, String> {
+    let now = Utc::now().to_rfc3339();
+    let mut response = SinkArtifactsResponse {
+        findings_created: vec![],
+        assets_created: vec![],
+        assets_updated: vec![],
+        subdomains_imported: 0,
+        live_hosts_imported: 0,
+        skipped_duplicates: 0,
+        errors: vec![],
+    };
+    
+    let auto_create_findings = request.auto_create_findings.unwrap_or(true);
+    let auto_update_assets = request.auto_update_assets.unwrap_or(true);
+    let deduplicate = request.deduplicate.unwrap_or(true);
+    
+    for artifact in request.artifacts {
+        match artifact.artifact_type.as_str() {
+            "finding" => {
+                if !auto_create_findings { continue; }
+                
+                // Extract finding data
+                if let Ok(finding_data) = serde_json::from_value::<FindingArtifactData>(artifact.data.clone()) {
+                    // Generate fingerprint for deduplication
+                    let fingerprint = format!(
+                        "{}:{}:{}:{}",
+                        request.program_id,
+                        finding_data.finding_type,
+                        finding_data.affected_url.as_deref().unwrap_or(""),
+                        artifact.step_id
+                    );
+                    let fingerprint = format!("{:x}", md5::compute(fingerprint.as_bytes()));
+                    
+                    // Check duplicate
+                    if deduplicate {
+                        if db_service.get_bounty_finding_by_fingerprint(&fingerprint)
+                            .await.map_err(|e| e.to_string())?.is_some() {
+                            response.skipped_duplicates += 1;
+                            continue;
+                        }
+                    }
+                    
+                    let finding_id = Uuid::new_v4().to_string();
+                    let finding = BountyFindingRow {
+                        id: finding_id.clone(),
+                        program_id: request.program_id.clone(),
+                        scope_id: request.scope_id.clone(),
+                        asset_id: None,
+                        title: finding_data.title,
+                        description: finding_data.description,
+                        finding_type: finding_data.finding_type,
+                        severity: finding_data.severity.unwrap_or_else(|| "medium".to_string()),
+                        status: "new".to_string(),
+                        confidence: finding_data.confidence.unwrap_or_else(|| "medium".to_string()),
+                        cvss_score: None,
+                        cwe_id: finding_data.cwe_id,
+                        affected_url: finding_data.affected_url,
+                        affected_parameter: finding_data.affected_parameter,
+                        reproduction_steps_json: finding_data.reproduction_steps.map(|s| 
+                            serde_json::to_string(&s).unwrap_or_default()
+                        ),
+                        impact: finding_data.impact,
+                        remediation: finding_data.remediation,
+                        evidence_ids_json: None,
+                        tags_json: Some(serde_json::to_string(&vec!["workflow", "automated"]).unwrap_or_default()),
+                        metadata_json: Some(serde_json::to_string(&serde_json::json!({
+                            "source": "workflow",
+                            "execution_id": request.execution_id,
+                            "step_id": artifact.step_id,
+                        })).unwrap_or_default()),
+                        fingerprint,
+                        duplicate_of: None,
+                        first_seen_at: now.clone(),
+                        last_seen_at: now.clone(),
+                        verified_at: None,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                        created_by: "workflow".to_string(),
+                    };
+                    
+                    match db_service.create_bounty_finding(&finding).await {
+                        Ok(_) => response.findings_created.push(finding_id),
+                        Err(e) => response.errors.push(format!("Failed to create finding: {}", e)),
+                    }
+                }
+            }
+            "subdomains" => {
+                if !auto_update_assets { continue; }
+                
+                // Extract subdomains and create assets
+                if let Some(subdomains) = artifact.data.get("subdomains").and_then(|v| v.as_array()) {
+                    for subdomain_entry in subdomains {
+                        let subdomain = subdomain_entry.get("subdomain")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_else(|| subdomain_entry.as_str().unwrap_or(""));
+                        
+                        if subdomain.is_empty() { continue; }
+                        
+                        // Create asset with canonical URL
+                        let canonical_url = format!("https://{}", subdomain);
+                        
+                        // Check if asset exists
+                        let existing = db_service.get_bounty_asset_by_canonical_url(&request.program_id, &canonical_url)
+                            .await.map_err(|e| e.to_string())?;
+                        
+                        if existing.is_none() {
+                            let asset = BountyAssetRow {
+                                id: Uuid::new_v4().to_string(),
+                                program_id: request.program_id.clone(),
+                                scope_id: request.scope_id.clone(),
+                                asset_type: "domain".to_string(),
+                                canonical_url: canonical_url.clone(),
+                                original_urls_json: None,
+                                hostname: Some(subdomain.to_string()),
+                                port: None,
+                                path: None,
+                                protocol: Some("https".to_string()),
+                                ip_addresses_json: None,
+                                dns_records_json: None,
+                                tech_stack_json: None,
+                                fingerprint: None,
+                                tags_json: None,
+                                labels_json: None,
+                                priority_score: Some(0.0),
+                                risk_score: Some(0.0),
+                                is_alive: true,
+                                last_checked_at: None,
+                                first_seen_at: now.clone(),
+                                last_seen_at: now.clone(),
+                                findings_count: 0,
+                                change_events_count: 0,
+                                metadata_json: Some(serde_json::to_string(&serde_json::json!({
+                                    "source": "workflow_subdomain_enum",
+                                    "execution_id": request.execution_id,
+                                })).unwrap_or_default()),
+                                created_at: now.clone(),
+                                updated_at: now.clone(),
+                            };
+                            
+                            if db_service.create_bounty_asset(&asset).await.is_ok() {
+                                response.assets_created.push(asset.id);
+                            }
+                        }
+                        response.subdomains_imported += 1;
+                    }
+                }
+            }
+            "live_hosts" => {
+                if !auto_update_assets { continue; }
+                
+                // Extract live hosts and update assets
+                if let Some(hosts) = artifact.data.get("hosts").and_then(|v| v.as_array()) {
+                    for host in hosts {
+                        let url = host.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                        if url.is_empty() { continue; }
+                        
+                        let status_code = host.get("status_code")
+                            .or_else(|| host.get("statusCode"))
+                            .and_then(|v| v.as_i64())
+                            .map(|n| n as i32);
+                        let title = host.get("title").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let tech: Option<Vec<String>> = host.get("technologies")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+                        
+                        // Try to find existing asset
+                        let (canonical_url, _, _, _, _) = canonicalize_url(url);
+                        if let Ok(Some(mut asset)) = db_service.get_bounty_asset_by_canonical_url(&request.program_id, &canonical_url).await {
+                            // Update existing asset - store status/title in metadata
+                            let mut metadata: serde_json::Map<String, serde_json::Value> = asset.metadata_json
+                                .as_ref()
+                                .and_then(|s| serde_json::from_str(s).ok())
+                                .unwrap_or_default();
+                            if let Some(sc) = status_code {
+                                metadata.insert("status_code".to_string(), serde_json::json!(sc));
+                            }
+                            if let Some(ref t) = title {
+                                metadata.insert("title".to_string(), serde_json::json!(t));
+                            }
+                            asset.metadata_json = Some(serde_json::to_string(&metadata).unwrap_or_default());
+                            asset.is_alive = status_code.map(|c| c >= 200 && c < 400).unwrap_or(true);
+                            if let Some(t) = tech {
+                                asset.tech_stack_json = Some(serde_json::to_string(&t).unwrap_or_default());
+                            }
+                            asset.last_seen_at = now.clone();
+                            asset.updated_at = now.clone();
+                            
+                            if db_service.update_bounty_asset(&asset).await.is_ok() {
+                                response.assets_updated.push(asset.id);
+                            }
+                        }
+                        response.live_hosts_imported += 1;
+                    }
+                }
+            }
+            _ => {
+                // Other artifact types - log but don't process
+            }
+        }
+    }
+    
+    Ok(response)
+}
+
+/// Finding artifact data for deserialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FindingArtifactData {
+    pub title: String,
+    pub description: String,
+    pub finding_type: String,
+    pub severity: Option<String>,
+    pub confidence: Option<String>,
+    pub affected_url: Option<String>,
+    pub affected_parameter: Option<String>,
+    pub cwe_id: Option<String>,
+    pub impact: Option<String>,
+    pub remediation: Option<String>,
+    pub reproduction_steps: Option<Vec<String>>,
+}
+
+/// Retry configuration for workflow step
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepRetryConfig {
+    pub max_attempts: u32,
+    pub initial_delay_ms: u64,
+    pub max_delay_ms: u64,
+    pub backoff_type: String, // "fixed", "linear", "exponential"
+    pub backoff_multiplier: Option<f64>,
+}
+
+/// Get default retry configuration
+#[tauri::command]
+pub async fn bounty_get_default_retry_config() -> Result<StepRetryConfig, String> {
+    Ok(StepRetryConfig {
+        max_attempts: 3,
+        initial_delay_ms: 1000,
+        max_delay_ms: 30000,
+        backoff_type: "exponential".to_string(),
+        backoff_multiplier: Some(2.0),
+    })
+}
+
+/// Rate limiter stats
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimiterStats {
+    pub global_available: usize,
+    pub global_limit: usize,
+    pub per_host_limit: usize,
+    pub per_host_delay_ms: u64,
+}
+
+/// Get rate limiter statistics
+#[tauri::command]
+pub async fn bounty_get_rate_limiter_stats() -> Result<RateLimiterStats, String> {
+    use sentinel_bounty::services::WorkflowOrchestrator;
+    
+    let orchestrator = WorkflowOrchestrator::new();
+    let stats = orchestrator.rate_limiter().stats();
+    
+    Ok(RateLimiterStats {
+        global_available: stats.global_available,
+        global_limit: stats.global_limit,
+        per_host_limit: stats.per_host_limit,
+        per_host_delay_ms: stats.per_host_delay_ms,
+    })
+}
+
+/// Plugin port info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginPortInfo {
+    pub plugin_id: String,
+    pub output_ports: Vec<PortDef>,
+    pub input_params: Vec<InputParamDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortDef {
+    pub name: String,
+    pub artifact_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputParamDef {
+    pub name: String,
+    pub expected_artifact_type: String,
+    pub extract_path: Option<String>,
+    pub required: bool,
+}
+
+/// Get plugin port definitions for data flow
+#[tauri::command]
+pub async fn bounty_get_plugin_ports(
+    plugin_id: String,
+) -> Result<Option<PluginPortInfo>, String> {
+    use sentinel_bounty::services::PluginPortRegistry;
+    
+    let registry = PluginPortRegistry::new();
+    
+    let output_ports: Vec<PortDef> = registry.get_output_ports(&plugin_id)
+        .map(|ports| ports.iter().map(|(name, atype)| PortDef {
+            name: name.clone(),
+            artifact_type: atype.as_str().to_string(),
+        }).collect())
+        .unwrap_or_default();
+    
+    let input_params: Vec<InputParamDef> = registry.get_input_specs(&plugin_id)
+        .map(|specs| specs.iter().map(|(name, spec)| InputParamDef {
+            name: name.clone(),
+            expected_artifact_type: spec.artifact_type.as_str().to_string(),
+            extract_path: spec.extract_path.clone(),
+            required: spec.required,
+        }).collect())
+        .unwrap_or_default();
+    
+    if output_ports.is_empty() && input_params.is_empty() {
+        return Ok(None);
+    }
+    
+    Ok(Some(PluginPortInfo {
+        plugin_id,
+        output_ports,
+        input_params,
+    }))
+}
+
+/// Get all registered plugin ports
+#[tauri::command]
+pub async fn bounty_list_plugin_ports() -> Result<Vec<PluginPortInfo>, String> {
+    use sentinel_bounty::services::PluginPortRegistry;
+    
+    let registry = PluginPortRegistry::new();
+    
+    // List of known builtin plugins
+    let plugin_ids = vec![
+        "subdomain_enumerator",
+        "http_prober",
+        "tech_fingerprinter",
+        "directory_bruteforcer",
+        "js_analyzer",
+        "ssrf_detector",
+        "cors_misconfiguration",
+        "open_redirect_detector",
+        "nextjs_rce_scanner",
+        "subdomain_takeover",
+    ];
+    
+    let mut result = Vec::new();
+    for plugin_id in plugin_ids {
+        let output_ports = registry.get_output_ports(plugin_id)
+            .map(|ports| ports.iter().map(|(name, atype)| PortDef {
+                name: name.clone(),
+                artifact_type: atype.as_str().to_string(),
+            }).collect())
+            .unwrap_or_default();
+        
+        let input_params = registry.get_input_specs(plugin_id)
+            .map(|specs| specs.iter().map(|(name, spec)| InputParamDef {
+                name: name.clone(),
+                expected_artifact_type: spec.artifact_type.as_str().to_string(),
+                extract_path: spec.extract_path.clone(),
+                required: spec.required,
+            }).collect())
+            .unwrap_or_default();
+        
+        result.push(PluginPortInfo {
+            plugin_id: plugin_id.to_string(),
+            output_ports,
+            input_params,
+        });
+    }
+    
+    Ok(result)
 }

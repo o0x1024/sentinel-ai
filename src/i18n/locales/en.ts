@@ -1739,7 +1739,20 @@ export default {
     errorInfo: 'Error Info',
     unknownError: 'Unknown error',
     referToAi: 'Reference to AI',
-    testResultAdded: 'Test result added to AI assistant'
+    testResultAdded: 'Test result added to AI assistant',
+    // Agent plugin subcategories
+    agentCategories: {
+      recon: 'Reconnaissance',
+      discovery: 'Discovery',
+      vuln: 'Vulnerability Scan',
+      exploit: 'Exploitation',
+      monitor: 'Change Monitor',
+      utility: 'Utility',
+      scanner: 'Scanner',
+      analyzer: 'Analyzer',
+      reporter: 'Reporter',
+      custom: 'Custom'
+    }
   },
   license: {
     title: 'Software Activation',

@@ -1280,7 +1280,9 @@ export default {
         newWorkflowTooltip: '新建工作流',
         aiGenerate: 'AI生成',
         aiGenerateTooltip: '通过自然语言生成工作流',
-        resetView: '重置视图',
+        fitToViewTooltip: '适应视图 (Ctrl+0)',
+        resetViewTooltip: '重置视图 (Ctrl+1)',
+        minimapTooltip: '小地图',
         arrangeNodes: '整理节点',
         arrangeNodesTooltip: '自动整理节点布局',
         undoTooltip: '撤销 (Ctrl+Z)',
@@ -1292,7 +1294,14 @@ export default {
       emptyState: {
         title: '画布为空',
         description: '从左侧节点库拖拽节点到这里开始创建工作流',
-        tip: '提示：按住 Shift 键拖拽可以平移画布'
+        tip: '提示：在空白区域拖拽可以平移画布，滚轮缩放，Ctrl+拖拽框选'
+      },
+      canvasHints: {
+        space: '拖拽空白: 移动画布',
+        scroll: '滚轮: 缩放',
+        drag: 'Ctrl+拖拽: 框选',
+        selectAll: '全选',
+        selected: '已选中 {count} 个节点'
       },
       ports: {
         input: '输入',
