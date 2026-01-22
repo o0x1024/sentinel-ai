@@ -60,7 +60,9 @@
           v-if="selectedCategory === 'store'"
           ref="pluginStoreSectionRef"
           :installed-plugin-ids="installedPluginIds"
+          :installed-plugins="installedPlugins"
           @plugin-installed="onPluginInstalled"
+          @plugin-updated="onPluginUpdated"
         />
 
         <!-- Plugin Review Section -->
@@ -372,6 +374,12 @@ const isAdvancedAgent = computed(() => advancedPlugin.value?.metadata?.main_cate
 // Installed plugin IDs for store section
 const installedPluginIds = computed(() => plugins.value.map(p => p.metadata.id))
 
+// Installed plugins with version info for store section
+const installedPlugins = computed(() => plugins.value.map(p => ({
+  id: p.metadata.id,
+  version: p.metadata.version
+})))
+
 // Helper Functions
 const isPluginFavorited = (plugin: PluginRecord): boolean => plugin.is_favorited || false
 
@@ -473,8 +481,12 @@ const togglePluginFavorite = async (plugin: PluginRecord) => {
   }
 }
 
-// Plugin store callback
+// Plugin store callbacks
 const onPluginInstalled = async () => {
+  await refreshPlugins()
+}
+
+const onPluginUpdated = async () => {
   await refreshPlugins()
 }
 

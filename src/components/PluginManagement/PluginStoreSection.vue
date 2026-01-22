@@ -103,7 +103,15 @@
 
           <!-- Plugin Meta -->
           <div class="flex flex-wrap gap-2 mt-2">
-            <span class="badge badge-outline badge-sm">v{{ plugin.version }}</span>
+            <span class="badge badge-outline badge-sm" :class="{'badge-warning': hasUpdate(plugin)}">
+              v{{ plugin.version }}
+              <template v-if="hasUpdate(plugin)">
+                <i class="fas fa-arrow-up ml-1 text-xs"></i>
+              </template>
+            </span>
+            <span v-if="getLocalVersion(plugin.id) && hasUpdate(plugin)" class="badge badge-ghost badge-sm text-xs">
+              {{ $t('plugins.store.localVersion', '本地') }}: v{{ getLocalVersion(plugin.id) }}
+            </span>
             <span v-if="plugin.author" class="badge badge-ghost badge-sm">
               <i class="fas fa-user mr-1"></i>{{ plugin.author }}
             </span>
@@ -129,6 +137,12 @@
               <span v-if="installing === plugin.id" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-download mr-1"></i>
               {{ $t('plugins.store.install') }}
+            </button>
+            <button v-else-if="hasUpdate(plugin)" class="btn btn-sm btn-warning"
+              :disabled="updating === plugin.id" @click="updatePlugin(plugin)">
+              <span v-if="updating === plugin.id" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-sync-alt mr-1"></i>
+              {{ $t('plugins.store.update', '更新') }}
             </button>
             <button v-else class="btn btn-sm btn-outline" disabled>
               <i class="fas fa-check mr-1"></i>
@@ -163,7 +177,15 @@
               {{ plugin.description || $t('plugins.store.noDescription') }}
             </p>
             <div class="flex flex-wrap gap-2 items-center">
-              <span class="badge badge-outline badge-sm">v{{ plugin.version }}</span>
+              <span class="badge badge-outline badge-sm" :class="{'badge-warning': hasUpdate(plugin)}">
+                v{{ plugin.version }}
+                <template v-if="hasUpdate(plugin)">
+                  <i class="fas fa-arrow-up ml-1 text-xs"></i>
+                </template>
+              </span>
+              <span v-if="getLocalVersion(plugin.id) && hasUpdate(plugin)" class="badge badge-ghost badge-sm text-xs">
+                {{ $t('plugins.store.localVersion', '本地') }}: v{{ getLocalVersion(plugin.id) }}
+              </span>
               <span v-if="plugin.author" class="badge badge-ghost badge-sm">
                 <i class="fas fa-user mr-1"></i>{{ plugin.author }}
               </span>
@@ -188,6 +210,12 @@
               <span v-if="installing === plugin.id" class="loading loading-spinner loading-xs"></span>
               <i v-else class="fas fa-download"></i>
               <span class="hidden sm:inline ml-1">{{ $t('plugins.store.install') }}</span>
+            </button>
+            <button v-else-if="hasUpdate(plugin)" class="btn btn-sm btn-warning"
+              :disabled="updating === plugin.id" @click="updatePlugin(plugin)">
+              <span v-if="updating === plugin.id" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-sync-alt"></i>
+              <span class="hidden sm:inline ml-1">{{ $t('plugins.store.update', '更新') }}</span>
             </button>
             <button v-else class="btn btn-sm btn-outline" disabled>
               <i class="fas fa-check"></i>
@@ -264,6 +292,12 @@
             <i v-else class="fas fa-download mr-1"></i>
             {{ $t('plugins.store.install') }}
           </button>
+          <button v-else-if="selectedPlugin && hasUpdate(selectedPlugin)" class="btn btn-warning"
+            :disabled="updating === selectedPlugin.id" @click="updatePlugin(selectedPlugin)">
+            <span v-if="updating === selectedPlugin.id" class="loading loading-spinner loading-xs"></span>
+            <i v-else class="fas fa-sync-alt mr-1"></i>
+            {{ $t('plugins.store.update', '更新') }}
+          </button>
           <button class="btn" @click="closeDetailDialog">{{ $t('common.close') }}</button>
         </div>
       </div>
@@ -309,12 +343,19 @@ interface CacheData {
 
 const { t } = useI18n()
 
+interface InstalledPlugin {
+  id: string
+  version: string
+}
+
 const props = defineProps<{
   installedPluginIds: string[]
+  installedPlugins?: InstalledPlugin[]
 }>()
 
 const emit = defineEmits<{
   pluginInstalled: [pluginId: string]
+  pluginUpdated: [pluginId: string]
 }>()
 
 // Constants (保留用于向后兼容，但实际使用 storage service)
@@ -329,6 +370,7 @@ const storePlugins = ref<StorePlugin[]>([])
 const searchText = ref('')
 const categoryFilter = ref('')
 const installing = ref<string | null>(null)
+const updating = ref<string | null>(null)
 const selectedPlugin = ref<StorePlugin | null>(null)
 const selectedPluginCode = ref('')
 const detailDialogRef = ref<HTMLDialogElement | null>(null)
@@ -359,6 +401,36 @@ const filteredPlugins = computed(() => {
 // Methods
 const isInstalled = (pluginId: string): boolean => {
   return props.installedPluginIds.includes(pluginId)
+}
+
+// Get local plugin version
+const getLocalVersion = (pluginId: string): string | null => {
+  if (!props.installedPlugins) return null
+  const plugin = props.installedPlugins.find(p => p.id === pluginId)
+  return plugin?.version || null
+}
+
+// Compare versions (returns true if storeVersion > localVersion)
+const compareVersions = (storeVersion: string, localVersion: string): number => {
+  const storeParts = storeVersion.split('.').map(Number)
+  const localParts = localVersion.split('.').map(Number)
+  
+  const maxLen = Math.max(storeParts.length, localParts.length)
+  for (let i = 0; i < maxLen; i++) {
+    const s = storeParts[i] || 0
+    const l = localParts[i] || 0
+    if (s > l) return 1
+    if (s < l) return -1
+  }
+  return 0
+}
+
+// Check if plugin has update available
+const hasUpdate = (plugin: StorePlugin): boolean => {
+  if (!isInstalled(plugin.id)) return false
+  const localVersion = getLocalVersion(plugin.id)
+  if (!localVersion) return false
+  return compareVersions(plugin.version, localVersion) > 0
 }
 
 const getCategoryLabel = (category: string): string => {
@@ -490,6 +562,40 @@ const installPlugin = async (plugin: StorePlugin) => {
     showToast(e instanceof Error ? e.message : t('plugins.store.installError'), 'error')
   } finally {
     installing.value = null
+  }
+}
+
+const updatePlugin = async (plugin: StorePlugin) => {
+  updating.value = plugin.id
+  
+  try {
+    const response = await invoke<CommandResponse<string>>('update_store_plugin', {
+      plugin: {
+        id: plugin.id,
+        name: plugin.name,
+        version: plugin.version,
+        author: plugin.author || '',
+        main_category: plugin.main_category,
+        category: plugin.category,
+        description: plugin.description || '',
+        default_severity: plugin.default_severity || 'medium',
+        tags: plugin.tags,
+        download_url: plugin.download_url
+      }
+    })
+    
+    if (response.success) {
+      showToast(t('plugins.store.updateSuccess', '插件更新成功'), 'success')
+      emit('pluginUpdated', plugin.id)
+      closeDetailDialog()
+    } else {
+      showToast(response.error || t('plugins.store.updateError', '插件更新失败'), 'error')
+    }
+  } catch (e) {
+    console.error('Failed to update plugin:', e)
+    showToast(e instanceof Error ? e.message : t('plugins.store.updateError', '插件更新失败'), 'error')
+  } finally {
+    updating.value = null
   }
 }
 

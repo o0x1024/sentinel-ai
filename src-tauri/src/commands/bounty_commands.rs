@@ -2016,6 +2016,14 @@ pub async fn bounty_run_workflow_template(
     log::info!("Inputs: {:?}", inputs);
     log::info!("Steps: {}", steps.len());
     
+    // Debug: log input_mappings for each step
+    for step in &steps {
+        if !step.input_mappings.is_empty() {
+            log::info!("Step '{}' has {} input mappings: {:?}", 
+                step.id, step.input_mappings.len(), step.input_mappings);
+        }
+    }
+    
     // Clone for async task
     let exec_id = execution_id.clone();
     let db = db_service.inner().clone();
@@ -2187,6 +2195,9 @@ fn resolve_step_inputs(
 ) -> serde_json::Value {
     let mut resolved = step.config.clone();
     
+    log::info!("resolve_step_inputs for step '{}': input_mappings count = {}", 
+        step.id, step.input_mappings.len());
+    
     // 1. Merge initial inputs (lowest priority)
     if let (Some(config_obj), Some(initial_obj)) = (resolved.as_object_mut(), initial_inputs.as_object()) {
         for (key, value) in initial_obj {
@@ -2197,9 +2208,20 @@ fn resolve_step_inputs(
     }
     
     // 2. Apply explicit input mappings (highest priority)
+    log::info!("Processing {} input mappings for step '{}'", step.input_mappings.len(), step.id);
     for mapping in &step.input_mappings {
+        log::info!("Processing mapping: target={}, source_step={}, source_path={}", 
+            mapping.target_field, mapping.source_step_id, mapping.source_path);
+        
         if let Some(source_result) = step_results.get(&mapping.source_step_id) {
+            log::info!("Found source_result for step '{}', keys: {:?}", 
+                mapping.source_step_id, 
+                source_result.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+            
             if let Some(value) = extract_by_jsonpath(source_result, &mapping.source_path) {
+                log::info!("Extracted value type: {:?}, len: {:?}", 
+                    value.as_array().map(|_| "array"),
+                    value.as_array().map(|a| a.len()));
                 let transformed = apply_transform(value, mapping.transform.as_deref());
                 if let Some(obj) = resolved.as_object_mut() {
                     log::info!(
@@ -2219,6 +2241,11 @@ fn resolve_step_inputs(
                 );
             }
         } else {
+            log::warn!(
+                "Source step '{}' not found in results. Available steps: {:?}",
+                mapping.source_step_id,
+                step_results.keys().collect::<Vec<_>>()
+            );
             log::warn!(
                 "Source step '{}' not found in results for mapping to '{}'",
                 mapping.source_step_id,
@@ -2288,6 +2315,8 @@ fn resolve_step_inputs(
 
 /// Extract value from JSON data using JSONPath expression
 /// Supports: $.field, $.field.subfield, $.field[0], $.field[*].name
+/// Note: step_results wraps plugin output in {"output": ...}, so we try both direct path
+/// and path prefixed with "output." for compatibility
 fn extract_by_jsonpath(data: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
     // Remove leading "$." if present
     let path = path.strip_prefix("$.").unwrap_or(path);
@@ -2298,8 +2327,22 @@ fn extract_by_jsonpath(data: &serde_json::Value, path: &str) -> Option<serde_jso
         return Some(data.clone());
     }
     
+    // Try direct path first
     let parts: Vec<&str> = split_jsonpath(path);
-    extract_recursive(data, &parts)
+    if let Some(result) = extract_recursive(data, &parts) {
+        return Some(result);
+    }
+    
+    // If not found and data has "output" field, try extracting from output
+    // This handles the step_results wrapper: {"success": true, "output": {...}}
+    if let Some(output) = data.get("output") {
+        log::debug!("Path '{}' not found at root, trying under 'output' field", path);
+        if let Some(result) = extract_recursive(output, &parts) {
+            return Some(result);
+        }
+    }
+    
+    None
 }
 
 /// Split JSONPath into parts, handling brackets correctly

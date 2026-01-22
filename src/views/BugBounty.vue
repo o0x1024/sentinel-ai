@@ -736,7 +736,19 @@ const viewWorkflowTemplate = (template: any) => {
 }
 
 const onWorkflowTemplateUpdated = async () => {
-  // Refresh if needed
+  // Refresh the selected template with latest data from backend
+  if (selectedWorkflowTemplate.value?.id) {
+    try {
+      const updated = await invoke('bounty_get_workflow_template', { 
+        id: selectedWorkflowTemplate.value.id 
+      }) as any
+      if (updated) {
+        selectedWorkflowTemplate.value = updated
+      }
+    } catch (error) {
+      console.error('Failed to refresh workflow template:', error)
+    }
+  }
 }
 
 // Batch operations

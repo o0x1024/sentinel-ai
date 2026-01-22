@@ -678,7 +678,18 @@ const editStep = async (step: WorkflowStep) => {
   stepForm.plugin_id = step.plugin_id || step.tool_name || ''
   stepForm.depends_on = [...(step.depends_on || [])]
   stepForm.config_json = JSON.stringify(step.config || {}, null, 2)
-  stepForm.input_mappings = [...(step.input_mappings || [])]
+  // Deep copy input_mappings to ensure they are editable
+  stepForm.input_mappings = (step.input_mappings || []).map(m => ({
+    target_field: m.target_field || '',
+    source_step_id: m.source_step_id || '',
+    source_path: m.source_path || '',
+    transform: m.transform || ''
+  }))
+  
+  // Load current plugin's input schema for target fields
+  if (stepForm.plugin_id) {
+    fetchPluginSchema(stepForm.plugin_id)
+  }
   
   // Pre-load output schemas for upstream steps
   for (const depId of stepForm.depends_on) {
@@ -788,10 +799,18 @@ const saveStep = async () => {
     return
   }
 
-  // Filter out incomplete mappings
-  const validMappings = stepForm.input_mappings.filter(
-    m => m.target_field && m.source_step_id && m.source_path
-  )
+  // Filter out incomplete mappings and clean up empty transform
+  const validMappings = stepForm.input_mappings
+    .filter(m => m.target_field && m.source_step_id && m.source_path)
+    .map(m => ({
+      target_field: m.target_field,
+      source_step_id: m.source_step_id,
+      source_path: m.source_path,
+      transform: m.transform || undefined, // Convert empty string to undefined
+    }))
+  
+  console.log('saveStep - stepForm.input_mappings:', stepForm.input_mappings)
+  console.log('saveStep - validMappings:', validMappings)
 
   const newStep: WorkflowStep = {
     id: editingStep.value?.id || `step_${Date.now()}`,
@@ -829,6 +848,7 @@ const removeStep = async (stepId: string) => {
 
 const saveTemplate = async () => {
   try {
+    console.log('Saving steps with input_mappings:', JSON.stringify(steps.value, null, 2))
     await invoke('bounty_update_workflow_template', {
       id: props.template.id,
       request: {
@@ -897,28 +917,35 @@ onMounted(() => {
   loadPlugins()
 })
 
+// Re-parse steps when template data changes (e.g., after save and refresh)
+watch(() => props.template.steps_json, () => {
+  parseSteps()
+}, { deep: true })
+
 watch(activeTab, () => {
   // Prevent scroll jump/overscroll bounce causing a flash on tab switch.
   modalBoxEl.value?.scrollTo({ top: 0 })
 })
 
-// Auto-fill config when plugin is selected (only for new steps, not editing)
+// Auto-fill config when plugin is selected, and always load schema for input mapping
 watch(() => stepForm.plugin_id, async (newPluginId) => {
-  if (!newPluginId || editingStep.value) return
+  if (!newPluginId) return
   
   loadingSchema.value = true
   try {
-    // Fetch schema from backend
+    // Fetch schema from backend (always load for input mapping target fields)
     const schema = await fetchPluginSchema(newPluginId)
-    if (schema) {
+    
+    // Only auto-fill config for new steps, not editing
+    if (schema && !editingStep.value) {
       const defaultConfig = generateDefaultFromSchema(schema)
       if (Object.keys(defaultConfig).length > 0) {
         stepForm.config_json = JSON.stringify(defaultConfig, null, 2)
       }
     }
     
-    // Auto-fill step name from plugin metadata or schema title
-    if (!stepForm.name) {
+    // Auto-fill step name from plugin metadata or schema title (only for new steps)
+    if (!stepForm.name && !editingStep.value) {
       const plugin = availablePlugins.value.find(p => p.id === newPluginId)
       if (plugin?.name) {
         stepForm.name = plugin.name
