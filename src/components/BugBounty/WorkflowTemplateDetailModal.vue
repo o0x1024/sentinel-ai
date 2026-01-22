@@ -68,15 +68,27 @@
         </div>
 
         <div class="bg-base-200 rounded-lg p-4">
-          <h4 class="font-medium mb-2">{{ t('bugBounty.workflowTemplates.stepsSummary') }}</h4>
+          <h4 class="font-medium mb-2 flex items-center gap-2">
+            {{ t('bugBounty.workflowTemplates.stepsSummary') }}
+            <span class="badge badge-sm badge-info">{{ t('bugBounty.workflow.executionOrder') }}</span>
+          </h4>
           <div v-if="steps.length === 0" class="text-base-content/50">
             {{ t('bugBounty.workflowTemplates.noSteps') }}
           </div>
           <div v-else class="space-y-2">
-            <div v-for="(step, idx) in steps" :key="step.id" class="flex items-center gap-2">
-              <span class="badge badge-primary badge-sm">{{ idx + 1 }}</span>
-              <span class="font-medium">{{ step.name }}</span>
-              <span class="text-xs text-base-content/50">{{ step.plugin_id || step.tool_name }}</span>
+            <div v-for="(step, idx) in steps" :key="step.id" class="flex items-start gap-2">
+              <div class="flex items-center gap-2 flex-1">
+                <span class="badge badge-primary badge-sm shrink-0">{{ idx + 1 }}</span>
+                <i class="fas fa-arrow-right text-primary/50 text-xs" v-if="idx > 0"></i>
+                <div class="flex-1">
+                  <div class="font-medium">{{ step.name }}</div>
+                  <div class="text-xs text-base-content/50">{{ step.plugin_id || step.tool_name }}</div>
+                  <div v-if="step.depends_on && step.depends_on.length > 0" class="text-xs text-warning mt-1">
+                    <i class="fas fa-link mr-1"></i>
+                    {{ t('bugBounty.workflowTemplates.dependsOn') }}: {{ step.depends_on.map(id => getStepName(id)).join(', ') }}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -102,21 +114,34 @@
         </div>
 
         <div v-else class="space-y-3">
+          <div class="alert alert-info text-sm mb-3">
+            <i class="fas fa-info-circle"></i>
+            <span>{{ t('bugBounty.workflow.stepsOrderByDependency') }}</span>
+          </div>
+          
           <div 
             v-for="(step, idx) in steps" 
             :key="step.id"
-            class="bg-base-200 rounded-lg p-4"
+            class="bg-base-200 rounded-lg p-4 relative"
           >
+            <!-- Connection line to next step -->
+            <div v-if="idx < steps.length - 1" class="absolute left-4 top-14 w-0.5 h-5 bg-primary/30"></div>
+            
             <div class="flex items-start justify-between">
               <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-full bg-primary text-primary-content flex items-center justify-center font-bold">
+                <div class="w-8 h-8 rounded-full bg-primary text-primary-content flex items-center justify-center font-bold text-sm shrink-0">
                   {{ idx + 1 }}
                 </div>
-                <div>
+                <div class="flex-1">
                   <div class="font-medium">{{ step.name }}</div>
-                  <div class="text-xs text-base-content/50">
+                  <div class="text-xs text-base-content/50 mt-1">
                     <span class="badge badge-ghost badge-xs mr-1">{{ step.step_type }}</span>
                     {{ step.plugin_id || step.tool_name }}
+                  </div>
+                  <!-- Show input mappings count -->
+                  <div v-if="step.input_mappings && step.input_mappings.length > 0" class="text-xs text-info mt-1">
+                    <i class="fas fa-project-diagram mr-1"></i>
+                    {{ step.input_mappings.length }} {{ t('bugBounty.workflow.inputMappings') }}
                   </div>
                 </div>
               </div>
@@ -616,10 +641,41 @@ const extractSchemaPaths = (schema: any, prefix = '$'): Array<{path: string, typ
   return paths
 }
 
+// Topological sort for dependency order
+const topologicalSort = (stepsArray: WorkflowStep[]): WorkflowStep[] => {
+  const result: WorkflowStep[] = []
+  const visited = new Set<string>()
+  const stepMap = new Map(stepsArray.map(s => [s.id, s]))
+  
+  const visit = (stepId: string) => {
+    if (visited.has(stepId)) return
+    visited.add(stepId)
+    
+    const step = stepMap.get(stepId)
+    if (!step) return
+    
+    // Visit dependencies first
+    for (const depId of step.depends_on || []) {
+      visit(depId)
+    }
+    
+    result.push(step)
+  }
+  
+  // Visit all steps
+  for (const step of stepsArray) {
+    visit(step.id)
+  }
+  
+  return result
+}
+
 // Methods
 const parseSteps = () => {
   try {
-    steps.value = JSON.parse(props.template.steps_json || '[]')
+    const rawSteps = JSON.parse(props.template.steps_json || '[]')
+    // Sort by dependency order
+    steps.value = topologicalSort(rawSteps)
   } catch {
     steps.value = []
   }
@@ -845,7 +901,7 @@ const removeStep = async (stepId: string) => {
 
 const saveTemplate = async () => {
   try {
-    await invoke('bounty_update_workflow_template', {
+    const updated = await invoke('bounty_update_workflow_template', {
       id: props.template.id,
       request: {
         name: props.template.name,
@@ -855,8 +911,16 @@ const saveTemplate = async () => {
         tags: getTags(),
         estimated_duration_mins: props.template.estimated_duration_mins,
       }
-    })
+    }) as any
+    
     toast.success(t('bugBounty.workflowTemplates.saved'))
+    
+    // Update local template data to reflect changes immediately
+    if (updated) {
+      Object.assign(props.template, updated)
+      parseSteps()
+    }
+    
     emit('updated')
   } catch (error) {
     console.error('Failed to save template:', error)
@@ -914,7 +978,7 @@ onMounted(() => {
 })
 
 // Re-parse steps when template data changes (e.g., after save and refresh)
-watch(() => props.template.steps_json, () => {
+watch(() => props.template, () => {
   parseSteps()
 }, { deep: true })
 

@@ -508,6 +508,8 @@ export default {
     running: 'Running',
     failed: 'Failed',
     pending: 'Pending',
+    executionOrder: 'Execution Order',
+    stepsOrderByDependency: 'Steps automatically sorted by dependencies',
     rateLimiter: 'Rate Limiter',
     globalConcurrency: 'Global Concurrency',
     perHostLimit: 'Per Host',

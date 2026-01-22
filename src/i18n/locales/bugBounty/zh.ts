@@ -508,6 +508,8 @@ export default {
     running: '运行中',
     failed: '失败',
     pending: '等待中',
+    executionOrder: '执行顺序',
+    stepsOrderByDependency: '步骤已按依赖关系自动排序',
     rateLimiter: '限流器',
     globalConcurrency: '全局并发',
     perHostLimit: '单主机',
