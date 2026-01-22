@@ -809,9 +809,6 @@ const saveStep = async () => {
       transform: m.transform || undefined, // Convert empty string to undefined
     }))
   
-  console.log('saveStep - stepForm.input_mappings:', stepForm.input_mappings)
-  console.log('saveStep - validMappings:', validMappings)
-
   const newStep: WorkflowStep = {
     id: editingStep.value?.id || `step_${Date.now()}`,
     name: stepForm.name,
@@ -848,7 +845,6 @@ const removeStep = async (stepId: string) => {
 
 const saveTemplate = async () => {
   try {
-    console.log('Saving steps with input_mappings:', JSON.stringify(steps.value, null, 2))
     await invoke('bounty_update_workflow_template', {
       id: props.template.id,
       request: {

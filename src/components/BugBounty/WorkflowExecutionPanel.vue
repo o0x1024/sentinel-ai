@@ -445,6 +445,7 @@ const completedSteps = ref(0)
 const totalSteps = ref(0)
 const stepResults = ref<Record<string, any>>({})
 const stepRetries = ref<Record<string, number>>({})
+const runningSteps = ref<Set<string>>(new Set()) // Track currently running steps
 const executionLogs = ref<ExecutionLog[]>([])
 const rateLimitStats = ref<any>(null)
 const retryConfig = ref<any>(null)
@@ -452,6 +453,7 @@ const duration = ref(0)
 const startTime = ref<Date | null>(null)
 let durationInterval: any = null
 let unlistenProgress: any = null
+let unlistenStepStart: any = null
 let unlistenStepComplete: any = null
 let unlistenComplete: any = null
 
@@ -490,6 +492,12 @@ const progressClass = computed(() => {
 const stepCounts = computed(() => {
   const counts = { completed: 0, running: 0, failed: 0, pending: 0 }
   for (const step of props.steps) {
+    // Check if step is currently running
+    if (runningSteps.value.has(step.id)) {
+      counts.running++
+      continue
+    }
+    
     const result = stepResults.value[step.id]
     if (!result) {
       counts.pending++
@@ -498,11 +506,6 @@ const stepCounts = computed(() => {
     } else {
       counts.completed++
     }
-  }
-  // Approximate running count
-  if (status.value === 'running' && counts.pending > 0) {
-    counts.pending--
-    counts.running = 1
   }
   return counts
 })
@@ -569,12 +572,27 @@ const setupEventListeners = async () => {
     }
   })
 
+  // Listen for step start (running status)
+  unlistenStepStart = await listen<any>('workflow:step-start', (event) => {
+    if (event.payload.execution_id === props.executionId) {
+      const stepId = event.payload.step_id
+      const stepName = event.payload.step_name || stepId
+      
+      // Mark step as running
+      runningSteps.value.add(stepId)
+      addLog('info', stepId, `${stepName} started`)
+    }
+  })
+
   // Listen for step completions
   unlistenStepComplete = await listen<any>('workflow:step-complete', (event) => {
     if (event.payload.execution_id === props.executionId) {
       const stepId = event.payload.step_id
       const stepName = event.payload.step_name || stepId
       const success = event.payload.success
+      
+      // Remove from running set
+      runningSteps.value.delete(stepId)
       
       // Store result or error
       if (success) {
@@ -690,9 +708,13 @@ const formatLogTime = (timestamp: string) => {
 
 // Get step execution status
 const getStepStatus = (stepId: string): 'pending' | 'running' | 'completed' | 'failed' => {
+  // Check if step is currently running
+  if (runningSteps.value.has(stepId)) {
+    return 'running'
+  }
+  
   const result = stepResults.value[stepId]
   if (!result) {
-    // Check if any step after this one has completed (meaning this one should be done)
     return 'pending'
   }
   if (result.success === false) {
@@ -739,6 +761,7 @@ onMounted(async () => {
 onUnmounted(() => {
   stopDurationTimer()
   unlistenProgress?.()
+  unlistenStepStart?.()
   unlistenStepComplete?.()
   unlistenComplete?.()
 })

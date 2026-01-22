@@ -2078,6 +2078,14 @@ async fn execute_workflow_steps(
         
         log::info!("Executing step: {} ({})", step.name, step.id);
         
+        // Emit step start event (running status)
+        let _ = app_handle.emit("workflow:step-start", &serde_json::json!({
+            "execution_id": execution_id,
+            "step_id": step.id,
+            "step_name": step.name,
+            "status": "running"
+        }));
+        
         // Resolve inputs from dependencies and initial inputs
         let resolved_inputs = resolve_step_inputs(step, &step_results, &initial_inputs);
         
