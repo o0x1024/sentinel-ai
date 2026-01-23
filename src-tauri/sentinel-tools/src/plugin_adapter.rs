@@ -19,6 +19,7 @@ pub struct PluginToolMeta {
     pub description: String,
     pub input_schema: Value,
     pub code: Option<String>,
+    pub category: Option<String>,
 }
 
 /// Plugin execution context
@@ -211,6 +212,7 @@ pub async fn load_plugin_tools_to_server(
             &plugin_meta.description,
             plugin_meta.input_schema,
             None,
+            plugin_meta.category,
             executor,
         ).await;
         
@@ -239,6 +241,7 @@ impl PluginToolAdapter {
             input_schema: meta.input_schema.clone(),
             output_schema: None,
             source: ToolSource::Plugin { plugin_id: plugin_id.clone() },
+            category: meta.category.clone().unwrap_or_else(|| "other".to_string()),
             executor: create_plugin_executor(plugin_id),
         }
     }
@@ -266,6 +269,26 @@ impl PluginToolAdapter {
             Err(e) => {
                 tracing::warn!(
                     "Failed to get input schema from runtime: {}, plugin must export get_input_schema()",
+                    e
+                );
+                // 返回默认空 schema
+                Self::default_schema()
+            }
+        }
+    }
+    
+    /// Get plugin output schema via runtime call
+    pub async fn get_output_schema_runtime(code: &str, metadata: sentinel_plugins::PluginMetadata) -> Value {
+        tracing::info!("Getting output schema via runtime call for plugin: {}", metadata.id);
+        
+        match sentinel_plugins::get_output_schema_from_code(code, metadata).await {
+            Ok(schema) => {
+                tracing::info!("Successfully got output schema from plugin runtime");
+                schema
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get output schema from runtime: {}, plugin must export get_output_schema()",
                     e
                 );
                 // 返回默认空 schema

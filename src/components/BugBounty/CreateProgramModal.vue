@@ -1,7 +1,9 @@
 <template>
   <div v-if="visible" class="modal modal-open">
     <div class="modal-box max-w-2xl">
-      <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.createProgram') }}</h3>
+      <h3 class="font-bold text-lg mb-4">
+        {{ editMode ? t('bugBounty.editProgram') : t('bugBounty.createProgram') }}
+      </h3>
       
       <div class="space-y-4">
         <div class="form-control">
@@ -78,7 +80,7 @@
           :disabled="!isValid || submitting"
         >
           <span v-if="submitting" class="loading loading-spinner loading-sm mr-2"></span>
-          {{ t('common.create') }}
+          {{ editMode ? t('common.save') : t('common.create') }}
         </button>
       </div>
     </div>
@@ -94,6 +96,7 @@ const { t } = useI18n()
 const props = defineProps<{
   visible: boolean
   submitting: boolean
+  program?: any // Program to edit (if provided, enters edit mode)
 }>()
 
 const emit = defineEmits<{
@@ -109,20 +112,53 @@ const form = reactive({
   description: '',
 })
 
+const editMode = computed(() => !!props.program)
+
 const isValid = computed(() => form.name && form.organization)
 
 const submit = () => {
   if (!isValid.value) return
-  emit('submit', { ...form })
+  const data = { ...form }
+  if (editMode.value && props.program) {
+    // Include ID for update
+    emit('submit', { id: props.program.id, ...data })
+  } else {
+    emit('submit', data)
+  }
+}
+
+const resetForm = () => {
+  form.name = ''
+  form.organization = ''
+  form.platform = 'private'
+  form.url = ''
+  form.description = ''
+}
+
+const loadProgramData = () => {
+  if (props.program) {
+    form.name = props.program.name || ''
+    form.organization = props.program.organization || ''
+    form.platform = props.program.platform || 'private'
+    form.url = props.program.url || ''
+    form.description = props.program.description || ''
+  } else {
+    resetForm()
+  }
 }
 
 watch(() => props.visible, (val) => {
-  if (!val) {
-    form.name = ''
-    form.organization = ''
-    form.platform = 'private'
-    form.url = ''
-    form.description = ''
+  if (val) {
+    loadProgramData()
+  } else {
+    resetForm()
   }
 })
+
+// Load data when program prop changes (for edit mode)
+watch(() => props.program, () => {
+  if (props.visible && props.program) {
+    loadProgramData()
+  }
+}, { deep: true })
 </script>

@@ -44,5 +44,57 @@ export default {
     active: '活跃',
     inactive: '未激活'
   },
-  noAssets: '暂无资产'
+  noAssets: '暂无资产',
+  allCountries: '全部国家',
+  allCloudProviders: '全部云服务商',
+  allServices: '全部服务',
+  allCDNs: '全部CDN',
+  allWAFs: '全部WAF',
+  customizeColumns: '自定义列',
+  filters: '筛选器',
+  allExposureLevels: '全部暴露级别',
+  exposureLevel: {
+    internet: '互联网',
+    intranet: '内网',
+    private: '私有'
+  },
+  columnGroups: {
+    basic: '基本信息',
+    ip: 'IP信息',
+    port: '端口信息',
+    domain: '域名信息',
+    web: 'Web信息',
+    certificate: '证书信息'
+  },
+  columns: {
+    name: '名称',
+    type: '类型',
+    value: '值',
+    risk_level: '风险等级',
+    status: '状态',
+    last_seen: '最后发现',
+    attack_surface_score: '攻击面评分',
+    exposure_level: '暴露级别',
+    discovery_method: '发现方式',
+    ip_version: 'IP版本',
+    asn: 'ASN',
+    country: '国家',
+    city: '城市',
+    cloud_provider: '云服务商',
+    port: '端口',
+    service_name: '服务名称',
+    service_version: '服务版本',
+    transport_protocol: '传输协议',
+    domain_registrar: '域名注册商',
+    expiration_date: '过期日期',
+    parent_domain: '父域名',
+    http_status: 'HTTP状态',
+    title: '标题',
+    cdn: 'CDN',
+    waf: 'WAF',
+    techStack: '技术栈',
+    ssl: 'SSL',
+    certIssuer: '证书颁发者',
+    certExpiry: '证书过期时间'
+  }
 }

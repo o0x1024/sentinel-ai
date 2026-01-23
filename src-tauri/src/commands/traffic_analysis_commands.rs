@@ -2472,6 +2472,12 @@ pub async fn update_plugin(
         .unwrap_or("traffic")
         .to_string();
 
+    // Extract category before consuming metadata
+    let plugin_category = metadata
+        .get("category")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     // 解析为 PluginMetadata 用于数据库更新
     let plugin: sentinel_traffic::PluginMetadata =
         serde_json::from_value(metadata).map_err(|e| format!("Invalid plugin metadata: {}", e))?;
@@ -2533,20 +2539,20 @@ pub async fn update_plugin(
         tool_server.unregister_tool(&tool_name).await;
 
         // 使用运行时调用获取 input_schema
-        let metadata = sentinel_plugins::PluginMetadata {
+        let plugin_metadata = sentinel_plugins::PluginMetadata {
             id: plugin_id.clone(),
             name: plugin_name.clone(),
             version: "1.0.0".to_string(),
             author: None,
             main_category: "agent".to_string(),
-            category: "tool".to_string(),
+            category: plugin_category.clone().unwrap_or_else(|| "other".to_string()),
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],
             description: Some(plugin_description.clone()),
         };
         let input_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
             &plugin_code,
-            metadata,
+            plugin_metadata,
         ).await;
 
         // 创建执行器
@@ -2581,6 +2587,7 @@ pub async fn update_plugin(
                 &plugin_description,
                 input_schema,
                 None,
+                plugin_category,
                 executor,
             )
             .await;
@@ -5143,6 +5150,91 @@ pub async fn install_store_plugin(
         .map_err(|e| format!("Failed to install plugin: {}", e))?;
     
     tracing::info!("Plugin installed: {}", plugin.id);
+    
+    // Update plugin manager cache
+    let plugin_manager = state.get_plugin_manager();
+    if let Err(e) = plugin_manager.set_plugin_code(plugin.id.clone(), plugin_code).await {
+        tracing::warn!("Failed to update plugin cache: {}", e);
+    }
+    
+    Ok(CommandResponse::ok(plugin.id))
+}
+
+/// Update plugin from store
+#[tauri::command]
+pub async fn update_store_plugin(
+    state: State<'_, TrafficAnalysisState>,
+    plugin: StorePluginInfo,
+) -> Result<CommandResponse<String>, String> {
+    tracing::info!("Updating store plugin: {} ({})", plugin.name, plugin.id);
+    
+    // Fetch plugin code
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
+    let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let client = builder
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let response = client.get(&plugin.download_url).send().await;
+    
+    let plugin_code = match response {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                resp.text().await.map_err(|e| format!("Failed to read response: {}", e))?
+            } else {
+                return Ok(CommandResponse::err(format!("Failed to download plugin: HTTP {}", resp.status())));
+            }
+        }
+        Err(e) => {
+            return Ok(CommandResponse::err(format!("Failed to download plugin: {}", e)));
+        }
+    };
+    
+    // Parse severity from string
+    let severity = match plugin.default_severity.to_lowercase().as_str() {
+        "critical" => Severity::Critical,
+        "high" => Severity::High,
+        "medium" => Severity::Medium,
+        "low" => Severity::Low,
+        "info" => Severity::Info,
+        _ => Severity::Medium,
+    };
+    
+    // Create plugin metadata
+    let metadata = PluginMetadata {
+        id: plugin.id.clone(),
+        name: plugin.name.clone(),
+        version: plugin.version,
+        author: Some(plugin.author),
+        category: plugin.category,
+        main_category: plugin.main_category,
+        description: Some(plugin.description),
+        default_severity: severity,
+        tags: plugin.tags,
+    };
+    
+    // Update plugin in database
+    let db = state.get_db_service();
+    
+    // Convert to TrafficPluginMetadata
+    use sentinel_db::TrafficPluginMetadata;
+    let traffic_metadata = TrafficPluginMetadata {
+        id: metadata.id.clone(),
+        name: metadata.name.clone(),
+        version: metadata.version.clone(),
+        author: metadata.author.clone(),
+        main_category: metadata.main_category.clone(),
+        category: metadata.category.clone(),
+        description: metadata.description.clone(),
+        default_severity: format!("{}", metadata.default_severity),
+        tags: metadata.tags.clone(),
+    };
+    
+    db.update_traffic_plugin(&traffic_metadata, &plugin_code)
+        .await
+        .map_err(|e| format!("Failed to update plugin: {}", e))?;
+    
+    tracing::info!("Plugin updated: {}", plugin.id);
     
     // Update plugin manager cache
     let plugin_manager = state.get_plugin_manager();

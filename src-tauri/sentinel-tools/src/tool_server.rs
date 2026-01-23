@@ -134,6 +134,7 @@ impl ToolServer {
                 "required": ["target"]
             }))
             .source(ToolSource::Builtin)
+            .category("recon")
             .executor(|args| async move {
                 use crate::buildin_tools::port_scan::PortScanArgs;
                 use rig::tool::Tool;
@@ -186,6 +187,7 @@ impl ToolServer {
                 "required": ["url"]
             }))
             .source(ToolSource::Builtin)
+            .category("network")
             .executor(|args| async move {
                 use crate::buildin_tools::http_request::HttpRequestArgs;
                 use rig::tool::Tool;
@@ -332,6 +334,7 @@ impl ToolServer {
                 "required": ["domains"]
             }))
             .source(ToolSource::Builtin)
+            .category("recon")
             .executor(|args| async move {
                 use crate::buildin_tools::subdomain_brute::SubdomainBruteArgs;
                 use rig::tool::Tool;
@@ -942,10 +945,10 @@ impl ToolServer {
                         "default": "load",
                         "enum": ["load", "domcontentloaded", "networkidle"]
                     },
-                    "show_browser": {
+                    "headless": {
                         "type": "boolean",
-                        "description": "Whether to show browser window (true) or use headless mode (false). Default is false (headless).",
-                        "default": false
+                        "description": "Whether to run in headless mode (true) or show browser window (false). Default is true (headless).",
+                        "default": true
                     }
                 },
                 "required": ["url"]
@@ -1318,12 +1321,7 @@ impl ToolServer {
                     ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
                     ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
                 },
-                category: match &def.source {
-                    ToolSource::Builtin => "builtin".to_string(),
-                    ToolSource::Mcp { .. } => "mcp".to_string(),
-                    ToolSource::Plugin { .. } => "plugin".to_string(),
-                    ToolSource::Workflow { .. } => "workflow".to_string(),
-                },
+                category: def.category.clone(),
                 enabled: true,
             })
             .collect()
@@ -1342,12 +1340,7 @@ impl ToolServer {
                 ToolSource::Plugin { plugin_id } => format!("plugin::{}", plugin_id),
                 ToolSource::Workflow { workflow_id } => format!("workflow::{}", workflow_id),
             },
-            category: match &def.source {
-                ToolSource::Builtin => "builtin".to_string(),
-                ToolSource::Mcp { .. } => "mcp".to_string(),
-                ToolSource::Plugin { .. } => "plugin".to_string(),
-                ToolSource::Workflow { .. } => "workflow".to_string(),
-            },
+            category: def.category.clone(),
             enabled: true,
         })
     }
@@ -1386,6 +1379,7 @@ impl ToolServer {
             source: ToolSource::Mcp {
                 server_name: server_name.to_string(),
             },
+            category: "mcp".to_string(),
             executor,
         };
 
@@ -1400,6 +1394,7 @@ impl ToolServer {
         description: &str,
         input_schema: Value,
         output_schema: Option<Value>,
+        category: Option<String>,
         executor: ToolExecutor,
     ) {
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
@@ -1413,6 +1408,7 @@ impl ToolServer {
             source: ToolSource::Plugin {
                 plugin_id: plugin_id.to_string(),
             },
+            category: category.unwrap_or_else(|| "other".to_string()),
             executor,
         };
 
@@ -1439,6 +1435,7 @@ impl ToolServer {
             source: ToolSource::Workflow {
                 workflow_id: workflow_id.to_string(),
             },
+            category: "workflow".to_string(),
             executor,
         };
 

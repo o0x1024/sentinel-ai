@@ -97,6 +97,29 @@
                   {{ tag }}
                 </span>
               </div>
+
+              <!-- Bound Programs -->
+              <div v-if="getBoundPrograms(template.id).length > 0" class="mt-2 pt-2 border-t border-base-300">
+                <div class="flex items-center gap-1 text-xs text-base-content/60">
+                  <i class="fas fa-link"></i>
+                  <span>{{ t('bugBounty.workflowTemplates.boundTo') }}:</span>
+                </div>
+                <div class="flex flex-wrap gap-1 mt-1">
+                  <span 
+                    v-for="programName in getBoundPrograms(template.id).slice(0, 2)" 
+                    :key="programName" 
+                    class="badge badge-primary badge-xs"
+                  >
+                    {{ programName }}
+                  </span>
+                  <span 
+                    v-if="getBoundPrograms(template.id).length > 2"
+                    class="badge badge-ghost badge-xs"
+                  >
+                    +{{ getBoundPrograms(template.id).length - 2 }}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -282,6 +305,7 @@ const emit = defineEmits<{
 const loading = ref(false)
 const templates = ref<any[]>([])
 const bindings = ref<any[]>([])
+const allBindings = ref<any[]>([]) // All bindings for all templates
 const showCreateModal = ref(false)
 const showBindModal = ref(false)
 const selectedTemplate = ref<any>(null)
@@ -331,6 +355,18 @@ const loadBindings = async () => {
     })
   } catch (error) {
     console.error('Failed to load bindings:', error)
+  }
+}
+
+const loadAllBindings = async () => {
+  try {
+    allBindings.value = await invoke('bounty_list_workflow_bindings', {
+      programId: null,
+      scopeId: null,
+      isEnabled: null,
+    })
+  } catch (error) {
+    console.error('Failed to load all bindings:', error)
   }
 }
 
@@ -419,6 +455,17 @@ const bindToProgram = (template: any) => {
 
 const createBinding = async () => {
   if (!selectedTemplate.value || !bindForm.program_id) return
+  
+  // Check if binding already exists
+  const existingBinding = allBindings.value.find(
+    b => b.workflow_template_id === selectedTemplate.value.id && b.program_id === bindForm.program_id
+  )
+  
+  if (existingBinding) {
+    toast.warning(t('bugBounty.workflowTemplates.bindingExists'))
+    return
+  }
+  
   try {
     await invoke('bounty_create_workflow_binding', {
       request: {
@@ -431,6 +478,7 @@ const createBinding = async () => {
     toast.success(t('bugBounty.workflowTemplates.bindingCreated'))
     showBindModal.value = false
     await loadBindings()
+    await loadAllBindings() // Reload all bindings to update template cards
   } catch (error) {
     console.error('Failed to create binding:', error)
     toast.error(t('bugBounty.errors.createFailed'))
@@ -448,6 +496,7 @@ const deleteBinding = async (binding: any) => {
     await invoke('bounty_delete_workflow_binding', { id: binding.id })
     toast.success(t('bugBounty.workflowTemplates.unbindSuccess'))
     await loadBindings()
+    await loadAllBindings() // Reload all bindings to update template cards
   } catch (error) {
     console.error('Failed to delete binding:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
@@ -492,9 +541,20 @@ const formatDate = (date: string) => {
   return new Date(date).toLocaleDateString()
 }
 
+const getBoundPrograms = (templateId: string) => {
+  const templateBindings = allBindings.value.filter(b => b.workflow_template_id === templateId)
+  const programNames = templateBindings.map(b => {
+    const program = props.programs.find(p => p.id === b.program_id)
+    return program?.name || b.program_id
+  })
+  // Remove duplicates
+  return [...new Set(programNames)]
+}
+
 // Lifecycle
 onMounted(async () => {
   await loadTemplates()
+  await loadAllBindings()
   if (props.selectedProgram) {
     await loadBindings()
   }

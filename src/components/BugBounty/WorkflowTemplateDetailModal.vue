@@ -889,7 +889,6 @@ const saveStep = async () => {
 }
 
 const removeStep = async (stepId: string) => {
-  if (!confirm(t('bugBounty.workflowTemplates.confirmDeleteStep'))) return
   
   steps.value = steps.value.filter(s => s.id !== stepId)
   // Remove from dependencies

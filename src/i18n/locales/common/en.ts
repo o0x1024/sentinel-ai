@@ -94,6 +94,13 @@ export default {
   provider: 'Provider',
   cost: 'Cost',
   viewAll: 'View All',
+  allPrograms: 'All Programs',
+  allExposureLevels: 'All Exposure Levels',
+  exposureLevel: {
+    internet: 'Internet',
+    intranet: 'Intranet',
+    private: 'Private'
+  },
 
   // Tour guide
   tour: {

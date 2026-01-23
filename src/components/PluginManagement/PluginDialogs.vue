@@ -396,8 +396,40 @@
             <div class="collapse-content">
               <div v-if="run.output" class="card bg-base-100">
                 <div class="card-body p-4">
-                  <h5 class="font-semibold text-sm mb-2">{{ $t('plugins.agentToolResult', 'Agent工具执行结果') }}</h5>
-                  <pre class="text-xs overflow-x-auto whitespace-pre-wrap break-all bg-base-200 p-3 rounded">{{ JSON.stringify(run.output, null, 2) }}</pre>
+                  <div class="flex justify-between items-center mb-2">
+                    <h5 class="font-semibold text-sm">{{ $t('plugins.agentToolResult', 'Agent工具执行结果') }}</h5>
+                    <div class="join">
+                      <button 
+                        @click="copyRunOutput(run)" 
+                        class="btn btn-xs btn-ghost join-item"
+                        :title="$t('tools.copyResult', '复制结果')"
+                      >
+                        <i class="fas fa-copy"></i>
+                      </button>
+                      <button 
+                        @click="toggleRunJsonView(run.run_index)" 
+                        class="btn btn-xs btn-ghost join-item"
+                        :class="{ 'btn-active': runJsonViewStates[run.run_index] }"
+                        :title="$t('tools.toggleJsonView', '切换JSON渲染')"
+                      >
+                        <i class="fas fa-code"></i>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <!-- 原始文本视图 -->
+                  <pre 
+                    v-if="!runJsonViewStates[run.run_index]"
+                    class="text-xs overflow-x-auto whitespace-pre-wrap break-all bg-base-200 p-3 rounded"
+                  >{{ JSON.stringify(run.output, null, 2) }}</pre>
+                  
+                  <!-- JSON渲染视图 -->
+                  <div 
+                    v-else 
+                    class="text-xs overflow-x-auto bg-base-200 p-3 rounded max-h-96"
+                  >
+                    <JsonViewer :data="run.output" :expanded="true" />
+                  </div>
                 </div>
               </div>
               <div v-else class="alert alert-warning">
@@ -417,8 +449,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { dialog } from '@/composables/useDialog'
+import JsonViewer from '@/components/Tools/JsonViewer.vue'
 import type { PluginRecord, ReviewPlugin, TestResult, AdvancedTestResult, AdvancedRunStat, AdvancedForm } from './types'
 
 const { t } = useI18n()
@@ -531,6 +565,26 @@ const getSeverityBadgeClass = (severity: string): string => {
     'medium': 'badge-warning', 'low': 'badge-info', 'info': 'badge-info'
   }
   return classMap[severity] || 'badge-ghost'
+}
+
+// JSON view states for each run
+const runJsonViewStates = reactive<Record<number, boolean>>({})
+
+// Copy run output to clipboard
+async function copyRunOutput(run: AdvancedRunStat) {
+  try {
+    const outputText = JSON.stringify(run.output, null, 2)
+    await navigator.clipboard.writeText(outputText)
+    dialog.toast.success(t('tools.copiedToClipboard'))
+  } catch (error) {
+    console.error('Failed to copy run output:', error)
+    dialog.toast.error(t('tools.copyFailed'))
+  }
+}
+
+// Toggle JSON view for a specific run
+function toggleRunJsonView(runIndex: number) {
+  runJsonViewStates[runIndex] = !runJsonViewStates[runIndex]
 }
 
 // Dialog methods

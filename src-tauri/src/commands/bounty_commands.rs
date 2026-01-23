@@ -16,6 +16,7 @@ use tauri::{AppHandle, State, Emitter};
 use chrono::Utc;
 use uuid::Uuid;
 
+
 // ============================================================================
 // Request/Response Types
 // ============================================================================
@@ -3191,6 +3192,23 @@ pub async fn bounty_create_asset(
         metadata_json: None,
         created_at: now.clone(),
         updated_at: now,
+        // ASM fields - all None by default
+        ip_version: None, asn: None, asn_org: None, isp: None, country: None,
+        city: None, latitude: None, longitude: None, is_cloud: None, cloud_provider: None,
+        service_name: None, service_version: None, service_product: None, banner: None,
+        transport_protocol: None, cpe: None, domain_registrar: None, registration_date: None,
+        expiration_date: None, nameservers_json: None, mx_records_json: None,
+        txt_records_json: None, whois_data_json: None, is_wildcard: None, parent_domain: None,
+        http_status: None, response_time_ms: None, content_length: None, content_type: None,
+        title: None, favicon_hash: None, headers_json: None, waf_detected: None,
+        cdn_detected: None, screenshot_path: None, body_hash: None, certificate_id: None,
+        ssl_enabled: None, certificate_subject: None, certificate_issuer: None,
+        certificate_valid_from: None, certificate_valid_to: None, certificate_san_json: None,
+        exposure_level: None, attack_surface_score: None, vulnerability_count: None,
+        cvss_max_score: None, exploit_available: None, asset_category: None, asset_owner: None,
+        business_unit: None, criticality: None, discovery_method: None, data_sources_json: None,
+        confidence_score: None, monitoring_enabled: None, scan_frequency: None,
+        last_scan_type: None, parent_asset_id: None, related_assets_json: None,
     };
     
     db_service.create_bounty_asset(&asset).await.map_err(|e| e.to_string())?;
@@ -3322,6 +3340,23 @@ pub async fn bounty_import_assets_from_scope(
             metadata_json: None,
             created_at: now.clone(),
             updated_at: now.clone(),
+            // ASM fields - all None by default
+            ip_version: None, asn: None, asn_org: None, isp: None, country: None,
+            city: None, latitude: None, longitude: None, is_cloud: None, cloud_provider: None,
+            service_name: None, service_version: None, service_product: None, banner: None,
+            transport_protocol: None, cpe: None, domain_registrar: None, registration_date: None,
+            expiration_date: None, nameservers_json: None, mx_records_json: None,
+            txt_records_json: None, whois_data_json: None, is_wildcard: None, parent_domain: None,
+            http_status: None, response_time_ms: None, content_length: None, content_type: None,
+            title: None, favicon_hash: None, headers_json: None, waf_detected: None,
+            cdn_detected: None, screenshot_path: None, body_hash: None, certificate_id: None,
+            ssl_enabled: None, certificate_subject: None, certificate_issuer: None,
+            certificate_valid_from: None, certificate_valid_to: None, certificate_san_json: None,
+            exposure_level: None, attack_surface_score: None, vulnerability_count: None,
+            cvss_max_score: None, exploit_available: None, asset_category: None, asset_owner: None,
+            business_unit: None, criticality: None, discovery_method: None, data_sources_json: None,
+            confidence_score: None, monitoring_enabled: None, scan_frequency: None,
+            last_scan_type: None, parent_asset_id: None, related_assets_json: None,
         };
 
         db_service.create_bounty_asset(&asset).await.map_err(|e| e.to_string())?;
@@ -4463,6 +4498,23 @@ pub async fn bounty_sink_artifacts(
                                 })).unwrap_or_default()),
                                 created_at: now.clone(),
                                 updated_at: now.clone(),
+                                // ASM fields - all None by default
+                                ip_version: None, asn: None, asn_org: None, isp: None, country: None,
+                                city: None, latitude: None, longitude: None, is_cloud: None, cloud_provider: None,
+                                service_name: None, service_version: None, service_product: None, banner: None,
+                                transport_protocol: None, cpe: None, domain_registrar: None, registration_date: None,
+                                expiration_date: None, nameservers_json: None, mx_records_json: None,
+                                txt_records_json: None, whois_data_json: None, is_wildcard: None, parent_domain: None,
+                                http_status: None, response_time_ms: None, content_length: None, content_type: None,
+                                title: None, favicon_hash: None, headers_json: None, waf_detected: None,
+                                cdn_detected: None, screenshot_path: None, body_hash: None, certificate_id: None,
+                                ssl_enabled: None, certificate_subject: None, certificate_issuer: None,
+                                certificate_valid_from: None, certificate_valid_to: None, certificate_san_json: None,
+                                exposure_level: None, attack_surface_score: None, vulnerability_count: None,
+                                cvss_max_score: None, exploit_available: None, asset_category: None, asset_owner: None,
+                                business_unit: None, criticality: None, discovery_method: None, data_sources_json: None,
+                                confidence_score: None, monitoring_enabled: None, scan_frequency: None,
+                                last_scan_type: None, parent_asset_id: None, related_assets_json: None,
                             };
                             
                             if db_service.create_bounty_asset(&asset).await.is_ok() {

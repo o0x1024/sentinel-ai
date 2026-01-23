@@ -4,8 +4,10 @@
 pub mod ai;
 pub mod aisettings;
 pub mod asset;
+pub mod asset_enrichment_commands;
 pub mod bounty_commands;
 pub mod cache_commands;
+pub mod monitor_commands;
 pub mod config;
 pub mod config_commands;
 pub mod database;
@@ -47,6 +49,7 @@ pub use dictionary::*;
 pub use document_commands::*;
 pub use license_commands::*;
 pub use mcp_commands::*;
+pub use monitor_commands::*;
 pub use notifications::*;
 pub use packet_capture_commands::*;
 pub use plugin_generation_commands::*;

@@ -47,6 +47,8 @@ pub struct DynamicToolDef {
     pub output_schema: Option<Value>,
     /// Tool source
     pub source: ToolSource,
+    /// Tool category
+    pub category: String,
     /// Tool executor function
     pub executor: ToolExecutor,
 }
@@ -290,6 +292,7 @@ pub struct DynamicToolBuilder {
     input_schema: Value,
     output_schema: Option<Value>,
     source: ToolSource,
+    category: String,
     executor: Option<ToolExecutor>,
 }
 
@@ -304,6 +307,7 @@ impl DynamicToolBuilder {
             }),
             output_schema: None,
             source: ToolSource::Builtin,
+            category: "other".to_string(),
             executor: None,
         }
     }
@@ -325,6 +329,11 @@ impl DynamicToolBuilder {
 
     pub fn source(mut self, source: ToolSource) -> Self {
         self.source = source;
+        self
+    }
+
+    pub fn category(mut self, category: impl Into<String>) -> Self {
+        self.category = category.into();
         self
     }
 
@@ -351,6 +360,7 @@ impl DynamicToolBuilder {
             input_schema: self.input_schema,
             output_schema: self.output_schema,
             source: self.source,
+            category: self.category,
             executor,
         })
     }

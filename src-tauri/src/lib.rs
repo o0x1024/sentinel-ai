@@ -32,6 +32,7 @@ use commands::{
     traffic_analysis_commands::{self, TrafficAnalysisState},
     performance,
     proxifier_commands::{self, ProxifierState},
+    monitor_commands::MonitorSchedulerState,
     rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
     packet_capture_commands::{self, PacketCaptureState},
 };
@@ -406,6 +407,7 @@ pub fn run() {
                 // Save a clone before manage() moves db_service
                 let db_service_for_mcp = db_service.clone();
                 let db_for_tracker = db_service.clone();
+                let db_service_for_enrichment = db_service.clone();
 
                 handle.manage(db_service);
                 handle.manage(ai_manager);
@@ -415,9 +417,16 @@ pub fn run() {
                 handle.manage(plugin_manager_for_workflow);
                 handle.manage(ProxifierState::new());
                 handle.manage(PacketCaptureState::default());
+                handle.manage(Arc::new(tokio::sync::RwLock::new(MonitorSchedulerState::new())));
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
                 handle.manage(commands::web_explorer::WebExplorerState::default());
+                
+                // Initialize asset enrichment service
+                let enrichment_service = Arc::new(sentinel_bounty::services::AssetEnrichmentService::new(
+                    db_service_for_enrichment
+                ));
+                handle.manage(enrichment_service);
 
                 // Initialize Tenth Man executor
                 crate::agents::tenth_man_executor::set_app_handle(handle.clone());
@@ -495,9 +504,9 @@ pub fn run() {
                         
                         // 使用直接 SQL 查询获取已启用的 agent 插件
                         // 避免使用 get_plugins_from_registry() 因为其 metadata JSON 反序列化可能失败
-                        let plugin_rows: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
+                        let plugin_rows: Result<Vec<(String, String, Option<String>, String)>, _> = sqlx::query_as(
                             r#"
-                            SELECT id, name, description
+                            SELECT id, name, description, category
                             FROM plugin_registry
                             WHERE main_category = 'agent' 
                               AND enabled = 1 
@@ -510,7 +519,7 @@ pub fn run() {
                         match plugin_rows {
                             Ok(plugins) => {
                                 let mut plugin_metas = Vec::new();
-                                for (id, name, description) in plugins {
+                                for (id, name, description, category) in plugins {
                                     if id.is_empty() {
                                         continue;
                                     }
@@ -551,6 +560,7 @@ pub fn run() {
                                         description: description_str.to_string(),
                                         input_schema,
                                         code,
+                                        category: Some(category.clone()),
                                     });
                                 }
                                 
@@ -773,6 +783,28 @@ pub fn run() {
             commands::bounty_get_rate_limiter_stats,
             commands::bounty_get_plugin_ports,
             commands::bounty_list_plugin_ports,
+            // Monitor commands
+            commands::monitor_start_scheduler,
+            commands::monitor_stop_scheduler,
+            commands::monitor_is_running,
+            commands::monitor_get_stats,
+            commands::monitor_create_task,
+            commands::monitor_get_task,
+            commands::monitor_list_tasks,
+            commands::monitor_delete_task,
+            commands::monitor_enable_task,
+            commands::monitor_disable_task,
+            commands::monitor_trigger_task,
+            commands::monitor_update_task,
+            commands::monitor_create_default_tasks,
+            commands::monitor_discover_and_import_assets,
+            commands::monitor_get_available_plugins,
+            commands::monitor_test_plugin,
+            commands::monitor_update_task_plugins,
+            // Asset enrichment commands
+            commands::asset_enrichment_commands::enrich_asset,
+            commands::asset_enrichment_commands::start_asset_enrichment,
+            commands::asset_enrichment_commands::stop_asset_enrichment,
             // Config commands
             config::save_config,
             config::get_config,
@@ -963,6 +995,7 @@ pub fn run() {
             traffic_analysis_commands::fetch_store_plugins,
             traffic_analysis_commands::fetch_plugin_code,
             traffic_analysis_commands::install_store_plugin,
+            traffic_analysis_commands::update_store_plugin,
             // Proxifier commands
             proxifier_commands::get_proxifier_config,
             proxifier_commands::start_proxifier,
@@ -1115,6 +1148,8 @@ pub fn run() {
             tool_commands::tool_server::list_tool_server_tools,
             tool_commands::tool_server::list_tools_by_source,
             tool_commands::tool_server::get_tool_server_tool,
+            tool_commands::tool_server::get_tool_input_schema,
+            tool_commands::tool_server::get_tool_output_schema,
             tool_commands::tool_server::execute_tool_server_tool,
             tool_commands::tool_server::get_tool_server_stats,
             tool_commands::tool_server::register_mcp_tools_from_server,

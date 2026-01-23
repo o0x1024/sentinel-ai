@@ -57,7 +57,7 @@ impl ActionExecutor {
         let service = get_browser_service().await;
         let mut service = service.write().await;
 
-        match service.open(url, Some("load")).await {
+        match service.open(url, Some("load"), None).await {
             Ok(result) => {
                 info!("Navigation successful to: {}", result.url);
                 

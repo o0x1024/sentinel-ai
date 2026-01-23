@@ -43,6 +43,11 @@ export default {
   testParams: 'Test Parameters (JSON, optional)',
   testParamsPlaceholder: 'Leave empty to use default parameters, or enter JSON object to override default parameters',
   testResult: 'Test Result',
+  copyResult: 'Copy Result',
+  toggleJsonView: 'Toggle JSON View',
+  copiedToClipboard: 'Copied to clipboard',
+  copyFailed: 'Copy failed',
+  jsonParseFailed: 'JSON parse failed',
   runTest: 'Run Test',
   testing: 'Testing...',
 

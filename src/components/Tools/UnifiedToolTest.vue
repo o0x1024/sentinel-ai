@@ -90,9 +90,42 @@
         <div class="form-control">
           <label class="label">
             <span class="label-text">测试结果</span>
-            <span v-if="testDuration" class="label-text-alt text-xs">耗时: {{ testDuration }}ms</span>
+            <div class="flex items-center gap-2">
+              <span v-if="testDuration" class="label-text-alt text-xs">耗时: {{ testDuration }}ms</span>
+              <div v-if="testResult" class="join">
+                <button 
+                  @click="copyResult" 
+                  class="btn btn-xs btn-ghost join-item"
+                  :title="t('tools.copyResult')"
+                >
+                  <i class="fas fa-copy"></i>
+                </button>
+                <button 
+                  @click="toggleJsonView" 
+                  class="btn btn-xs btn-ghost join-item"
+                  :class="{ 'btn-active': isJsonView }"
+                  :title="t('tools.toggleJsonView')"
+                  :disabled="!isValidJson"
+                >
+                  <i class="fas fa-code"></i>
+                </button>
+              </div>
+            </div>
           </label>
-          <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-48 bg-base-200 overflow-auto">{{ testResult || '点击"运行测试"查看结果' }}</pre>
+          
+          <!-- 原始文本视图 -->
+          <pre 
+            v-if="!isJsonView" 
+            class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-48 bg-base-200 overflow-auto"
+          >{{ testResult || '点击"运行测试"查看结果' }}</pre>
+          
+          <!-- JSON渲染视图 -->
+          <div 
+            v-else 
+            class="border border-base-300 rounded-lg h-48 bg-base-200 overflow-auto p-3"
+          >
+            <JsonViewer :data="parsedJson" :expanded="true" />
+          </div>
         </div>
       </div>
 
@@ -127,6 +160,10 @@
 import { ref, computed, watch, defineComponent, h } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
+import { useI18n } from 'vue-i18n'
+import JsonViewer from './JsonViewer.vue'
+
+const { t } = useI18n()
 
 // 工具类型图标组件
 const BuiltinIcon = defineComponent({
@@ -227,6 +264,8 @@ const paramsJson = ref('{}')
 const testResult = ref('')
 const testDuration = ref<number | null>(null)
 const isTesting = ref(false)
+const isJsonView = ref(false)
+const parsedJson = ref<any>(null)
 
 // Computed
 const toolIcon = computed(() => {
@@ -244,6 +283,16 @@ const categoryBadgeClass = computed(() => {
     case 'workflow': return 'badge-secondary'
     case 'plugin': return 'badge-primary'
     default: return 'badge-ghost'
+  }
+})
+
+const isValidJson = computed(() => {
+  if (!testResult.value) return false
+  try {
+    JSON.parse(testResult.value)
+    return true
+  } catch {
+    return false
   }
 })
 
@@ -276,7 +325,35 @@ function close() {
     showAdvanced.value = false
     testResult.value = ''
     testDuration.value = null
+    isJsonView.value = false
+    parsedJson.value = null
   }, 300)
+}
+
+async function copyResult() {
+  try {
+    await navigator.clipboard.writeText(testResult.value)
+    dialog.toast.success(t('tools.copiedToClipboard'))
+  } catch (error) {
+    console.error('Failed to copy result:', error)
+    dialog.toast.error(t('tools.copyFailed'))
+  }
+}
+
+function toggleJsonView() {
+  if (!isValidJson.value) return
+  
+  isJsonView.value = !isJsonView.value
+  
+  if (isJsonView.value) {
+    try {
+      parsedJson.value = JSON.parse(testResult.value)
+    } catch (error) {
+      console.error('Failed to parse JSON:', error)
+      isJsonView.value = false
+      dialog.toast.error(t('tools.jsonParseFailed'))
+    }
+  }
 }
 
 function resetParams() {

@@ -126,6 +126,20 @@ export default {
     importFailed: 'Failed to import assets',
     tags: 'Tags',
     metadata: 'Metadata',
+    allCountries: 'All Countries',
+    allCloudProviders: 'All Cloud Providers',
+    allServices: 'All Services',
+    allCDNs: 'All CDNs',
+    allWAFs: 'All WAFs',
+    allPrograms: 'All Programs',
+    customizeColumns: 'Customize Columns',
+    filters: 'Filters',
+    allExposureLevels: 'All Exposure Levels',
+    exposureLevel: {
+      internet: 'Internet',
+      intranet: 'Intranet',
+      private: 'Private',
+    },
   },
   assetTypes: {
     domain: 'Domain',
@@ -1683,6 +1697,14 @@ export default {
     codeQuality: 'Code Quality',
     validationResult: 'Validation Result',
     codeEditor: 'Code Editor',
+    favorited: 'Favorited',
+    allPlugins: 'All Plugins',
+    agentInputs: 'Agent Inputs (JSON)',
+    aiAssistant: 'AI Assistant',
+    aiInputPlaceholder: 'Describe your changes...',
+    contextMenuHint: 'Right-click code to quickly reference in AI assistant',
+    fullCode: 'Full Code',
+    referToAi: 'Reference to AI',
     review: {
       pending: 'Pending',
       approved: 'Approved',
@@ -1704,7 +1726,6 @@ export default {
       custom: 'Custom'
     },
     // AI Assistant in code editor
-    aiAssistant: 'AI Assistant',
     aiAssistantHint: 'Describe your changes and AI will help you edit the code',
     aiInputPlaceholder: 'Describe your changes...',
     contextMenuHint: 'Right-click code to quickly reference in AI assistant',
@@ -1752,6 +1773,30 @@ export default {
       analyzer: 'Analyzer',
       reporter: 'Reporter',
       custom: 'Custom'
+    },
+    // Plugin store
+    store: {
+      title: 'Plugin Store',
+      install: 'Install',
+      installed: 'Installed',
+      update: 'Update',
+      updateAvailable: 'Update Available',
+      localVersion: 'Local',
+      installSuccess: 'Plugin installed successfully',
+      installError: 'Failed to install plugin',
+      updateSuccess: 'Plugin updated successfully',
+      updateError: 'Failed to update plugin',
+      fetchError: 'Failed to fetch plugins',
+      noPlugins: 'No plugins available',
+      noDescription: 'No description',
+      refreshToLoad: 'Click refresh to load plugins',
+      allCategories: 'All Categories',
+      searchPlaceholder: 'Search plugins...',
+      listView: 'List View',
+      cardView: 'Card View',
+      justNow: 'Just now',
+      minutesAgo: '{minutes} minutes ago',
+      hoursAgo: '{hours} hours ago'
     }
   },
   license: {

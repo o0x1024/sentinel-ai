@@ -2,6 +2,138 @@ use anyhow::Result;
 use sqlx::sqlite::SqlitePool;
 use tracing::info;
 
+/// Database migration for ASM (Attack Surface Management) enhancements
+pub struct AsmEnhancementMigration;
+
+impl AsmEnhancementMigration {
+    /// Apply migration to add ASM fields to bounty_assets table
+    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+        info!("Applying ASM enhancement migration...");
+
+        // Add IP Asset Attributes
+        Self::add_column_if_not_exists(pool, "bounty_assets", "ip_version", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "asn", "INTEGER").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "asn_org", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "isp", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "country", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "city", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "latitude", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "longitude", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "is_cloud", "BOOLEAN").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "cloud_provider", "TEXT").await?;
+
+        // Add Port/Service Attributes
+        Self::add_column_if_not_exists(pool, "bounty_assets", "service_name", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "service_version", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "service_product", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "banner", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "transport_protocol", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "cpe", "TEXT").await?;
+
+        // Add Domain Attributes
+        Self::add_column_if_not_exists(pool, "bounty_assets", "domain_registrar", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "registration_date", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "expiration_date", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "nameservers_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "mx_records_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "txt_records_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "whois_data_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "is_wildcard", "BOOLEAN").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "parent_domain", "TEXT").await?;
+
+        // Add Web/URL Attributes
+        Self::add_column_if_not_exists(pool, "bounty_assets", "http_status", "INTEGER").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "response_time_ms", "INTEGER").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "content_length", "INTEGER").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "content_type", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "title", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "favicon_hash", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "headers_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "waf_detected", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "cdn_detected", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "screenshot_path", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "body_hash", "TEXT").await?;
+
+        // Add Certificate Attributes
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_id", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "ssl_enabled", "BOOLEAN").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_subject", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_issuer", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_valid_from", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_valid_to", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_san_json", "TEXT").await?;
+
+        // Add Attack Surface & Risk
+        Self::add_column_if_not_exists(pool, "bounty_assets", "exposure_level", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "attack_surface_score", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "vulnerability_count", "INTEGER").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "cvss_max_score", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "exploit_available", "BOOLEAN").await?;
+
+        // Add Asset Classification
+        Self::add_column_if_not_exists(pool, "bounty_assets", "asset_category", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "asset_owner", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "business_unit", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "criticality", "TEXT").await?;
+
+        // Add Discovery & Monitoring
+        Self::add_column_if_not_exists(pool, "bounty_assets", "discovery_method", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "data_sources_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "confidence_score", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "monitoring_enabled", "BOOLEAN").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "scan_frequency", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "last_scan_type", "TEXT").await?;
+
+        // Add Asset Relationships
+        Self::add_column_if_not_exists(pool, "bounty_assets", "parent_asset_id", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "related_assets_json", "TEXT").await?;
+
+        // Add indices for new columns
+        let indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_asset_type ON bounty_assets(asset_type)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_ip_version ON bounty_assets(ip_version)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_asn ON bounty_assets(asn)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_country ON bounty_assets(country)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_service_name ON bounty_assets(service_name)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_exposure_level ON bounty_assets(exposure_level)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_criticality ON bounty_assets(criticality)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_parent_asset_id ON bounty_assets(parent_asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_attack_surface_score ON bounty_assets(attack_surface_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_assets_vulnerability_count ON bounty_assets(vulnerability_count DESC)",
+        ];
+
+        for index_sql in indices {
+            sqlx::query(index_sql).execute(pool).await?;
+        }
+
+        info!("ASM enhancement migration completed successfully");
+        Ok(())
+    }
+
+    /// Helper function to add column if it doesn't exist
+    async fn add_column_if_not_exists(
+        pool: &SqlitePool,
+        table: &str,
+        column: &str,
+        column_type: &str,
+    ) -> Result<()> {
+        let query = format!(
+            "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name = '{}'",
+            table, column
+        );
+
+        let result: (i32,) = sqlx::query_as(&query).fetch_one(pool).await?;
+
+        if result.0 == 0 {
+            info!("Adding column '{}' to table '{}'", column, table);
+            let alter_query = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type);
+            sqlx::query(&alter_query).execute(pool).await?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Database migration for task-tool integration feature
 pub struct TaskToolIntegrationMigration;
 

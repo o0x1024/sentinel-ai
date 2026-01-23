@@ -8,6 +8,7 @@ use crate::database_service::migrations::{
     SubagentMessagesMigration,
     SubagentRunsMigration,
     TaskToolIntegrationMigration,
+    AsmEnhancementMigration,
 };
 
 impl DatabaseService {
@@ -1089,7 +1090,7 @@ impl DatabaseService {
                 hostname TEXT,
                 port INTEGER,
                 path TEXT,
-                protocol TEXT DEFAULT 'https',
+                protocol TEXT,
                 ip_addresses_json TEXT,
                 dns_records_json TEXT,
                 tech_stack_json TEXT,
@@ -1107,8 +1108,89 @@ impl DatabaseService {
                 metadata_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                
+                -- P0: Core ASM Attributes
+                -- IP Asset Attributes
+                ip_version TEXT,
+                asn INTEGER,
+                asn_org TEXT,
+                isp TEXT,
+                country TEXT,
+                city TEXT,
+                latitude REAL,
+                longitude REAL,
+                is_cloud BOOLEAN,
+                cloud_provider TEXT,
+                
+                -- Port/Service Attributes
+                service_name TEXT,
+                service_version TEXT,
+                service_product TEXT,
+                banner TEXT,
+                transport_protocol TEXT,
+                cpe TEXT,
+                
+                -- Domain Attributes
+                domain_registrar TEXT,
+                registration_date TEXT,
+                expiration_date TEXT,
+                nameservers_json TEXT,
+                mx_records_json TEXT,
+                txt_records_json TEXT,
+                whois_data_json TEXT,
+                is_wildcard BOOLEAN,
+                parent_domain TEXT,
+                
+                -- Web/URL Attributes
+                http_status INTEGER,
+                response_time_ms INTEGER,
+                content_length INTEGER,
+                content_type TEXT,
+                title TEXT,
+                favicon_hash TEXT,
+                headers_json TEXT,
+                waf_detected TEXT,
+                cdn_detected TEXT,
+                screenshot_path TEXT,
+                body_hash TEXT,
+                
+                -- Certificate Attributes
+                certificate_id TEXT,
+                ssl_enabled BOOLEAN,
+                certificate_subject TEXT,
+                certificate_issuer TEXT,
+                certificate_valid_from TEXT,
+                certificate_valid_to TEXT,
+                certificate_san_json TEXT,
+                
+                -- Attack Surface & Risk
+                exposure_level TEXT,
+                attack_surface_score REAL,
+                vulnerability_count INTEGER DEFAULT 0,
+                cvss_max_score REAL,
+                exploit_available BOOLEAN,
+                
+                -- Asset Classification
+                asset_category TEXT,
+                asset_owner TEXT,
+                business_unit TEXT,
+                criticality TEXT,
+                
+                -- Discovery & Monitoring
+                discovery_method TEXT,
+                data_sources_json TEXT,
+                confidence_score REAL,
+                monitoring_enabled BOOLEAN DEFAULT 0,
+                scan_frequency TEXT,
+                last_scan_type TEXT,
+                
+                -- Asset Relationships
+                parent_asset_id TEXT,
+                related_assets_json TEXT,
+                
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
-                FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL
+                FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL,
+                FOREIGN KEY(parent_asset_id) REFERENCES bounty_assets(id) ON DELETE SET NULL
             )"#
         ).execute(pool).await?;
 
@@ -1187,11 +1269,14 @@ impl DatabaseService {
 
         info!("Database schema creation completed");
         
-        // Run task-tool integration migration
+        // Run migrations
         TaskToolIntegrationMigration::apply(pool).await?;
         SubagentRunsMigration::apply(pool).await?;
         SubagentMessagesMigration::apply(pool).await?;
         AgentTodosMigration::apply(pool).await?;
+        
+        // Run ASM enhancement migration
+        AsmEnhancementMigration::apply(pool).await?;
         
         Ok(())
     }

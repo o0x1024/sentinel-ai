@@ -10,7 +10,7 @@ const baseCommandSchema = z.object({
 // Individual action schemas
 const launchSchema = baseCommandSchema.extend({
   action: z.literal('launch'),
-  headless: z.literal(false).optional(),
+  headless: z.boolean().optional(),
   viewport: z
     .object({
       width: z.number().positive(),

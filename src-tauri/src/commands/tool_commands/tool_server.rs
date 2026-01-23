@@ -43,6 +43,37 @@ pub async fn get_tool_server_tool(tool_name: String) -> Result<Option<sentinel_t
     Ok(server.get_tool(&tool_name).await)
 }
 
+/// Get tool input schema from ToolServer
+#[tauri::command]
+pub async fn get_tool_input_schema(tool_id: String) -> Result<serde_json::Value, String> {
+    let server = get_tool_server();
+    server.init_builtin_tools().await;
+    
+    // Get tool info
+    let tool_info = server.get_tool(&tool_id).await
+        .ok_or_else(|| format!("Tool not found: {}", tool_id))?;
+    
+    // Return the input_schema from ToolInfo
+    Ok(tool_info.input_schema)
+}
+
+/// Get tool output schema from ToolServer
+#[tauri::command]
+pub async fn get_tool_output_schema(tool_id: String) -> Result<serde_json::Value, String> {
+    let server = get_tool_server();
+    server.init_builtin_tools().await;
+    
+    // Get tool info
+    let tool_info = server.get_tool(&tool_id).await
+        .ok_or_else(|| format!("Tool not found: {}", tool_id))?;
+    
+    // Return the output_schema from ToolInfo
+    Ok(tool_info.output_schema.unwrap_or_else(|| serde_json::json!({
+        "type": "object",
+        "properties": {}
+    })))
+}
+
 /// Execute a tool via ToolServer
 #[tauri::command]
 pub async fn execute_tool_server_tool(

@@ -548,6 +548,11 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     "description": "Wait condition: 'load', 'domcontentloaded', or 'networkidle'",
                     "default": "load",
                     "enum": ["load", "domcontentloaded", "networkidle"]
+                },
+                "headless": {
+                    "type": "boolean",
+                    "description": "Whether to run in headless mode (true) or show browser window (false). Default is true (headless).",
+                    "default": true
                 }
             },
             "required": ["url"]
@@ -1591,7 +1596,8 @@ pub async fn clear_tool_usage_stats() -> Result<(), String> {
 
 pub mod tool_server;
 pub use tool_server::{
-    execute_tool_server_tool, get_tool_server_stats, get_tool_server_tool, init_tool_server,
+    execute_tool_server_tool, get_tool_server_stats, get_tool_server_tool, 
+    get_tool_input_schema, get_tool_output_schema, init_tool_server,
     list_tool_server_tools, list_tools_by_source, refresh_all_dynamic_tools,
     register_mcp_tools_from_server, register_workflow_tools,
 };

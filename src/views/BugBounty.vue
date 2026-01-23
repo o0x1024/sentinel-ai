@@ -97,6 +97,10 @@
         <i class="fas fa-project-diagram mr-2"></i>
         {{ t('bugBounty.tabs.workflows') }}
       </a>
+      <a class="tab" :class="{ 'tab-active': activeTab === 'monitor' }" @click="switchTab('monitor')">
+        <i class="fas fa-radar mr-2"></i>
+        {{ t('bugBounty.tabs.monitor') }}
+      </a>
     </div>
 
     <!-- Tab Content -->
@@ -114,8 +118,12 @@
 
       <!-- Assets Tab -->
       <AssetsPanel 
+        ref="assetsPanelRef"
         v-if="activeTab === 'assets'"
+        :selected-program="selectedProgram"
+        :programs="programs"
         @stats-updated="updateAssetStats"
+        @discover-assets="showDiscoverAssetsModal = true"
       />
 
       <!-- Findings Tab -->
@@ -177,14 +185,21 @@
         v-if="activeTab === 'changes'"
         @view="viewChangeEvent"
         @trigger-workflow="triggerWorkflowFromEvent"
+        @create="showCreateChangeEventModal = true"
       />
 
       <!-- Workflow Templates Tab -->
-      <WorkflowTemplatesPanel 
+      <WorkflowTemplatesPanel
         v-if="activeTab === 'workflows'"
         :programs="programs"
         :selected-program="selectedProgram"
         @view="viewWorkflowTemplate"
+      />
+
+      <!-- Monitor Tab -->
+      <MonitorPanel
+        v-if="activeTab === 'monitor'"
+        :selected-program="selectedProgram"
       />
     </div>
 
@@ -192,8 +207,9 @@
     <CreateProgramModal
       :visible="showCreateProgramModal"
       :submitting="creating"
-      @close="showCreateProgramModal = false"
-      @submit="createProgram"
+      :program="editingProgram"
+      @close="closeProgramModal"
+      @submit="saveProgram"
     />
 
     <CreateFindingModal
@@ -246,6 +262,22 @@
       @trigger-workflow="triggerWorkflowFromEvent"
     />
 
+    <CreateChangeEventModal
+      :visible="showCreateChangeEventModal"
+      :submitting="creating"
+      :programs="programs"
+      :selected-program="selectedProgram"
+      @close="showCreateChangeEventModal = false"
+      @submit="createChangeEvent"
+    />
+
+    <DiscoverAssetsModal
+      :visible="showDiscoverAssetsModal"
+      :selected-program="selectedProgram"
+      @close="showDiscoverAssetsModal = false"
+      @success="onAssetsDiscovered"
+    />
+
     <WorkflowTemplateDetailModal
       v-if="showWorkflowTemplateDetailModal && selectedWorkflowTemplate"
       :template="selectedWorkflowTemplate"
@@ -278,8 +310,11 @@ import {
   CreateSubmissionModal,
   ProgramDetailModal,
   FindingDetailModal,
-  SubmissionDetailModal
+  SubmissionDetailModal,
+  DiscoverAssetsModal
 } from '../components/BugBounty'
+import MonitorPanel from '../components/BugBounty/MonitorPanel.vue'
+import CreateChangeEventModal from '../components/BugBounty/CreateChangeEventModal.vue'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -291,10 +326,15 @@ const loadingSubmissions = ref(false)
 const creating = ref(false)
 const activeTab = ref('programs')
 
+// Component refs
+const assetsPanelRef = ref<InstanceType<typeof AssetsPanel> | null>(null)
+
 // Modals
 const showCreateProgramModal = ref(false)
 const showCreateFindingModal = ref(false)
 const showCreateSubmissionModal = ref(false)
+const showCreateChangeEventModal = ref(false)
+const showDiscoverAssetsModal = ref(false)
 const showProgramDetailModal = ref(false)
 const showFindingDetailModal = ref(false)
 const showSubmissionDetailModal = ref(false)
@@ -306,6 +346,7 @@ const selectedFinding = ref<any>(null)
 const selectedSubmission = ref<any>(null)
 const selectedChangeEvent = ref<any>(null)
 const selectedWorkflowTemplate = ref<any>(null)
+const editingProgram = ref<any>(null) // Program being edited
 
 // Data
 const programs = ref<any[]>([])
@@ -477,29 +518,51 @@ const updateAssetStats = (stats: any) => {
   }
 }
 
-const createProgram = async (data: any) => {
+const saveProgram = async (data: any) => {
   try {
     creating.value = true
-    const request = {
-      name: data.name,
-      organization: data.organization,
-      platform: data.platform || null,
-      url: data.url || null,
-      description: data.description || null,
-      platform_handle: null,
-      program_type: null,
-      rewards: null,
-      rules: null,
-      tags: null,
+    
+    if (data.id) {
+      // Update existing program
+      const request = {
+        name: data.name,
+        organization: data.organization,
+        platform: data.platform || null,
+        url: data.url || null,
+        description: data.description || null,
+        platform_handle: null,
+        program_type: null,
+        rewards: null,
+        rules: null,
+        tags: null,
+        status: editingProgram.value?.status || 'active',
+      }
+      await invoke('bounty_update_program', { id: data.id, request })
+      toast.success(t('bugBounty.success.programUpdated'))
+    } else {
+      // Create new program
+      const request = {
+        name: data.name,
+        organization: data.organization,
+        platform: data.platform || null,
+        url: data.url || null,
+        description: data.description || null,
+        platform_handle: null,
+        program_type: null,
+        rewards: null,
+        rules: null,
+        tags: null,
+      }
+      await invoke('bounty_create_program', { request })
+      toast.success(t('bugBounty.success.programCreated'))
     }
-    await invoke('bounty_create_program', { request })
-    toast.success(t('bugBounty.success.programCreated'))
-    showCreateProgramModal.value = false
+    
+    closeProgramModal()
     await loadPrograms()
     await loadStats()
   } catch (error) {
-    console.error('Failed to create program:', error)
-    toast.error(t('bugBounty.errors.createFailed'))
+    console.error('Failed to save program:', error)
+    toast.error(data.id ? t('bugBounty.errors.updateFailed') : t('bugBounty.errors.createFailed'))
   } finally {
     creating.value = false
   }
@@ -649,7 +712,13 @@ const onProgramUpdated = async () => {
 }
 
 const editProgram = (program: any) => {
-  toast.info(t('bugBounty.comingSoon'))
+  editingProgram.value = program
+  showCreateProgramModal.value = true
+}
+
+const closeProgramModal = () => {
+  showCreateProgramModal.value = false
+  editingProgram.value = null
 }
 
 const viewFinding = (finding: any) => {
@@ -727,6 +796,33 @@ const triggerWorkflowFromEvent = async (event: any) => {
 
 const onChangeEventUpdated = async () => {
   await loadChangeEventStats()
+}
+
+const createChangeEvent = async (data: any) => {
+  try {
+    creating.value = true
+    await invoke('bounty_create_change_event', { request: data })
+    toast.success(t('bugBounty.changeEvents.eventCreated'))
+    showCreateChangeEventModal.value = false
+    await loadChangeEventStats()
+  } catch (error: any) {
+    console.error('Failed to create change event:', error)
+    toast.error(error || t('bugBounty.errors.createFailed'))
+  } finally {
+    creating.value = false
+  }
+}
+
+const onAssetsDiscovered = async (result: any) => {
+  // Refresh asset stats and change event stats after assets are discovered
+  await loadChangeEventStats()
+  
+  // Refresh assets panel to show newly imported assets
+  if (assetsPanelRef.value) {
+    assetsPanelRef.value.refreshAssets()
+  }
+  
+  showDiscoverAssetsModal.value = false
 }
 
 // Workflow Template

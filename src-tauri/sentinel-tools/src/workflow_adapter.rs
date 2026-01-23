@@ -172,6 +172,7 @@ impl WorkflowToolAdapter {
             source: ToolSource::Workflow {
                 workflow_id: workflow_id.clone(),
             },
+            category: "workflow".to_string(),
             executor: create_workflow_executor(workflow_id),
         }
     }

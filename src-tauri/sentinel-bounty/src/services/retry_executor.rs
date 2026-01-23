@@ -203,7 +203,7 @@ impl RateLimiter {
         
         // Apply per-host delay
         if self.per_host_delay_ms > 0 {
-            let mut last_times = self.last_request_times.write().await;
+            let last_times = self.last_request_times.write().await;
             if let Some(last_time) = last_times.get(host) {
                 let elapsed = last_time.elapsed().as_millis() as u64;
                 if elapsed < self.per_host_delay_ms {

@@ -213,6 +213,15 @@
               >
                 {{ getStepStatus(step.id) }}
               </span>
+              <!-- Copy Result Button -->
+              <button 
+                v-if="stepResults[step.id]"
+                class="btn btn-ghost btn-xs"
+                @click.stop="copyStepResult(step.id)"
+                :title="t('bugBounty.workflow.copyResult')"
+              >
+                <i class="fas fa-copy"></i>
+              </button>
             </div>
             <div class="collapse-content">
               <div v-if="stepResults[step.id]" class="pt-2">
@@ -337,14 +346,30 @@
                       </div>
                     </div>
                     
-                    <!-- Raw output toggle -->
+                    <!-- JSON Viewer with Copy -->
                     <div class="collapse collapse-arrow bg-base-300 rounded mt-2">
                       <input type="checkbox" />
-                      <div class="collapse-title text-xs py-1 min-h-0">
-                        {{ t('bugBounty.workflow.rawOutput') }}
+                      <div class="collapse-title text-xs py-1 min-h-0 flex items-center justify-between">
+                        <span>{{ t('bugBounty.workflow.rawOutput') }}</span>
+                        <button 
+                          class="btn btn-ghost btn-xs"
+                          @click.stop="copyStepResult(step.id)"
+                          :title="t('bugBounty.workflow.copyResult')"
+                        >
+                          <i class="fas fa-copy"></i>
+                        </button>
                       </div>
                       <div class="collapse-content">
-                        <pre class="text-xs font-mono overflow-auto max-h-60 whitespace-pre-wrap">{{ JSON.stringify(stepResults[step.id]?.output, null, 2) }}</pre>
+                        <div class="relative">
+                          <JsonViewer 
+                            :value="stepResults[step.id]?.output || stepResults[step.id]" 
+                            :expand-depth="2"
+                            copyable
+                            boxed
+                            sort
+                            theme="light"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -404,9 +429,13 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { JsonViewer } from 'vue3-json-viewer'
+import 'vue3-json-viewer/dist/vue3-json-viewer.css'
 import WorkflowDataFlow from './WorkflowDataFlow.vue'
+import { useToast } from '../../composables/useToast'
 
 const { t } = useI18n()
+const toast = useToast()
 
 interface WorkflowStep {
   id: string
@@ -739,6 +768,24 @@ const getOutputArray = (stepId: string, key: string): any[] => {
   const result = stepResults.value[stepId]
   if (!result?.output) return []
   return result.output[key] || []
+}
+
+// Copy step result to clipboard
+const copyStepResult = async (stepId: string) => {
+  try {
+    const result = stepResults.value[stepId]
+    if (!result) {
+      toast.warning(t('bugBounty.workflow.noResultToCopy'))
+      return
+    }
+    
+    const jsonString = JSON.stringify(result, null, 2)
+    await navigator.clipboard.writeText(jsonString)
+    toast.success(t('bugBounty.workflow.resultCopied'))
+  } catch (error) {
+    console.error('Failed to copy result:', error)
+    toast.error(t('bugBounty.workflow.copyFailed'))
+  }
 }
 
 // Lifecycle

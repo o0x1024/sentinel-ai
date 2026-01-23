@@ -46,6 +46,11 @@ pub enum ToolCategory {
     Workflow,
     Browser,
     Utility,
+    Recon,      // Discovery/Reconnaissance
+    Scanning,   // Vulnerability scanning
+    Exploitation, // Exploitation tools
+    Monitoring, // Monitoring tools
+    Other,      // Other/Uncategorized
 }
 
 impl std::fmt::Display for ToolCategory {
@@ -61,6 +66,11 @@ impl std::fmt::Display for ToolCategory {
             ToolCategory::Workflow => write!(f, "workflow"),
             ToolCategory::Browser => write!(f, "browser"),
             ToolCategory::Utility => write!(f, "utility"),
+            ToolCategory::Recon => write!(f, "recon"),
+            ToolCategory::Scanning => write!(f, "scanning"),
+            ToolCategory::Exploitation => write!(f, "exploitation"),
+            ToolCategory::Monitoring => write!(f, "monitoring"),
+            ToolCategory::Other => write!(f, "other"),
         }
     }
 }

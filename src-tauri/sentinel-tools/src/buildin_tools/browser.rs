@@ -67,9 +67,13 @@ pub struct BrowserOpenArgs {
     pub url: String,
     #[serde(default)]
     pub wait_until: Option<String>,
-    /// Whether to show browser window (true) or use headless mode (false)
-    #[serde(default)]
-    pub show_browser: Option<bool>,
+    /// Whether to run in headless mode (true) or show browser window (false)
+    #[serde(default = "default_open_headless")]
+    pub headless: bool,
+}
+
+fn default_open_headless() -> bool {
+    true
 }
 
 /// Browser snapshot arguments
@@ -213,13 +217,11 @@ pub async fn execute_browser_open(args: Value) -> Result<Value, String> {
     let service = get_browser_service().await;
     let mut service = service.write().await;
 
-    // Set headless mode - default to showing browser (headless=false)
-    let show_browser = args.show_browser.unwrap_or(true);
-    service.set_headless(!show_browser).await
-        .map_err(|e| format!("Failed to set headless mode: {}", e))?;
+    // Set headless mode
+    let headless = args.headless;
 
     let result = service
-        .open(&normalized_url, args.wait_until.as_deref())
+        .open(&normalized_url, args.wait_until.as_deref(), Some(headless))
         .await
         .map_err(|e| format!("Failed to open URL: {}", e))?;
 

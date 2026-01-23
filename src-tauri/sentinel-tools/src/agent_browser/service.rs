@@ -79,8 +79,16 @@ impl AgentBrowserService {
     // ==================== Navigation ====================
 
     /// Open a URL
-    pub async fn open(&mut self, url: &str, wait_until: Option<&str>) -> Result<NavigateResult> {
+    pub async fn open(&mut self, url: &str, wait_until: Option<&str>, headless: Option<bool>) -> Result<NavigateResult> {
         self.ensure_init().await?;
+        
+        // If headless mode is specified and different from current, update it
+        if let Some(headless_mode) = headless {
+            if self.config.headless != headless_mode {
+                self.set_headless(headless_mode).await?;
+            }
+        }
+        
         let client = self.client();
         let result = client.navigate(url, wait_until)?;
 
@@ -447,11 +455,14 @@ impl AgentBrowserService {
         if self.config.headless != headless {
             self.config.headless = headless;
             
-            // If already initialized, close and reinitialize immediately
+            // If already initialized, close and reinitialize
             if self.initialized {
                 info!("Closing browser to apply new headless setting");
                 let _ = self.close().await;
                 self.initialized = false;
+                
+                // Wait a bit for browser to fully close
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
         }
         

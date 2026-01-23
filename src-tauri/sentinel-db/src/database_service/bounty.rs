@@ -1723,7 +1723,7 @@ impl DatabaseService {
 // Bounty Asset Models (P1-B3: Asset Consolidation)
 // ============================================================================
 
-/// Bounty asset model
+/// Bounty asset model (Enhanced for ASM - Attack Surface Management)
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct BountyAssetRow {
     pub id: String,
@@ -1753,6 +1753,86 @@ pub struct BountyAssetRow {
     pub metadata_json: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    
+    // ========== P0: Core ASM Attributes ==========
+    
+    // IP Asset Attributes
+    pub ip_version: Option<String>,           // IPv4/IPv6
+    pub asn: Option<i32>,                     // Autonomous System Number
+    pub asn_org: Option<String>,              // ASN Organization
+    pub isp: Option<String>,                  // ISP Provider
+    pub country: Option<String>,              // Country Code
+    pub city: Option<String>,                 // City
+    pub latitude: Option<f64>,                // Latitude
+    pub longitude: Option<f64>,               // Longitude
+    pub is_cloud: Option<bool>,               // Is Cloud Service
+    pub cloud_provider: Option<String>,       // AWS/Azure/GCP/Alibaba
+    
+    // Port/Service Attributes
+    pub service_name: Option<String>,         // Service name (ssh, http, mysql)
+    pub service_version: Option<String>,      // Service version
+    pub service_product: Option<String>,      // Product name (nginx, apache)
+    pub banner: Option<String>,               // Service banner
+    pub transport_protocol: Option<String>,   // TCP/UDP
+    pub cpe: Option<String>,                  // Common Platform Enumeration
+    
+    // Domain Attributes
+    pub domain_registrar: Option<String>,     // Domain registrar
+    pub registration_date: Option<String>,    // Registration date
+    pub expiration_date: Option<String>,      // Expiration date
+    pub nameservers_json: Option<String>,     // NS servers
+    pub mx_records_json: Option<String>,      // MX records
+    pub txt_records_json: Option<String>,     // TXT records
+    pub whois_data_json: Option<String>,      // WHOIS data
+    pub is_wildcard: Option<bool>,            // Is wildcard domain
+    pub parent_domain: Option<String>,        // Parent domain
+    
+    // Web/URL Attributes
+    pub http_status: Option<i32>,             // HTTP status code
+    pub response_time_ms: Option<i32>,        // Response time
+    pub content_length: Option<i64>,          // Content length
+    pub content_type: Option<String>,         // Content-Type header
+    pub title: Option<String>,                // Page title
+    pub favicon_hash: Option<String>,         // Favicon hash
+    pub headers_json: Option<String>,         // HTTP headers
+    pub waf_detected: Option<String>,         // WAF detection
+    pub cdn_detected: Option<String>,         // CDN detection
+    pub screenshot_path: Option<String>,      // Screenshot path
+    pub body_hash: Option<String>,            // Page body hash
+    
+    // Certificate Attributes
+    pub certificate_id: Option<String>,       // Related certificate ID
+    pub ssl_enabled: Option<bool>,            // SSL/TLS enabled
+    pub certificate_subject: Option<String>,  // Certificate subject
+    pub certificate_issuer: Option<String>,   // Certificate issuer
+    pub certificate_valid_from: Option<String>, // Certificate valid from
+    pub certificate_valid_to: Option<String>,   // Certificate valid to
+    pub certificate_san_json: Option<String>,   // Subject Alternative Names
+    
+    // Attack Surface & Risk
+    pub exposure_level: Option<String>,       // internet/intranet/private
+    pub attack_surface_score: Option<f64>,    // Attack surface score (0-100)
+    pub vulnerability_count: Option<i32>,     // Known vulnerabilities count
+    pub cvss_max_score: Option<f64>,          // Highest CVSS score
+    pub exploit_available: Option<bool>,      // Exploit available
+    
+    // Asset Classification
+    pub asset_category: Option<String>,       // external/internal/third-party
+    pub asset_owner: Option<String>,          // Asset owner
+    pub business_unit: Option<String>,        // Business unit
+    pub criticality: Option<String>,          // critical/high/medium/low
+    
+    // Discovery & Monitoring
+    pub discovery_method: Option<String>,     // passive/active/manual
+    pub data_sources_json: Option<String>,    // Data sources (shodan, censys, etc)
+    pub confidence_score: Option<f64>,        // Confidence score (0-1)
+    pub monitoring_enabled: Option<bool>,     // Monitoring enabled
+    pub scan_frequency: Option<String>,       // Scan frequency (daily/weekly/monthly)
+    pub last_scan_type: Option<String>,       // Last scan type
+    
+    // Asset Relationships
+    pub parent_asset_id: Option<String>,      // Parent asset ID
+    pub related_assets_json: Option<String>,  // Related assets
 }
 
 /// Asset statistics

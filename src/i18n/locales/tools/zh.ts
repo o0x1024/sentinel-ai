@@ -43,6 +43,11 @@ export default {
   testParams: '测试参数 (JSON，可选)',
   testParamsPlaceholder: '留空使用默认参数，或输入 JSON 对象覆盖默认参数',
   testResult: '测试结果',
+  copyResult: '复制结果',
+  toggleJsonView: '切换JSON渲染',
+  copiedToClipboard: '已复制到剪贴板',
+  copyFailed: '复制失败',
+  jsonParseFailed: 'JSON解析失败',
   runTest: '运行测试',
   testing: '正在执行测试...',
 

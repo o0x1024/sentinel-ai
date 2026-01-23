@@ -98,6 +98,7 @@ export default {
     ok: '确定',
     view: '查看',
     reset: '重置',
+    required: '必填',
     export: '导出',
     duplicate: '复制',
     select: '选择',
@@ -168,6 +169,20 @@ export default {
     importFailed: '导入资产失败',
     tags: '标签',
     metadata: '元数据',
+    allCountries: '全部国家',
+    allCloudProviders: '全部云服务商',
+    allServices: '全部服务',
+    allCDNs: '全部CDN',
+    allWAFs: '全部WAF',
+    allPrograms: '全部项目',
+    customizeColumns: '自定义列',
+    filters: '筛选器',
+    allExposureLevels: '全部暴露级别',
+    exposureLevel: {
+      internet: '互联网',
+      intranet: '内网',
+      private: '私有',
+    },
   },
   assetTypes: {
     domain: '域名',
@@ -1801,6 +1816,7 @@ export default {
     aiInputPlaceholder: '描述你想要的修改...',
     contextMenuHint: '右键点击代码可快速引用到 AI 助手',
     fullCode: '完整代码',
+    referToAi: '引用到AI助手',
     review: {
       pending: '待审核',
       approved: '已通过',
@@ -1853,7 +1869,6 @@ export default {
     testPassed: '测试通过',
     errorInfo: '错误信息',
     unknownError: '未知错误',
-    referToAi: '引用到AI助手',
     testResultAdded: '已添加测试结果到AI助手',
     // Agent plugin subcategories
     agentCategories: {
@@ -1867,6 +1882,30 @@ export default {
       analyzer: '分析工具',
       reporter: '报告工具',
       custom: '自定义'
+    },
+    // Plugin store
+    store: {
+      title: '插件商店',
+      install: '安装',
+      installed: '已安装',
+      update: '更新',
+      updateAvailable: '有更新',
+      localVersion: '本地版本',
+      installSuccess: '插件安装成功',
+      installError: '插件安装失败',
+      updateSuccess: '插件更新成功',
+      updateError: '插件更新失败',
+      fetchError: '获取插件列表失败',
+      noPlugins: '暂无插件',
+      noDescription: '暂无描述',
+      refreshToLoad: '点击刷新按钮加载插件',
+      allCategories: '全部分类',
+      searchPlaceholder: '搜索插件...',
+      listView: '列表视图',
+      cardView: '卡片视图',
+      justNow: '刚刚更新',
+      minutesAgo: '{minutes}分钟前',
+      hoursAgo: '{hours}小时前'
     }
   },
   license: {

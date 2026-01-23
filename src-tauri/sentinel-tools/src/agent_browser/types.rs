@@ -165,7 +165,7 @@ impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
             session: default_session(),
-            headless: false,
+            headless: true,
             viewport_width: 1280,
             viewport_height: 720,
             user_agent: None,

@@ -44,5 +44,57 @@ export default {
     active: 'Active',
     inactive: 'Inactive'
   },
-  noAssets: 'No assets found'
+  noAssets: 'No assets found',
+  allCountries: 'All Countries',
+  allCloudProviders: 'All Cloud Providers',
+  allServices: 'All Services',
+  allCDNs: 'All CDNs',
+  allWAFs: 'All WAFs',
+  customizeColumns: 'Customize Columns',
+  filters: 'Filters',
+  allExposureLevels: 'All Exposure Levels',
+  exposureLevel: {
+    internet: 'Internet',
+    intranet: 'Intranet',
+    private: 'Private'
+  },
+  columnGroups: {
+    basic: 'Basic Info',
+    ip: 'IP Info',
+    port: 'Port Info',
+    domain: 'Domain Info',
+    web: 'Web Info',
+    certificate: 'Certificate Info'
+  },
+  columns: {
+    name: 'Name',
+    type: 'Type',
+    value: 'Value',
+    risk_level: 'Risk Level',
+    status: 'Status',
+    last_seen: 'Last Seen',
+    attack_surface_score: 'Attack Surface Score',
+    exposure_level: 'Exposure Level',
+    discovery_method: 'Discovery Method',
+    ip_version: 'IP Version',
+    asn: 'ASN',
+    country: 'Country',
+    city: 'City',
+    cloud_provider: 'Cloud Provider',
+    port: 'Port',
+    service_name: 'Service Name',
+    service_version: 'Service Version',
+    transport_protocol: 'Transport Protocol',
+    domain_registrar: 'Domain Registrar',
+    expiration_date: 'Expiration Date',
+    parent_domain: 'Parent Domain',
+    http_status: 'HTTP Status',
+    title: 'Title',
+    cdn: 'CDN',
+    waf: 'WAF',
+    techStack: 'Tech Stack',
+    ssl: 'SSL',
+    certIssuer: 'Certificate Issuer',
+    certExpiry: 'Certificate Expiry'
+  }
 }

@@ -41,6 +41,10 @@
               <i class="fas fa-sync-alt mr-2"></i>
               {{ t('common.refresh') }}
             </button>
+            <button class="btn btn-sm btn-primary" @click="$emit('create')">
+              <i class="fas fa-plus mr-2"></i>
+              {{ t('bugBounty.changeEvents.createEvent') }}
+            </button>
           </div>
         </div>
         
@@ -173,6 +177,7 @@ const toast = useToast()
 const emit = defineEmits<{
   (e: 'view', event: any): void
   (e: 'trigger-workflow', event: any): void
+  (e: 'create'): void
 }>()
 
 // State

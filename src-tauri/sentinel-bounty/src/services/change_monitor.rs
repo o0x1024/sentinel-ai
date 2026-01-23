@@ -3,7 +3,7 @@
 //! Monitors assets for changes and triggers workflows when changes are detected.
 
 use crate::models::{
-    ChangeEvent, ChangeEventType, ChangeSeverity, ChangeEventStatus,
+    ChangeEvent, ChangeEventType, ChangeSeverity,
     CreateChangeEventRequest,
 };
 use chrono::Utc;
@@ -11,17 +11,71 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Plugin configuration for a monitor type
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MonitorPluginConfig {
+    /// Primary plugin ID to use
+    pub plugin_id: String,
+    /// Fallback plugin IDs if primary fails
+    #[serde(default)]
+    pub fallback_plugins: Vec<String>,
+    /// Custom plugin parameters
+    #[serde(default)]
+    pub plugin_params: serde_json::Value,
+}
+
+impl MonitorPluginConfig {
+    pub fn new(plugin_id: String) -> Self {
+        Self {
+            plugin_id,
+            fallback_plugins: Vec::new(),
+            plugin_params: serde_json::Value::Null,
+        }
+    }
+
+    pub fn with_fallbacks(plugin_id: String, fallbacks: Vec<String>) -> Self {
+        Self {
+            plugin_id,
+            fallback_plugins: fallbacks,
+            plugin_params: serde_json::Value::Null,
+        }
+    }
+
+    /// Get all plugin IDs in order (primary + fallbacks)
+    pub fn all_plugins(&self) -> Vec<String> {
+        let mut plugins = vec![self.plugin_id.clone()];
+        plugins.extend(self.fallback_plugins.clone());
+        plugins
+    }
+}
+
 /// Change monitor configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChangeMonitorConfig {
     /// Enable DNS change monitoring
     pub enable_dns_monitoring: bool,
+    /// Plugin configuration for DNS monitoring
+    #[serde(default)]
+    pub dns_plugins: Vec<MonitorPluginConfig>,
+    
     /// Enable certificate change monitoring
     pub enable_cert_monitoring: bool,
+    /// Plugin configuration for certificate monitoring
+    #[serde(default)]
+    pub cert_plugins: Vec<MonitorPluginConfig>,
+    
     /// Enable content fingerprint monitoring
     pub enable_content_monitoring: bool,
+    /// Plugin configuration for content monitoring
+    #[serde(default)]
+    pub content_plugins: Vec<MonitorPluginConfig>,
+    
     /// Enable API endpoint monitoring
     pub enable_api_monitoring: bool,
+    /// Plugin configuration for API monitoring
+    #[serde(default)]
+    pub api_plugins: Vec<MonitorPluginConfig>,
+    
     /// Auto-trigger workflows on high severity events
     pub auto_trigger_enabled: bool,
     /// Minimum severity to auto-trigger
@@ -34,13 +88,62 @@ impl Default for ChangeMonitorConfig {
     fn default() -> Self {
         Self {
             enable_dns_monitoring: true,
+            dns_plugins: vec![
+                MonitorPluginConfig::with_fallbacks(
+                    "subdomain_enumerator".to_string(),
+                    vec!["dns_resolver".to_string()],
+                ),
+            ],
+            
             enable_cert_monitoring: true,
+            cert_plugins: vec![
+                MonitorPluginConfig::new("cert_monitor".to_string()),
+            ],
+            
             enable_content_monitoring: true,
+            content_plugins: vec![
+                MonitorPluginConfig::new("content_monitor".to_string()),
+            ],
+            
             enable_api_monitoring: true,
+            api_plugins: vec![
+                MonitorPluginConfig::new("api_monitor".to_string()),
+            ],
+            
             auto_trigger_enabled: true,
             auto_trigger_min_severity: ChangeSeverity::Medium,
             check_interval_secs: 3600, // 1 hour
         }
+    }
+}
+
+impl ChangeMonitorConfig {
+    /// Get all DNS plugin IDs
+    pub fn dns_plugin_ids(&self) -> Vec<String> {
+        self.dns_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all certificate plugin IDs
+    pub fn cert_plugin_ids(&self) -> Vec<String> {
+        self.cert_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all content plugin IDs
+    pub fn content_plugin_ids(&self) -> Vec<String> {
+        self.content_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all API plugin IDs
+    pub fn api_plugin_ids(&self) -> Vec<String> {
+        self.api_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
     }
 }
 

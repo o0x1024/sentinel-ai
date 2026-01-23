@@ -841,6 +841,19 @@ export default {
   total: '总计',
   cost: '成本',
   viewAll: '查看全部',
+  reset: '重置',
+  minutesAgo: '分钟前',
+  hoursAgo: '小时前',
+  daysAgo: '天前',
+  justNow: '刚刚',
+  never: '从未',
+  allPrograms: '全部项目',
+  allExposureLevels: '全部暴露级别',
+  exposureLevel: {
+    internet: '互联网',
+    intranet: '内网',
+    private: '私有'
+  },
 
   // Tour guide
   tour: {

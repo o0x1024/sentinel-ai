@@ -332,6 +332,7 @@ impl McpToolAdapter {
             source: ToolSource::Mcp {
                 server_name: server_name.clone(),
             },
+            category: "mcp".to_string(),
             executor: create_mcp_tool_executor(server_name, tool_name),
         }
     }
