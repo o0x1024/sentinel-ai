@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use tauri::{State, AppHandle, Emitter};
 use tokio::sync::RwLock;
+use sqlx;
 use serde::{Deserialize, Serialize};
 use sentinel_bounty::services::{MonitorScheduler, MonitorTask, MonitorStats, ChangeMonitorConfig, MonitorPluginConfig};
 use sentinel_db::{DatabaseService, BountyAssetRow};
@@ -111,14 +112,67 @@ fn calculate_cert_risk_score(cert_value: &serde_json::Value) -> f64 {
 /// Global monitor scheduler state
 pub struct MonitorSchedulerState {
     pub scheduler: Arc<MonitorScheduler>,
+    pub initialized: bool,
 }
 
 impl MonitorSchedulerState {
     pub fn new() -> Self {
         Self {
             scheduler: Arc::new(MonitorScheduler::new()),
+            initialized: false,
         }
     }
+}
+
+// ============================================================================
+// Persistence Helpers
+// ============================================================================
+
+async fn save_tasks_to_db(scheduler: &MonitorScheduler, db: &DatabaseService) -> Result<(), String> {
+    let tasks = scheduler.list_tasks().await;
+    let json = serde_json::to_string(&tasks).map_err(|e| e.to_string())?;
+    
+    let pool = db.get_pool().map_err(|e| e.to_string())?;
+    
+    let _ = sqlx::query(
+        "INSERT INTO configurations (id, category, key, value, created_at, updated_at) 
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
+         ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP"
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind("monitor_scheduler")
+    .bind("tasks")
+    .bind(json)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
+async fn load_tasks_from_db(scheduler: &MonitorScheduler, db: &DatabaseService) -> Result<(), String> {
+    let pool = db.get_pool().map_err(|e| e.to_string())?;
+    
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM configurations WHERE category = ? AND key = ?"
+    )
+    .bind("monitor_scheduler")
+    .bind("tasks")
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    
+    if let Some((json,)) = row {
+        if !json.is_empty() {
+             let tasks: Vec<MonitorTask> = serde_json::from_str(&json).unwrap_or_default();
+             for task in tasks {
+                 if scheduler.get_task(&task.id).await.is_none() {
+                     let _ = scheduler.add_task(task).await;
+                 }
+             }
+        }
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -129,9 +183,25 @@ impl MonitorSchedulerState {
 #[tauri::command]
 pub async fn monitor_start_scheduler(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     app: AppHandle,
 ) -> Result<bool, String> {
+    // Ensure tasks are loaded
+    {
+        let state_read = state.read().await;
+        if !state_read.initialized {
+            drop(state_read);
+            let mut state_write = state.write().await;
+            if !state_write.initialized {
+                load_tasks_from_db(&state_write.scheduler, &db_service).await?;
+                state_write.initialized = true;
+            }
+        }
+    }
+
     let state_guard = state.read().await;
+    // Start scheduler if not running (logic from start() handles check)
+    state_guard.scheduler.start().await?;
     let scheduler = state_guard.scheduler.clone();
     drop(state_guard);
 
@@ -283,6 +353,7 @@ impl From<MonitorConfigDto> for ChangeMonitorConfig {
 #[tauri::command]
 pub async fn monitor_create_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     request: CreateMonitorTaskRequest,
 ) -> Result<String, String> {
     let state_guard = state.read().await;
@@ -298,6 +369,10 @@ pub async fn monitor_create_task(
     }
     
     let task_id = state_guard.scheduler.add_task(task).await?;
+    
+    // Save state
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
+    
     Ok(task_id)
 }
 
@@ -315,8 +390,22 @@ pub async fn monitor_get_task(
 #[tauri::command]
 pub async fn monitor_list_tasks(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     program_id: Option<String>,
 ) -> Result<Vec<MonitorTask>, String> {
+    // Ensure tasks are loaded
+    {
+        let state_read = state.read().await;
+        if !state_read.initialized {
+            drop(state_read);
+            let mut state_write = state.write().await;
+            if !state_write.initialized {
+                load_tasks_from_db(&state_write.scheduler, &db_service).await?;
+                state_write.initialized = true;
+            }
+        }
+    }
+
     let state_guard = state.read().await;
     let mut tasks = state_guard.scheduler.list_tasks().await;
     
@@ -332,10 +421,12 @@ pub async fn monitor_list_tasks(
 #[tauri::command]
 pub async fn monitor_delete_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
     let state_guard = state.read().await;
     state_guard.scheduler.remove_task(&task_id).await?;
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
     Ok(true)
 }
 
@@ -343,10 +434,12 @@ pub async fn monitor_delete_task(
 #[tauri::command]
 pub async fn monitor_enable_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
     let state_guard = state.read().await;
     state_guard.scheduler.enable_task(&task_id).await?;
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
     Ok(true)
 }
 
@@ -354,10 +447,12 @@ pub async fn monitor_enable_task(
 #[tauri::command]
 pub async fn monitor_disable_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
     let state_guard = state.read().await;
     state_guard.scheduler.disable_task(&task_id).await?;
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
     Ok(true)
 }
 
@@ -383,6 +478,7 @@ pub struct UpdateMonitorTaskRequest {
 #[tauri::command]
 pub async fn monitor_update_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
     request: UpdateMonitorTaskRequest,
 ) -> Result<bool, String> {
@@ -401,6 +497,8 @@ pub async fn monitor_update_task(
         }
     }).await?;
     
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
+    
     Ok(true)
 }
 
@@ -412,6 +510,7 @@ pub async fn monitor_update_task(
 #[tauri::command]
 pub async fn monitor_create_default_tasks(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     program_id: String,
 ) -> Result<Vec<String>, String> {
     let state_guard = state.read().await;
@@ -440,6 +539,8 @@ pub async fn monitor_create_default_tasks(
     content_task.config.enable_content_monitoring = true;
     content_task.config.enable_api_monitoring = true;
     task_ids.push(state_guard.scheduler.add_task(content_task).await?);
+    
+    save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
     
     Ok(task_ids)
 }
@@ -1337,9 +1438,12 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
         tracing::debug!("Checking tool: name={}, category={}, enabled={}", 
             tool.name, tool.category, tool.enabled);
         
-        let monitor_type = match tool.name.as_str() {
+        // Normalize name by removing prefix if it's a plugin
+        let normalized_name = tool.name.strip_prefix("plugin__").unwrap_or(&tool.name);
+        
+        let monitor_type = match normalized_name {
             // DNS monitoring plugins
-            "subdomain_enumerator" | "dns_resolver" => "dns",
+            "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" => "dns",
             
             // Certificate monitoring plugins
             "cert_monitor" | "ssl_scanner" => "cert",
@@ -1352,11 +1456,12 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
             
             _ => {
                 // Check category-based matching
-                match tool.category.as_str() {
-                    "monitor" if tool.name.contains("dns") => "dns",
-                    "monitor" if tool.name.contains("cert") || tool.name.contains("ssl") => "cert",
-                    "monitor" if tool.name.contains("content") || tool.name.contains("http") => "content",
-                    "monitor" if tool.name.contains("api") || tool.name.contains("js") => "api",
+                let cat_lower = tool.category.to_lowercase();
+                match cat_lower.as_str() {
+                    "monitor" | "recon" | "reconnaissance" if normalized_name.contains("dns") || normalized_name.contains("subdomain") => "dns",
+                    "monitor" if normalized_name.contains("cert") || normalized_name.contains("ssl") => "cert",
+                    "monitor" if normalized_name.contains("content") || normalized_name.contains("http") => "content",
+                    "monitor" if normalized_name.contains("api") || normalized_name.contains("js") => "api",
                     _ => continue, // Skip non-monitor plugins
                 }
             }

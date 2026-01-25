@@ -200,6 +200,7 @@
       <MonitorPanel
         v-if="activeTab === 'monitor'"
         :selected-program="selectedProgram"
+        :programs="programs"
       />
     </div>
 

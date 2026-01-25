@@ -155,9 +155,7 @@ impl MonitorScheduler {
                 let monitors_guard = monitors.read().await;
 
                 for (task_id, task) in tasks_guard.iter_mut() {
-                    if !task.enabled {
-                        continue;
-                    }
+
 
                     // Check if it's time to run
                     let should_run = task.next_run_at
@@ -168,7 +166,7 @@ impl MonitorScheduler {
                         continue;
                     }
 
-                    debug!("Running monitor task: {} ({})", task.name, task_id);
+                    info!("Running monitor task: {} ({})", task.name, task_id);
 
                     // Get or create monitor for this program
                     let monitor = monitors_guard.get(&task.program_id)

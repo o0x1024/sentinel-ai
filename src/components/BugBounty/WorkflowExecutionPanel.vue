@@ -214,14 +214,7 @@
                 {{ getStepStatus(step.id) }}
               </span>
               <!-- Copy Result Button -->
-              <button 
-                v-if="stepResults[step.id]"
-                class="btn btn-ghost btn-xs"
-                @click.stop="copyStepResult(step.id)"
-                :title="t('bugBounty.workflow.copyResult')"
-              >
-                <i class="fas fa-copy"></i>
-              </button>
+
             </div>
             <div class="collapse-content">
               <div v-if="stepResults[step.id]" class="pt-2">
@@ -346,28 +339,46 @@
                       </div>
                     </div>
                     
-                    <!-- JSON Viewer with Copy -->
-                    <div class="collapse collapse-arrow bg-base-300 rounded mt-2">
-                      <input type="checkbox" />
-                      <div class="collapse-title text-xs py-1 min-h-0 flex items-center justify-between">
-                        <span>{{ t('bugBounty.workflow.rawOutput') }}</span>
-                        <button 
-                          class="btn btn-ghost btn-xs"
-                          @click.stop="copyStepResult(step.id)"
-                          :title="t('bugBounty.workflow.copyResult')"
-                        >
-                          <i class="fas fa-copy"></i>
-                        </button>
+                    <!-- Raw Output with Toggle -->
+                    <div class="bg-base-300 rounded mt-2 overflow-hidden">
+                      <div class="flex justify-between items-center p-2 bg-base-content/5 border-b border-base-content/10">
+                        <span class="text-xs font-medium text-base-content/70 ml-1">{{ t('bugBounty.workflow.rawOutput') }}</span>
+                        <div class="join">
+                          <button 
+                            class="btn btn-ghost btn-xs join-item"
+                            @click.stop="copyStepResult(step.id)"
+                            :title="t('bugBounty.workflow.copyResult')"
+                          >
+                            <i class="fas fa-copy"></i>
+                          </button>
+                          <button 
+                            class="btn btn-ghost btn-xs join-item"
+                            :class="{ 'btn-active': jsonViewStates[step.id] }"
+                            @click.stop="toggleJsonView(step.id)"
+                            :title="t('tools.toggleJsonView')"
+                          >
+                            <i class="fas fa-code"></i>
+                          </button>
+                        </div>
                       </div>
-                      <div class="collapse-content">
-                        <div class="relative">
+                      
+                      <div class="p-0">
+                        <!-- Raw Text View (Default) -->
+                        <div 
+                          v-if="!jsonViewStates[step.id]"
+                          class="max-h-96 overflow-auto p-3"
+                        >
+                          <pre class="text-xs font-mono whitespace-pre-wrap break-all">{{ JSON.stringify(stepResults[step.id]?.output || stepResults[step.id], null, 2) }}</pre>
+                        </div>
+                        
+                        <!-- JSON Viewer (Toggled) -->
+                        <div 
+                          v-else
+                          class="max-h-96 overflow-auto p-3 bg-base-100"
+                        >
                           <JsonViewer 
-                            :value="stepResults[step.id]?.output || stepResults[step.id]" 
-                            :expand-depth="2"
-                            copyable
-                            boxed
-                            sort
-                            theme="light"
+                            :data="stepResults[step.id]?.output || stepResults[step.id]" 
+                            :expanded="true"
                           />
                         </div>
                       </div>
@@ -425,12 +436,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { JsonViewer } from 'vue3-json-viewer'
-import 'vue3-json-viewer/dist/vue3-json-viewer.css'
+import JsonViewer from '@/components/Tools/JsonViewer.vue'
 import WorkflowDataFlow from './WorkflowDataFlow.vue'
 import { useToast } from '../../composables/useToast'
 
@@ -480,6 +490,8 @@ const rateLimitStats = ref<any>(null)
 const retryConfig = ref<any>(null)
 const duration = ref(0)
 const startTime = ref<Date | null>(null)
+const jsonViewStates = reactive<Record<string, boolean>>({})
+
 let durationInterval: any = null
 let unlistenProgress: any = null
 let unlistenStepStart: any = null
@@ -779,13 +791,20 @@ const copyStepResult = async (stepId: string) => {
       return
     }
     
-    const jsonString = JSON.stringify(result, null, 2)
+    // Copy the output part if available, otherwise the full result
+    const contentToCopy = result.output || result
+    
+    const jsonString = JSON.stringify(contentToCopy, null, 2)
     await navigator.clipboard.writeText(jsonString)
     toast.success(t('bugBounty.workflow.resultCopied'))
   } catch (error) {
     console.error('Failed to copy result:', error)
     toast.error(t('bugBounty.workflow.copyFailed'))
   }
+}
+
+const toggleJsonView = (stepId: string) => {
+  jsonViewStates[stepId] = !jsonViewStates[stepId]
 }
 
 // Lifecycle

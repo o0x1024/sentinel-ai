@@ -87,7 +87,7 @@
               <i class="fas fa-magic mr-2"></i>
               {{ t('bugBounty.monitor.createDefault') }}
             </button>
-            <button class="btn btn-sm btn-primary" @click="showCreateModal = true">
+            <button class="btn btn-sm btn-primary" @click="openCreateModal">
               <i class="fas fa-plus mr-2"></i>
               {{ t('bugBounty.monitor.createTask') }}
             </button>
@@ -164,7 +164,6 @@
                     class="btn btn-ghost btn-xs"
                     @click="triggerTask(task)"
                     :title="t('bugBounty.monitor.runNow')"
-                    :disabled="!task.enabled"
                   >
                     <i class="fas fa-play"></i>
                   </button>
@@ -214,6 +213,16 @@
         </h3>
 
         <div class="space-y-4">
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ t('bugBounty.program.selectedProgram') }} *</span></label>
+            <select v-model="taskForm.program_id" class="select select-bordered" :disabled="!!editingTask">
+              <option value="">{{ t('bugBounty.program.selectProgramPlaceholder') }}</option>
+              <option v-for="p in programs" :key="p.id" :value="p.id">
+                {{ p.name }} {{ p.organization ? `(${p.organization})` : '' }}
+              </option>
+            </select>
+          </div>
+
           <div class="form-control">
             <label class="label"><span class="label-text">{{ t('bugBounty.monitor.taskName') }} *</span></label>
             <input 
@@ -302,7 +311,7 @@
                             {{ p.name }}
                           </option>
                         </select>
-                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('dns', idx, fIdx)">
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('dns', idx, Number(fIdx))">
                           <i class="fas fa-times"></i>
                         </button>
                       </div>
@@ -377,7 +386,7 @@
                             {{ p.name }}
                           </option>
                         </select>
-                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('cert', idx, fIdx)">
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('cert', idx, Number(fIdx))">
                           <i class="fas fa-times"></i>
                         </button>
                       </div>
@@ -452,7 +461,7 @@
                             {{ p.name }}
                           </option>
                         </select>
-                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('content', idx, fIdx)">
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('content', idx, Number(fIdx))">
                           <i class="fas fa-times"></i>
                         </button>
                       </div>
@@ -527,7 +536,7 @@
                             {{ p.name }}
                           </option>
                         </select>
-                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('api', idx, fIdx)">
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('api', idx, Number(fIdx))">
                           <i class="fas fa-times"></i>
                         </button>
                       </div>
@@ -707,6 +716,7 @@ const toast = useToast()
 
 const props = defineProps<{
   selectedProgram?: any
+  programs?: any[]
 }>()
 
 // State
@@ -728,6 +738,7 @@ const loadingPlugins = ref(false)
 
 const taskForm = reactive({
   name: '',
+  program_id: '',
   interval_secs: 6 * 3600, // 6 hours default
   config: {
     enable_dns_monitoring: true,
@@ -797,39 +808,10 @@ const loadAvailablePlugins = async () => {
     const plugins = await invoke('monitor_get_available_plugins') as any[]
     console.log('✅ Loaded available plugins from backend:', plugins)
     
-    if (!plugins || plugins.length === 0) {
-      console.warn('⚠️ Backend returned empty plugin list, using fallback plugins')
-      // 如果后端返回空列表，提供默认插件列表
-      availablePlugins.value = [
-        { id: 'subdomain_enumerator', name: 'Subdomain Enumerator', monitor_type: 'dns', category: 'recon', is_available: true },
-        { id: 'dns_resolver', name: 'DNS Resolver', monitor_type: 'dns', category: 'recon', is_available: true },
-        { id: 'cert_monitor', name: 'Certificate Monitor', monitor_type: 'cert', category: 'monitor', is_available: true },
-        { id: 'ssl_scanner', name: 'SSL Scanner', monitor_type: 'cert', category: 'monitor', is_available: true },
-        { id: 'content_monitor', name: 'Content Monitor', monitor_type: 'content', category: 'monitor', is_available: true },
-        { id: 'http_prober', name: 'HTTP Prober', monitor_type: 'content', category: 'recon', is_available: true },
-        { id: 'api_monitor', name: 'API Monitor', monitor_type: 'api', category: 'monitor', is_available: true },
-        { id: 'js_analyzer', name: 'JS Analyzer', monitor_type: 'api', category: 'recon', is_available: true },
-        { id: 'js_link_finder', name: 'JS Link Finder', monitor_type: 'api', category: 'recon', is_available: true },
-      ]
-      console.log('📋 Using fallback plugins:', availablePlugins.value)
-    } else {
-      availablePlugins.value = plugins
-    }
+    availablePlugins.value = plugins || []
   } catch (error) {
     console.error('❌ Failed to load available plugins:', error)
-    // 如果加载失败，提供默认插件列表
-    availablePlugins.value = [
-      { id: 'subdomain_enumerator', name: 'Subdomain Enumerator', monitor_type: 'dns', category: 'recon', is_available: true },
-      { id: 'dns_resolver', name: 'DNS Resolver', monitor_type: 'dns', category: 'recon', is_available: true },
-      { id: 'cert_monitor', name: 'Certificate Monitor', monitor_type: 'cert', category: 'monitor', is_available: true },
-      { id: 'ssl_scanner', name: 'SSL Scanner', monitor_type: 'cert', category: 'monitor', is_available: true },
-      { id: 'content_monitor', name: 'Content Monitor', monitor_type: 'content', category: 'monitor', is_available: true },
-      { id: 'http_prober', name: 'HTTP Prober', monitor_type: 'content', category: 'recon', is_available: true },
-      { id: 'api_monitor', name: 'API Monitor', monitor_type: 'api', category: 'monitor', is_available: true },
-      { id: 'js_analyzer', name: 'JS Analyzer', monitor_type: 'api', category: 'recon', is_available: true },
-      { id: 'js_link_finder', name: 'JS Link Finder', monitor_type: 'api', category: 'recon', is_available: true },
-    ]
-    console.log('📋 Using fallback plugins due to error:', availablePlugins.value)
+    availablePlugins.value = []
     toast.warning(t('bugBounty.monitor.pluginsLoadFailed'))
   } finally {
     loadingPlugins.value = false
@@ -972,7 +954,7 @@ const createDefaultTasks = async () => {
 
 const saveTask = async () => {
   if (!taskForm.name.trim()) return
-  if (!props.selectedProgram) {
+  if (!taskForm.program_id) {
     toast.error(t('bugBounty.monitor.selectProgramFirst'))
     return
   }
@@ -995,7 +977,7 @@ const saveTask = async () => {
       // Create new task
       await invoke('monitor_create_task', {
         request: {
-          program_id: props.selectedProgram.id,
+          program_id: taskForm.program_id,
           name: taskForm.name,
           interval_secs: taskForm.interval_secs,
           config: taskForm.config
@@ -1032,6 +1014,12 @@ const toggleTask = async (task: any) => {
 
 const triggerTask = async (task: any) => {
   try {
+    // Auto-start scheduler if not running
+    if (!schedulerRunning.value) {
+      toast.info(t('bugBounty.monitor.autoStartingScheduler'))
+      await startScheduler()
+    }
+    
     await invoke('monitor_trigger_task', { taskId: task.id })
     toast.success(t('bugBounty.monitor.taskTriggered'))
     await loadTasks()
@@ -1044,6 +1032,7 @@ const triggerTask = async (task: any) => {
 const editTask = (task: any) => {
   editingTask.value = task
   taskForm.name = task.name
+  taskForm.program_id = task.program_id
   taskForm.interval_secs = task.interval_secs
   taskForm.config = { ...task.config }
 }
@@ -1061,7 +1050,8 @@ const deleteTask = async (task: any) => {
 }
 
 const discoverAssets = (task: any) => {
-  if (!props.selectedProgram) {
+  const programId = task.program_id || props.selectedProgram?.id
+  if (!programId) {
     toast.error(t('bugBounty.monitor.selectProgramFirst'))
     return
   }
@@ -1076,7 +1066,9 @@ const discoverAssets = (task: any) => {
 }
 
 const executeDiscovery = async () => {
-  if (!props.selectedProgram || !currentDiscoverTask.value) return
+  const programId = currentDiscoverTask.value?.program_id || props.selectedProgram?.id
+  
+  if (!programId || !currentDiscoverTask.value) return
   
   try {
     discovering.value = true
@@ -1098,7 +1090,7 @@ const executeDiscovery = async () => {
     
     const result = await invoke('monitor_discover_and_import_assets', {
       request: {
-        program_id: props.selectedProgram.id,
+        program_id: programId,
         scope_id: null,
         plugin_id: discoverForm.plugin_id,
         plugin_input: pluginInput,
@@ -1138,10 +1130,18 @@ const closeDiscoverModal = () => {
   discoverResult.value = null
 }
 
+const openCreateModal = () => {
+  if (props.selectedProgram) {
+    taskForm.program_id = props.selectedProgram.id
+  }
+  showCreateModal.value = true
+}
+
 const closeModal = () => {
   showCreateModal.value = false
   editingTask.value = null
   taskForm.name = ''
+  taskForm.program_id = ''
   taskForm.interval_secs = 6 * 3600
   taskForm.config = {
     enable_dns_monitoring: true,
