@@ -472,6 +472,7 @@ export default {
   program: {
     selectProgram: '选择项目',
     selectProgramPlaceholder: '请选择一个项目',
+    selectedProgram: '已选择项目',
   },
 
   workflowTemplates: {
@@ -678,10 +679,16 @@ export default {
     certMonitoring: 'SSL 证书监控',
     contentMonitoring: '内容变更监控',
     apiMonitoring: 'API 端点监控',
+    portMonitoring: '端口监控',
+    webMonitoring: 'Web 监控',
+    vulnMonitoring: '漏洞监控',
     autoTrigger: '自动触发设置',
     autoTriggerEnabled: '检测到变更时自动触发工作流',
     cert: '证书',
     content: '内容',
+    port: '端口',
+    web: 'Web',
+    vuln: '漏洞',
     days: '天',
     hours: '小时',
     schedulerStarted: '监控调度器已启动',
@@ -694,6 +701,7 @@ export default {
     taskEnabled: '监控任务已启用',
     taskDisabled: '监控任务已禁用',
     taskTriggered: '监控任务已触发',
+    autoStartingScheduler: '正在自动启动监控调度器...',
     defaultTasksCreated: '已创建 {count} 个默认监控任务',
     changeDetected: '检测到资产变更',
     confirmDelete: '确定要删除这个监控任务吗？',

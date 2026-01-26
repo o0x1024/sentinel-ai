@@ -43,6 +43,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn delete_ai_messages_after(&self, conversation_id: &str, message_id: &str) -> Result<u64>;
     async fn update_ai_usage(&self, provider: &str, model: &str, input_tokens: i32, output_tokens: i32, cost: f64) -> Result<()>;
     async fn get_ai_usage_stats(&self) -> Result<Vec<crate::core::models::database::AiUsageStats>>;
+    async fn clear_ai_usage_stats(&self) -> Result<()>;
     async fn get_aggregated_ai_usage(&self) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>>;
     async fn get_ai_roles(&self) -> Result<Vec<AiRole>>;
     async fn create_ai_role(&self, role: &AiRole) -> Result<()>;
@@ -50,6 +51,9 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn delete_ai_role(&self, role_id: &str) -> Result<()>;
     async fn set_current_ai_role(&self, role_id: Option<&str>) -> Result<()>;
     async fn get_current_ai_role(&self) -> Result<Option<AiRole>>;
+    async fn save_agent_run_state(&self, execution_id: &str, state_json: &str) -> Result<()>;
+    async fn get_agent_run_state(&self, execution_id: &str) -> Result<Option<String>>;
+    async fn delete_agent_run_state(&self, execution_id: &str) -> Result<()>;
 
     // 扫描会话相关方法
     async fn create_scan_session(&self, request: CreateScanSessionRequest) -> Result<ScanSession>;
@@ -146,7 +150,8 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn list_workflow_tools(&self) -> Result<Vec<serde_json::Value>>;
 
     // 插件相关方法
-    async fn get_plugins_from_registry(&self) -> Result<Vec<PluginRecord>>;
+    async fn get_plugins_from_registry(&self, user_id: Option<&str>) -> Result<Vec<PluginRecord>>;
+    async fn get_active_agent_plugins(&self) -> Result<Vec<PluginRecord>>;
     async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()>;
     async fn update_plugin(&self, metadata: &serde_json::Value, code: &str) -> Result<()>;
     async fn get_plugin_from_registry(&self, plugin_id: &str) -> Result<Option<PluginRecord>>;
@@ -163,6 +168,10 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool>;
     async fn get_favorited_plugins(&self, user_id: Option<&str>) -> Result<Vec<String>>;
     async fn get_plugin_review_stats(&self) -> Result<serde_json::Value>;
+    async fn update_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()>;
+    async fn get_plugin_name(&self, plugin_id: &str) -> Result<Option<String>>;
+    async fn get_plugin_summary(&self, plugin_id: &str) -> Result<Option<(String, bool)>>;
+    async fn get_plugin_tags(&self, plugin_id: &str) -> Result<Vec<String>>;
 
     // 配置相关方法
     async fn get_configs_by_category(&self, category: &str) -> Result<Vec<Configuration>>;
@@ -210,6 +219,20 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn set_subdomain_dictionary(&self, dictionary: &[String]) -> Result<()>;
     async fn add_subdomain_words(&self, words: &[String]) -> Result<()>;
     async fn remove_subdomain_words(&self, words: &[String]) -> Result<()>;
+
+    // Cache operations
+    async fn get_cache(&self, key: &str) -> Result<Option<String>>;
+    async fn set_cache(&self, key: &str, value: &str, cache_type: &str, expires_at: Option<chrono::DateTime<chrono::Utc>>) -> Result<()>;
+    async fn delete_cache(&self, key: &str) -> Result<()>;
+    async fn cleanup_expired_cache(&self) -> Result<u64>;
+    async fn get_all_cache_keys(&self, cache_type: Option<String>) -> Result<Vec<String>>;
+
+    // Sliding Window Memory
+    async fn ensure_sliding_window_tables_exist(&self) -> Result<()>;
+    async fn get_sliding_window_summaries(&self, conversation_id: &str) -> Result<(Option<crate::core::models::database::GlobalSummary>, Vec<crate::core::models::database::ConversationSegment>)>;
+    async fn save_conversation_segment(&self, segment: &crate::core::models::database::ConversationSegment) -> Result<()>;
+    async fn upsert_global_summary(&self, summary: &crate::core::models::database::GlobalSummary) -> Result<()>;
+    async fn delete_conversation_segments(&self, segment_ids: &[String]) -> Result<()>;
 
     // RAG相关方法
     async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String>;

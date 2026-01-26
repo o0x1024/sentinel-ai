@@ -1229,9 +1229,7 @@ pub async fn get_detailed_ai_usage_stats(
 pub async fn clear_ai_usage_stats(
     db: tauri::State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM ai_usage_stats")
-        .execute(pool)
+    db.clear_ai_usage_stats()
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -1467,26 +1465,8 @@ pub async fn delete_ai_messages_after(
         .map_err(|e: anyhow::Error| format!("Failed to delete messages after {}: {}", message_id, e))?;
 
     // Resend semantics delete tail messages; clear run_state to avoid stale "Recent Tool Digests".
-    if let Ok(pool) = db_service.get_pool() {
-        // Keep schema in sync with checkpoint storage.
-        if let Err(e) = sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
-                execution_id TEXT PRIMARY KEY,
-                state_json TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            )"#,
-        )
-        .execute(pool)
-        .await
-        {
-            tracing::warn!("Failed to ensure agent_run_states table exists: {}", e);
-        } else if let Err(e) = sqlx::query("DELETE FROM agent_run_states WHERE execution_id = ?")
-            .bind(&conversation_id)
-            .execute(pool)
-            .await
-        {
-            tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
-        }
+    if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
+        tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
     }
 
     Ok(deleted)
@@ -1565,25 +1545,8 @@ pub async fn clear_conversation_messages(
         })?;
 
     // Also clear agent run state to prevent cross-run leakage (tool digests, etc).
-    if let Ok(pool) = db_service.get_pool() {
-        if let Err(e) = sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
-                execution_id TEXT PRIMARY KEY,
-                state_json TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            )"#,
-        )
-        .execute(pool)
-        .await
-        {
-            tracing::warn!("Failed to ensure agent_run_states table exists: {}", e);
-        } else if let Err(e) = sqlx::query("DELETE FROM agent_run_states WHERE execution_id = ?")
-            .bind(&conversation_id)
-            .execute(pool)
-            .await
-        {
-            tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
-        }
+    if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
+        tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
     }
 
     Ok(())

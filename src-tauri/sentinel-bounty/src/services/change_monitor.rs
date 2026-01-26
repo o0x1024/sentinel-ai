@@ -75,6 +75,24 @@ pub struct ChangeMonitorConfig {
     /// Plugin configuration for API monitoring
     #[serde(default)]
     pub api_plugins: Vec<MonitorPluginConfig>,
+
+    /// Enable Port/Service monitoring
+    pub enable_port_monitoring: bool,
+    /// Plugin configuration for Port monitoring
+    #[serde(default)]
+    pub port_plugins: Vec<MonitorPluginConfig>,
+
+    /// Enable Web monitoring (Uptime, Status, Screenshot)
+    pub enable_web_monitoring: bool,
+    /// Plugin configuration for Web monitoring
+    #[serde(default)]
+    pub web_plugins: Vec<MonitorPluginConfig>,
+
+    /// Enable Vulnerability monitoring
+    pub enable_vuln_monitoring: bool,
+    /// Plugin configuration for Vulnerability monitoring
+    #[serde(default)]
+    pub vuln_plugins: Vec<MonitorPluginConfig>,
     
     /// Auto-trigger workflows on high severity events
     pub auto_trigger_enabled: bool,
@@ -109,6 +127,19 @@ impl Default for ChangeMonitorConfig {
             api_plugins: vec![
                 MonitorPluginConfig::new("api_monitor".to_string()),
             ],
+
+            enable_port_monitoring: true,
+            port_plugins: vec![
+                MonitorPluginConfig::new("port_scanner".to_string()),
+            ],
+
+            enable_web_monitoring: true,
+            web_plugins: vec![
+                MonitorPluginConfig::new("web_prober".to_string()),
+            ],
+
+            enable_vuln_monitoring: false, // Default off as it might be heavy
+            vuln_plugins: vec![],
             
             auto_trigger_enabled: true,
             auto_trigger_min_severity: ChangeSeverity::Medium,
@@ -142,6 +173,27 @@ impl ChangeMonitorConfig {
     /// Get all API plugin IDs
     pub fn api_plugin_ids(&self) -> Vec<String> {
         self.api_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all Port plugin IDs
+    pub fn port_plugin_ids(&self) -> Vec<String> {
+        self.port_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all Web plugin IDs
+    pub fn web_plugin_ids(&self) -> Vec<String> {
+        self.web_plugins.iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all Vuln plugin IDs
+    pub fn vuln_plugin_ids(&self) -> Vec<String> {
+        self.vuln_plugins.iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }

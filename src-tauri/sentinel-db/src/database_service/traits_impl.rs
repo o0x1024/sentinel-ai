@@ -78,8 +78,13 @@ impl Database for DatabaseService {
         Self::update_ai_usage_internal(self, provider, model, input_tokens, output_tokens, cost).await
     }
     async fn get_ai_usage_stats(&self) -> Result<Vec<crate::core::models::database::AiUsageStats>> {
-        Self::get_ai_usage_stats_internal(self).await
+        self.get_ai_usage_stats_internal().await
     }
+
+    async fn clear_ai_usage_stats(&self) -> Result<()> {
+        self.clear_ai_usage_stats_internal().await
+    }
+
     async fn get_aggregated_ai_usage(&self) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>> {
         Self::get_aggregated_ai_usage_internal(self).await
     }
@@ -99,7 +104,19 @@ impl Database for DatabaseService {
         Self::set_current_ai_role_internal(self, role_id).await
     }
     async fn get_current_ai_role(&self) -> Result<Option<AiRole>> {
-        Self::get_current_ai_role_internal(self).await
+        self.get_current_ai_role_internal().await
+    }
+
+    async fn save_agent_run_state(&self, execution_id: &str, state_json: &str) -> Result<()> {
+        self.save_agent_run_state_internal(execution_id, state_json).await
+    }
+
+    async fn get_agent_run_state(&self, execution_id: &str) -> Result<Option<String>> {
+        self.get_agent_run_state_internal(execution_id).await
+    }
+
+    async fn delete_agent_run_state(&self, execution_id: &str) -> Result<()> {
+        self.delete_agent_run_state_internal(execution_id).await
     }
 
     // Scan Session
@@ -313,8 +330,12 @@ impl Database for DatabaseService {
     }
 
     // Plugin
-    async fn get_plugins_from_registry(&self) -> Result<Vec<PluginRecord>> {
-        Self::get_plugins_from_registry_internal(self).await
+    async fn get_plugins_from_registry(&self, user_id: Option<&str>) -> Result<Vec<PluginRecord>> {
+        self.get_plugins_from_registry_internal(user_id).await
+    }
+
+    async fn get_active_agent_plugins(&self) -> Result<Vec<PluginRecord>> {
+        self.get_active_agent_plugins_internal().await
     }
     async fn update_plugin_status(&self, plugin_id: &str, status: &str) -> Result<()> {
         Self::update_plugin_status_internal(self, plugin_id, status).await
@@ -348,7 +369,19 @@ impl Database for DatabaseService {
         Self::get_favorited_plugins_internal(self, user_id).await
     }
     async fn get_plugin_review_stats(&self) -> Result<serde_json::Value> {
-        Self::get_plugin_review_stats_internal(self).await
+        self.get_plugin_review_stats_internal().await
+    }
+    async fn update_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()> {
+        self.update_plugin_enabled_internal(plugin_id, enabled).await
+    }
+    async fn get_plugin_name(&self, plugin_id: &str) -> Result<Option<String>> {
+        self.get_plugin_name_internal(plugin_id).await
+    }
+    async fn get_plugin_summary(&self, plugin_id: &str) -> Result<Option<(String, bool)>> {
+        self.get_plugin_summary_internal(plugin_id).await
+    }
+    async fn get_plugin_tags(&self, plugin_id: &str) -> Result<Vec<String>> {
+        self.get_plugin_tags_internal(plugin_id).await
     }
 
     // Config
@@ -439,7 +472,47 @@ impl Database for DatabaseService {
         Self::add_subdomain_words_internal(self, words).await
     }
     async fn remove_subdomain_words(&self, words: &[String]) -> Result<()> {
-        Self::remove_subdomain_words_internal(self, words).await
+        self.remove_subdomain_words_internal(words).await
+    }
+
+    async fn get_cache(&self, key: &str) -> Result<Option<String>> {
+        self.get_cache_internal(key).await
+    }
+
+    async fn set_cache(&self, key: &str, value: &str, cache_type: &str, expires_at: Option<chrono::DateTime<chrono::Utc>>) -> Result<()> {
+        self.set_cache_internal(key, value, cache_type, expires_at).await
+    }
+
+    async fn delete_cache(&self, key: &str) -> Result<()> {
+        self.delete_cache_internal(key).await
+    }
+
+    async fn cleanup_expired_cache(&self) -> Result<u64> {
+        self.cleanup_expired_cache_internal().await
+    }
+
+    async fn get_all_cache_keys(&self, cache_type: Option<String>) -> Result<Vec<String>> {
+        self.get_all_cache_keys_internal(cache_type).await
+    }
+
+    async fn ensure_sliding_window_tables_exist(&self) -> Result<()> {
+        self.ensure_sliding_window_tables_exist_internal().await
+    }
+
+    async fn get_sliding_window_summaries(&self, conversation_id: &str) -> Result<(Option<crate::core::models::database::GlobalSummary>, Vec<crate::core::models::database::ConversationSegment>)> {
+        self.get_sliding_window_summaries_internal(conversation_id).await
+    }
+
+    async fn save_conversation_segment(&self, segment: &crate::core::models::database::ConversationSegment) -> Result<()> {
+        self.save_conversation_segment_internal(segment).await
+    }
+
+    async fn upsert_global_summary(&self, summary: &crate::core::models::database::GlobalSummary) -> Result<()> {
+        self.upsert_global_summary_internal(summary).await
+    }
+
+    async fn delete_conversation_segments(&self, segment_ids: &[String]) -> Result<()> {
+        self.delete_conversation_segments_internal(segment_ids).await
     }
 
     // RAG

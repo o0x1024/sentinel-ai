@@ -422,6 +422,28 @@ pub struct AiUsageStats {
 
 
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ConversationSegment {
+    pub id: String,
+    pub conversation_id: String,
+    pub segment_index: i32,
+    pub start_message_index: i32,
+    pub end_message_index: i32,
+    pub summary: String,
+    pub summary_tokens: i32,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct GlobalSummary {
+    pub id: String,
+    pub conversation_id: String,
+    pub summary: String,
+    pub summary_tokens: i32,
+    pub covers_up_to_index: i32,
+    pub updated_at: i64,
+}
+
 /// 配置
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Configuration {

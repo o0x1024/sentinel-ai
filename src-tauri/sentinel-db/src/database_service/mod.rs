@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod cache;
 pub mod ai;
 pub mod config;
 pub mod init;
@@ -17,6 +18,7 @@ pub mod asset;
 pub mod proxifier;
 pub mod ability;
 pub mod scan_session;
+pub mod sliding_window;
 pub mod traffic;
 pub mod repeater;
 pub mod db_config;
@@ -26,6 +28,8 @@ pub mod bounty;
 
 #[allow(unused_imports)]
 pub use agent::*;
+#[allow(unused_imports)]
+pub use cache::*;
 #[allow(unused_imports)]
 pub use ai::*;
 #[allow(unused_imports)]
@@ -56,6 +60,8 @@ pub use proxifier::*;
 pub use ability::*;
 #[allow(unused_imports)]
 pub use scan_session::*;
+#[allow(unused_imports)]
+pub use sliding_window::*;
 #[allow(unused_imports)]
 pub use traffic::*;
 #[allow(unused_imports)]

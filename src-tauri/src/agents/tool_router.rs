@@ -1218,61 +1218,36 @@ impl ToolRouter {
     ) -> Result<Vec<ToolMetadata>> {
         let mut plugin_tools = Vec::new();
 
-        // 直接查询数据库获取已启用的 agent 类型插件
-        // 使用与 TrafficAnalysisState::list_plugins_internal 相同的查询方式
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,         // id
-                String,         // name
-                Option<String>, // description
-                Option<String>, // tags (JSON)
-            ),
-        >(
-            r#"
-            SELECT id, name, description, tags
-            FROM plugin_registry
-            WHERE main_category = 'agent' 
-              AND enabled = 1 
-              AND validation_status = 'Approved'
-            "#,
-        )
-        .fetch_all(db_service.pool())
-        .await;
+        use sentinel_db::Database;
+        let plugins = db_service.get_plugins_from_registry(Some("default"))
+            .await
+            .map_err(|e| format!("Failed to query database plugins: {}", e))?;
 
-        match rows {
-            Ok(plugins) => {
-                for (id, name, description, tags_json) in plugins {
-                    let description_str = description.as_deref().unwrap_or("Agent plugin tool");
+        for p in plugins {
+            // 只查询已启用的 agent 类型插件
+            if p.metadata.main_category == "agent" && p.status == sentinel_plugins::PluginStatus::Enabled {
+                let description_str = p.metadata.description.as_deref().unwrap_or("Agent plugin tool");
 
-                    // 从 tags JSON 提取标签
-                    let mut tags = vec!["plugin".to_string(), "agent".to_string()];
-                    if let Some(tags_str) = tags_json {
-                        if let Ok(parsed_tags) = serde_json::from_str::<Vec<String>>(&tags_str) {
-                            for tag in parsed_tags {
-                                tags.push(tag);
-                            }
-                        }
-                    }
-
-                    let sanitized_id = id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-                    plugin_tools.push(ToolMetadata {
-                        id: format!("plugin__{}", sanitized_id),
-                        name: name.clone(),
-                        description: description_str.to_string(),
-                        category: ToolCategory::Plugin,
-                        tags,
-                        cost_estimate: ToolCost::Medium,
-                        always_available: false,
-                    });
+                // 从 tags 提取标签
+                let mut tags = vec!["plugin".to_string(), "agent".to_string()];
+                for tag in p.metadata.tags {
+                    tags.push(tag);
                 }
 
-                tracing::info!("Loaded {} plugin tools from database", plugin_tools.len());
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load plugin tools from database: {}", e);
+                let sanitized_id = p.metadata.id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+                plugin_tools.push(ToolMetadata {
+                    id: format!("plugin__{}", sanitized_id),
+                    name: p.metadata.name.clone(),
+                    description: description_str.to_string(),
+                    category: ToolCategory::Plugin,
+                    tags,
+                    cost_estimate: ToolCost::Medium,
+                    always_available: false,
+                });
             }
         }
+
+        tracing::info!("Loaded {} plugin tools from database", plugin_tools.len());
 
         Ok(plugin_tools)
     }

@@ -51,35 +51,14 @@ impl Default for SlidingWindowConfig {
     }
 }
 
-/// Represents a summarized segment of conversation
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct ConversationSegment {
-    pub id: String,
-    pub conversation_id: String,
-    pub segment_index: i32,
-    pub start_message_index: i32,
-    pub end_message_index: i32,
-    pub summary: String,
-    pub summary_tokens: i32,
-    pub created_at: i64,
-}
-
-/// Global summary of the conversation
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct GlobalSummary {
-    pub id: String,
-    pub conversation_id: String,
-    pub summary: String,
-    pub summary_tokens: i32,
-    pub covers_up_to_index: i32,
-    pub updated_at: i64,
-}
+// 从 sentinel-core 导入模型定义
+pub use sentinel_core::models::database::{ConversationSegment, GlobalSummary};
 
 /// Manager for sliding window memory
 pub struct SlidingWindowManager {
     app_handle: AppHandle,
     conversation_id: String,
-    db_pool: SqlitePool,
+    db: Arc<dyn Database>,
     config: SlidingWindowConfig,
     
     // Memory State
@@ -98,19 +77,18 @@ impl SlidingWindowManager {
         conversation_id: &str,
         config: Option<SlidingWindowConfig>,
     ) -> Result<Self> {
-        let db_service = app_handle.state::<Arc<DatabaseService>>();
-        let pool = db_service.get_pool()?;
+        let db = app_handle.state::<Arc<dyn Database>>().inner().clone();
 
         // Ensure tables exist
-        Self::ensure_tables_exist(&pool).await?;
+        db.ensure_sliding_window_tables_exist().await?;
 
-        // Load config (merge with dynamic max_context_length if provided in config param)
+        // Load config
         let final_config = config.unwrap_or_default();
         
         // Load state from DB
-        let (global_summary, segments) = Self::load_summaries(&pool, conversation_id).await?;
+        let (global_summary, segments) = db.get_sliding_window_summaries(conversation_id).await?;
         
-        // Determine where we left off (highest index in summaries)
+        // Determine where we left off
         let last_summarized_index = segments
             .iter()
             .last()
@@ -118,15 +96,15 @@ impl SlidingWindowManager {
             .or_else(|| global_summary.as_ref().map(|g| g.covers_up_to_index))
             .unwrap_or(-1);
 
-        // Load recent messages (those after the last summarized index)
-        let recent_messages = Self::load_recent_messages(&db_service, conversation_id, last_summarized_index).await?;
+        // Load recent messages
+        let recent_messages = Self::load_recent_messages(&db, conversation_id, last_summarized_index).await?;
         
         let total_processed_messages = last_summarized_index + 1 + recent_messages.len() as i32;
 
         Ok(Self {
             app_handle: app_handle.clone(),
             conversation_id: conversation_id.to_string(),
-            db_pool: pool.clone(),
+            db,
             config: final_config,
             global_summary,
             segments: segments.into(),
@@ -135,72 +113,12 @@ impl SlidingWindowManager {
         })
     }
 
-    /// Ensure necessary tables exist
-    async fn ensure_tables_exist(pool: &SqlitePool) -> Result<()> {
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS conversation_segments (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                segment_index INTEGER NOT NULL,
-                start_message_index INTEGER NOT NULL,
-                end_message_index INTEGER NOT NULL,
-                summary TEXT NOT NULL,
-                summary_tokens INTEGER NOT NULL,
-                created_at INTEGER NOT NULL
-            )"#
-        ).execute(pool).await?;
-
-        sqlx::query(
-            r#"CREATE INDEX IF NOT EXISTS idx_segments_conv ON conversation_segments(conversation_id, segment_index)"#
-        ).execute(pool).await?;
-
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS conversation_global_summaries (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL UNIQUE,
-                summary TEXT NOT NULL,
-                summary_tokens INTEGER NOT NULL,
-                covers_up_to_index INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )"#
-        ).execute(pool).await?;
-
-        Ok(())
-    }
-
-    async fn load_summaries(
-        pool: &SqlitePool,
-        conversation_id: &str,
-    ) -> Result<(Option<GlobalSummary>, Vec<ConversationSegment>)> {
-        let global_summary = sqlx::query_as::<_, GlobalSummary>(
-            "SELECT * FROM conversation_global_summaries WHERE conversation_id = ?"
-        )
-        .bind(conversation_id)
-        .fetch_optional(pool)
-        .await?;
-
-        let segments = sqlx::query_as::<_, ConversationSegment>(
-            "SELECT * FROM conversation_segments WHERE conversation_id = ? ORDER BY segment_index ASC"
-        )
-        .bind(conversation_id)
-        .fetch_all(pool)
-        .await?;
-
-        Ok((global_summary, segments))
-    }
 
     async fn load_recent_messages(
-        db: &DatabaseService,
+        db: &Arc<dyn Database>,
         conversation_id: &str,
         after_index: i32,
     ) -> Result<Vec<ChatMessage>> {
-        // We need to load all messages and filter, or if DB supports offset/limit well.
-        // Assuming core_db messages are ordered by timestamp/creation.
-        // Since we don't have a reliable index column in ai_messages mapped to our logical index easily,
-        // we'll load messages and take the suffix.
-        // Note: In a production system, we'd add 'sequence_number' to ai_messages.
-        // Here we rely on timestamp ordering.
-        
         let all_messages = db.get_ai_messages_by_conversation(conversation_id).await?;
         
         // Convert to ChatMessage
@@ -391,21 +309,7 @@ impl SlidingWindowManager {
         };
 
         // Save to DB
-        sqlx::query(
-            r#"INSERT INTO conversation_segments 
-            (id, conversation_id, segment_index, start_message_index, end_message_index, summary, summary_tokens, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
-        )
-        .bind(&segment.id)
-        .bind(&segment.conversation_id)
-        .bind(segment.segment_index)
-        .bind(segment.start_message_index)
-        .bind(segment.end_message_index)
-        .bind(&segment.summary)
-        .bind(segment.summary_tokens)
-        .bind(segment.created_at)
-        .execute(&self.db_pool)
-        .await?;
+        self.db.save_conversation_segment(&segment).await?;
 
         self.segments.push_back(segment.clone());
         
@@ -476,33 +380,13 @@ impl SlidingWindowManager {
         };
 
         // Save to DB (Upsert)
-        sqlx::query(
-            r#"INSERT INTO conversation_global_summaries (id, conversation_id, summary, summary_tokens, covers_up_to_index, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(conversation_id) DO UPDATE SET
-            summary = excluded.summary,
-            summary_tokens = excluded.summary_tokens,
-            covers_up_to_index = excluded.covers_up_to_index,
-            updated_at = excluded.updated_at"#
-        )
-        .bind(&new_summary.id)
-        .bind(&new_summary.conversation_id)
-        .bind(&new_summary.summary)
-        .bind(estimate_tokens(&new_summary.summary) as i32)
-        .bind(new_summary.covers_up_to_index)
-        .bind(new_summary.updated_at)
-        .execute(&self.db_pool)
-        .await?;
+        self.db.upsert_global_summary(&new_summary).await?;
 
         self.global_summary = Some(new_summary.clone());
         
         // Delete merged segments from DB
-        for seg in segments_to_merge {
-            sqlx::query("DELETE FROM conversation_segments WHERE id = ?")
-                .bind(seg.id)
-                .execute(&self.db_pool)
-                .await?;
-        }
+        let ids: Vec<String> = segments_to_merge.iter().map(|s| s.id.clone()).collect();
+        self.db.delete_conversation_segments(&ids).await?;
         
         info!("Merged segments into global summary. Covered up to index {}", new_covers_up_to);
 
@@ -552,8 +436,7 @@ impl SlidingWindowManager {
 
     /// Export full conversation history to formatted string
     pub async fn export_history(&self) -> Result<String> {
-        let db = self.app_handle.state::<Arc<DatabaseService>>();
-        let all_messages = db.get_ai_messages_by_conversation(&self.conversation_id).await?;
+        let all_messages = self.db.get_ai_messages_by_conversation(&self.conversation_id).await?;
         
         let mut content = String::new();
         content.push_str(&format!("=== Conversation History: {} ===\n", self.conversation_id));

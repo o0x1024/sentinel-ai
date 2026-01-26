@@ -97,7 +97,7 @@ impl AssetEnrichmentService {
     }
     
     /// Enrich assets that are pending enrichment
-    async fn enrich_pending_assets(db_service: &DatabaseService) -> Result<usize> {
+    async fn enrich_pending_assets(_db_service: &DatabaseService) -> Result<usize> {
         // TODO: Query assets that need enrichment
         // For now, return 0
         Ok(0)

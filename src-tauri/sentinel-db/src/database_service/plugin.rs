@@ -3,14 +3,18 @@ use sentinel_plugins::PluginRecord;
 use crate::database_service::service::DatabaseService;
 
 impl DatabaseService {
-    pub async fn get_plugins_from_registry_internal(&self) -> Result<Vec<PluginRecord>> {
+    pub async fn get_active_agent_plugins_internal(&self) -> Result<Vec<PluginRecord>> {
         let pool = self.get_pool()?;
+        
         let rows = sqlx::query(
             r#"
-            SELECT id, name, version, author, main_category, category, description,
-                   default_severity, tags, enabled, metadata, status
-            FROM plugin_registry 
-            ORDER BY updated_at DESC
+            SELECT p.id, p.name, p.version, p.author, p.main_category, p.category, p.description,
+                   p.default_severity, p.tags, p.enabled, p.metadata, p.status
+            FROM plugin_registry p
+            WHERE p.main_category = 'agent' 
+              AND p.enabled = 1 
+              AND p.validation_status = 'Approved'
+            ORDER BY p.updated_at DESC
             "#
         )
         .fetch_all(pool)
@@ -18,10 +22,80 @@ impl DatabaseService {
 
         let mut plugins = Vec::with_capacity(rows.len());
         for row in rows {
+            let id: String = sqlx::Row::get(&row, "id");
+            let name: String = sqlx::Row::get(&row, "name");
+            let version: String = sqlx::Row::get(&row, "version");
+            let author: Option<String> = sqlx::Row::get(&row, "author");
+            let main_category: String = sqlx::Row::get(&row, "main_category");
+            let category: String = sqlx::Row::get(&row, "category");
+            let description: Option<String> = sqlx::Row::get(&row, "description");
+            let default_severity_str: String = sqlx::Row::get(&row, "default_severity");
+            let tags_json: Option<String> = sqlx::Row::get(&row, "tags");
+
+            let severity = match default_severity_str.to_lowercase().as_str() {
+                "critical" => sentinel_plugins::Severity::Critical,
+                "high" => sentinel_plugins::Severity::High,
+                "medium" => sentinel_plugins::Severity::Medium,
+                "low" => sentinel_plugins::Severity::Low,
+                "info" => sentinel_plugins::Severity::Info,
+                _ => sentinel_plugins::Severity::Medium,
+            };
+
+            let tags = tags_json
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or_default();
+
+            let metadata = sentinel_plugins::PluginMetadata {
+                id,
+                name,
+                version,
+                author,
+                main_category,
+                category,
+                default_severity: severity,
+                tags,
+                description,
+            };
+
+            #[allow(deprecated)]
+            plugins.push(PluginRecord {
+                metadata,
+                path: None,
+                status: sentinel_plugins::PluginStatus::Enabled,
+                last_error: None,
+                is_favorited: false,
+            });
+        }
+        Ok(plugins)
+    }
+
+    pub async fn get_plugins_from_registry_internal(&self, user_id: Option<&str>) -> Result<Vec<PluginRecord>> {
+        let pool = self.get_pool()?;
+        let uid = user_id.unwrap_or("default");
+        
+        let rows = sqlx::query(
+            r#"
+            SELECT p.id, p.name, p.version, p.author, p.main_category, p.category, p.description,
+                   p.default_severity, p.tags, p.enabled, p.metadata, p.status,
+                   CASE WHEN f.plugin_id IS NOT NULL THEN 1 ELSE 0 END as is_favorited
+            FROM plugin_registry p
+            LEFT JOIN plugin_favorites f ON p.id = f.plugin_id AND f.user_id = ?
+            WHERE p.validation_status = 'Approved'
+            ORDER BY p.updated_at DESC
+            "#
+        )
+        .bind(uid)
+        .fetch_all(pool)
+        .await?;
+
+        let mut plugins = Vec::with_capacity(rows.len());
+        for row in rows {
             let metadata_json: String = sqlx::Row::get(&row, "metadata");
+            let is_favorited: bool = sqlx::Row::get::<i64, _>(&row, "is_favorited") == 1;
             
             // 尝试直接从 metadata JSON 解析（旧模式）
-            if let Ok(record) = serde_json::from_str::<PluginRecord>(&metadata_json) {
+            if let Ok(mut record) = serde_json::from_str::<PluginRecord>(&metadata_json) {
+                record.is_favorited = is_favorited;
                 plugins.push(record);
                 continue;
             }
@@ -75,7 +149,7 @@ impl DatabaseService {
                 path: None,
                 status,
                 last_error: None,
-                is_favorited: false,
+                is_favorited,
             });
         }
         Ok(plugins)
@@ -346,5 +420,46 @@ impl DatabaseService {
             "active": active,
             "pending": pending
         }))
+    }
+
+    pub async fn update_plugin_enabled_internal(&self, plugin_id: &str, enabled: bool) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("UPDATE plugin_registry SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(enabled)
+            .bind(plugin_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_plugin_name_internal(&self, plugin_id: &str) -> Result<Option<String>> {
+        let pool = self.get_pool()?;
+        let name: Option<String> = sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
+            .bind(plugin_id)
+            .fetch_optional(pool)
+            .await?;
+        Ok(name)
+    }
+
+    pub async fn get_plugin_summary_internal(&self, plugin_id: &str) -> Result<Option<(String, bool)>> {
+        let pool = self.get_pool()?;
+        let row: Option<(String, bool)> = sqlx::query_as("SELECT main_category, enabled FROM plugin_registry WHERE id = ?")
+            .bind(plugin_id)
+            .fetch_optional(pool)
+            .await?;
+        Ok(row)
+    }
+
+    pub async fn get_plugin_tags_internal(&self, plugin_id: &str) -> Result<Vec<String>> {
+        let pool = self.get_pool()?;
+        let tags_json: Option<String> = sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = ?")
+            .bind(plugin_id)
+            .fetch_optional(pool)
+            .await?;
+        
+        let tags = tags_json
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        Ok(tags)
     }
 }

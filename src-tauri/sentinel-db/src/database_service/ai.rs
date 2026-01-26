@@ -725,6 +725,14 @@ impl DatabaseService {
         Ok(rows)
     }
 
+    pub async fn clear_ai_usage_stats_internal(&self) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM ai_usage_stats")
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_aggregated_ai_usage_internal(&self) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query(
@@ -758,5 +766,50 @@ impl DatabaseService {
             });
         }
         Ok(stats)
+    }
+
+    pub async fn save_agent_run_state_internal(&self, execution_id: &str, state_json: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        
+        // Ensure table exists (internal migrations usually handle this, but for safety in transition)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
+                execution_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO agent_run_states (execution_id, state_json, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(execution_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at"
+        )
+        .bind(execution_id)
+        .bind(state_json)
+        .bind(Utc::now().timestamp_millis())
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_agent_run_state_internal(&self, execution_id: &str) -> Result<Option<String>> {
+        let pool = self.get_pool()?;
+        let state: Option<(String,)> = sqlx::query_as("SELECT state_json FROM agent_run_states WHERE execution_id = ?")
+            .bind(execution_id)
+            .fetch_optional(pool)
+            .await?;
+        Ok(state.map(|s| s.0))
+    }
+
+    pub async fn delete_agent_run_state_internal(&self, execution_id: &str) -> Result<()> {
+        let pool = self.get_pool()?;
+        sqlx::query("DELETE FROM agent_run_states WHERE execution_id = ?")
+            .bind(execution_id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 }

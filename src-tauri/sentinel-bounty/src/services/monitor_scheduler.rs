@@ -10,10 +10,15 @@ use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error, debug};
+use std::pin::Pin;
+use std::future::Future;
+use tracing::{info, error};
 
 use crate::services::change_monitor::{ChangeMonitor, ChangeMonitorConfig, AssetSnapshot};
 use crate::models::ChangeEvent;
+
+/// Callback for executing a monitor task
+pub type TaskExecutor = Box<dyn Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync>;
 
 /// Monitoring task configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +98,8 @@ pub struct MonitorScheduler {
     start_time: Arc<RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
     /// Event callback
     event_callback: Arc<Mutex<Option<Box<dyn Fn(ChangeEvent) + Send + Sync>>>>,
+    /// Task execution handler
+    task_executor: Arc<Mutex<Option<TaskExecutor>>>,
 }
 
 impl Default for MonitorScheduler {
@@ -109,6 +116,7 @@ impl MonitorScheduler {
             is_running: Arc::new(RwLock::new(false)),
             start_time: Arc::new(RwLock::new(None)),
             event_callback: Arc::new(Mutex::new(None)),
+            task_executor: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -137,6 +145,7 @@ impl MonitorScheduler {
         let monitors = self.monitors.clone();
         let is_running = self.is_running.clone();
         let event_callback = self.event_callback.clone();
+        let task_executor = self.task_executor.clone();
 
         tokio::spawn(async move {
             let mut tick_interval = interval(Duration::from_secs(10)); // Check every 10 seconds
@@ -169,30 +178,44 @@ impl MonitorScheduler {
                     info!("Running monitor task: {} ({})", task.name, task_id);
 
                     // Get or create monitor for this program
-                    let monitor = monitors_guard.get(&task.program_id)
+                    let _monitor = monitors_guard.get(&task.program_id)
                         .cloned()
                         .unwrap_or_else(|| {
                             Arc::new(ChangeMonitor::with_config(task.config.clone()))
                         });
 
                     // Run monitoring check
-                    // Note: In a real implementation, this would:
-                    // 1. Fetch current asset data from plugins/tools
-                    // 2. Compare with stored snapshots
-                    // 3. Generate change events
-                    // For now, we'll just update task stats
+                    let mut detected_events = Vec::new();
+                    
+                    if let Some(executor) = task_executor.lock().await.as_ref() {
+                        info!("Executing task logic via registered executor...");
+                        match executor(task.clone()).await {
+                            Ok(events) => {
+                                info!("Task execution successful, {} events generated", events.len());
+                                detected_events = events;
+                            }
+                            Err(e) => {
+                                error!("Task execution failed: {}", e);
+                            }
+                        }
+                    } else {
+                        // Fallback/Placeholder if no executor registered
+                        info!("No task executor registered, skipping actual execution");
+                    }
                     
                     task.last_run_at = Some(Utc::now());
                     task.run_count += 1;
                     task.calculate_next_run();
 
-                    // Get pending events from monitor
-                    let events = monitor.take_pending_events().await;
-                    task.events_detected += events.len() as u64;
+                    // Get pending events from monitor (if used by executor)
+                    // let events = monitor.take_pending_events().await;
+                    // detected_events.extend(events);
+                    
+                    task.events_detected += detected_events.len() as u64;
 
                     // Trigger callbacks for each event
                     if let Some(callback) = event_callback.lock().await.as_ref() {
-                        for event in events {
+                        for event in detected_events {
                             callback(event);
                         }
                     }
@@ -319,6 +342,15 @@ impl MonitorScheduler {
     {
         let mut cb = self.event_callback.lock().await;
         *cb = Some(Box::new(callback));
+    }
+
+    /// Set task executor
+    pub async fn set_task_executor<F>(&self, executor: F)
+    where
+        F: Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync + 'static,
+    {
+        let mut exec = self.task_executor.lock().await;
+        *exec = Some(Box::new(executor));
     }
 
     /// Store asset snapshot for a program

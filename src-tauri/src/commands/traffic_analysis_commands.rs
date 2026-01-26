@@ -290,93 +290,46 @@ impl TrafficAnalysisState {
     /// 只返回已批准（Approved）的插件，待审核和已拒绝的插件不显示
     pub async fn list_plugins_internal(&self) -> Result<Vec<PluginRecord>, String> {
         let db = self.get_db_service();
-        // 查询数据库中所有插件（包含 main_category 和收藏状态）
-        // 只查询已批准的插件：validation_status = 'Approved'
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,         // id
-                String,         // name
-                String,         // version
-                Option<String>, // author
-                String,         // main_category
-                String,         // category
-                Option<String>, // description
-                String,         // default_severity
-                Option<String>, // tags (JSON)
-                bool,           // enabled
-                Option<String>, // plugin_code
-                i64,            // is_favorited (0 or 1)
-            ),
-        >(
-            r#"
-            SELECT p.id, p.name, p.version, p.author, p.main_category, p.category, p.description,
-                   p.default_severity, p.tags, p.enabled, p.plugin_code,
-                   CASE WHEN f.plugin_id IS NOT NULL THEN 1 ELSE 0 END as is_favorited
-            FROM plugin_registry p
-            LEFT JOIN plugin_favorites f ON p.id = f.plugin_id AND f.user_id = 'default'
-            WHERE p.validation_status = 'Approved'
-            "#,
-        )
-        .fetch_all(db.pool())
-        .await
-        .map_err(|e| format!("Failed to query database plugins: {}", e))?;
+        
+        let db_records = db.get_plugins_from_registry(Some("default"))
+            .await
+            .map_err(|e| format!("Failed to query database plugins: {}", e))?;
 
         let mut records = Vec::new();
-        for (
-            id,
-            name,
-            version,
-            author,
-            main_category,
-            category,
-            description,
-            default_severity,
-            tags,
-            enabled,
-            _plugin_code,
-            is_favorited,
-        ) in rows
-        {
-            let tags_array: Vec<String> = tags
-                .and_then(|t| serde_json::from_str(&t).ok())
-                .unwrap_or_default();
-
-            let severity = match default_severity.to_lowercase().as_str() {
-                "critical" => sentinel_traffic::types::Severity::Critical,
-                "high" => sentinel_traffic::types::Severity::High,
-                "medium" => sentinel_traffic::types::Severity::Medium,
-                "low" => sentinel_traffic::types::Severity::Low,
-                "info" => sentinel_traffic::types::Severity::Info,
-                _ => sentinel_traffic::types::Severity::Medium,
-            };
-
+        for db_rec in db_records {
             let metadata = PluginMetadata {
-                id: id.clone(),
-                name,
-                version,
-                author,
-                // 从数据库字段加载 main_category（traffic/agent）
-                main_category,
-                category,
-                description,
-                default_severity: severity,
-                tags: tags_array,
+                id: db_rec.metadata.id,
+                name: db_rec.metadata.name,
+                version: db_rec.metadata.version,
+                author: db_rec.metadata.author,
+                main_category: db_rec.metadata.main_category,
+                category: db_rec.metadata.category,
+                description: db_rec.metadata.description,
+                default_severity: match db_rec.metadata.default_severity {
+                    sentinel_plugins::Severity::Critical => sentinel_traffic::Severity::Critical,
+                    sentinel_plugins::Severity::High => sentinel_traffic::Severity::High,
+                    sentinel_plugins::Severity::Medium => sentinel_traffic::Severity::Medium,
+                    sentinel_plugins::Severity::Low => sentinel_traffic::Severity::Low,
+                    sentinel_plugins::Severity::Info => sentinel_traffic::Severity::Info,
+                },
+                tags: db_rec.metadata.tags,
             };
 
-            let status = if enabled {
-                PluginStatus::Enabled
-            } else {
-                PluginStatus::Disabled
+            let status = match db_rec.status {
+                sentinel_plugins::PluginStatus::Enabled => PluginStatus::Enabled,
+                sentinel_plugins::PluginStatus::Disabled => PluginStatus::Disabled,
+                sentinel_plugins::PluginStatus::Error(_) => PluginStatus::Disabled,
+                sentinel_plugins::PluginStatus::Loading => PluginStatus::Disabled,
+                sentinel_plugins::PluginStatus::Invalid(_) => PluginStatus::Disabled,
             };
 
             records.push(PluginRecord {
                 metadata,
                 #[allow(deprecated)]
-                path: None, // 插件存储在数据库中，不再使用文件路径
+                path: None,
                 status,
                 last_error: None,
-                is_favorited: is_favorited == 1,
+                is_favorited: db_rec.is_favorited,
             });
         }
 
@@ -1086,85 +1039,45 @@ pub async fn enable_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
-    // DB-only：直接更新数据库中的插件状态
     let db = state.get_db_service();
 
-    // 获取插件的main_category
-    let _main_category: Option<String> =
-        sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
-            .bind(&plugin_id)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+    // 1. 获取插件信息
+    let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
+        Ok(Some(info)) => info,
+        Ok(None) => return Ok(CommandResponse::err(format!("Plugin not found: {}", plugin_id))),
+        Err(e) => return Ok(CommandResponse::err(format!("Failed to query plugin: {}", e))),
+    };
 
-    let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
-        .bind(true)
-        .bind(&plugin_id)
-        .execute(db.pool())
-        .await;
+    // 2. 更新启用状态
+    if let Err(e) = db.update_plugin_enabled(&plugin_id, true).await {
+        return Ok(CommandResponse::err(format!("Failed to enable plugin: {}", e)));
+    }
 
-    match result {
-        Ok(result) => {
-            if result.rows_affected() > 0 {
-                tracing::info!("Plugin enabled in database: {}", plugin_id);
+    tracing::info!("Plugin enabled in database: {}", plugin_id);
 
-                let plugin_name = sqlx::query_scalar::<_, String>(
-                    "SELECT name FROM plugin_registry WHERE id = ?",
-                )
-                .bind(&plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| plugin_id.clone());
+    // 3. 获取插件名称用于事件发送
+    let plugin_name = db.get_plugin_name(&plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
 
-                // 检查插件类型，只有traffic插件才需要更新流量扫描器缓存
-                let main_category = sqlx::query_scalar::<_, String>(
-                    "SELECT main_category FROM plugin_registry WHERE id = ?",
-                )
-                .bind(&plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "traffic".to_string());
-
-                // 如果是流量分析插件，重新加载到扫描管道
-                if main_category == "traffic" {
-                    let scan_tx = state.scan_tx.read().await;
-                    if let Some(ref tx) = *scan_tx {
-                        if let Err(e) = tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone())) {
-                            tracing::warn!("Failed to send reload plugin task for {}: {}", plugin_id, e);
-                        } else {
-                            tracing::info!("Sent reload plugin task for {}", plugin_id);
-                        }
-                    } else {
-                        tracing::warn!("Scan pipeline not running, cannot reload plugin {}", plugin_id);
-                    }
-                }
-
-                emit_plugin_changed(
-                    &app,
-                    PluginChangedEvent {
-                        plugin_id: plugin_id.clone(),
-                        enabled: true,
-                        name: plugin_name,
-                    },
-                );
-
-                Ok(CommandResponse::ok(()))
-            } else {
-                Ok(CommandResponse::err(format!(
-                    "Failed to enable plugin: Plugin not found: {}",
-                    plugin_id
-                )))
+    // 4. 重载流量分析管道（如果是流量插件）
+    if main_category == "traffic" {
+        let scan_tx = state.scan_tx.read().await;
+        if let Some(ref tx) = *scan_tx {
+            if let Err(e) = tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone())) {
+                tracing::warn!("Failed to send reload plugin task for {}: {}", plugin_id, e);
             }
         }
-        Err(db_err) => Ok(CommandResponse::err(format!(
-            "Failed to enable plugin (Database update error): {}",
-            db_err
-        ))),
     }
+
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id,
+            enabled: true,
+            name: plugin_name,
+        },
+    );
+
+    Ok(CommandResponse::ok(()))
 }
 
 /// 禁用插件
@@ -1174,85 +1087,45 @@ pub async fn disable_plugin(
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
-    // DB-only：直接更新数据库中的插件状态
     let db = state.get_db_service();
 
-    // 获取插件的main_category
-    let _main_category: Option<String> =
-        sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
-            .bind(&plugin_id)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
+    // 1. 获取插件信息
+    let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
+        Ok(Some(info)) => info,
+        Ok(None) => return Ok(CommandResponse::err(format!("Plugin not found: {}", plugin_id))),
+        Err(e) => return Ok(CommandResponse::err(format!("Failed to query plugin: {}", e))),
+    };
 
-    let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
-        .bind(false)
-        .bind(&plugin_id)
-        .execute(db.pool())
-        .await;
+    // 2. 更新启用状态
+    if let Err(e) = db.update_plugin_enabled(&plugin_id, false).await {
+        return Ok(CommandResponse::err(format!("Failed to disable plugin: {}", e)));
+    }
 
-    match result {
-        Ok(result) => {
-            if result.rows_affected() > 0 {
-                tracing::info!("Plugin disabled in database: {}", plugin_id);
+    tracing::info!("Plugin disabled in database: {}", plugin_id);
 
-                let plugin_name = sqlx::query_scalar::<_, String>(
-                    "SELECT name FROM plugin_registry WHERE id = ?",
-                )
-                .bind(&plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| plugin_id.clone());
+    // 3. 获取插件名称用于事件发送
+    let plugin_name = db.get_plugin_name(&plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
 
-                // 检查插件类型，只有traffic插件才需要更新流量扫描器缓存
-                let main_category = sqlx::query_scalar::<_, String>(
-                    "SELECT main_category FROM plugin_registry WHERE id = ?",
-                )
-                .bind(&plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "traffic".to_string());
-
-                // 如果是流量分析插件，从扫描管道移除
-                if main_category == "traffic" {
-                    let scan_tx = state.scan_tx.read().await;
-                    if let Some(ref tx) = *scan_tx {
-                        if let Err(e) = tx.send(sentinel_traffic::ScanTask::RemovePlugin(plugin_id.clone())) {
-                            tracing::warn!("Failed to send remove plugin task for {}: {}", plugin_id, e);
-                        } else {
-                            tracing::info!("Sent remove plugin task for {}", plugin_id);
-                        }
-                    } else {
-                        tracing::warn!("Scan pipeline not running, cannot remove plugin {}", plugin_id);
-                    }
-                }
-
-                emit_plugin_changed(
-                    &app,
-                    PluginChangedEvent {
-                        plugin_id: plugin_id.clone(),
-                        enabled: false,
-                        name: plugin_name,
-                    },
-                );
-
-                Ok(CommandResponse::ok(()))
-            } else {
-                Ok(CommandResponse::err(format!(
-                    "Failed to disable plugin: Plugin not found: {}",
-                    plugin_id
-                )))
+    // 4. 从流量分析管道移除（如果是流量插件）
+    if main_category == "traffic" {
+        let scan_tx = state.scan_tx.read().await;
+        if let Some(ref tx) = *scan_tx {
+            if let Err(e) = tx.send(sentinel_traffic::ScanTask::RemovePlugin(plugin_id.clone())) {
+                tracing::warn!("Failed to send remove plugin task for {}: {}", plugin_id, e);
             }
         }
-        Err(db_err) => Ok(CommandResponse::err(format!(
-            "Failed to disable plugin (Database update error): {}",
-            db_err
-        ))),
     }
+
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id,
+            enabled: false,
+            name: plugin_name,
+        },
+    );
+
+    Ok(CommandResponse::ok(()))
 }
 
 /// 列出所有插件（包含数据库中的插件）
@@ -1295,49 +1168,22 @@ pub async fn batch_enable_plugins(
     let mut failed_ids: Vec<String> = Vec::new();
 
     for plugin_id in plugin_ids.iter() {
-        let _main_category: Option<String> =
-            sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
-                .bind(plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
-
-        let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
-            .bind(true)
-            .bind(plugin_id)
-            .execute(db.pool())
-            .await;
-
-        match result {
-            Ok(exec) => {
-                if exec.rows_affected() > 0 {
-                    enabled_count += 1;
-                    let plugin_name = sqlx::query_scalar::<_, String>(
-                        "SELECT name FROM plugin_registry WHERE id = ?",
-                    )
-                    .bind(plugin_id)
-                    .fetch_optional(db.pool())
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| plugin_id.clone());
-
-                    emit_plugin_changed(
-                        &app,
-                        PluginChangedEvent {
-                            plugin_id: plugin_id.clone(),
-                            enabled: true,
-                            name: plugin_name,
-                        },
-                    );
-                } else {
-                    failed_ids.push(plugin_id.clone());
-                }
-            }
-            Err(_) => {
-                failed_ids.push(plugin_id.clone());
-            }
+        if let Err(_) = db.update_plugin_enabled(plugin_id, true).await {
+            failed_ids.push(plugin_id.clone());
+            continue;
         }
+
+        enabled_count += 1;
+        let plugin_name = db.get_plugin_name(plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
+
+        emit_plugin_changed(
+            &app,
+            PluginChangedEvent {
+                plugin_id: plugin_id.clone(),
+                enabled: true,
+                name: plugin_name,
+            },
+        );
     }
 
     Ok(CommandResponse::ok(BatchToggleResult {
@@ -1359,49 +1205,22 @@ pub async fn batch_disable_plugins(
     let mut failed_ids: Vec<String> = Vec::new();
 
     for plugin_id in plugin_ids.iter() {
-        let _main_category: Option<String> =
-            sqlx::query_scalar("SELECT main_category FROM plugin_registry WHERE id = ?")
-                .bind(plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .map_err(|e| format!("Failed to query plugin main_category: {}", e))?;
-
-        let result = sqlx::query("UPDATE plugin_registry SET enabled = ? WHERE id = ?")
-            .bind(false)
-            .bind(plugin_id)
-            .execute(db.pool())
-            .await;
-
-        match result {
-            Ok(exec) => {
-                if exec.rows_affected() > 0 {
-                    disabled_count += 1;
-                    let plugin_name = sqlx::query_scalar::<_, String>(
-                        "SELECT name FROM plugin_registry WHERE id = ?",
-                    )
-                    .bind(plugin_id)
-                    .fetch_optional(db.pool())
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| plugin_id.clone());
-
-                    emit_plugin_changed(
-                        &app,
-                        PluginChangedEvent {
-                            plugin_id: plugin_id.clone(),
-                            enabled: false,
-                            name: plugin_name,
-                        },
-                    );
-                } else {
-                    failed_ids.push(plugin_id.clone());
-                }
-            }
-            Err(_) => {
-                failed_ids.push(plugin_id.clone());
-            }
+        if let Err(_) = db.update_plugin_enabled(plugin_id, false).await {
+            failed_ids.push(plugin_id.clone());
+            continue;
         }
+
+        disabled_count += 1;
+        let plugin_name = db.get_plugin_name(plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
+
+        emit_plugin_changed(
+            &app,
+            PluginChangedEvent {
+                plugin_id: plugin_id.clone(),
+                enabled: false,
+                name: plugin_name,
+            },
+        );
     }
 
     Ok(CommandResponse::ok(BatchToggleResult {
@@ -2908,86 +2727,56 @@ pub async fn test_plugin_advanced(
     let db = state.get_db_service();
     
     // 确保插件存在并加载到内存中
-    let plugin_exists: Option<bool> =
-        sqlx::query_scalar("SELECT 1 FROM plugin_registry WHERE id = ?")
-            .bind(&plugin_id)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| format!("Failed to query plugin: {}", e))?;
-    
-    if plugin_exists.is_none() {
-        return Ok(CommandResponse::ok(AdvancedTestResult {
-            plugin_id,
-            success: false,
-            total_runs: runs,
-            concurrency,
-            total_duration_ms: 0,
-            avg_duration_ms: 0.0,
-            total_findings: 0,
-            unique_findings: 0,
-            findings: vec![],
-            runs: vec![],
-            message: Some("Plugin not found".to_string()),
-            error: Some("PluginNotFound".to_string()),
-            outputs: None,
-        }));
-    }
+    let plugin_record = match db.get_plugin_from_registry(&plugin_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return Ok(CommandResponse::ok(AdvancedTestResult {
+                plugin_id,
+                success: false,
+                total_runs: runs,
+                concurrency,
+                total_duration_ms: 0,
+                avg_duration_ms: 0.0,
+                total_findings: 0,
+                unique_findings: 0,
+                findings: vec![],
+                runs: vec![],
+                message: Some("Plugin not found".to_string()),
+                error: Some("PluginNotFound".to_string()),
+                outputs: None,
+            }));
+        }
+        Err(e) => return Err(format!("Failed to query plugin: {}", e)),
+    };
     
     // 确保插件已加载到内存中（不检查启用状态）
     let plugin_manager = state.get_plugin_manager();
     if plugin_manager.get_plugin(&plugin_id).await.is_none() {
-        // 加载插件代码和元数据
-        let code_opt = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT plugin_code FROM plugin_registry WHERE id = ?",
-        )
-        .bind(&plugin_id)
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| format!("Failed to load plugin code: {}", e))?;
+        // 加载插件代码
+        let code_opt = db.get_plugin_code(&plugin_id).await
+            .map_err(|e| format!("Failed to load plugin code: {}", e))?;
         
-        if let Some(code) = code_opt.flatten() {
-            let (name, version, author, main_category, category, description, default_severity, enabled) = sqlx::query_as::<_, (String,String,Option<String>,String,String,Option<String>,String,bool)>(
-                "SELECT name, version, author, main_category, category, description, default_severity, enabled FROM plugin_registry WHERE id = ?"
-            )
-            .bind(&plugin_id)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| format!("Failed to query plugin metadata: {}", e))?
-            .ok_or_else(|| format!("Plugin metadata not found for id {}", plugin_id))?;
-            
-            let tags_json: Option<String> =
-                sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = ?")
-                    .bind(&plugin_id)
-                    .fetch_optional(db.pool())
-                    .await
-                    .map_err(|e| format!("Failed to query plugin tags: {}", e))?;
-            let tags: Vec<String> = tags_json
-                .and_then(|t| serde_json::from_str(&t).ok())
-                .unwrap_or_default();
-            
-            let severity = match default_severity.to_lowercase().as_str() {
-                "critical" => sentinel_traffic::types::Severity::Critical,
-                "high" => sentinel_traffic::types::Severity::High,
-                "medium" => sentinel_traffic::types::Severity::Medium,
-                "low" => sentinel_traffic::types::Severity::Low,
-                "info" => sentinel_traffic::types::Severity::Info,
-                _ => sentinel_traffic::types::Severity::Medium,
-            };
-            
-            let metadata = PluginMetadata {
+        if let Some(code) = code_opt {
+             let metadata = PluginMetadata {
                 id: plugin_id.clone(),
-                name,
-                version,
-                author,
-                main_category,
-                category,
-                description,
-                default_severity: severity,
-                tags,
+                name: plugin_record.metadata.name,
+                version: plugin_record.metadata.version,
+                author: plugin_record.metadata.author,
+                main_category: plugin_record.metadata.main_category,
+                category: plugin_record.metadata.category,
+                description: plugin_record.metadata.description,
+                default_severity: match plugin_record.metadata.default_severity {
+                    sentinel_plugins::Severity::Critical => sentinel_traffic::Severity::Critical,
+                    sentinel_plugins::Severity::High => sentinel_traffic::Severity::High,
+                    sentinel_plugins::Severity::Medium => sentinel_traffic::Severity::Medium,
+                    sentinel_plugins::Severity::Low => sentinel_traffic::Severity::Low,
+                    sentinel_plugins::Severity::Info => sentinel_traffic::Severity::Info,
+                },
+                tags: plugin_record.metadata.tags,
             };
             
             let _ = plugin_manager
-                .register_plugin(plugin_id.clone(), metadata, enabled)
+                .register_plugin(plugin_id.clone(), metadata, true) // force enable for test
                 .await;
             let _ = plugin_manager
                 .set_plugin_code(plugin_id.clone(), code)
@@ -3150,16 +2939,9 @@ pub async fn test_agent_plugin(
     let db = state.get_db_service();
 
     // 验证插件存在且是 Agent 类型
-    let row: Option<(String, String, bool)> =
-        sqlx::query_as("SELECT id, main_category, enabled FROM plugin_registry WHERE id = ?")
-            .bind(&plugin_id)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| format!("Failed to query plugin: {}", e))?;
-
-    let (_id, main_category, _enabled) = match row {
-        Some(r) => r,
-        None => {
+    let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
+        Ok(Some(info)) => info,
+        Ok(None) => {
             return Ok(CommandResponse::ok(AgentTestResult {
                 success: false,
                 message: Some(format!("插件 '{}' 不存在", plugin_id)),
@@ -3168,6 +2950,7 @@ pub async fn test_agent_plugin(
                 error: Some("PluginNotFound".to_string()),
             }));
         }
+        Err(e) => return Err(format!("Failed to query plugin: {}", e)),
     };
 
     if main_category != "agent" {

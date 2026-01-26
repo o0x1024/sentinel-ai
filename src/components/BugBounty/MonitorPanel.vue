@@ -198,6 +198,15 @@
                 <span v-if="task.config.enable_api_monitoring" class="badge badge-outline badge-xs">
                   <i class="fas fa-plug mr-1"></i>API
                 </span>
+                <span v-if="task.config.enable_port_monitoring" class="badge badge-outline badge-xs">
+                  <i class="fas fa-network-wired mr-1"></i>Port
+                </span>
+                <span v-if="task.config.enable_web_monitoring" class="badge badge-outline badge-xs">
+                  <i class="fas fa-globe mr-1"></i>Web
+                </span>
+                <span v-if="task.config.enable_vuln_monitoring" class="badge badge-outline badge-xs">
+                  <i class="fas fa-shield-alt mr-1"></i>Vuln
+                </span>
               </div>
             </div>
           </div>
@@ -558,7 +567,230 @@
               </div>
             </div>
           </div>
+          <!-- Port Monitoring -->
+          <div class="card bg-base-200 p-4 mb-3">
+            <div class="flex items-center justify-between mb-2">
+              <label class="label cursor-pointer gap-2">
+                <input type="checkbox" v-model="taskForm.config.enable_port_monitoring" class="checkbox checkbox-primary" />
+                <span class="label-text font-semibold">
+                  <i class="fas fa-network-wired mr-2"></i>
+                  {{ t('bugBounty.monitor.portMonitoring') }}
+                </span>
+              </label>
+              <button 
+                v-if="taskForm.config.enable_port_monitoring"
+                class="btn btn-xs btn-ghost"
+                @click="addPluginConfig('port')"
+              >
+                <i class="fas fa-plus mr-1"></i>
+                {{ t('bugBounty.monitor.addPlugin') }}
+              </button>
+            </div>
+            
+            <div v-if="taskForm.config.enable_port_monitoring && taskForm.config.port_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
+              <i class="fas fa-info-circle mr-1"></i>
+              {{ t('bugBounty.monitor.noPluginsConfigured') }}
+            </div>
+            
+            <div v-if="taskForm.config.enable_port_monitoring && taskForm.config.port_plugins.length > 0" class="space-y-2 ml-6">
+              <div v-for="(plugin, idx) in taskForm.config.port_plugins" :key="`port-${idx}`" class="card bg-base-100 p-3">
+                <div class="flex items-start gap-2">
+                  <div class="flex-1 space-y-2">
+                    <div class="form-control">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
+                      </label>
+                      <select v-model="plugin.plugin_id" class="select select-sm select-bordered">
+                        <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                        <option v-for="p in getPluginsByType('port')" :key="p.id" :value="p.id">
+                          {{ p.name }}
+                        </option>
+                      </select>
+                    </div>
+                    
+                    <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
+                      </label>
+                      <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`port-fb-${idx}-${fIdx}`" class="flex gap-1">
+                        <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1">
+                          <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                          <option v-for="p in getPluginsByType('port')" :key="p.id" :value="p.id">
+                            {{ p.name }}
+                          </option>
+                        </select>
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('port', idx, Number(fIdx))">
+                          <i class="fas fa-times"></i>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      class="btn btn-xs btn-ghost"
+                      @click="addFallbackPlugin('port', idx)"
+                    >
+                      <i class="fas fa-plus mr-1"></i>
+                      {{ t('bugBounty.monitor.addFallback') }}
+                    </button>
+                  </div>
+                  
+                  <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('port', idx)">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
 
+          <!-- Web Monitoring -->
+          <div class="card bg-base-200 p-4 mb-3">
+            <div class="flex items-center justify-between mb-2">
+              <label class="label cursor-pointer gap-2">
+                <input type="checkbox" v-model="taskForm.config.enable_web_monitoring" class="checkbox checkbox-primary" />
+                <span class="label-text font-semibold">
+                  <i class="fas fa-globe mr-2"></i>
+                  {{ t('bugBounty.monitor.webMonitoring') }}
+                </span>
+              </label>
+              <button 
+                v-if="taskForm.config.enable_web_monitoring"
+                class="btn btn-xs btn-ghost"
+                @click="addPluginConfig('web')"
+              >
+                <i class="fas fa-plus mr-1"></i>
+                {{ t('bugBounty.monitor.addPlugin') }}
+              </button>
+            </div>
+            
+            <div v-if="taskForm.config.enable_web_monitoring && taskForm.config.web_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
+              <i class="fas fa-info-circle mr-1"></i>
+              {{ t('bugBounty.monitor.noPluginsConfigured') }}
+            </div>
+            
+            <div v-if="taskForm.config.enable_web_monitoring && taskForm.config.web_plugins.length > 0" class="space-y-2 ml-6">
+              <div v-for="(plugin, idx) in taskForm.config.web_plugins" :key="`web-${idx}`" class="card bg-base-100 p-3">
+                <div class="flex items-start gap-2">
+                  <div class="flex-1 space-y-2">
+                    <div class="form-control">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
+                      </label>
+                      <select v-model="plugin.plugin_id" class="select select-sm select-bordered">
+                        <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                        <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
+                          {{ p.name }}
+                        </option>
+                      </select>
+                    </div>
+                    
+                    <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
+                      </label>
+                      <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`web-fb-${idx}-${fIdx}`" class="flex gap-1">
+                        <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1">
+                          <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                          <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
+                            {{ p.name }}
+                          </option>
+                        </select>
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('web', idx, Number(fIdx))">
+                          <i class="fas fa-times"></i>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      class="btn btn-xs btn-ghost"
+                      @click="addFallbackPlugin('web', idx)"
+                    >
+                      <i class="fas fa-plus mr-1"></i>
+                      {{ t('bugBounty.monitor.addFallback') }}
+                    </button>
+                  </div>
+                  
+                  <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('web', idx)">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Vulnerability Monitoring -->
+          <div class="card bg-base-200 p-4 mb-3">
+            <div class="flex items-center justify-between mb-2">
+              <label class="label cursor-pointer gap-2">
+                <input type="checkbox" v-model="taskForm.config.enable_vuln_monitoring" class="checkbox checkbox-primary" />
+                <span class="label-text font-semibold">
+                  <i class="fas fa-shield-alt mr-2"></i>
+                  {{ t('bugBounty.monitor.vulnMonitoring') }}
+                </span>
+              </label>
+              <button 
+                v-if="taskForm.config.enable_vuln_monitoring"
+                class="btn btn-xs btn-ghost"
+                @click="addPluginConfig('vuln')"
+              >
+                <i class="fas fa-plus mr-1"></i>
+                {{ t('bugBounty.monitor.addPlugin') }}
+              </button>
+            </div>
+            
+            <div v-if="taskForm.config.enable_vuln_monitoring && taskForm.config.vuln_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
+              <i class="fas fa-info-circle mr-1"></i>
+              {{ t('bugBounty.monitor.noPluginsConfigured') }}
+            </div>
+            
+            <div v-if="taskForm.config.enable_vuln_monitoring && taskForm.config.vuln_plugins.length > 0" class="space-y-2 ml-6">
+              <div v-for="(plugin, idx) in taskForm.config.vuln_plugins" :key="`vuln-${idx}`" class="card bg-base-100 p-3">
+                <div class="flex items-start gap-2">
+                  <div class="flex-1 space-y-2">
+                    <div class="form-control">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
+                      </label>
+                      <select v-model="plugin.plugin_id" class="select select-sm select-bordered">
+                        <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                        <option v-for="p in getPluginsByType('vuln')" :key="p.id" :value="p.id">
+                          {{ p.name }}
+                        </option>
+                      </select>
+                    </div>
+                    
+                    <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
+                      </label>
+                      <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`vuln-fb-${idx}-${fIdx}`" class="flex gap-1">
+                        <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1">
+                          <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                          <option v-for="p in getPluginsByType('vuln')" :key="p.id" :value="p.id">
+                            {{ p.name }}
+                          </option>
+                        </select>
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('vuln', idx, Number(fIdx))">
+                          <i class="fas fa-times"></i>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      class="btn btn-xs btn-ghost"
+                      @click="addFallbackPlugin('vuln', idx)"
+                    >
+                      <i class="fas fa-plus mr-1"></i>
+                      {{ t('bugBounty.monitor.addFallback') }}
+                    </button>
+                  </div>
+                  
+                  <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('vuln', idx)">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="divider">{{ t('bugBounty.monitor.autoTrigger') }}</div>
 
           <div class="form-control">
@@ -749,6 +981,12 @@ const taskForm = reactive({
     content_plugins: [] as any[],
     enable_api_monitoring: false,
     api_plugins: [] as any[],
+    enable_port_monitoring: false,
+    port_plugins: [] as any[],
+    enable_web_monitoring: false,
+    web_plugins: [] as any[],
+    enable_vuln_monitoring: false,
+    vuln_plugins: [] as any[],
     auto_trigger_enabled: true,
   }
 })
@@ -842,7 +1080,17 @@ const addPluginConfig = (monitorType: string) => {
       taskForm.config.content_plugins.push(newPlugin)
       break
     case 'api':
+    case 'api':
       taskForm.config.api_plugins.push(newPlugin)
+      break
+    case 'port':
+      taskForm.config.port_plugins.push(newPlugin)
+      break
+    case 'web':
+      taskForm.config.web_plugins.push(newPlugin)
+      break
+    case 'vuln':
+      taskForm.config.vuln_plugins.push(newPlugin)
       break
   }
 }
@@ -859,7 +1107,17 @@ const removePluginConfig = (monitorType: string, index: number) => {
       taskForm.config.content_plugins.splice(index, 1)
       break
     case 'api':
+    case 'api':
       taskForm.config.api_plugins.splice(index, 1)
+      break
+    case 'port':
+      taskForm.config.port_plugins.splice(index, 1)
+      break
+    case 'web':
+      taskForm.config.web_plugins.splice(index, 1)
+      break
+    case 'vuln':
+      taskForm.config.vuln_plugins.splice(index, 1)
       break
   }
 }
@@ -878,6 +1136,15 @@ const addFallbackPlugin = (monitorType: string, pluginIndex: number) => {
       break
     case 'api':
       plugins = taskForm.config.api_plugins
+      break
+    case 'port':
+      plugins = taskForm.config.port_plugins
+      break
+    case 'web':
+      plugins = taskForm.config.web_plugins
+      break
+    case 'vuln':
+      plugins = taskForm.config.vuln_plugins
       break
   }
   
@@ -901,6 +1168,15 @@ const removeFallbackPlugin = (monitorType: string, pluginIndex: number, fallback
     case 'api':
       plugins = taskForm.config.api_plugins
       break
+    case 'port':
+      plugins = taskForm.config.port_plugins
+      break
+    case 'web':
+      plugins = taskForm.config.web_plugins
+      break
+    case 'vuln':
+      plugins = taskForm.config.vuln_plugins
+      break
   }
   
   if (plugins[pluginIndex]) {
@@ -908,16 +1184,29 @@ const removeFallbackPlugin = (monitorType: string, pluginIndex: number, fallback
   }
 }
 
-const startScheduler = async () => {
+const startScheduler = async (options?: any) => {
   try {
     starting.value = true
     await invoke('monitor_start_scheduler')
     schedulerRunning.value = true
     toast.success(t('bugBounty.monitor.schedulerStarted'))
     await refreshStats()
-  } catch (error) {
+  } catch (error: any) {
+    const errorMsg = error?.toString() || ''
+    // Handle case where scheduler is already running
+    if (errorMsg.includes('Scheduler is already running')) {
+      console.log('Scheduler is already running, syncing state.')
+      schedulerRunning.value = true
+      return
+    }
+
     console.error('Failed to start scheduler:', error)
     toast.error(t('bugBounty.monitor.startFailed'))
+    
+    // Allow caller to handle error if requested
+    if (options?.throwOnFail) {
+      throw error
+    }
   } finally {
     starting.value = false
   }
@@ -1017,7 +1306,7 @@ const triggerTask = async (task: any) => {
     // Auto-start scheduler if not running
     if (!schedulerRunning.value) {
       toast.info(t('bugBounty.monitor.autoStartingScheduler'))
-      await startScheduler()
+      await startScheduler({ throwOnFail: true })
     }
     
     await invoke('monitor_trigger_task', { taskId: task.id })
@@ -1152,6 +1441,12 @@ const closeModal = () => {
     content_plugins: [],
     enable_api_monitoring: false,
     api_plugins: [],
+    enable_port_monitoring: false,
+    port_plugins: [],
+    enable_web_monitoring: false,
+    web_plugins: [],
+    enable_vuln_monitoring: false,
+    vuln_plugins: [],
     auto_trigger_enabled: true,
   }
 }

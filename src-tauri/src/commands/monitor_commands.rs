@@ -132,37 +132,19 @@ async fn save_tasks_to_db(scheduler: &MonitorScheduler, db: &DatabaseService) ->
     let tasks = scheduler.list_tasks().await;
     let json = serde_json::to_string(&tasks).map_err(|e| e.to_string())?;
     
-    let pool = db.get_pool().map_err(|e| e.to_string())?;
-    
-    let _ = sqlx::query(
-        "INSERT INTO configurations (id, category, key, value, created_at, updated_at) 
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) 
-         ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP"
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind("monitor_scheduler")
-    .bind("tasks")
-    .bind(json)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    db.set_config("monitor_scheduler", "tasks", &json, Some("Monitor tasks configuration"))
+        .await
+        .map_err(|e| e.to_string())?;
     
     Ok(())
 }
 
 async fn load_tasks_from_db(scheduler: &MonitorScheduler, db: &DatabaseService) -> Result<(), String> {
-    let pool = db.get_pool().map_err(|e| e.to_string())?;
+    let row = db.get_config("monitor_scheduler", "tasks")
+        .await
+        .map_err(|e| e.to_string())?;
     
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM configurations WHERE category = ? AND key = ?"
-    )
-    .bind("monitor_scheduler")
-    .bind("tasks")
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    
-    if let Some((json,)) = row {
+    if let Some(json) = row {
         if !json.is_empty() {
              let tasks: Vec<MonitorTask> = serde_json::from_str(&json).unwrap_or_default();
              for task in tasks {
@@ -209,6 +191,389 @@ pub async fn monitor_start_scheduler(
     let app_clone = app.clone();
     scheduler.set_event_callback(move |event| {
         let _ = app_clone.emit("monitor:change-detected", event);
+    }).await;
+
+    // Register Task Executor
+    let db_service_clone = db_service.inner().clone();
+    scheduler.set_task_executor(move |task| {
+        let db = db_service_clone.clone();
+        Box::pin(async move {
+            tracing::info!("Executor running for task: {}", task.name);
+            let all_events = Vec::new();
+
+            // 1. Resolve targets from Program Scope
+            let scopes = db.list_program_scopes(Some(&task.program_id), None).await
+                .map_err(|e| e.to_string())?;
+            
+            let mut targets = Vec::new();
+            for scope in scopes {
+                // Determine if scope is relevant (e.g. in_scope)
+                // For now, assume all scopes are valid targets if they are domains/wildcards
+                if scope.target_type == "wildcard" || scope.target_type == "domain" || scope.target_type == "url" {
+                    targets.push(scope.target);
+                }
+            }
+            
+            // Also fetch all discovered subdomains/assets for this program
+            // This is critical for web monitoring to scan all subdomains, not just the root scope
+            match db.list_bounty_assets(
+                Some(&task.program_id), // program_id
+                None,                   // scope_id
+                Some("domain"),         // asset_type
+                None,                   // is_alive
+                None,                   // has_findings
+                Some(10000),            // limit
+                Some(0)                 // offset
+            ).await {
+                Ok(assets) => {
+                     for asset in assets {
+                         if asset.asset_type == "domain" && asset.is_wildcard != Some(true) {
+                             if !targets.contains(&asset.canonical_url) {
+                                  targets.push(asset.canonical_url);
+                             }
+                         }
+                     }
+                },
+                Err(e) => tracing::warn!("Failed to fetch existing assets for task targets: {}", e),
+            }
+            
+            if targets.is_empty() {
+                tracing::warn!("No targets found for program {}, skipping task execution", task.program_id);
+                return Ok(vec![]);
+            }
+            let target_domains = targets.join(",");
+
+            // 2. Gather plugins to run
+            let mut plugins_to_run = Vec::new();
+            
+            if task.config.enable_dns_monitoring {
+                for p in &task.config.dns_plugins { plugins_to_run.push(p); }
+            }
+            if task.config.enable_cert_monitoring {
+                for p in &task.config.cert_plugins { plugins_to_run.push(p); }
+            }
+            if task.config.enable_content_monitoring {
+                for p in &task.config.content_plugins { plugins_to_run.push(p); }
+            }
+            if task.config.enable_api_monitoring {
+                for p in &task.config.api_plugins { plugins_to_run.push(p); }
+            }
+            if task.config.enable_port_monitoring {
+                for p in &task.config.port_plugins { plugins_to_run.push(p); }
+            }
+            if task.config.enable_web_monitoring {
+                for p in &task.config.web_plugins { plugins_to_run.push(p); }
+            }
+            if task.config.enable_vuln_monitoring {
+                for p in &task.config.vuln_plugins { plugins_to_run.push(p); }
+            }
+
+            // 3. Execute Plugins
+            let tool_server = sentinel_tools::get_tool_server();
+
+            for plugin in plugins_to_run {
+                tracing::info!("Running plugin: {} for task {}", plugin.plugin_id, task.name);
+                
+                // Prepare input
+                // Merge task config params with necessary targets
+                let mut input = plugin.plugin_params.clone();
+                if !input.is_object() { input = serde_json::json!({}); }
+                
+                // Inject targets if missing
+                if input.get("domains").is_none() {
+                    input["domains"] = serde_json::Value::String(target_domains.clone());
+                }
+                if input.get("domain").is_none() {
+                     // Some plugins take single domain, use first one or loop? 
+                     // Simple heuristic: use first target
+                     if let Some(first) = targets.first() {
+                         input["domain"] = serde_json::Value::String(first.clone());
+                     }
+                }
+                if input.get("urls").is_none() {
+                     // For http prober - legacy comma separated
+                     input["urls"] = serde_json::Value::String(target_domains.clone());
+                }
+                if input.get("targets").is_none() {
+                    // For newer plugins expecting array of targets
+                    input["targets"] = serde_json::to_value(&targets).unwrap_or(serde_json::json!([]));
+                }
+                if input.get("url").is_none() {
+                    // For single URL plugins
+                    if let Some(first) = targets.first() {
+                        let url = if first.starts_with("http") { first.clone() } else { format!("https://{}", first) };
+                        input["url"] = serde_json::Value::String(url);
+                    }
+                }
+
+                // Execute
+                let result = tool_server.execute(&plugin.plugin_id, input).await;
+                
+                if !result.success {
+                    tracing::error!("Plugin {} failed: {:?}", plugin.plugin_id, result.error);
+                    continue;
+                }
+
+                // Process Output (Simulated import logic similar to monitor_discover_and_import_assets)
+                // We'll reuse the logic by calling a helper or implementing it here.
+                // For brevity, we'll implement basic ingestion for subdomain_brute keys
+                
+                // Process Output
+                if let Some(output) = &result.output {
+                    tracing::info!("Plugin {} output: {}", plugin.plugin_id, output);
+
+                    // Normalize output: wrapping in 'data' or using direct keys
+                    let data = output.get("data").unwrap_or(output);
+
+                    let mut discovered_assets = Vec::new();
+
+                    // 1. Check for explicit 'subdomains' list
+                    if let Some(subdomains) = data.get("subdomains").and_then(|v| v.as_array()) {
+                        for sub in subdomains {
+                             let sub_str = sub.as_str()
+                                .or_else(|| sub.get("domain").and_then(|s| s.as_str()))
+                                .unwrap_or("");
+                            if !sub_str.is_empty() {
+                                discovered_assets.push(sub_str.to_string());
+                            }
+                        }
+                    }
+
+                    // 1.1 Check for 'urls' list (Standard Recon)
+                    if let Some(urls) = data.get("urls").and_then(|v| v.as_array()) {
+                        for url in urls {
+                            if let Some(url_str) = url.as_str() {
+                                if !url_str.is_empty() {
+                                    // Extract domain from URL or keep as is? 
+                                    // For now, let's treat it as an asset source
+                                    discovered_assets.push(url_str.to_string());
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 1.2 Check for 'ips' list (Standard Recon)
+                    if let Some(ips) = data.get("ips").and_then(|v| v.as_array()) {
+                        for ip in ips {
+                            if let Some(ip_str) = ip.as_str() {
+                                if !ip_str.is_empty() {
+                                    discovered_assets.push(ip_str.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Check for standard 'findings' list
+                    if let Some(findings) = data.get("findings").and_then(|v| v.as_array()) {
+                         for finding in findings {
+                             // Extract potential asset from finding
+                             // Strategy: check 'url', then 'evidence' if it looks like a domain/url
+                             if let Some(url) = finding.get("url").and_then(|s| s.as_str()) {
+                                 if !url.is_empty() { discovered_assets.push(url.to_string()); }
+                             } else if let Some(evidence) = finding.get("evidence").and_then(|s| s.as_str()) {
+                                  // Simple check if evidence looks like a domain/url
+                                  if !evidence.contains('\n') && (evidence.contains('.') || evidence.contains("http")) {
+                                      discovered_assets.push(evidence.to_string());
+                                  }
+                             }
+                         }
+                    }
+                    
+                    for sub_str in discovered_assets {
+                            if sub_str.is_empty() { continue; }
+
+                            // Clean/Normalize domain (remove protocol)
+                            let clean_domain = sub_str.trim_start_matches("http://").trim_start_matches("https://").trim_matches('/');
+
+                            // Check existence
+                            let exists = db.get_bounty_asset_by_canonical_url(&task.program_id, clean_domain).await
+                                .map(|opt| opt.is_some())
+                                .unwrap_or(false);
+
+                            if !exists {
+                                // Create new asset
+                                let now = Utc::now().to_rfc3339();
+                                let asset_id = Uuid::new_v4().to_string();
+                                let asset = BountyAssetRow {
+                                    id: asset_id.clone(),
+                                    program_id: task.program_id.clone(),
+                                    scope_id: None, 
+                                    asset_type: "domain".to_string(),
+                                    canonical_url: clean_domain.to_string(),
+                                    original_urls_json: None,
+                                    hostname: Some(clean_domain.to_string()),
+                                    port: None,
+                                    path: None,
+                                    protocol: None,
+                                    is_alive: true,
+                                    last_checked_at: None,
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                    first_seen_at: now.clone(),
+                                    last_seen_at: now.clone(),
+                                    // ... default other fields
+                                    priority_score: Some(0.0),
+                                    risk_score: Some(0.0),
+                                    findings_count: 0,
+                                    change_events_count: 0,
+                                    ip_addresses_json: None, dns_records_json: None, tech_stack_json: None,
+                                    fingerprint: None, tags_json: None, labels_json: Some("[\"monitor-task\"]".to_string()),
+                                    metadata_json: None, ip_version: None, asn: None, asn_org: None, isp: None,
+                                    country: None, city: None, latitude: None, longitude: None,
+                                    is_cloud: None, cloud_provider: None, service_name: None, service_version: None,
+                                    service_product: None, banner: None, transport_protocol: None, cpe: None,
+                                    domain_registrar: None, registration_date: None, expiration_date: None,
+                                    nameservers_json: None, mx_records_json: None, txt_records_json: None,
+                                    whois_data_json: None, is_wildcard: None, parent_domain: None, http_status: None,
+                                    response_time_ms: None, content_length: None, content_type: None, title: None,
+                                    favicon_hash: None, headers_json: None, waf_detected: None, cdn_detected: None,
+                                    screenshot_path: None, body_hash: None, certificate_id: None, ssl_enabled: None,
+                                    certificate_subject: None, certificate_issuer: None, certificate_valid_from: None,
+                                    certificate_valid_to: None, certificate_san_json: None, exposure_level: None,
+                                    attack_surface_score: None, vulnerability_count: None, cvss_max_score: None,
+                                    exploit_available: None, asset_category: None, asset_owner: None, business_unit: None,
+                                    criticality: None, discovery_method: Some("monitor".to_string()), 
+                                    data_sources_json: None, confidence_score: None, monitoring_enabled: Some(true),
+                                    scan_frequency: None, last_scan_type: None, parent_asset_id: None, related_assets_json: None
+                                };
+                                
+                                if let Err(e) = db.create_bounty_asset(&asset).await {
+                                    tracing::error!("Failed to save asset: {}", e);
+                                } else {
+                                    tracing::info!("Monitor imported new asset: {}", clean_domain);
+                                }
+                            }
+                    }
+
+                // 3. Check for 'assets' list (Complex Asset Objects)
+                if let Some(assets) = data.get("assets").and_then(|v| v.as_array()) {
+                    for asset_obj in assets {
+                         // Parse fields
+                         let asset_type = asset_obj.get("type").and_then(|s| s.as_str()).unwrap_or("unknown");
+                         let canonical_url = asset_obj.get("value").and_then(|s| s.as_str()).unwrap_or("");
+                         
+                         if canonical_url.is_empty() { continue; }
+
+                         // Check existence
+                         let exists = db.get_bounty_asset_by_canonical_url(&task.program_id, canonical_url).await
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+                        
+                         if !exists {
+                             let now = Utc::now().to_rfc3339();
+                             let asset_id = Uuid::new_v4().to_string();
+                             
+                             let attrs = asset_obj.get("attributes");
+                             let tags = asset_obj.get("tags").map(|v| v.to_string());
+                             let metadata = asset_obj.get("metadata").map(|v| v.to_string());
+
+                             let hostname = asset_obj.get("hostname").and_then(|s| s.as_str()).map(|s| s.to_string())
+                                .or_else(|| if asset_type == "domain" { Some(canonical_url.to_string()) } else { None });
+                             let port = asset_obj.get("port").and_then(|v| v.as_i64()).map(|i| i as i32);
+
+                             let asset = BountyAssetRow {
+                                id: asset_id.clone(),
+                                program_id: task.program_id.clone(),
+                                scope_id: None,
+                                asset_type: asset_type.to_string(),
+                                canonical_url: canonical_url.to_string(),
+                                original_urls_json: None,
+                                hostname: hostname,
+                                port: port,
+                                path: None,
+                                protocol: None,
+                                is_alive: asset_obj.get("is_alive").and_then(|v| v.as_bool()).unwrap_or(true),
+                                last_checked_at: None,
+                                created_at: now.clone(),
+                                updated_at: now.clone(),
+                                first_seen_at: now.clone(),
+                                last_seen_at: now.clone(),
+                                priority_score: Some(0.0),
+                                risk_score: Some(0.0),
+                                findings_count: 0,
+                                change_events_count: 0,
+                                
+                                // Parse attributes from "attributes" object or flat fields
+                                ip_addresses_json: None, 
+                                dns_records_json: None, 
+                                tech_stack_json: attrs.and_then(|a| a.get("tech_stack")).map(|v| v.to_string()),
+                                fingerprint: None, 
+                                tags_json: tags, 
+                                labels_json: Some("[\"monitor-task\"]".to_string()),
+                                metadata_json: metadata,
+                                
+                                // IP Attributes
+                                ip_version: attrs.and_then(|a| a.get("ip_version")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                asn: attrs.and_then(|a| a.get("asn")).and_then(|v| v.as_i64()).map(|i| i as i32),
+                                asn_org: attrs.and_then(|a| a.get("asn_org")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                isp: attrs.and_then(|a| a.get("isp")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                country: attrs.and_then(|a| a.get("country")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                city: attrs.and_then(|a| a.get("city")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                latitude: attrs.and_then(|a| a.get("latitude")).and_then(|v| v.as_f64()),
+                                longitude: attrs.and_then(|a| a.get("longitude")).and_then(|v| v.as_f64()),
+                                is_cloud: attrs.and_then(|a| a.get("is_cloud")).and_then(|v| v.as_bool()),
+                                cloud_provider: attrs.and_then(|a| a.get("cloud_provider")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+
+                                // Port/Service
+                                service_name: attrs.and_then(|a| a.get("service_name")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                service_version: attrs.and_then(|a| a.get("service_version")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                service_product: attrs.and_then(|a| a.get("service_product")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                banner: attrs.and_then(|a| a.get("banner")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                transport_protocol: attrs.and_then(|a| a.get("transport_protocol")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                cpe: attrs.and_then(|a| a.get("cpe")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+
+                                // Domain
+                                domain_registrar: attrs.and_then(|a| a.get("domain_registrar")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                registration_date: attrs.and_then(|a| a.get("registration_date")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                expiration_date: attrs.and_then(|a| a.get("expiration_date")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                nameservers_json: attrs.and_then(|a| a.get("nameservers")).map(|v| v.to_string()),
+                                mx_records_json: None,
+                                txt_records_json: None,
+                                whois_data_json: None,
+                                is_wildcard: attrs.and_then(|a| a.get("is_wildcard")).and_then(|v| v.as_bool()),
+                                parent_domain: attrs.and_then(|a| a.get("parent_domain")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+
+                                // Web
+                                http_status: attrs.and_then(|a| a.get("http_status")).and_then(|v| v.as_i64()).map(|i| i as i32),
+                                response_time_ms: attrs.and_then(|a| a.get("response_time_ms")).and_then(|v| v.as_i64()).map(|i| i as i32),
+                                content_length: attrs.and_then(|a| a.get("content_length")).and_then(|v| v.as_i64()),
+                                content_type: attrs.and_then(|a| a.get("content_type")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                title: attrs.and_then(|a| a.get("title")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                favicon_hash: attrs.and_then(|a| a.get("favicon_hash")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                headers_json: attrs.and_then(|a| a.get("headers")).map(|v| v.to_string()),
+                                waf_detected: attrs.and_then(|a| a.get("waf_detected")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                cdn_detected: attrs.and_then(|a| a.get("cdn_detected")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                screenshot_path: None, body_hash: None,
+
+                                // Certificate
+                                certificate_id: None,
+                                ssl_enabled: attrs.and_then(|a| a.get("ssl_enabled")).and_then(|v| v.as_bool()),
+                                certificate_subject: attrs.and_then(|a| a.get("certificate_subject")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                certificate_issuer: attrs.and_then(|a| a.get("certificate_issuer")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                certificate_valid_from: None,
+                                certificate_valid_to: attrs.and_then(|a| a.get("certificate_valid_to")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+                                certificate_san_json: None,
+
+                                exposure_level: None, attack_surface_score: None, vulnerability_count: None, cvss_max_score: None, exploit_available: None,
+                                asset_category: None, asset_owner: None, business_unit: None, criticality: None,
+                                discovery_method: Some("monitor-plugin".to_string()),
+                                data_sources_json: None, confidence_score: Some(1.0), monitoring_enabled: Some(true),
+                                scan_frequency: None, last_scan_type: None, parent_asset_id: None, related_assets_json: None
+                             };
+
+                             if let Err(e) = db.create_bounty_asset(&asset).await {
+                                 tracing::error!("Failed to save asset: {}", e);
+                             } else {
+                                 tracing::info!("Monitor imported new detailed asset: {}", canonical_url);
+                             }
+                        }
+                    }
+                }
+            }
+            }
+
+            Ok(all_events)
+        })
     }).await;
 
     scheduler.start().await?;
@@ -300,6 +665,18 @@ pub struct MonitorConfigDto {
     pub enable_api_monitoring: Option<bool>,
     #[serde(default)]
     pub api_plugins: Vec<MonitorPluginConfigDto>,
+
+    pub enable_port_monitoring: Option<bool>,
+    #[serde(default)]
+    pub port_plugins: Vec<MonitorPluginConfigDto>,
+
+    pub enable_web_monitoring: Option<bool>,
+    #[serde(default)]
+    pub web_plugins: Vec<MonitorPluginConfigDto>,
+
+    pub enable_vuln_monitoring: Option<bool>,
+    #[serde(default)]
+    pub vuln_plugins: Vec<MonitorPluginConfigDto>,
     
     pub auto_trigger_enabled: Option<bool>,
     pub auto_trigger_min_severity: Option<String>,
@@ -336,6 +713,27 @@ impl From<MonitorConfigDto> for ChangeMonitorConfig {
         }
         if !dto.api_plugins.is_empty() {
             config.api_plugins = dto.api_plugins.into_iter().map(Into::into).collect();
+        }
+
+        if let Some(v) = dto.enable_port_monitoring {
+            config.enable_port_monitoring = v;
+        }
+        if !dto.port_plugins.is_empty() {
+            config.port_plugins = dto.port_plugins.into_iter().map(Into::into).collect();
+        }
+
+        if let Some(v) = dto.enable_web_monitoring {
+            config.enable_web_monitoring = v;
+        }
+        if !dto.web_plugins.is_empty() {
+            config.web_plugins = dto.web_plugins.into_iter().map(Into::into).collect();
+        }
+
+        if let Some(v) = dto.enable_vuln_monitoring {
+            config.enable_vuln_monitoring = v;
+        }
+        if !dto.vuln_plugins.is_empty() {
+            config.vuln_plugins = dto.vuln_plugins.into_iter().map(Into::into).collect();
         }
         
         if let Some(v) = dto.auto_trigger_enabled {
