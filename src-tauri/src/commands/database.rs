@@ -82,18 +82,15 @@ pub async fn get_database_status(
     let db_path = db_service.get_db_path();
     tracing::info!("Database path: {}", db_path.display());
     
-    // 获取表数量 - 使用更简单的查询并处理不同的返回类型
+    // 获取表数量 - 使用 PostgreSQL 的查询方式
     let table_count = match db_service.execute_query(
-        "SELECT COUNT(*) as table_count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
     ).await {
         Ok(rows) => {
             tracing::info!("Table count query result: {:?}", rows);
             if let Some(first) = rows.first() {
-                // 尝试从不同的可能字段名获取值
                 let count = first.get("table_count")
-                    .or_else(|| first.get("COUNT(*)"))
                     .and_then(|v| {
-                        // 处理 integer 或 string 类型
                         v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
                     })
                     .unwrap_or(0) as i32;
@@ -114,12 +111,36 @@ pub async fn get_database_status(
     let last_backup = get_last_backup_info(&db_path)
         .map(|info| info.created_at);
     
+    // Get DB type from config
+    let (db_type, connection_info) = if let Some(config) = db_service.get_db_config() {
+        let type_str = match config.db_type {
+            sentinel_db::database_service::DatabaseType::PostgreSQL => "PostgreSQL",
+            sentinel_db::database_service::DatabaseType::MySQL => "MySQL",
+            sentinel_db::database_service::DatabaseType::SQLite => "SQLite",
+        };
+        
+        let conn_info = match config.db_type {
+            sentinel_db::database_service::DatabaseType::SQLite => {
+                config.path.clone().unwrap_or_else(|| "Default".to_string())
+            },
+            _ => {
+                format!("{}:{}", 
+                    config.host.as_deref().unwrap_or("localhost"),
+                    config.port.unwrap_or(5432)
+                )
+            }
+        };
+        (type_str.to_string(), conn_info)
+    } else {
+        ("Unknown".to_string(), "Not connected".to_string())
+    };
+
     let status = DatabaseStatus {
         connected: true,
-        db_type: "SQLite".to_string(),
+        db_type,
         size: stats.db_size_bytes,
         tables: table_count,
-        path: db_path.to_string_lossy().to_string(),
+        path: connection_info,
         last_backup,
     };
     
@@ -210,9 +231,9 @@ pub async fn optimize_database(
 pub async fn rebuild_database_indexes(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    // 获取所有索引
+    // 获取所有索引 - PostgreSQL 方式
     let indexes = db_service
-        .execute_query("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL")
+        .execute_query("SELECT indexname as name FROM pg_indexes WHERE schemaname = 'public'")
         .await
         .map_err(|e| format!("获取索引列表失败: {}", e))?;
     
@@ -244,7 +265,7 @@ pub async fn cleanup_database(
     // 清理旧日志
     if cleanup_logs {
         let query = format!(
-            "DELETE FROM agent_session_logs WHERE timestamp < datetime('now', '-{} days')",
+            "DELETE FROM agent_session_logs WHERE timestamp < NOW() - INTERVAL '{} days'",
             retention_days
         );
         if let Ok(result) = db_service.execute_query(&query).await {
@@ -256,7 +277,7 @@ pub async fn cleanup_database(
     // 清理旧会话
     if cleanup_old_sessions {
         let query = format!(
-            "DELETE FROM agent_sessions WHERE created_at < datetime('now', '-{} days')",
+            "DELETE FROM agent_sessions WHERE created_at < NOW() - INTERVAL '{} days'",
             retention_days
         );
         if let Ok(result) = db_service.execute_query(&query).await {
@@ -293,6 +314,24 @@ pub async fn list_database_backups(
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with("backup_") && name.ends_with(".db") {
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        let created = metadata
+                            .created()
+                            .or_else(|_| metadata.modified())
+                            .ok()
+                            .map(|t| {
+                                let datetime: chrono::DateTime<chrono::Utc> = t.into();
+                                datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                            })
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        
+                        backups.push(BackupInfo {
+                            path: path.to_string_lossy().to_string(),
+                            size: metadata.len(),
+                            created_at: created,
+                        });
+                    }
+                } else if name.starts_with("backup_") && name.ends_with(".sql") {
                     if let Ok(metadata) = std::fs::metadata(&path) {
                         let created = metadata
                             .created()
@@ -415,7 +454,7 @@ pub async fn get_database_statistics(
         .map_err(|e| format!("获取统计信息失败: {}", e))?;
     
     // 获取各表的记录数
-    let table_stats_query = r#"
+    let _table_stats_query = r#"
         SELECT 
             name as table_name,
             (SELECT COUNT(*) FROM pragma_table_info(name)) as column_count
@@ -425,7 +464,7 @@ pub async fn get_database_statistics(
     "#;
     
     let table_info = db_service
-        .execute_query(table_stats_query)
+        .execute_query("SELECT table_name, 0 as column_count FROM information_schema.tables WHERE table_schema = 'public'")
         .await
         .unwrap_or_default();
     
@@ -639,6 +678,8 @@ pub async fn migrate_database(
         .map_err(|e| format!("Failed to connect to target database: {}", e))?;
     
     // Perform migration
+    // For migration purposes, we still need DatabasePool to have SQLite variant if we want to migrate FROM it.
+    // Assuming source is SQLite and we want to migrate to target_pool (PostgreSQL)
     let source_db_pool = DatabasePool::SQLite(source_pool.clone());
     let migration = DatabaseMigration::new(source_db_pool)
         .with_target(target_pool);

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::postgres::PgPool;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -10,13 +10,13 @@ use sentinel_core::models::dictionary::{
 };
 
 /// 字典服务
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone) ]
 pub struct DictionaryService {
-    pool: SqlitePool,
+    pool: PgPool,
 }
 
 impl DictionaryService {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
@@ -26,8 +26,8 @@ impl DictionaryService {
             dictionary.id = Uuid::new_v4().to_string();
         }
 
-        let now = chrono::Utc::now().to_rfc3339();
-        dictionary.created_at = now.clone();
+        let now = chrono::Utc::now();
+        dictionary.created_at = now;
         dictionary.updated_at = now;
 
         sqlx::query(
@@ -37,7 +37,7 @@ impl DictionaryService {
                 is_builtin, is_active, word_count, file_size, checksum,
                 version, author, source_url, tags, metadata,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         "#,
         )
         .bind(&dictionary.id)
@@ -66,7 +66,7 @@ impl DictionaryService {
 
     /// 获取字典
     pub async fn get_dictionary(&self, id: &str) -> Result<Option<Dictionary>> {
-        let dictionary = sqlx::query_as::<_, Dictionary>("SELECT * FROM dictionaries WHERE id = ?")
+        let dictionary = sqlx::query_as::<_, Dictionary>("SELECT * FROM dictionaries WHERE id = $1")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -77,7 +77,7 @@ impl DictionaryService {
     /// 根据名称获取字典
     pub async fn get_dictionary_by_name(&self, name: &str) -> Result<Option<Dictionary>> {
         let dictionary =
-            sqlx::query_as::<_, Dictionary>("SELECT * FROM dictionaries WHERE name = ?")
+            sqlx::query_as::<_, Dictionary>("SELECT * FROM dictionaries WHERE name = $1")
                 .bind(name)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -91,33 +91,39 @@ impl DictionaryService {
         filter: Option<DictionaryFilter>,
     ) -> Result<Vec<Dictionary>> {
         let mut query = "SELECT * FROM dictionaries WHERE 1=1".to_string();
+        let mut param_idx = 1;
         let mut params: Vec<String> = Vec::new();
 
         if let Some(filter) = filter {
             if let Some(dict_type) = filter.dict_type {
-                query.push_str(" AND dict_type = ?");
+                query.push_str(&format!(" AND dict_type = ${}", param_idx));
+                param_idx += 1;
                 params.push(dict_type.to_string());
             }
             if let Some(service_type) = filter.service_type {
-                query.push_str(" AND service_type = ?");
+                query.push_str(&format!(" AND service_type = ${}", param_idx));
+                param_idx += 1;
                 params.push(service_type.to_string());
             }
             if let Some(category) = filter.category {
-                query.push_str(" AND category = ?");
+                query.push_str(&format!(" AND category = ${}", param_idx));
+                param_idx += 1;
                 params.push(category);
             }
             if let Some(is_builtin) = filter.is_builtin {
-                query.push_str(" AND is_builtin = ?");
+                query.push_str(&format!(" AND is_builtin = ${}", param_idx));
+                param_idx += 1;
                 params.push(is_builtin.to_string());
             }
             if let Some(is_active) = filter.is_active {
-                query.push_str(" AND is_active = ?");
+                query.push_str(&format!(" AND is_active = ${}", param_idx));
+                param_idx += 1;
                 params.push(is_active.to_string());
             }
             if let Some(search_term) = filter.search_term {
-                query.push_str(" AND (name LIKE ? OR description LIKE ?)");
+                query.push_str(&format!(" AND (name LIKE ${0} OR description LIKE ${0})", param_idx));
+                param_idx += 1;
                 let search_pattern = format!("%{}%", search_term);
-                params.push(search_pattern.clone());
                 params.push(search_pattern);
             }
         }
@@ -135,16 +141,16 @@ impl DictionaryService {
 
     /// 更新字典
     pub async fn update_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary> {
-        dictionary.updated_at = chrono::Utc::now().to_rfc3339();
+        dictionary.updated_at = chrono::Utc::now();
 
         sqlx::query(
             r#"
             UPDATE dictionaries SET
-                name = ?, description = ?, dict_type = ?, service_type = ?,
-                category = ?, is_builtin = ?, is_active = ?, word_count = ?,
-                file_size = ?, checksum = ?, version = ?, author = ?,
-                source_url = ?, tags = ?, metadata = ?, updated_at = ?
-            WHERE id = ?
+                name = $1, description = $2, dict_type = $3, service_type = $4,
+                category = $5, is_builtin = $6, is_active = $7, word_count = $8,
+                file_size = $9, checksum = $10, version = $11, author = $12,
+                source_url = $13, tags = $14, metadata = $15, updated_at = $16
+            WHERE id = $17
         "#,
         )
         .bind(&dictionary.name)
@@ -173,19 +179,19 @@ impl DictionaryService {
     /// 删除字典
     pub async fn delete_dictionary(&self, id: &str) -> Result<()> {
         // 先删除相关的词条
-        sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = ?")
+        sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
 
         // 删除字典集合关系
-        sqlx::query("DELETE FROM dictionary_set_relations WHERE dictionary_id = ?")
+        sqlx::query("DELETE FROM dictionary_set_relations WHERE dictionary_id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
 
         // 删除字典
-        sqlx::query("DELETE FROM dictionaries WHERE id = ?")
+        sqlx::query("DELETE FROM dictionaries WHERE id = $1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -206,7 +212,7 @@ impl DictionaryService {
 
             sqlx::query(r#"
                 INSERT INTO dictionary_words (id, dictionary_id, word, weight, category, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#)
             .bind(&dict_word.id)
             .bind(&dict_word.dictionary_id)
@@ -232,8 +238,8 @@ impl DictionaryService {
         let mut removed_count = 0;
 
         for word in words {
-            let result =
-                sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = ? AND word = ?")
+            let result: sqlx::postgres::PgQueryResult =
+                sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = $1 AND word = $2")
                     .bind(dictionary_id)
                     .bind(&word)
                     .execute(&self.pool)
@@ -251,7 +257,7 @@ impl DictionaryService {
     /// 获取字典的所有词条
     pub async fn get_dictionary_words(&self, dictionary_id: &str) -> Result<Vec<DictionaryWord>> {
         let words = sqlx::query_as::<_, DictionaryWord>(
-            "SELECT * FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC",
+            "SELECT * FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC",
         )
         .bind(dictionary_id)
         .fetch_all(&self.pool)
@@ -268,7 +274,7 @@ impl DictionaryService {
         limit: u32,
     ) -> Result<Vec<DictionaryWord>> {
         let words = sqlx::query_as::<_, DictionaryWord>(
-            "SELECT * FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ? OFFSET ?",
+            "SELECT * FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2 OFFSET $3",
         )
         .bind(dictionary_id)
         .bind(limit as i64)
@@ -288,7 +294,7 @@ impl DictionaryService {
     ) -> Result<Vec<DictionaryWord>> {
         let limit_clause = limit.map(|l| format!(" LIMIT {}", l)).unwrap_or_default();
         let query = format!(
-            "SELECT * FROM dictionary_words WHERE dictionary_id = ? AND word LIKE ? ORDER BY weight DESC, word ASC{}",
+            "SELECT * FROM dictionary_words WHERE dictionary_id = $1 AND word LIKE $2 ORDER BY weight DESC, word ASC{}",
             limit_clause
         );
 
@@ -311,7 +317,7 @@ impl DictionaryService {
         limit: u32,
     ) -> Result<Vec<DictionaryWord>> {
         let query =
-            "SELECT * FROM dictionary_words WHERE dictionary_id = ? AND word LIKE ? ORDER BY weight DESC, word ASC LIMIT ? OFFSET ?";
+            "SELECT * FROM dictionary_words WHERE dictionary_id = $1 AND word LIKE $2 ORDER BY weight DESC, word ASC LIMIT $3 OFFSET $4";
 
         let search_pattern = format!("%{}%", pattern);
         let words = sqlx::query_as::<_, DictionaryWord>(query)
@@ -327,7 +333,7 @@ impl DictionaryService {
 
     /// 清空字典词条
     pub async fn clear_dictionary(&self, dictionary_id: &str) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = ?")
+        let result: sqlx::postgres::PgQueryResult = sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = $1")
             .bind(dictionary_id)
             .execute(&self.pool)
             .await?;
@@ -341,14 +347,14 @@ impl DictionaryService {
     /// 更新字典的词条数量
     async fn update_word_count(&self, dictionary_id: &str) -> Result<()> {
         let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionary_words WHERE dictionary_id = ?")
+            sqlx::query_scalar("SELECT COUNT(*) FROM dictionary_words WHERE dictionary_id = $1")
                 .bind(dictionary_id)
                 .fetch_one(&self.pool)
                 .await?;
 
-        sqlx::query("UPDATE dictionaries SET word_count = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE dictionaries SET word_count = $1, updated_at = $2 WHERE id = $3")
             .bind(count)
-            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(chrono::Utc::now())
             .bind(dictionary_id)
             .execute(&self.pool)
             .await?;
@@ -474,17 +480,17 @@ impl DictionaryService {
             .await?;
 
         let builtin_dictionaries: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_builtin = 1")
+            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_builtin = TRUE")
                 .fetch_one(&self.pool)
                 .await?;
 
         let custom_dictionaries: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_builtin = 0")
+            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_builtin = FALSE")
                 .fetch_one(&self.pool)
                 .await?;
 
         let active_dictionaries: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_active = 1")
+            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_active = TRUE")
                 .fetch_one(&self.pool)
                 .await?;
 
@@ -537,13 +543,13 @@ impl DictionaryService {
             set.id = Uuid::new_v4().to_string();
         }
 
-        let now = chrono::Utc::now().to_rfc3339();
-        set.created_at = now.clone();
+        let now = chrono::Utc::now();
+        set.created_at = now;
         set.updated_at = now;
 
         sqlx::query(r#"
             INSERT INTO dictionary_sets (id, name, description, service_type, scenario, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#)
         .bind(&set.id)
         .bind(&set.name)
@@ -571,7 +577,7 @@ impl DictionaryService {
 
         sqlx::query(r#"
             INSERT INTO dictionary_set_relations (id, set_id, dictionary_id, priority, is_enabled, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6)
         "#)
         .bind(&relation.id)
         .bind(&relation.set_id)
@@ -591,7 +597,7 @@ impl DictionaryService {
             r#"
             SELECT d.* FROM dictionaries d
             JOIN dictionary_set_relations r ON d.id = r.dictionary_id
-            WHERE r.set_id = ? AND r.is_enabled = 1
+            WHERE r.set_id = $1 AND r.is_enabled = TRUE
             ORDER BY r.priority DESC, d.name ASC
         "#,
         )
@@ -622,8 +628,8 @@ impl DictionaryService {
             source_url: None,
             tags: Some("subdomain,reconnaissance,common".to_string()),
             metadata: None,
-            created_at: chrono::Utc::now().to_rfc3339(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         };
 
         // 检查是否已存在

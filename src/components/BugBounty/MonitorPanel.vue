@@ -215,8 +215,10 @@
     </div>
 
     <!-- Create/Edit Task Modal -->
-    <div v-if="showCreateModal || editingTask" class="modal modal-open">
-      <div class="modal-box max-w-2xl">
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showCreateModal || editingTask" class="modal modal-open">
+          <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4">
           {{ editingTask ? t('bugBounty.monitor.editTask') : t('bugBounty.monitor.createTask') }}
         </h3>
@@ -815,10 +817,14 @@
       </div>
       <div class="modal-backdrop" @click="closeModal"></div>
     </div>
+      </Transition>
+    </Teleport>
 
     <!-- Discover Assets Modal -->
-    <div v-if="showDiscoverModal" class="modal modal-open">
-      <div class="modal-box max-w-3xl">
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showDiscoverModal" class="modal modal-open">
+          <div class="modal-box max-w-3xl">
         <h3 class="font-bold text-lg mb-4">
           <i class="fas fa-search mr-2"></i>
           {{ t('bugBounty.monitor.discoverAssets') }}
@@ -933,6 +939,8 @@
       </div>
       <div class="modal-backdrop" @click="closeDiscoverModal"></div>
     </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -1080,7 +1088,6 @@ const addPluginConfig = (monitorType: string) => {
       taskForm.config.content_plugins.push(newPlugin)
       break
     case 'api':
-    case 'api':
       taskForm.config.api_plugins.push(newPlugin)
       break
     case 'port':
@@ -1106,7 +1113,6 @@ const removePluginConfig = (monitorType: string, index: number) => {
     case 'content':
       taskForm.config.content_plugins.splice(index, 1)
       break
-    case 'api':
     case 'api':
       taskForm.config.api_plugins.splice(index, 1)
       break
@@ -1327,7 +1333,6 @@ const editTask = (task: any) => {
 }
 
 const deleteTask = async (task: any) => {
-  if (!confirm(t('bugBounty.monitor.confirmDelete'))) return
   try {
     await invoke('monitor_delete_task', { taskId: task.id })
     toast.success(t('bugBounty.monitor.taskDeleted'))
@@ -1519,3 +1524,26 @@ onMounted(async () => {
   })
 })
 </script>
+
+<style scoped>
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-box,
+.modal-leave-active .modal-box {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.modal-enter-from .modal-box,
+.modal-leave-to .modal-box {
+  transform: scale(0.95);
+  opacity: 0;
+}
+</style>

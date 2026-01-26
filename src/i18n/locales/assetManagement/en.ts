@@ -52,6 +52,8 @@ export default {
   allWAFs: 'All WAFs',
   customizeColumns: 'Customize Columns',
   filters: 'Filters',
+  showAdvanced: 'Advanced Filters',
+  hideAdvanced: 'Hide Advanced',
   allExposureLevels: 'All Exposure Levels',
   exposureLevel: {
     internet: 'Internet',

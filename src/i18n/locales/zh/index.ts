@@ -427,6 +427,20 @@ export default {
       hoursAgo: '{hours}小时前',
       listView: '列表视图',
       cardView: '卡片视图'
+    },
+
+    // Agent plugin subcategories
+    agentCategories: {
+      recon: '信息收集',
+      discovery: '目标发现',
+      vuln: '漏洞扫描',
+      exploit: '漏洞利用',
+      monitor: '变更监控',
+      utility: '实用工具',
+      scanner: '扫描工具',
+      analyzer: '分析工具',
+      reporter: '报告工具',
+      custom: '自定义'
     }
   },
 

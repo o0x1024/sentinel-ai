@@ -1,6 +1,8 @@
 <template>
-  <div v-if="visible" class="modal modal-open">
-    <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="visible" class="modal modal-open">
+        <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
       <!-- Header -->
       <div class="flex justify-between items-start mb-4">
         <div>
@@ -294,6 +296,8 @@
       </div>
     </div>
   </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -390,7 +394,6 @@ const createScope = async () => {
 }
 
 const deleteScope = async (scope: any) => {
-  if (!confirm(t('bugBounty.confirm.deleteScope'))) return
   try {
     await invoke('bounty_delete_scope', { id: scope.id })
     toast.success(t('bugBounty.success.scopeDeleted'))
@@ -448,3 +451,26 @@ watch(() => props.visible, async (val) => {
   }
 })
 </script>
+
+<style scoped>
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-box,
+.modal-leave-active .modal-box {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.modal-enter-from .modal-box,
+.modal-leave-to .modal-box {
+  transform: scale(0.95);
+  opacity: 0;
+}
+</style>

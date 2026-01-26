@@ -15,7 +15,7 @@ impl DatabaseService {
                 end_message_index INTEGER NOT NULL,
                 summary TEXT NOT NULL,
                 summary_tokens INTEGER NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at BIGINT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -30,7 +30,7 @@ impl DatabaseService {
                 summary TEXT NOT NULL,
                 summary_tokens INTEGER NOT NULL,
                 covers_up_to_index INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at BIGINT NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -44,14 +44,14 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         
         let global_summary = sqlx::query_as::<_, GlobalSummary>(
-            "SELECT * FROM conversation_global_summaries WHERE conversation_id = ?"
+            "SELECT * FROM conversation_global_summaries WHERE conversation_id = $1"
         )
         .bind(conversation_id)
         .fetch_optional(pool)
         .await?;
 
         let segments = sqlx::query_as::<_, ConversationSegment>(
-            "SELECT * FROM conversation_segments WHERE conversation_id = ? ORDER BY segment_index ASC"
+            "SELECT * FROM conversation_segments WHERE conversation_id = $1 ORDER BY segment_index ASC"
         )
         .bind(conversation_id)
         .fetch_all(pool)
@@ -66,7 +66,7 @@ impl DatabaseService {
         sqlx::query(
             r#"INSERT INTO conversation_segments 
             (id, conversation_id, segment_index, start_message_index, end_message_index, summary, summary_tokens, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
         )
         .bind(&segment.id)
         .bind(&segment.conversation_id)
@@ -87,7 +87,7 @@ impl DatabaseService {
         
         sqlx::query(
             r#"INSERT INTO conversation_global_summaries (id, conversation_id, summary, summary_tokens, covers_up_to_index, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT(conversation_id) DO UPDATE SET
             summary = excluded.summary,
             summary_tokens = excluded.summary_tokens,
@@ -110,7 +110,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         
         for id in segment_ids {
-            sqlx::query("DELETE FROM conversation_segments WHERE id = ?")
+            sqlx::query("DELETE FROM conversation_segments WHERE id = $1")
                 .bind(id)
                 .execute(pool)
                 .await?;

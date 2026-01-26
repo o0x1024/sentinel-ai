@@ -23,7 +23,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
 
         let value: Option<String> =
-            sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
+            sqlx::query_scalar("SELECT value FROM configurations WHERE category = $1 AND key = $2")
                 .bind(category)
                 .bind(key)
                 .fetch_optional(pool)
@@ -40,10 +40,13 @@ impl DatabaseService {
         description: Option<&str>,
     ) -> Result<()> {
         let pool = self.get_pool()?;
+        // Generate ID from category and key for consistency
+        let id = format!("{}:{}", category, key);
         sqlx::query(
-            "INSERT INTO configurations (category, key, value, description) VALUES (?, ?, ?, ?)
-             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description"
+            "INSERT INTO configurations (id, category, key, value, description) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = CURRENT_TIMESTAMP"
         )
+        .bind(&id)
         .bind(category)
         .bind(key)
         .bind(value)
@@ -57,7 +60,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query_as::<_, Configuration>(
-            "SELECT * FROM configurations WHERE category = ? ORDER BY key",
+            "SELECT * FROM configurations WHERE category = $1 ORDER BY key",
         )
         .bind(category)
         .fetch_all(pool)
@@ -70,7 +73,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         sqlx::query(
             r#"INSERT INTO notification_rules (id, name, description, channel, config, is_encrypted, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#
         )
         .bind(&rule.id)
         .bind(&rule.name)
@@ -99,7 +102,7 @@ impl DatabaseService {
     pub async fn get_notification_rule_internal(&self, id: &str) -> Result<Option<NotificationRule>> {
         let pool = self.get_pool()?;
         let row = sqlx::query_as::<_, NotificationRule>(
-            "SELECT * FROM notification_rules WHERE id = ?"
+            "SELECT * FROM notification_rules WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(pool)
@@ -111,8 +114,8 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         sqlx::query(
             r#"UPDATE notification_rules
-               SET name = ?, description = ?, channel = ?, config = ?, is_encrypted = ?, enabled = ?, updated_at = ?
-               WHERE id = ?"#
+               SET name = $1, description = $2, channel = $3, config = $4, is_encrypted = $5, enabled = $6, updated_at = $7
+               WHERE id = $8"#
         )
         .bind(&rule.name)
         .bind(&rule.description)
@@ -129,7 +132,7 @@ impl DatabaseService {
 
     pub async fn delete_notification_rule_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM notification_rules WHERE id = ?")
+        sqlx::query("DELETE FROM notification_rules WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -153,7 +156,7 @@ impl DatabaseService {
         sqlx::query(
             r#"
             INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
         .bind(&id)
@@ -171,7 +174,7 @@ impl DatabaseService {
     pub async fn get_all_mcp_server_configs_internal(&self) -> Result<Vec<McpServerConfig>> {
         let pool = self.get_pool()?;
         let configs = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
         )
         .fetch_all(pool)
         .await?;
@@ -181,7 +184,7 @@ impl DatabaseService {
     pub async fn get_auto_connect_mcp_servers_internal(&self) -> Result<Vec<McpServerConfig>> {
         let pool = self.get_pool()?;
         let configs = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = 1"
+            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE"
         )
         .fetch_all(pool)
         .await?;
@@ -190,7 +193,7 @@ impl DatabaseService {
     
     pub async fn update_mcp_server_auto_connect_internal(&self, id: &str, auto_connect: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE mcp_server_configs SET auto_connect = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE mcp_server_configs SET auto_connect = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
             .bind(auto_connect)
             .bind(id)
             .execute(pool)
@@ -200,7 +203,7 @@ impl DatabaseService {
 
     pub async fn update_mcp_server_config_enabled_internal(&self, id: &str, enabled: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE mcp_server_configs SET is_enabled = ? WHERE id = ?")
+        sqlx::query("UPDATE mcp_server_configs SET is_enabled = $1 WHERE id = $2")
             .bind(enabled)
             .bind(id)
             .execute(pool)
@@ -210,7 +213,7 @@ impl DatabaseService {
 
     pub async fn delete_mcp_server_config_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM mcp_server_configs WHERE id = ?")
+        sqlx::query("DELETE FROM mcp_server_configs WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -223,7 +226,7 @@ impl DatabaseService {
     ) -> Result<Option<McpServerConfig>> {
         let pool = self.get_pool()?;
         let config = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, 0) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
+            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(pool)
@@ -255,7 +258,7 @@ impl DatabaseService {
             .unwrap_or_else(|| "stdio".to_string());
 
         sqlx::query(
-            "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "UPDATE mcp_server_configs SET name = $1, description = $2, url = $3, connection_type = $4, command = $5, args = $6, is_enabled = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8",
         )
         .bind(name)
         .bind(description)
@@ -280,7 +283,7 @@ impl DatabaseService {
         {
             let words: Vec<String> = sqlx::query_scalar(
                 r#"SELECT word FROM dictionary_words 
-                   WHERE dictionary_id = ? 
+                   WHERE dictionary_id = $1 
                    ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
             )
             .bind(&default_dict_id)
@@ -295,7 +298,7 @@ impl DatabaseService {
 
         if let Some(candidate_id) = sqlx::query_scalar::<_, String>(
             r#"SELECT id FROM dictionaries 
-               WHERE dict_type = 'subdomain' AND is_active = 1 
+               WHERE dict_type = 'subdomain' AND is_active = TRUE 
                ORDER BY is_builtin DESC, updated_at DESC 
                LIMIT 1"#,
         )
@@ -304,7 +307,7 @@ impl DatabaseService {
         {
             let words: Vec<String> = sqlx::query_scalar(
                 r#"SELECT word FROM dictionary_words 
-                   WHERE dictionary_id = ? 
+                   WHERE dictionary_id = $1 
                    ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
             )
             .bind(&candidate_id)

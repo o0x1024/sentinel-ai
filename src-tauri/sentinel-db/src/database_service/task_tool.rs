@@ -24,7 +24,7 @@ impl DatabaseService {
                last_execution_time, last_error_message, metadata,
                created_at, updated_at
                FROM task_tool_executions 
-               WHERE task_id = ? AND tool_id = ?"#
+               WHERE task_id = $1 AND tool_id = $2"#
         )
         .bind(&request.task_id)
         .bind(&request.tool_id)
@@ -44,18 +44,12 @@ impl DatabaseService {
                 error_count: row.get("error_count"),
                 total_execution_time_ms: row.get("total_execution_time_ms"),
                 avg_execution_time_ms: row.get("avg_execution_time_ms"),
-                last_execution_time: row.get::<Option<String>, _>("last_execution_time")
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                    .map(|dt| dt.with_timezone(&Utc)),
+                last_execution_time: row.get("last_execution_time"),
                 last_error_message: row.get("last_error_message"),
                 metadata: row.get::<Option<String>, _>("metadata")
                     .and_then(|s| serde_json::from_str(&s).ok()),
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
             });
         }
 
@@ -68,7 +62,7 @@ impl DatabaseService {
                 execution_count, success_count, error_count, 
                 total_execution_time_ms, avg_execution_time_ms,
                 created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0, 0, 0, $7, $8)"#
         )
         .bind(&id)
         .bind(&request.task_id)
@@ -76,8 +70,8 @@ impl DatabaseService {
         .bind(&request.tool_name)
         .bind(request.tool_type.to_string())
         .bind(ToolExecutionStatus::Idle.to_string())
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -127,10 +121,10 @@ impl DatabaseService {
 
         // Update status to running
         sqlx::query(
-            "UPDATE task_tool_executions SET status = ?, updated_at = ? WHERE id = ?"
+            "UPDATE task_tool_executions SET status = $1, updated_at = $2 WHERE id = $3"
         )
         .bind(ToolExecutionStatus::Running.to_string())
-        .bind(now.to_rfc3339())
+        .bind(now)
         .bind(&task_tool_exec.id)
         .execute(pool)
         .await?;
@@ -142,7 +136,7 @@ impl DatabaseService {
             r#"INSERT INTO task_tool_execution_logs 
                (id, task_tool_execution_id, task_id, tool_id, tool_name, tool_type, 
                 status, started_at, input_params, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#
         )
         .bind(&log_id)
         .bind(&task_tool_exec.id)
@@ -151,9 +145,9 @@ impl DatabaseService {
         .bind(&tool_name)
         .bind(tool_type.to_string())
         .bind(ToolExecutionStatus::Running.to_string())
-        .bind(now.to_rfc3339())
+        .bind(now)
         .bind(input_json)
-        .bind(now.to_rfc3339())
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -176,16 +170,14 @@ impl DatabaseService {
 
         // Get the log record to calculate execution time
         let log = sqlx::query(
-            "SELECT task_tool_execution_id, started_at FROM task_tool_execution_logs WHERE id = ?"
+            "SELECT task_tool_execution_id, started_at FROM task_tool_execution_logs WHERE id = $1"
         )
         .bind(&log_id)
         .fetch_one(pool)
         .await?;
 
         let task_tool_exec_id: String = log.get("task_tool_execution_id");
-        let started_at_str: String = log.get("started_at");
-        let started_at = chrono::DateTime::parse_from_rfc3339(&started_at_str)?
-            .with_timezone(&Utc);
+        let started_at: chrono::DateTime<Utc> = log.get("started_at");
         
         let execution_time_ms = (now - started_at).num_milliseconds();
 
@@ -200,12 +192,12 @@ impl DatabaseService {
 
         sqlx::query(
             r#"UPDATE task_tool_execution_logs 
-               SET status = ?, completed_at = ?, execution_time_ms = ?, 
-                   output_result = ?, error_message = ?
-               WHERE id = ?"#
+               SET status = $1, completed_at = $2, execution_time_ms = $3, 
+                   output_result = $4, error_message = $5
+               WHERE id = $6"#
         )
         .bind(status.to_string())
-        .bind(now.to_rfc3339())
+        .bind(now)
         .bind(execution_time_ms)
         .bind(output_json)
         .bind(&error_message)
@@ -216,7 +208,7 @@ impl DatabaseService {
         // Update aggregated task tool execution record
         let exec_record = sqlx::query(
             r#"SELECT execution_count, success_count, error_count, 
-               total_execution_time_ms FROM task_tool_executions WHERE id = ?"#
+               total_execution_time_ms FROM task_tool_executions WHERE id = $1"#
         )
         .bind(&task_tool_exec_id)
         .fetch_one(pool)
@@ -244,10 +236,10 @@ impl DatabaseService {
 
         sqlx::query(
             r#"UPDATE task_tool_executions 
-               SET status = ?, execution_count = ?, success_count = ?, error_count = ?,
-                   total_execution_time_ms = ?, avg_execution_time_ms = ?,
-                   last_execution_time = ?, last_error_message = ?, updated_at = ?
-               WHERE id = ?"#
+               SET status = $1, execution_count = $2, success_count = $3, error_count = $4,
+                   total_execution_time_ms = $5, avg_execution_time_ms = $6,
+                   last_execution_time = $7, last_error_message = $8, updated_at = $9
+               WHERE id = $10"#
         )
         .bind(final_status.to_string())
         .bind(exec_count)
@@ -255,9 +247,9 @@ impl DatabaseService {
         .bind(error_count)
         .bind(total_time)
         .bind(avg_time)
-        .bind(now.to_rfc3339())
+        .bind(now)
         .bind(&error_message)
-        .bind(now.to_rfc3339())
+        .bind(now)
         .bind(&task_tool_exec_id)
         .execute(pool)
         .await?;
@@ -277,7 +269,7 @@ impl DatabaseService {
                t.name as task_name
                FROM task_tool_execution_logs l
                LEFT JOIN scan_tasks t ON l.task_id = t.id
-               WHERE l.task_id = ? AND l.status = 'running'
+               WHERE l.task_id = $1 AND l.status = 'running'
                ORDER BY l.started_at DESC"#
         )
         .bind(&task_id)
@@ -293,9 +285,7 @@ impl DatabaseService {
                 tool_id: row.get("tool_id"),
                 tool_name: row.get("tool_name"),
                 tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("started_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
+                started_at: row.get("started_at"),
                 input_params: row.get::<Option<String>, _>("input_params")
                     .and_then(|s| serde_json::from_str(&s).ok()),
             });
@@ -315,14 +305,14 @@ impl DatabaseService {
                SUM(error_count) as failed_executions,
                SUM(total_execution_time_ms) as total_execution_time
                FROM task_tool_executions 
-               WHERE task_id = ?"#
+               WHERE task_id = $1"#
         )
         .bind(&task_id)
         .fetch_one(pool)
         .await?;
 
         let tools_used = sqlx::query(
-            "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = ?"
+            "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = $1"
         )
         .bind(&task_id)
         .fetch_all(pool)
@@ -352,10 +342,10 @@ impl DatabaseService {
         let mut query_str = r#"SELECT id, tool_name, tool_type, status, started_at, 
                                completed_at, execution_time_ms, error_message
                                FROM task_tool_execution_logs 
-                               WHERE task_id = ?"#.to_string();
+                               WHERE task_id = $1"#.to_string();
 
         if tool_id.is_some() {
-            query_str.push_str(" AND tool_id = ?");
+            query_str.push_str(" AND tool_id = $2");
         }
 
         query_str.push_str(" ORDER BY started_at DESC");
@@ -379,12 +369,8 @@ impl DatabaseService {
                 tool_name: row.get("tool_name"),
                 tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
                 status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("started_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
-                completed_at: row.get::<Option<String>, _>("completed_at")
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                    .map(|dt| dt.with_timezone(&Utc)),
+                started_at: row.get("started_at"),
+                completed_at: row.get("completed_at"),
                 execution_time_ms: row.get("execution_time_ms"),
                 error_message: row.get("error_message"),
             });
@@ -399,9 +385,9 @@ impl DatabaseService {
         let cutoff_date = Utc::now() - chrono::Duration::days(days_to_keep);
 
         let result = sqlx::query(
-            "DELETE FROM task_tool_execution_logs WHERE created_at < ?"
+            "DELETE FROM task_tool_execution_logs WHERE created_at < $1"
         )
-        .bind(cutoff_date.to_rfc3339())
+        .bind(cutoff_date)
         .execute(pool)
         .await?;
 
@@ -435,9 +421,7 @@ impl DatabaseService {
                 tool_id: row.get("tool_id"),
                 tool_name: row.get("tool_name"),
                 tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                started_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("started_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
+                started_at: row.get("started_at"),
                 input_params: row.get::<Option<String>, _>("input_params")
                     .and_then(|s| serde_json::from_str(&s).ok()),
             });

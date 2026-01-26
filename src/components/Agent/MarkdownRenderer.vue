@@ -117,11 +117,13 @@ renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
 
 marked.use({ renderer })
 
+// Watch content changes to reset code blocks
+watch(() => props.content, () => {
+  codeBlocks.value = []
+}, { immediate: true })
+
 const renderedHtml = computed(() => {
   try {
-    // Reset code blocks for each render
-    codeBlocks.value = []
-    
     let content = props.content
     
     // Highlight knowledge base citations [SOURCE n]

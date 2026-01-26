@@ -1050,18 +1050,18 @@ fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
 // ============================================================
 
 use std::sync::OnceLock;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 
 /// Global database pool for dictionary operations
-static DICTIONARY_POOL: OnceLock<SqlitePool> = OnceLock::new();
+static DICTIONARY_POOL: OnceLock<PgPool> = OnceLock::new();
 
 /// Initialize dictionary database pool (call from main app)
-pub fn init_dictionary_pool(pool: SqlitePool) {
+pub fn init_dictionary_pool(pool: PgPool) {
     let _ = DICTIONARY_POOL.set(pool);
 }
 
 /// Get dictionary pool
-fn get_dictionary_pool() -> Option<&'static SqlitePool> {
+fn get_dictionary_pool() -> Option<&'static PgPool> {
     DICTIONARY_POOL.get()
 }
 
@@ -1089,7 +1089,7 @@ async fn op_get_dictionary(
     
     // Try by ID first
     let dict: Option<(String, String, Option<String>, String, Option<String>, Option<String>, i64, Option<String>)> = 
-        sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = ? OR name = ?")
+        sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = $1 OR name = $2")
             .bind(&id_or_name)
             .bind(&id_or_name)
             .fetch_optional(pool)
@@ -1122,7 +1122,7 @@ async fn op_get_dictionary_words(
     
     // First get dictionary ID
     let dict_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM dictionaries WHERE id = ? OR name = ?"
+        "SELECT id FROM dictionaries WHERE id = $1 OR name = $2"
     )
         .bind(&id_or_name)
         .bind(&id_or_name)
@@ -1138,7 +1138,7 @@ async fn op_get_dictionary_words(
     // Get words
     let limit_val = limit.unwrap_or(10000) as i64;
     let words: Vec<String> = sqlx::query_scalar(
-        "SELECT word FROM dictionary_words WHERE dictionary_id = ? ORDER BY weight DESC, word ASC LIMIT ?"
+        "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2"
     )
         .bind(&dict_id)
         .bind(limit_val)
@@ -1161,11 +1161,14 @@ async fn op_list_dictionaries(
     
     let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
     
-    if dict_type.is_some() {
-        query.push_str(" AND dict_type = ?");
+    let mut params_count = 0;
+    if let Some(_) = dict_type {
+        params_count += 1;
+        query.push_str(&format!(" AND dict_type = ${}", params_count));
     }
-    if category.is_some() {
-        query.push_str(" AND category = ?");
+    if let Some(_) = category {
+        params_count += 1;
+        query.push_str(&format!(" AND category = ${}", params_count));
     }
     query.push_str(" ORDER BY name ASC");
     

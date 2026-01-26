@@ -84,7 +84,7 @@ impl DatabaseService {
             INSERT INTO traffic_vulnerabilities (
                 id, plugin_id, vuln_type, severity, confidence, title, description,
                 cwe, owasp, remediation, signature, first_seen_at, last_seen_at, session_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL)
             "#,
         )
         .bind(&finding.id)
@@ -106,7 +106,7 @@ impl DatabaseService {
         // Insert deduplication index
         sqlx::query(
             r#"
-            INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)
+            INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES ($1, $2)
             "#,
         )
         .bind(&signature)
@@ -144,9 +144,9 @@ impl DatabaseService {
             r#"
             UPDATE traffic_vulnerabilities 
             SET hit_count = hit_count + 1, 
-                last_seen_at = ?,
-                updated_at = ?
-            WHERE signature = ?
+                last_seen_at = $1,
+                updated_at = $2
+            WHERE signature = $3
             "#,
         )
         .bind(Utc::now())
@@ -164,7 +164,7 @@ impl DatabaseService {
         
         let count: i64 = sqlx::query_scalar(
             r#"
-            SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = ?
+            SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = $1
             "#,
         )
         .bind(signature)
@@ -181,7 +181,7 @@ impl DatabaseService {
     ) -> Result<Vec<TrafficVulnerabilityRecord>> {
         let pool = self.get_pool()?;
         
-        let mut query = String::from(
+        let mut query_builder = sqlx::QueryBuilder::new(
             r#"
             SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                    cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
@@ -191,30 +191,29 @@ impl DatabaseService {
             "#,
         );
 
-        // Dynamic filter conditions
         if let Some(ref vuln_type) = filters.vuln_type {
-            query.push_str(&format!(" AND vuln_type = '{}'", vuln_type));
+            query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
         }
         if let Some(ref severity) = filters.severity {
-            query.push_str(&format!(" AND severity = '{}'", severity));
+            query_builder.push(" AND severity = ").push_bind(severity);
         }
         if let Some(ref status) = filters.status {
-            query.push_str(&format!(" AND status = '{}'", status));
+            query_builder.push(" AND status = ").push_bind(status);
         }
         if let Some(ref plugin_id) = filters.plugin_id {
-            query.push_str(&format!(" AND plugin_id = '{}'", plugin_id));
+            query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
         }
 
-        query.push_str(" ORDER BY created_at DESC");
+        query_builder.push(" ORDER BY created_at DESC");
 
         if let Some(limit) = filters.limit {
-            query.push_str(&format!(" LIMIT {}", limit));
+            query_builder.push(" LIMIT ").push_bind(limit);
         }
         if let Some(offset) = filters.offset {
-            query.push_str(&format!(" OFFSET {}", offset));
+            query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let records = sqlx::query_as::<_, TrafficVulnerabilityRecord>(&query)
+        let records = query_builder.build_query_as::<TrafficVulnerabilityRecord>()
             .fetch_all(pool)
             .await?;
 
@@ -251,28 +250,28 @@ impl DatabaseService {
     pub async fn count_traffic_vulnerabilities(&self, filters: TrafficVulnerabilityFilters) -> Result<i64> {
         let pool = self.get_pool()?;
         
-        let mut query = String::from(
+        let mut query_builder = sqlx::QueryBuilder::new(
             r#"
-            SELECT COUNT(*) as count
+            SELECT COUNT(*)
             FROM traffic_vulnerabilities
             WHERE 1=1
             "#,
         );
 
         if let Some(ref vuln_type) = filters.vuln_type {
-            query.push_str(&format!(" AND vuln_type = '{}'", vuln_type));
+            query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
         }
         if let Some(ref severity) = filters.severity {
-            query.push_str(&format!(" AND severity = '{}'", severity));
+            query_builder.push(" AND severity = ").push_bind(severity);
         }
         if let Some(ref status) = filters.status {
-            query.push_str(&format!(" AND status = '{}'", status));
+            query_builder.push(" AND status = ").push_bind(status);
         }
         if let Some(ref plugin_id) = filters.plugin_id {
-            query.push_str(&format!(" AND plugin_id = '{}'", plugin_id));
+            query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
         }
 
-        let row: (i64,) = sqlx::query_as(&query)
+        let row: (i64,) = query_builder.build_query_as()
             .fetch_one(pool)
             .await?;
 
@@ -289,7 +288,7 @@ impl DatabaseService {
                    cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
                    hit_count, session_id, created_at, updated_at
             FROM traffic_vulnerabilities
-            WHERE id = ?
+            WHERE id = $1
             "#,
         )
         .bind(vuln_id)
@@ -309,7 +308,7 @@ impl DatabaseService {
                    request_headers, request_body, response_status, response_headers,
                    response_body, timestamp
             FROM traffic_evidence
-            WHERE vuln_id = ?
+            WHERE vuln_id = $1
             ORDER BY timestamp DESC
             "#,
         )
@@ -327,8 +326,8 @@ impl DatabaseService {
         let result = sqlx::query(
             r#"
             UPDATE traffic_vulnerabilities 
-            SET status = ?, updated_at = ?
-            WHERE id = ?
+            SET status = $1, updated_at = $2
+            WHERE id = $3
             "#,
         )
         .bind(status)
@@ -353,7 +352,7 @@ impl DatabaseService {
         // First get the signature before deleting
         let signature: Option<String> = sqlx::query_scalar(
             r#"
-            SELECT signature FROM traffic_vulnerabilities WHERE id = ?
+            SELECT signature FROM traffic_vulnerabilities WHERE id = $1
             "#,
         )
         .bind(vuln_id)
@@ -367,7 +366,7 @@ impl DatabaseService {
         // Delete the vulnerability
         let result = sqlx::query(
             r#"
-            DELETE FROM traffic_vulnerabilities WHERE id = ?
+            DELETE FROM traffic_vulnerabilities WHERE id = $1
             "#,
         )
         .bind(vuln_id)
@@ -415,7 +414,7 @@ impl DatabaseService {
                 id, vuln_id, url, method, location, evidence_snippet,
                 request_headers, request_body, response_status, response_headers,
                 response_body, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(&evidence.id)
@@ -462,10 +461,23 @@ impl DatabaseService {
 
         sqlx::query(
             r#"
-            INSERT OR REPLACE INTO plugin_registry (
+            INSERT INTO plugin_registry (
                 id, name, version, author, main_category, category, description, default_severity,
                 tags, enabled, plugin_code, quality_score, validation_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10, $11, $12)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                version = excluded.version,
+                author = excluded.author,
+                main_category = excluded.main_category,
+                category = excluded.category,
+                description = excluded.description,
+                default_severity = excluded.default_severity,
+                tags = excluded.tags,
+                plugin_code = excluded.plugin_code,
+                quality_score = excluded.quality_score,
+                validation_status = excluded.validation_status,
+                updated_at = CURRENT_TIMESTAMP
             "#,
         )
         .bind(&plugin.id)
@@ -494,9 +506,9 @@ impl DatabaseService {
         sqlx::query(
             r#"
             UPDATE plugin_registry 
-            SET name = ?, version = ?, author = ?, main_category = ?, category = ?,
-                description = ?, default_severity = ?, tags = ?, plugin_code = ?, updated_at = ?
-            WHERE id = ?
+            SET name = $1, version = $2, author = $3, main_category = $4, category = $5,
+                description = $6, default_severity = $7, tags = $8, plugin_code = $9, updated_at = $10
+            WHERE id = $11
             "#,
         )
         .bind(&plugin.name)
@@ -524,7 +536,7 @@ impl DatabaseService {
             r#"
             SELECT plugin_code
             FROM plugin_registry 
-            WHERE id = ?
+            WHERE id = $1
             "#,
         )
         .bind(plugin_id)
@@ -546,7 +558,7 @@ impl DatabaseService {
             SELECT id, name, version, author, main_category, category, description, 
                    default_severity, tags, enabled, plugin_code
             FROM plugin_registry 
-            WHERE id = ?
+            WHERE id = $1
             "#,
         )
         .bind(plugin_id)
@@ -593,8 +605,8 @@ impl DatabaseService {
             SELECT id, name, version, author, main_category, category, description,
                    default_severity, tags, enabled, plugin_code, quality_score, validation_status
             FROM plugin_registry
-            WHERE category = ? 
-              AND (quality_score IS NULL OR quality_score >= ?)
+            WHERE category = $1 
+              AND (quality_score IS NULL OR quality_score >= $2)
               AND validation_status IN ('Approved', 'Passed')
               AND main_category = 'traffic'
             ORDER BY quality_score DESC NULLS LAST, updated_at DESC
@@ -641,8 +653,8 @@ impl DatabaseService {
         sqlx::query(
             r#"
             UPDATE plugin_registry 
-            SET enabled = ?, updated_at = ?
-            WHERE id = ?
+            SET enabled = $1, updated_at = $2
+            WHERE id = $3
             "#,
         )
         .bind(enabled)
@@ -661,7 +673,7 @@ impl DatabaseService {
         sqlx::query(
             r#"
             DELETE FROM plugin_registry 
-            WHERE id = ?
+            WHERE id = $1
             "#,
         )
         .bind(plugin_id)
@@ -683,14 +695,20 @@ impl DatabaseService {
         let (request_body, request_compressed) = smart_compress(request.request_body.as_ref())?;
         let (response_body, response_compressed) = smart_compress(request.response_body.as_ref())?;
         
-        let result = sqlx::query(
+        // Postgres returns last inserted ID differently. 
+        // IF we need the ID, we must use RETURNING id.
+        // Assuming table `proxy_requests` has a SERIAL/BIGSERIAL execution `id`.
+        // `result.last_insert_rowid()` is SQLite specific and will not work on PG with sqlx::postgres.
+        
+        let row: (i64,) = sqlx::query_as(
             r#"
             INSERT INTO proxy_requests (
                 url, host, protocol, method, status_code,
                 request_headers, request_body, response_headers, response_body,
                 response_size, response_time, timestamp,
                 request_body_compressed, response_body_compressed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING id
             "#,
         )
         .bind(&request.url)
@@ -707,10 +725,10 @@ impl DatabaseService {
         .bind(request.timestamp)
         .bind(request_compressed)
         .bind(response_compressed)
-        .execute(pool)
+        .fetch_one(pool)
         .await?;
 
-        Ok(result.last_insert_rowid())
+        Ok(row.0)
     }
 
     /// List proxy requests with filters (with decompression support)
@@ -720,7 +738,7 @@ impl DatabaseService {
     ) -> Result<Vec<ProxyRequestRecord>> {
         let pool = self.get_pool()?;
         
-        let mut query = String::from(
+        let mut query_builder = sqlx::QueryBuilder::new(
             r#"
             SELECT id, url, host, protocol, method, status_code,
                    request_headers, request_body, response_headers, response_body,
@@ -732,31 +750,31 @@ impl DatabaseService {
         );
 
         if let Some(ref protocol) = filters.protocol {
-            query.push_str(&format!(" AND protocol = '{}'", protocol));
+            query_builder.push(" AND protocol = ").push_bind(protocol);
         }
         if let Some(ref method) = filters.method {
-            query.push_str(&format!(" AND method = '{}'", method));
+            query_builder.push(" AND method = ").push_bind(method);
         }
         if let Some(ref host) = filters.host {
-            query.push_str(&format!(" AND host LIKE '%{}%'", host));
+            query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
         }
         if let Some(status_min) = filters.status_code_min {
-            query.push_str(&format!(" AND status_code >= {}", status_min));
+            query_builder.push(" AND status_code >= ").push_bind(status_min);
         }
         if let Some(status_max) = filters.status_code_max {
-            query.push_str(&format!(" AND status_code <= {}", status_max));
+            query_builder.push(" AND status_code <= ").push_bind(status_max);
         }
 
-        query.push_str(" ORDER BY timestamp DESC");
+        query_builder.push(" ORDER BY timestamp DESC");
 
         if let Some(limit) = filters.limit {
-            query.push_str(&format!(" LIMIT {}", limit));
+            query_builder.push(" LIMIT ").push_bind(limit);
         }
         if let Some(offset) = filters.offset {
-            query.push_str(&format!(" OFFSET {}", offset));
+            query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let mut records = sqlx::query_as::<_, ProxyRequestRecord>(&query)
+        let mut records = query_builder.build_query_as::<ProxyRequestRecord>()
             .fetch_all(pool)
             .await?;
 
@@ -786,31 +804,31 @@ impl DatabaseService {
     pub async fn count_proxy_requests(&self, filters: ProxyRequestFilters) -> Result<i64> {
         let pool = self.get_pool()?;
         
-        let mut query = String::from(
+        let mut query_builder = sqlx::QueryBuilder::new(
             r#"
-            SELECT COUNT(*) as count
+            SELECT COUNT(*)
             FROM proxy_requests
             WHERE 1=1
             "#,
         );
 
         if let Some(ref protocol) = filters.protocol {
-            query.push_str(&format!(" AND protocol = '{}'", protocol));
+            query_builder.push(" AND protocol = ").push_bind(protocol);
         }
         if let Some(ref method) = filters.method {
-            query.push_str(&format!(" AND method = '{}'", method));
+            query_builder.push(" AND method = ").push_bind(method);
         }
         if let Some(ref host) = filters.host {
-            query.push_str(&format!(" AND host LIKE '%{}%'", host));
+            query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
         }
         if let Some(status_min) = filters.status_code_min {
-            query.push_str(&format!(" AND status_code >= {}", status_min));
+            query_builder.push(" AND status_code >= ").push_bind(status_min);
         }
         if let Some(status_max) = filters.status_code_max {
-            query.push_str(&format!(" AND status_code <= {}", status_max));
+            query_builder.push(" AND status_code <= ").push_bind(status_max);
         }
 
-        let row: (i64,) = sqlx::query_as(&query)
+        let row: (i64,) = query_builder.build_query_as()
             .fetch_one(pool)
             .await?;
 
@@ -827,7 +845,7 @@ impl DatabaseService {
                    request_headers, request_body, response_headers, response_body,
                    response_size, response_time, timestamp
             FROM proxy_requests
-            WHERE id = ?
+            WHERE id = $1
             "#,
         )
         .bind(id)
@@ -843,17 +861,22 @@ impl DatabaseService {
         
         let mut tx = pool.begin().await?;
 
+        // Uses TRUNCATE to clear and reset identity if possible, but standard DELETE is safer transactionally across different DBs if we want to be simple.
+        // However, to mimic "reset ID" behavior of deleting from sqlite_sequence, TRUNCATE with RESTART IDENTITY is best in PG.
+        // casting to u64 is needed for return type.
+        // But sqlx execute result rows_affected for TRUNCATE might be 0 or undefined depending on driver.
+        // Let's stick to DELETE for now to ensure rows_affected is returned correctly, as requested by return type.
+        // And we skip resetting sequence to avoid complexity.
+        
         let result = sqlx::query("DELETE FROM proxy_requests")
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query("DELETE FROM sqlite_sequence WHERE name='proxy_requests'")
-            .execute(&mut *tx)
-            .await?;
+        // Removed sqlite_sequence deletion as it is SQLite specific.
 
         tx.commit().await?;
 
-        info!("Cleared {} proxy request records and reset ID", result.rows_affected());
+        info!("Cleared {} proxy request records", result.rows_affected());
         Ok(result.rows_affected())
     }
 
@@ -861,7 +884,7 @@ impl DatabaseService {
     pub async fn delete_proxy_requests_before(&self, before: DateTime<Utc>) -> Result<u64> {
         let pool = self.get_pool()?;
         
-        let result = sqlx::query("DELETE FROM proxy_requests WHERE timestamp < ?")
+        let result = sqlx::query("DELETE FROM proxy_requests WHERE timestamp < $1")
             .bind(before)
             .execute(pool)
             .await?;
@@ -877,7 +900,7 @@ impl DatabaseService {
         sqlx::query(
             r#"
             INSERT INTO proxy_config (key, value, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            VALUES ($1, $2, CURRENT_TIMESTAMP)
             ON CONFLICT(key) DO UPDATE SET
                 value = excluded.value,
                 updated_at = CURRENT_TIMESTAMP
@@ -897,7 +920,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         
         let result: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM proxy_config WHERE key = ?"
+            "SELECT value FROM proxy_config WHERE key = $1"
         )
         .bind(key)
         .fetch_optional(pool)
@@ -910,7 +933,7 @@ impl DatabaseService {
     pub async fn delete_proxy_config(&self, key: &str) -> Result<()> {
         let pool = self.get_pool()?;
         
-        sqlx::query("DELETE FROM proxy_config WHERE key = ?")
+        sqlx::query("DELETE FROM proxy_config WHERE key = $1")
             .bind(key)
             .execute(pool)
             .await?;

@@ -164,7 +164,7 @@ async fn perform_rag_enhancement(
     }
 
     // 4. 执行多集合检索
-    let rag_service = crate::commands::rag_commands::get_global_rag_service().await?;
+    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone()).await?;
 
     // 如果没有传入配置，尝试从数据库获取
     let effective_config = if let Some(cfg) = rag_config {
@@ -184,8 +184,8 @@ async fn perform_rag_enhancement(
             conversation_history: None, // 我们已经重写了查询
             top_k: Some(effective_config.top_k),
             use_mmr: Some(effective_config.mmr_lambda < 1.0),
-            mmr_lambda: Some(effective_config.mmr_lambda),
-            similarity_threshold: Some(effective_config.similarity_threshold),
+            mmr_lambda: Some(effective_config.mmr_lambda as f64),
+            similarity_threshold: Some(effective_config.similarity_threshold as f64),
             reranking_enabled: Some(effective_config.reranking_enabled),
             model_provider: None,
             model_name: None,

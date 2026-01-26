@@ -1,6 +1,8 @@
 <template>
-  <div v-if="visible" class="modal modal-open">
-    <div class="modal-box max-w-4xl max-h-[90vh] flex flex-col">
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="visible" class="modal modal-open">
+        <div class="modal-box max-w-4xl max-h-[90vh] flex flex-col">
       <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.createFinding') }}</h3>
       
       <!-- Template Selector -->
@@ -235,6 +237,8 @@
       </div>
     </div>
   </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -641,3 +645,26 @@ onMounted(() => {
   loadCustomTemplates()
 })
 </script>
+
+<style scoped>
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-box,
+.modal-leave-active .modal-box {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.modal-enter-from .modal-box,
+.modal-leave-to .modal-box {
+  transform: scale(0.95);
+  opacity: 0;
+}
+</style>

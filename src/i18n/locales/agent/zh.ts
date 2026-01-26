@@ -157,7 +157,8 @@ export default {
   toolManagement: '工具管理',
   searchToolNamesOrDescriptions: '搜索工具名称或描述...',
   all: '全部',
-  plugins: {
+  plugins: '插件',
+  pluginCategory: {
     category: '插件',
     referToAi: '引用到AI助手'
   },

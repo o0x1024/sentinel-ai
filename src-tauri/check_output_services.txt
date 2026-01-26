@@ -1,0 +1,704 @@
+   Compiling displaydoc v0.2.5
+    Checking tokio-util v0.7.17
+    Checking tokio-rustls v0.26.4
+    Checking compression-codecs v0.4.35
+    Checking arrow-csv v56.2.0
+    Checking arrow-string v56.2.0
+   Compiling syn v1.0.109
+    Checking tantivy v0.24.2
+   Compiling curve25519-dalek v4.1.3
+    Checking tokenizers v0.22.2
+    Checking async-compression v0.4.36
+    Checking tracing-subscriber v0.3.22
+    Checking pnet_datalink v0.35.0
+    Checking h2 v0.4.12
+    Checking arrow v56.2.0
+    Checking tower-http v0.6.8
+    Checking aws-smithy-types v1.3.5
+    Checking tinystr v0.8.2
+    Checking zerotrie v0.2.3
+    Checking icu_locale_core v2.1.1
+    Checking icu_collections v2.1.1
+    Checking h2 v0.3.27
+    Checking aws-smithy-runtime-api v1.9.3
+    Checking calendrical_calculations v0.2.3
+    Checking aws-smithy-json v0.61.9
+    Checking icu_provider v2.1.1
+    Checking zoneinfo64 v0.2.1
+    Checking aws-smithy-query v0.60.9
+    Checking icu_properties v2.1.2
+    Checking icu_normalizer v2.1.1
+    Checking aws-smithy-http v0.62.6
+    Checking aws-credential-types v1.2.11
+    Checking aws-smithy-observability v0.1.5
+    Checking aws-sigv4 v1.3.7
+    Checking aws-types v1.3.11
+    Checking icu_locale v2.1.1
+    Checking timezone_provider v0.1.2
+    Checking lance-datagen v0.39.0
+    Checking idna_adapter v1.2.1
+    Checking x25519-dalek v2.0.1
+    Checking idna v1.1.0
+    Checking tungstenite v0.28.0
+    Checking oar-ocr-core v0.5.2
+    Checking icu_calendar v2.1.1
+    Checking url v2.5.7
+    Checking pnet v0.35.0
+    Checking swc_sourcemap v9.3.4
+    Checking hyper v1.8.1
+    Checking deno_error v0.7.1
+    Checking sourcemap v9.3.1
+    Checking deno_path_util v0.6.4
+    Checking wasm_dep_analyzer v0.4.0
+   Compiling sqlx-core v0.8.6
+    Checking swc_common v14.0.4
+    Checking hyper v0.14.32
+    Checking urlpattern v0.3.0
+    Checking temporal_rs v0.1.2
+    Checking hyper-util v0.1.19
+   Compiling deepsize_derive v0.1.2
+   Compiling cssparser v0.29.6
+    Checking temporal_capi v0.1.2
+    Checking deepsize v0.2.0
+   Compiling phf_macros v0.10.0
+   Compiling schemars v0.8.22
+    Checking swc_ecma_ast v15.0.0
+    Checking v8 v142.2.0
+    Checking hyper-rustls v0.27.7
+    Checking hyper-tls v0.6.0
+   Compiling phf v0.10.1
+    Checking reqwest v0.12.28
+    Checking deno_permissions v0.82.0
+   Compiling selectors v0.24.0
+   Compiling sqlx-postgres v0.8.6
+    Checking hickory-proto v0.25.2
+    Checking swc_ecma_loader v14.0.0
+    Checking object_store v0.12.4
+    Checking reqsign v0.16.5
+    Checking lance-namespace-reqwest-client v0.0.18
+   Compiling kuchikiki v0.8.8-speedreader
+    Checking hyper-rustls v0.24.2
+    Checking serde_v8 v0.282.0
+    Checking aws-smithy-http-client v1.0.6
+    Checking deno_core v0.373.0
+   Compiling tauri-utils v2.8.1
+    Checking aws-smithy-runtime v1.8.6
+    Checking opendal v0.54.1
+    Checking hickory-resolver v0.25.2
+    Checking aws-runtime v1.5.10
+   Compiling sqlx-macros-core v0.8.6
+    Checking aws-sdk-sso v1.82.0
+    Checking aws-sdk-sts v1.84.0
+    Checking aws-sdk-ssooidc v1.83.0
+    Checking aws-sdk-dynamodb v1.91.0
+    Checking hyper-tls v0.5.0
+    Checking rig-core v0.28.0
+    Checking aws-config v1.8.5
+    Checking datafusion-common v50.3.0
+    Checking deno_features v0.20.0
+   Compiling sqlx-macros v0.8.6
+    Checking deno_web v0.254.0
+    Checking swc_ecma_lexer v23.0.2
+    Checking swc_ecma_visit v15.0.0
+    Checking datafusion-expr-common v50.3.0
+    Checking sqlx v0.8.6
+    Checking sentinel-core v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-core)
+    Checking datafusion-physical-expr-common v50.3.0
+    Checking object_store_opendal v0.54.1
+    Checking datafusion-functions-window-common v50.3.0
+    Checking datafusion-functions-aggregate-common v50.3.0
+   Compiling tauri-build v2.5.3
+    Checking swc_ecma_codegen v17.0.2
+    Checking datafusion-expr v50.3.0
+    Checking deno_tls v0.210.0
+    Checking deno_signals v0.14.0
+    Checking web-transport-proto v0.2.8
+    Checking deno_media_type v0.3.3
+    Checking deno_net v0.215.0
+    Checking tauri-runtime v2.9.2
+    Checking swc_ecma_utils v21.0.0
+    Checking deno_crypto v0.237.0
+   Compiling tauri-codegen v2.5.2
+    Checking deno_webidl v0.223.0
+    Checking reqwest v0.11.27
+    Checking datafusion-sql v50.3.0
+    Checking datafusion-physical-expr v50.3.0
+    Checking datafusion-execution v50.3.0
+    Checking hickory-proto v0.24.4
+    Checking swc_ecma_parser v24.0.3
+    Checking trust-dns-proto v0.23.2
+    Checking tao v0.34.5
+    Checking datafusion-functions v50.3.0
+    Checking swc_ecma_transforms_base v27.0.0
+    Checking lance-core v0.39.0
+    Checking datafusion-physical-plan v50.3.0
+    Checking datafusion-functions-aggregate v50.3.0
+    Checking datafusion-optimizer v50.3.0
+    Checking datafusion-functions-window v50.3.0
+    Checking swc_ecma_transforms_classes v27.0.0
+    Checking lance-namespace v0.39.0
+    Checking lance-encoding v0.39.0
+    Checking lance-linalg v0.39.0
+    Checking swc_ecma_transforms_react v30.0.2
+    Checking swc_ecma_transforms_proposal v27.0.0
+    Checking lance-io v0.39.0
+    Checking dprint-swc-ext v0.25.1
+   Compiling tauri v2.9.5
+    Checking swc_ecma_transforms_typescript v30.0.1
+    Checking wry v0.53.5
+   Compiling tauri-macros v2.5.2
+    Checking trust-dns-resolver v0.23.2
+    Checking datafusion-physical-expr-adapter v50.3.0
+    Checking datafusion-functions-nested v50.3.0
+    Checking deno_ast v0.51.0
+    Checking tauri-runtime-wry v2.9.3
+    Checking hickory-resolver v0.24.4
+    Checking oauth2 v5.0.0
+    Checking axum v0.8.8
+    Checking sentinel-plugins v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-plugins)
+    Checking rustscan v2.4.1
+    Checking rsubdomain v1.2.6
+    Checking jsonschema v0.17.1
+    Checking oar-ocr v0.5.2
+    Checking tokio-tungstenite v0.28.0
+    Checking datafusion-session v50.3.0
+    Checking lance-file v0.39.0
+    Checking datafusion-datasource v50.3.0
+    Checking datafusion-catalog v50.3.0
+    Checking datafusion-pruning v50.3.0
+    Checking rmcp v0.9.1
+    Checking lance-table v0.39.0
+    Checking datafusion-physical-optimizer v50.3.0
+    Checking datafusion-functions-table v50.3.0
+    Checking datafusion-datasource-csv v50.3.0
+    Checking datafusion-catalog-listing v50.3.0
+    Checking datafusion-datasource-json v50.3.0
+    Checking datafusion v50.3.0
+    Checking lance-datafusion v0.39.0
+    Checking lance-index v0.39.0
+    Checking lance v0.39.0
+    Checking lance-namespace-impls v0.39.0
+    Checking lancedb v0.22.3
+    Checking rig-lancedb v0.2.31
+    Checking sentinel-rag v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-rag)
+    Checking sentinel-db v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-db)
+warning: unused import: `PgRow`
+ --> sentinel-db/src/database_service/service.rs:2:45
+  |
+2 | use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
+  |                                             ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `error`
+ --> sentinel-db/src/database_service/migration.rs:8:27
+  |
+8 | use tracing::{info, warn, error};
+  |                           ^^^^^
+
+warning: unused import: `engine::general_purpose`
+ --> sentinel-db/src/database_service/migration.rs:9:27
+  |
+9 | use base64::{Engine as _, engine::general_purpose};
+  |                           ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> sentinel-db/src/database_service/scan_session.rs:98:13
+   |
+98 |         let mut query = "UPDATE scan_sessions SET updated_at = CURRENT_TIMESTAMP".to_string();
+   |             ----^^^^^
+   |             |
+   |             help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> sentinel-db/src/database_service/scan_session.rs:99:13
+   |
+99 |         let mut idx = 1;
+   |             ----^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: unused variable: `now`
+   --> sentinel-db/src/database_service/rag.rs:445:13
+    |
+445 |         let now = chrono::Utc::now(); // Use DateTime for consistency? No, existing used RFC3339 string or i64?
+    |             ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `query`
+  --> sentinel-db/src/database_service/scan_session.rs:98:13
+   |
+98 |         let mut query = "UPDATE scan_sessions SET updated_at = CURRENT_TIMESTAMP".to_string();
+   |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: unused variable: `idx`
+  --> sentinel-db/src/database_service/scan_session.rs:99:13
+   |
+99 |         let mut idx = 1;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_idx`
+
+warning: value assigned to `param_idx` is never read
+   --> sentinel-db/src/database_service/scan_session.rs:166:13
+    |
+166 |             param_idx += 1;
+    |             ^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `tables` is never read
+   --> sentinel-db/src/database_service/migration.rs:113:9
+    |
+113 |         tables = self.sort_tables_by_dependencies(tables).await?;
+    |         ^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `p`
+   --> sentinel-db/src/database_service/migration.rs:484:42
+    |
+484 |                 DatabasePool::PostgreSQL(p) => {
+    |                                          ^ help: if this is intentional, prefix it with an underscore: `_p`
+
+warning: methods `table_has_foreign_keys`, `get_schema_sql`, `convert_to_postgresql_sql`, `convert_to_mysql_sql`, `import_table_selective`, and `import_single_row` are never used
+   --> sentinel-db/src/database_service/migration.rs:120:14
+    |
+ 38 | impl DatabaseMigration {
+    | ---------------------- methods in this implementation
+...
+120 |     async fn table_has_foreign_keys(&self, _table_name: &str) -> Result<bool> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+261 |     async fn get_schema_sql(&self) -> Result<Vec<String>> {
+    |              ^^^^^^^^^^^^^^
+...
+270 |     fn convert_to_postgresql_sql(&self, sqlite_sql: &[String]) -> Vec<String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+315 |     fn convert_to_mysql_sql(&self, sqlite_sql: &[String]) -> Vec<String> {
+    |        ^^^^^^^^^^^^^^^^^^^^
+...
+583 |     async fn import_table_selective(&self, table_name: &str, table_data: &TableData, pool: &DatabasePool) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^^^^^^
+...
+614 |     async fn import_single_row(&self, table_name: &str, row_data: &HashMap<String, Value>, pool: &DatabasePool) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sentinel-db` (lib) generated 12 warnings (run `cargo fix --lib -p sentinel-db` to apply 9 suggestions)
+    Checking sentinel-tools v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-tools)
+    Checking sentinel-services v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-services)
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:23:74
+    |
+ 23 |     pub async fn create_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary> {
+    |                                                                          ^^^^^^ ---------- supplied 1 generic argument
+    |                                                                          |
+    |                                                                          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+ 23 |     pub async fn create_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary, E> {
+    |                                                                                           +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:67:53
+    |
+ 67 |     pub async fn get_dictionary(&self, id: &str) -> Result<Option<Dictionary>> {
+    |                                                     ^^^^^^ ------------------ supplied 1 generic argument
+    |                                                     |
+    |                                                     expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+ 67 |     pub async fn get_dictionary(&self, id: &str) -> Result<Option<Dictionary>, E> {
+    |                                                                              +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:77:63
+    |
+ 77 |     pub async fn get_dictionary_by_name(&self, name: &str) -> Result<Option<Dictionary>> {
+    |                                                               ^^^^^^ ------------------ supplied 1 generic argument
+    |                                                               |
+    |                                                               expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+ 77 |     pub async fn get_dictionary_by_name(&self, name: &str) -> Result<Option<Dictionary>, E> {
+    |                                                                                        +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:91:10
+    |
+ 91 |     ) -> Result<Vec<Dictionary>> {
+    |          ^^^^^^ --------------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+ 91 |     ) -> Result<Vec<Dictionary>, E> {
+    |                                +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:142:74
+    |
+142 |     pub async fn update_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary> {
+    |                                                                          ^^^^^^ ---------- supplied 1 generic argument
+    |                                                                          |
+    |                                                                          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+142 |     pub async fn update_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary, E> {
+    |                                                                                           +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:179:56
+    |
+179 |     pub async fn delete_dictionary(&self, id: &str) -> Result<()> {
+    |                                                        ^^^^^^ -- supplied 1 generic argument
+    |                                                        |
+    |                                                        expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+179 |     pub async fn delete_dictionary(&self, id: &str) -> Result<(), E> {
+    |                                                                 +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:206:10
+    |
+206 |     ) -> Result<Vec<DictionaryWord>> {
+    |          ^^^^^^ ------------------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+206 |     ) -> Result<Vec<DictionaryWord>, E> {
+    |                                    +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:236:82
+    |
+236 |     pub async fn remove_words(&self, dictionary_id: &str, words: Vec<String>) -> Result<u64> {
+    |                                                                                  ^^^^^^ --- supplied 1 generic argument
+    |                                                                                  |
+    |                                                                                  expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+236 |     pub async fn remove_words(&self, dictionary_id: &str, words: Vec<String>) -> Result<u64, E> {
+    |                                                                                            +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:257:70
+    |
+257 |     pub async fn get_dictionary_words(&self, dictionary_id: &str) -> Result<Vec<DictionaryWord>> {
+    |                                                                      ^^^^^^ ------------------- supplied 1 generic argument
+    |                                                                      |
+    |                                                                      expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+257 |     pub async fn get_dictionary_words(&self, dictionary_id: &str) -> Result<Vec<DictionaryWord>, E> {
+    |                                                                                                +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:274:10
+    |
+274 |     ) -> Result<Vec<DictionaryWord>> {
+    |          ^^^^^^ ------------------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+274 |     ) -> Result<Vec<DictionaryWord>, E> {
+    |                                    +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:293:10
+    |
+293 |     ) -> Result<Vec<DictionaryWord>> {
+    |          ^^^^^^ ------------------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+293 |     ) -> Result<Vec<DictionaryWord>, E> {
+    |                                    +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:317:10
+    |
+317 |     ) -> Result<Vec<DictionaryWord>> {
+    |          ^^^^^^ ------------------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+317 |     ) -> Result<Vec<DictionaryWord>, E> {
+    |                                    +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:334:66
+    |
+334 |     pub async fn clear_dictionary(&self, dictionary_id: &str) -> Result<u64> {
+    |                                                                  ^^^^^^ --- supplied 1 generic argument
+    |                                                                  |
+    |                                                                  expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+334 |     pub async fn clear_dictionary(&self, dictionary_id: &str) -> Result<u64, E> {
+    |                                                                            +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:347:63
+    |
+347 |     async fn update_word_count(&self, dictionary_id: &str) -> Result<()> {
+    |                                                               ^^^^^^ -- supplied 1 generic argument
+    |                                                               |
+    |                                                               expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+347 |     async fn update_word_count(&self, dictionary_id: &str) -> Result<(), E> {
+    |                                                                        +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:365:67
+    |
+365 |     pub async fn export_dictionary(&self, dictionary_id: &str) -> Result<DictionaryExport> {
+    |                                                                   ^^^^^^ ---------------- supplied 1 generic argument
+    |                                                                   |
+    |                                                                   expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+365 |     pub async fn export_dictionary(&self, dictionary_id: &str) -> Result<DictionaryExport, E> {
+    |                                                                                          +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:381:10
+    |
+381 |     ) -> Result<Dictionary> {
+    |          ^^^^^^ ---------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+381 |     ) -> Result<Dictionary, E> {
+    |                           +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:472:38
+    |
+472 |     pub async fn get_stats(&self) -> Result<DictionaryStats> {
+    |                                      ^^^^^^ --------------- supplied 1 generic argument
+    |                                      |
+    |                                      expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+472 |     pub async fn get_stats(&self) -> Result<DictionaryStats, E> {
+    |                                                            +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:540:74
+    |
+540 |     pub async fn create_dictionary_set(&self, mut set: DictionarySet) -> Result<DictionarySet> {
+    |                                                                          ^^^^^^ ------------- supplied 1 generic argument
+    |                                                                          |
+    |                                                                          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+540 |     pub async fn create_dictionary_set(&self, mut set: DictionarySet) -> Result<DictionarySet, E> {
+    |                                                                                              +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:573:10
+    |
+573 |     ) -> Result<DictionarySetRelation> {
+    |          ^^^^^^ --------------------- supplied 1 generic argument
+    |          |
+    |          expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+573 |     ) -> Result<DictionarySetRelation, E> {
+    |                                      +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:594:63
+    |
+594 |     pub async fn get_set_dictionaries(&self, set_id: &str) -> Result<Vec<Dictionary>> {
+    |                                                               ^^^^^^ --------------- supplied 1 generic argument
+    |                                                               |
+    |                                                               expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+594 |     pub async fn get_set_dictionaries(&self, set_id: &str) -> Result<Vec<Dictionary>, E> {
+    |                                                                                     +++
+
+error[E0107]: enum takes 2 generic arguments but 1 generic argument was supplied
+   --> sentinel-services/src/dictionary.rs:611:60
+    |
+611 |     pub async fn initialize_builtin_dictionaries(&self) -> Result<()> {
+    |                                                            ^^^^^^ -- supplied 1 generic argument
+    |                                                            |
+    |                                                            expected 2 generic arguments
+    |
+note: enum defined here, with 2 generic parameters: `T`, `E`
+   --> /Users/a1024/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:557:10
+    |
+557 | pub enum Result<T, E> {
+    |          ^^^^^^ -  -
+help: add missing generic argument
+    |
+611 |     pub async fn initialize_builtin_dictionaries(&self) -> Result<(), E> {
+    |                                                                     +++
+
+error[E0282]: type annotations needed
+   --> sentinel-services/src/dictionary.rs:366:26
+    |
+366 |           let dictionary = self
+    |  __________________________^
+367 | |             .get_dictionary(dictionary_id)
+368 | |             .await?
+    | |___________________^ cannot infer type
+
+error[E0282]: type annotations needed
+   --> sentinel-services/src/dictionary.rs:441:25
+    |
+441 |                     let existing_words = self.get_dictionary_words(&dictionary.id).await?;
+    |                         ^^^^^^^^^^^^^^
+442 |                     let existing_word_set: std::collections::HashSet<String> =
+443 |                         existing_words.into_iter().map(|w| w.word).collect();
+    |                         -------------- type must be known at this point
+    |
+help: consider giving `existing_words` an explicit type
+    |
+441 |                     let existing_words: /* Type */ = self.get_dictionary_words(&dictionary.id).await?;
+    |                                       ++++++++++++
+
+error[E0282]: type annotations needed
+   --> sentinel-services/src/dictionary.rs:635:12
+    |
+635 |         if self.get_dictionary(&subdomain_dict.id).await?.is_none() {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot infer type
+
+Some errors have detailed explanations: E0107, E0282.
+For more information about an error, try `rustc --explain E0107`.
+error: could not compile `sentinel-services` (lib) due to 24 previous errors

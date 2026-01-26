@@ -567,7 +567,6 @@ const editAsset = (asset: Asset) => {
 }
 
 const deleteAsset = async (asset: Asset) => {
-  if (confirm(t('assetManagement.confirmDelete', '确定要删除这个资产吗？'))) {
     try {
       await invoke('delete_asset', { assetId: asset.id })
       toast.success(t('assetManagement.deleteSuccess', '资产删除成功'))
@@ -576,7 +575,7 @@ const deleteAsset = async (asset: Asset) => {
       console.error('Failed to delete asset:', error)
       toast.error(t('assetManagement.deleteFailed', '删除资产失败'))
     }
-  }
+  
 }
 
 const handleFileSelect = (event: Event) => {

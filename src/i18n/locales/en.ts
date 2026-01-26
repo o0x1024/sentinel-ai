@@ -134,6 +134,8 @@ export default {
     allPrograms: 'All Programs',
     customizeColumns: 'Customize Columns',
     filters: 'Filters',
+    showAdvanced: 'Advanced Filters',
+    hideAdvanced: 'Hide Advanced',
     allExposureLevels: 'All Exposure Levels',
     exposureLevel: {
       internet: 'Internet',
@@ -1727,9 +1729,6 @@ export default {
     },
     // AI Assistant in code editor
     aiAssistantHint: 'Describe your changes and AI will help you edit the code',
-    aiInputPlaceholder: 'Describe your changes...',
-    contextMenuHint: 'Right-click code to quickly reference in AI assistant',
-    fullCode: 'Full Code',
     editorMinimized: 'Editor minimized',
     codeFormatted: 'Code formatted',
     includeCodeContext: 'Include code context',
@@ -1759,7 +1758,6 @@ export default {
     testPassed: 'Test passed',
     errorInfo: 'Error Info',
     unknownError: 'Unknown error',
-    referToAi: 'Reference to AI',
     testResultAdded: 'Test result added to AI assistant',
     // Agent plugin subcategories
     agentCategories: {

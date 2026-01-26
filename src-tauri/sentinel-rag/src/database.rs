@@ -621,7 +621,7 @@ impl LanceDbManager {
                 
                 // Convert distance to similarity score
                 // For L2 distance: smaller is better, convert to similarity score [0, 1]
-                let score = 1.0 / (1.0 + distance);
+                let score = 1.0 / (1.0 + distance as f64);
                 
                 if rank == 0 && row == 0 {
                     info!("First result: distance={}, score={}", distance, score);
@@ -689,7 +689,7 @@ impl LanceDbManager {
             let start_char = value.get("start_char").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0) as usize;
             let end_char = value.get("end_char").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0) as usize;
             let chunk = DocumentChunk { id, source_id, content: content.clone(), content_hash: format!("{:x}", md5::compute(content.as_bytes())), chunk_index, metadata: crate::models::ChunkMetadata { file_path, file_name, file_type: "unknown".to_string(), file_size: 0, chunk_start_char: start_char, chunk_end_char: end_char, page_number: None, section_title: None, custom_fields: HashMap::new(), }, embedding: None, created_at: chrono::Utc::now(), };
-            results.push(QueryResult { chunk, score: score as f32, rank });
+            results.push(QueryResult { chunk, score, rank });
         }
         info!("Found {} similar chunks in collection '{}'", results.len(), collection_name);
         Ok(results)

@@ -11,7 +11,7 @@ impl DatabaseService {
                 tools_config, status, progress, priority, scheduled_at, started_at, 
                 completed_at, execution_time, results_summary, error_message, 
                 created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)"#
         )
         .bind(&task.id)
         .bind(&task.project_id)
@@ -41,7 +41,7 @@ impl DatabaseService {
     pub async fn get_scan_tasks_internal(&self, project_id: Option<&str>) -> Result<Vec<ScanTask>> {
         let pool = self.get_pool()?;
         let query = if let Some(pid) = project_id {
-            sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE project_id = ? ORDER BY created_at DESC").bind(pid)
+            sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE project_id = $1 ORDER BY created_at DESC").bind(pid)
         } else {
             sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks ORDER BY created_at DESC")
         };
@@ -51,7 +51,7 @@ impl DatabaseService {
 
     pub async fn get_scan_task_internal(&self, id: &str) -> Result<Option<ScanTask>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE id = ?")
+        let row = sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -61,7 +61,7 @@ impl DatabaseService {
     pub async fn get_scan_tasks_by_target_internal(&self, target: &str) -> Result<Vec<ScanTask>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query_as::<_, ScanTask>(
-            "SELECT * FROM scan_tasks WHERE targets LIKE ? ORDER BY created_at DESC"
+            "SELECT * FROM scan_tasks WHERE targets LIKE $1 ORDER BY created_at DESC"
         )
         .bind(format!("%{}%", target))
         .fetch_all(pool)
@@ -71,10 +71,12 @@ impl DatabaseService {
 
     pub async fn update_scan_task_status_internal(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
         let pool = self.get_pool()?;
-        let mut query = "UPDATE scan_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP".to_string();
+        let mut query = "UPDATE scan_tasks SET status = $1, updated_at = CURRENT_TIMESTAMP".to_string();
+        let mut idx = 2; // $1 is status
 
         if progress.is_some() {
-            query.push_str(", progress = ?");
+            query.push_str(&format!(", progress = ${}", idx));
+            idx += 1;
         }
 
         if status == "running" {
@@ -83,20 +85,22 @@ impl DatabaseService {
             query.push_str(", completed_at = CURRENT_TIMESTAMP");
         }
 
-        query.push_str(" WHERE id = ?");
+        query.push_str(&format!(" WHERE id = ${}", idx));
 
         let mut q = sqlx::query(&query).bind(status);
         if let Some(p) = progress {
             q = q.bind(p);
         }
-        q.bind(id).execute(pool).await?;
+        q = q.bind(id);
+        
+        q.execute(pool).await?;
 
         Ok(())
     }
 
     pub async fn delete_scan_task_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM scan_tasks WHERE id = ?")
+        sqlx::query("DELETE FROM scan_tasks WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -105,7 +109,7 @@ impl DatabaseService {
 
     pub async fn stop_scan_task_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE scan_tasks SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE scan_tasks SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -121,7 +125,7 @@ impl DatabaseService {
                 owasp_category, proof_of_concept, impact, remediation, references_json, 
                 status, verification_status, resolution_date, tags, attachments, notes, 
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"#
         )
         .bind(&v.id)
         .bind(&v.project_id)
@@ -155,7 +159,7 @@ impl DatabaseService {
     pub async fn get_vulnerabilities_internal(&self, project_id: Option<&str>) -> Result<Vec<Vulnerability>> {
         let pool = self.get_pool()?;
         let query = if let Some(pid) = project_id {
-            sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities WHERE project_id = ? ORDER BY created_at DESC").bind(pid)
+            sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities WHERE project_id = $1 ORDER BY created_at DESC").bind(pid)
         } else {
             sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities ORDER BY created_at DESC")
         };
@@ -165,7 +169,7 @@ impl DatabaseService {
 
     pub async fn get_vulnerability_internal(&self, id: &str) -> Result<Option<Vulnerability>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities WHERE id = ?")
+        let row = sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -174,7 +178,7 @@ impl DatabaseService {
 
     pub async fn update_vulnerability_status_internal(&self, id: &str, status: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE vulnerabilities SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE vulnerabilities SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
             .bind(status)
             .bind(id)
             .execute(pool)
@@ -190,7 +194,7 @@ impl DatabaseService {
                 id, tool_id, scan_task_id, command, arguments, status, progress,
                 start_time, end_time, execution_time, output, error_output, exit_code,
                 resource_usage, artifacts, metadata, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             "#,
         )
         .bind(&exec.id)
@@ -225,7 +229,7 @@ impl DatabaseService {
     ) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "UPDATE tool_executions SET status = ?, progress = COALESCE(?, progress), end_time = COALESCE(?, end_time), execution_time = COALESCE(?, execution_time) WHERE id = ?",
+            "UPDATE tool_executions SET status = $1, progress = COALESCE($2, progress), end_time = COALESCE($3, end_time), execution_time = COALESCE($4, execution_time) WHERE id = $5",
         )
         .bind(status)
         .bind(progress)
@@ -240,7 +244,7 @@ impl DatabaseService {
     pub async fn get_tool_executions_by_tool_internal(&self, tool_id: &str) -> Result<Vec<ToolExecution>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query_as::<_, ToolExecution>(
-            "SELECT * FROM tool_executions WHERE tool_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM tool_executions WHERE tool_id = $1 ORDER BY created_at DESC",
         )
         .bind(tool_id)
         .fetch_all(pool)

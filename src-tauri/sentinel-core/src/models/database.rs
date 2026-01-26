@@ -2,16 +2,54 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// 数据库类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DatabaseType {
+    PostgreSQL,
+    MySQL,
+    SQLite,
+}
+
+impl Default for DatabaseType {
+    fn default() -> Self {
+        DatabaseType::PostgreSQL
+    }
+}
+
 /// 数据库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    pub database_url: String,
+    pub db_type: DatabaseType,
+    pub database_url: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub database: Option<String>,
+    pub path: Option<String>,
+    pub enable_ssl: bool,
+    pub enable_wal: bool,
     pub max_connections: u32,
-    pub connection_timeout: f64,
-    pub auto_migrate: bool,
-    pub backup_enabled: bool,
-    pub backup_interval_hours: u32,
-    pub backup_retention_days: u32,
+    pub query_timeout: u64,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            db_type: DatabaseType::PostgreSQL,
+            database_url: None,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            username: Some("postgres".to_string()),
+            password: Some("postgres".to_string()),
+            database: Some("sentinel_ai".to_string()),
+            path: None,
+            enable_ssl: false,
+            enable_wal: false,
+            max_connections: 50,
+            query_timeout: 30,
+        }
+    }
 }
 
 /// 数据库统计信息

@@ -25,7 +25,7 @@ pub async fn get_plugins_for_review(
     log::info!("Getting plugins for review from plugin_registry");
     
     // Query from plugin_registry table
-    match db.inner().get_plugins_from_registry().await {
+    match db.inner().get_plugins_from_registry(None).await {
         Ok(plugins) => {
             log::info!("Found {} plugins in registry", plugins.len());
             Ok(PluginReviewResponse {

@@ -430,6 +430,20 @@ export default {
       hoursAgo: '{hours} hours ago',
       listView: 'List View',
       cardView: 'Card View'
+    },
+
+    // Agent plugin subcategories
+    agentCategories: {
+      recon: 'Reconnaissance',
+      discovery: 'Discovery',
+      vuln: 'Vulnerability Scan',
+      exploit: 'Exploitation',
+      monitor: 'Change Monitor',
+      utility: 'Utility',
+      scanner: 'Scanner',
+      analyzer: 'Analyzer',
+      reporter: 'Reporter',
+      custom: 'Custom'
     }
   },
 

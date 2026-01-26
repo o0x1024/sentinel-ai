@@ -32,7 +32,7 @@
     <div v-else class="timeline-container">
       <div class="timeline">
         <div 
-          v-for="(record, index) in records" 
+          v-for="record in records" 
           :key="record.id"
           class="timeline-item"
         >

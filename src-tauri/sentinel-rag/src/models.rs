@@ -11,13 +11,13 @@ pub struct RagQueryRequest {
     pub collection_id: Option<String>,
     pub top_k: Option<usize>,
     pub use_mmr: Option<bool>,
-    pub mmr_lambda: Option<f32>,
+    pub mmr_lambda: Option<f64>,
     pub filters: Option<HashMap<String, String>>,
     #[serde(default)]
     pub use_embedding: Option<bool>,
     #[serde(default)]
     pub reranking_enabled: Option<bool>,
-    pub similarity_threshold: Option<f32>,
+    pub similarity_threshold: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ pub struct Citation {
     pub section_title: Option<String>,
     pub start_char: usize,
     pub end_char: usize,
-    pub score: f32,
+    pub score: f64,
     pub content_preview: String,
 }
 
@@ -52,13 +52,13 @@ pub struct AssistantRagRequest {
     pub conversation_history: Option<Vec<String>>,
     pub top_k: Option<usize>,
     pub use_mmr: Option<bool>,
-    pub mmr_lambda: Option<f32>,
-    pub similarity_threshold: Option<f32>,
+    pub mmr_lambda: Option<f64>,
+    pub similarity_threshold: Option<f64>,
     pub reranking_enabled: Option<bool>,
     pub model_provider: Option<String>,
     pub model_name: Option<String>,
     pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     pub system_prompt: Option<String>,
 }
 

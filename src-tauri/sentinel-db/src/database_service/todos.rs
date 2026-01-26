@@ -66,7 +66,7 @@ impl DatabaseService {
     pub async fn get_agent_todos(&self, execution_id: &str) -> Result<Vec<AgentTodoItem>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query_as::<_, AgentTodoItem>(
-            "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC"
+            "SELECT * FROM agent_todos WHERE execution_id = $1 ORDER BY item_index ASC"
         )
         .bind(execution_id)
         .fetch_all(pool)
@@ -80,7 +80,7 @@ impl DatabaseService {
         let now = Utc::now().to_rfc3339();
 
         // Delete existing todos for this execution
-        sqlx::query("DELETE FROM agent_todos WHERE execution_id = ?")
+        sqlx::query("DELETE FROM agent_todos WHERE execution_id = $1")
             .bind(execution_id)
             .execute(pool)
             .await?;
@@ -90,7 +90,7 @@ impl DatabaseService {
             let id = format!("{}_{}", execution_id, index);
             sqlx::query(
                 r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
             )
             .bind(&id)
             .bind(execution_id)
@@ -119,7 +119,7 @@ impl DatabaseService {
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(
-            "UPDATE agent_todos SET status = ?, result = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
+            "UPDATE agent_todos SET status = $1, result = $2, updated_at = $3 WHERE execution_id = $4 AND item_index = $5"
         )
         .bind(status.to_string())
         .bind(result)
@@ -143,7 +143,7 @@ impl DatabaseService {
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(
-            "UPDATE agent_todos SET description = ?, updated_at = ? WHERE execution_id = ? AND item_index = ?"
+            "UPDATE agent_todos SET description = $1, updated_at = $2 WHERE execution_id = $3 AND item_index = $4"
         )
         .bind(description)
         .bind(&now)
@@ -158,7 +158,7 @@ impl DatabaseService {
     /// Delete all todos for an execution
     pub async fn delete_agent_todos(&self, execution_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM agent_todos WHERE execution_id = ?")
+        sqlx::query("DELETE FROM agent_todos WHERE execution_id = $1")
             .bind(execution_id)
             .execute(pool)
             .await?;
@@ -171,7 +171,7 @@ impl DatabaseService {
         let now = Utc::now().to_rfc3339();
 
         // Delete the item
-        sqlx::query("DELETE FROM agent_todos WHERE execution_id = ? AND item_index = ?")
+        sqlx::query("DELETE FROM agent_todos WHERE execution_id = $1 AND item_index = $2")
             .bind(execution_id)
             .bind(item_index)
             .execute(pool)
@@ -179,7 +179,7 @@ impl DatabaseService {
 
         // Reindex items after the deleted one
         sqlx::query(
-            "UPDATE agent_todos SET item_index = item_index - 1, updated_at = ? WHERE execution_id = ? AND item_index > ?"
+            "UPDATE agent_todos SET item_index = item_index - 1, updated_at = $1 WHERE execution_id = $2 AND item_index > $3"
         )
         .bind(&now)
         .bind(execution_id)
@@ -192,7 +192,7 @@ impl DatabaseService {
         for item in remaining {
             let new_id = format!("{}_{}", execution_id, item.item_index);
             if item.id != new_id {
-                sqlx::query("UPDATE agent_todos SET id = ? WHERE id = ?")
+                sqlx::query("UPDATE agent_todos SET id = $1 WHERE id = $2")
                     .bind(&new_id)
                     .bind(&item.id)
                     .execute(pool)
@@ -216,7 +216,7 @@ impl DatabaseService {
 
         // Shift existing items at and after the insert position
         sqlx::query(
-            "UPDATE agent_todos SET item_index = item_index + 1, updated_at = ? WHERE execution_id = ? AND item_index >= ?"
+            "UPDATE agent_todos SET item_index = item_index + 1, updated_at = $1 WHERE execution_id = $2 AND item_index >= $3"
         )
         .bind(&now)
         .bind(execution_id)
@@ -228,7 +228,7 @@ impl DatabaseService {
         let id = format!("{}_{}", execution_id, item_index);
         sqlx::query(
             r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, NULL, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)"#
         )
         .bind(&id)
         .bind(execution_id)
@@ -245,7 +245,7 @@ impl DatabaseService {
         for item in all_items {
             let expected_id = format!("{}_{}", execution_id, item.item_index);
             if item.id != expected_id {
-                sqlx::query("UPDATE agent_todos SET id = ? WHERE id = ?")
+                sqlx::query("UPDATE agent_todos SET id = $1 WHERE id = $2")
                     .bind(&expected_id)
                     .bind(&item.id)
                     .execute(pool)
@@ -263,7 +263,7 @@ impl DatabaseService {
 
         // Get current max index
         let max_index: Option<(i32,)> = sqlx::query_as(
-            "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?"
+            "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = $1"
         )
         .bind(execution_id)
         .fetch_optional(pool)
@@ -276,7 +276,7 @@ impl DatabaseService {
             let id = format!("{}_{}", execution_id, index);
             sqlx::query(
                 r#"INSERT INTO agent_todos (id, execution_id, item_index, description, status, result, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#
             )
             .bind(&id)
             .bind(execution_id)
@@ -297,7 +297,7 @@ impl DatabaseService {
     pub async fn has_agent_todos(&self, execution_id: &str) -> Result<bool> {
         let pool = self.get_pool()?;
         let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM agent_todos WHERE execution_id = ?"
+            "SELECT COUNT(*) FROM agent_todos WHERE execution_id = $1"
         )
         .bind(execution_id)
         .fetch_one(pool)

@@ -1,15 +1,13 @@
 use anyhow::Result;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Emitter};
 use tracing::{info}; // Removed warn
 
 use sentinel_db::Database; // Added Database trait
-use sentinel_db::DatabaseService;
 use sentinel_llm::{ChatMessage, LlmClient, LlmConfig};
 
 /// Configuration for sliding window manager

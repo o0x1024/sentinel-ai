@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::sqlite::SqlitePool;
+use sqlx::postgres::PgPool;
 use tracing::info;
 use chrono::Utc;
 use crate::database_service::service::DatabaseService;
@@ -9,10 +9,13 @@ use crate::database_service::migrations::{
     SubagentRunsMigration,
     TaskToolIntegrationMigration,
     AsmEnhancementMigration,
+    FloatTypeMigration,
+    TimestampTypeMigration,
+    IntegerTypeMigration,
 };
 
 impl DatabaseService {
-    pub async fn create_database_schema(&self, pool: &SqlitePool) -> Result<()> {
+    pub async fn create_database_schema(&self, pool: &PgPool) -> Result<()> {
         info!("Creating database schema...");
         
         // 核心配置表
@@ -23,9 +26,9 @@ impl DatabaseService {
                 key TEXT NOT NULL,
                 value TEXT,
                 description TEXT,
-                is_encrypted BOOLEAN DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_encrypted BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(category, key)
             )"#
         ).execute(pool).await?;
@@ -46,12 +49,12 @@ impl DatabaseService {
                 summary TEXT,
                 total_messages INTEGER DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0,
-                cost REAL DEFAULT 0.0,
+                cost DOUBLE PRECISION DEFAULT 0.0,
                 tags TEXT,
                 tool_config TEXT,
-                is_archived BOOLEAN DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                is_archived BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -63,11 +66,11 @@ impl DatabaseService {
                 content TEXT NOT NULL,
                 metadata TEXT,
                 token_count INTEGER,
-                cost REAL,
+                cost DOUBLE PRECISION,
                 tool_calls TEXT,
                 attachments TEXT,
                 reasoning_content TEXT,
-                timestamp TEXT NOT NULL,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
                 architecture_type TEXT,
                 architecture_meta TEXT,
                 structured_data TEXT,
@@ -87,17 +90,17 @@ impl DatabaseService {
                 scan_type TEXT NOT NULL,
                 tools_config TEXT,
                 status TEXT NOT NULL,
-                progress REAL DEFAULT 0.0,
+                progress DOUBLE PRECISION DEFAULT 0.0,
                 priority INTEGER DEFAULT 1,
-                scheduled_at TEXT,
-                started_at TEXT,
-                completed_at TEXT,
+                scheduled_at TIMESTAMP WITH TIME ZONE,
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 execution_time INTEGER,
                 results_summary TEXT,
                 error_message TEXT,
                 created_by TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -111,15 +114,15 @@ impl DatabaseService {
                 scan_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 config TEXT NOT NULL,
-                progress REAL DEFAULT 0.0,
+                progress DOUBLE PRECISION DEFAULT 0.0,
                 current_stage TEXT NOT NULL,
                 total_stages INTEGER DEFAULT 0,
                 completed_stages INTEGER DEFAULT 0,
                 results_summary TEXT,
                 error_message TEXT,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 created_by TEXT
             )"#
         ).execute(pool).await?;
@@ -135,8 +138,8 @@ impl DatabaseService {
                 config TEXT NOT NULL,
                 results TEXT,
                 error_message TEXT,
-                started_at TEXT,
-                completed_at TEXT,
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 duration_ms INTEGER,
                 FOREIGN KEY(session_id) REFERENCES scan_sessions(id)
             )"#
@@ -152,7 +155,7 @@ impl DatabaseService {
                 description TEXT,
                 vulnerability_type TEXT,
                 severity TEXT NOT NULL,
-                cvss_score REAL,
+                cvss_score DOUBLE PRECISION,
                 cvss_vector TEXT,
                 cwe_id TEXT,
                 owasp_category TEXT,
@@ -162,12 +165,12 @@ impl DatabaseService {
                 references_json TEXT,
                 status TEXT NOT NULL,
                 verification_status TEXT NOT NULL,
-                resolution_date TEXT,
+                resolution_date TIMESTAMP WITH TIME ZONE,
                 tags TEXT,
                 attachments TEXT,
                 notes TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -182,11 +185,11 @@ impl DatabaseService {
                 progress INTEGER DEFAULT 0,
                 completed_steps INTEGER DEFAULT 0,
                 total_steps INTEGER DEFAULT 0,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
+                started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 error_message TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -195,8 +198,8 @@ impl DatabaseService {
                 run_id TEXT NOT NULL,
                 step_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
+                started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 result_json TEXT,
                 error_message TEXT,
                 PRIMARY KEY(run_id, step_id),
@@ -210,14 +213,14 @@ impl DatabaseService {
                 name TEXT NOT NULL,
                 description TEXT,
                 graph_data TEXT NOT NULL,
-                is_template BOOLEAN DEFAULT 0,
-                is_tool BOOLEAN DEFAULT 0,
+                is_template BOOLEAN DEFAULT FALSE,
+                is_tool BOOLEAN DEFAULT FALSE,
                 category TEXT,
                 tags TEXT,
                 version TEXT NOT NULL,
                 created_by TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
         
@@ -231,9 +234,9 @@ impl DatabaseService {
                 command TEXT,
                 arguments TEXT,
                 status TEXT NOT NULL,
-                progress REAL DEFAULT 0.0,
-                start_time TEXT,
-                end_time TEXT,
+                progress DOUBLE PRECISION DEFAULT 0.0,
+                start_time TIMESTAMP WITH TIME ZONE,
+                end_time TIMESTAMP WITH TIME ZONE,
                 execution_time INTEGER,
                 output TEXT,
                 error_output TEXT,
@@ -241,7 +244,7 @@ impl DatabaseService {
                 resource_usage TEXT,
                 artifacts TEXT,
                 metadata TEXT,
-                created_at TEXT NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -256,12 +259,12 @@ impl DatabaseService {
                 priority TEXT NOT NULL,
                 timeout INTEGER,
                 status TEXT DEFAULT 'pending',
-                started_at TEXT,
-                completed_at TEXT,
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 execution_time_ms INTEGER,
                 error_message TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -271,8 +274,8 @@ impl DatabaseService {
                 task_id TEXT NOT NULL,
                 agent_name TEXT NOT NULL,
                 status TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(task_id) REFERENCES agent_tasks(id)
             )"#
         ).execute(pool).await?;
@@ -284,7 +287,7 @@ impl DatabaseService {
                 level TEXT NOT NULL,
                 message TEXT NOT NULL,
                 source TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
             )"#
         ).execute(pool).await?;
@@ -296,7 +299,7 @@ impl DatabaseService {
                 success BOOLEAN NOT NULL,
                 data TEXT,
                 error TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
             )"#
         ).execute(pool).await?;
@@ -307,12 +310,12 @@ impl DatabaseService {
                 session_id TEXT NOT NULL,
                 step_name TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 duration_ms INTEGER,
                 result_data TEXT,
                 error_message TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
             )"#
         ).execute(pool).await?;
@@ -327,7 +330,7 @@ impl DatabaseService {
                 success BOOLEAN NOT NULL,
                 error TEXT,
                 response_excerpt TEXT,
-                created_at TEXT NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -348,15 +351,15 @@ impl DatabaseService {
                 description TEXT,
                 default_severity TEXT NOT NULL DEFAULT 'medium',
                 tags TEXT,
-                enabled BOOLEAN NOT NULL DEFAULT 0,
+                enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 metadata TEXT NOT NULL DEFAULT '{}',
                 code TEXT NOT NULL DEFAULT '',
                 plugin_code TEXT,
                 status TEXT NOT NULL DEFAULT 'active',
-                quality_score REAL,
+                quality_score DOUBLE PRECISION,
                 validation_status TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -364,7 +367,7 @@ impl DatabaseService {
             r#"CREATE TABLE IF NOT EXISTS plugin_favorites (
                 plugin_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(plugin_id, user_id),
                 FOREIGN KEY(plugin_id) REFERENCES plugin_registry(id)
             )"#
@@ -378,10 +381,10 @@ impl DatabaseService {
                 description TEXT,
                 channel TEXT NOT NULL,
                 config TEXT,
-                is_encrypted BOOLEAN DEFAULT 0,
-                enabled BOOLEAN DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                is_encrypted BOOLEAN DEFAULT FALSE,
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -394,10 +397,10 @@ impl DatabaseService {
                 connection_type TEXT NOT NULL,
                 command TEXT NOT NULL,
                 args TEXT NOT NULL,
-                is_enabled BOOLEAN DEFAULT 1,
-                auto_connect BOOLEAN DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                is_enabled BOOLEAN DEFAULT TRUE,
+                auto_connect BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -408,31 +411,41 @@ impl DatabaseService {
                 title TEXT NOT NULL,
                 description TEXT,
                 prompt TEXT NOT NULL,
-                is_system BOOLEAN DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                is_system BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
+        // Fix for migration issues where created_at/updated_at might be TEXT in PostgreSQL
+        let _ = sqlx::query("ALTER TABLE ai_roles ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE ai_roles ALTER COLUMN updated_at TYPE TIMESTAMP WITH TIME ZONE USING updated_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE ai_conversations ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE ai_conversations ALTER COLUMN updated_at TYPE TIMESTAMP WITH TIME ZONE USING updated_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE ai_messages ALTER COLUMN timestamp TYPE TIMESTAMP WITH TIME ZONE USING timestamp::TIMESTAMP WITH TIME ZONE").execute(pool).await;
+
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS prompt_templates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT,
                 content TEXT NOT NULL,
-                is_default BOOLEAN DEFAULT 0,
-                is_active BOOLEAN DEFAULT 1,
+                is_default BOOLEAN DEFAULT FALSE,
+                is_active BOOLEAN DEFAULT TRUE,
                 category TEXT,
                 template_type TEXT,
-                is_system BOOLEAN DEFAULT 0,
+                is_system BOOLEAN DEFAULT FALSE,
                 priority INTEGER DEFAULT 50,
                 tags TEXT,
                 variables TEXT,
                 version TEXT DEFAULT '1.0.0',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
+
+        let _ = sqlx::query("ALTER TABLE prompt_templates ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE prompt_templates ALTER COLUMN updated_at TYPE TIMESTAMP WITH TIME ZONE USING updated_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
 
         // AI 用量统计表
         sqlx::query(
@@ -442,11 +455,16 @@ impl DatabaseService {
                 input_tokens INTEGER DEFAULT 0,
                 output_tokens INTEGER DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0,
-                cost REAL DEFAULT 0.0,
-                last_used TEXT,
+                cost DOUBLE PRECISION DEFAULT 0.0,
+                last_used TIMESTAMP WITH TIME ZONE,
                 PRIMARY KEY(provider, model)
             )"#
         ).execute(pool).await?;
+
+        // Fix for migration issues where last_used might be TEXT in PostgreSQL
+        let _ = sqlx::query("ALTER TABLE ai_usage_stats ALTER COLUMN last_used TYPE TIMESTAMP WITH TIME ZONE USING last_used::TIMESTAMP WITH TIME ZONE")
+            .execute(pool)
+            .await;
 
         // Plan-and-Execute 架构相关表
         sqlx::query(
@@ -455,8 +473,8 @@ impl DatabaseService {
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 estimated_duration INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT NOT NULL DEFAULT '{}'
             )"#
         ).execute(pool).await?;
@@ -466,13 +484,13 @@ impl DatabaseService {
                 id TEXT PRIMARY KEY,
                 plan_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
+                started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                completed_at TIMESTAMP WITH TIME ZONE,
                 current_step INTEGER,
-                progress REAL DEFAULT 0.0,
+                progress DOUBLE PRECISION DEFAULT 0.0,
                 context TEXT NOT NULL DEFAULT '{}',
                 metadata TEXT NOT NULL DEFAULT '{}',
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(plan_id) REFERENCES execution_plans(id)
             )"#
         ).execute(pool).await?;
@@ -486,17 +504,17 @@ impl DatabaseService {
                 name TEXT NOT NULL,
                 value TEXT NOT NULL,
                 description TEXT,
-                confidence REAL DEFAULT 1.0,
+                confidence DOUBLE PRECISION DEFAULT 1.0,
                 status TEXT NOT NULL,
                 source TEXT,
                 source_scan_id TEXT,
                 metadata TEXT,
                 tags TEXT,
                 risk_level TEXT,
-                last_seen TEXT NOT NULL,
-                first_seen TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                last_seen TIMESTAMP WITH TIME ZONE NOT NULL,
+                first_seen TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 created_by TEXT NOT NULL
             )"#
         ).execute(pool).await?;
@@ -508,9 +526,9 @@ impl DatabaseService {
                 target_asset_id TEXT NOT NULL,
                 relationship_type TEXT NOT NULL,
                 description TEXT,
-                confidence REAL DEFAULT 1.0,
+                confidence DOUBLE PRECISION DEFAULT 1.0,
                 metadata TEXT,
-                created_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(source_asset_id) REFERENCES assets(id),
                 FOREIGN KEY(target_asset_id) REFERENCES assets(id)
@@ -526,8 +544,8 @@ impl DatabaseService {
                 instructions TEXT NOT NULL DEFAULT '',
                 additional_notes TEXT NOT NULL DEFAULT '',
                 tool_ids TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -541,10 +559,10 @@ impl DatabaseService {
                 proxy_type TEXT NOT NULL,
                 username TEXT,
                 password TEXT,
-                enabled BOOLEAN DEFAULT 1,
+                enabled BOOLEAN DEFAULT TRUE,
                 sort_order INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -552,15 +570,15 @@ impl DatabaseService {
             r#"CREATE TABLE IF NOT EXISTS proxifier_rules (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                enabled BOOLEAN DEFAULT 1,
+                enabled BOOLEAN DEFAULT TRUE,
                 applications TEXT,
                 target_hosts TEXT,
                 target_ports TEXT,
                 action TEXT NOT NULL,
                 proxy_id TEXT,
                 sort_order INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(proxy_id) REFERENCES proxifier_proxies(id)
             )"#
         ).execute(pool).await?;
@@ -574,18 +592,18 @@ impl DatabaseService {
                 dict_type TEXT NOT NULL,
                 service_type TEXT,
                 category TEXT,
-                is_builtin BOOLEAN DEFAULT 0,
-                is_active BOOLEAN DEFAULT 1,
-                word_count INTEGER DEFAULT 0,
-                file_size INTEGER DEFAULT 0,
+                is_builtin BOOLEAN DEFAULT FALSE,
+                is_active BOOLEAN DEFAULT TRUE,
+                word_count BIGINT DEFAULT 0,
+                file_size BIGINT DEFAULT 0,
                 checksum TEXT,
                 version TEXT DEFAULT '1.0.0',
                 author TEXT,
                 source_url TEXT,
                 tags TEXT,
                 metadata TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -594,10 +612,10 @@ impl DatabaseService {
                 id TEXT PRIMARY KEY,
                 dictionary_id TEXT NOT NULL,
                 word TEXT NOT NULL,
-                weight REAL DEFAULT 1.0,
+                weight DOUBLE PRECISION DEFAULT 1.0,
                 category TEXT,
                 metadata TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -619,9 +637,9 @@ impl DatabaseService {
                 description TEXT,
                 service_type TEXT,
                 scenario TEXT,
-                is_active BOOLEAN DEFAULT 1,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -631,8 +649,8 @@ impl DatabaseService {
                 set_id TEXT NOT NULL,
                 dictionary_id TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
-                is_enabled BOOLEAN DEFAULT 1,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(set_id) REFERENCES dictionary_sets(id) ON DELETE CASCADE,
                 FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
             )"#
@@ -645,9 +663,9 @@ impl DatabaseService {
                 cache_value TEXT NOT NULL,
                 cache_type TEXT NOT NULL,
                 version TEXT DEFAULT '1.0',
-                expires_at TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                expires_at TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -667,11 +685,11 @@ impl DatabaseService {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT,
-                is_active BOOLEAN DEFAULT 0,
-                document_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                is_active BOOLEAN DEFAULT FALSE,
+                document_count BIGINT DEFAULT 0,
+                chunk_count BIGINT DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -682,14 +700,14 @@ impl DatabaseService {
                 file_path TEXT,
                 file_name TEXT NOT NULL,
                 file_type TEXT,
-                file_size INTEGER,
+                file_size BIGINT,
                 file_hash TEXT,
                 content_hash TEXT,
                 status TEXT DEFAULT 'Pending',
-                chunk_count INTEGER DEFAULT 0,
+                chunk_count BIGINT DEFAULT 0,
                 metadata TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -703,10 +721,10 @@ impl DatabaseService {
                 content_hash TEXT,
                 chunk_index INTEGER,
                 char_count INTEGER,
-                embedding BLOB,
+                embedding BYTEA,
                 metadata TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 FOREIGN KEY(document_id) REFERENCES rag_document_sources(id) ON DELETE CASCADE,
                 FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
             )"#
@@ -720,7 +738,7 @@ impl DatabaseService {
                 query TEXT NOT NULL,
                 response TEXT NOT NULL,
                 processing_time_ms INTEGER,
-                created_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -740,12 +758,12 @@ impl DatabaseService {
                 remediation TEXT,
                 status TEXT NOT NULL DEFAULT 'open',
                 signature TEXT NOT NULL,
-                first_seen_at DATETIME NOT NULL,
-                last_seen_at DATETIME NOT NULL,
+                first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 hit_count INTEGER NOT NULL DEFAULT 1,
                 session_id TEXT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -763,7 +781,7 @@ impl DatabaseService {
                 response_status INTEGER,
                 response_headers TEXT,
                 response_body TEXT,
-                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -773,8 +791,8 @@ impl DatabaseService {
             r#"CREATE TABLE IF NOT EXISTS traffic_dedupe_index (
                 signature TEXT PRIMARY KEY,
                 vuln_id TEXT NOT NULL,
-                first_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                first_hit TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_hit TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -782,7 +800,7 @@ impl DatabaseService {
         // Proxy request history table
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS proxy_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 url TEXT NOT NULL,
                 host TEXT NOT NULL,
                 protocol TEXT NOT NULL,
@@ -794,19 +812,19 @@ impl DatabaseService {
                 response_body TEXT,
                 response_size INTEGER NOT NULL DEFAULT 0,
                 response_time INTEGER NOT NULL DEFAULT 0,
-                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                request_body_compressed BOOLEAN NOT NULL DEFAULT 0,
-                response_body_compressed BOOLEAN NOT NULL DEFAULT 0
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE,
+                response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE
             )"#
         ).execute(pool).await?;
         
         // 添加压缩标记列（如果表已存在）
         let _ = sqlx::query(
-            "ALTER TABLE proxy_requests ADD COLUMN request_body_compressed BOOLEAN NOT NULL DEFAULT 0"
+            "ALTER TABLE proxy_requests ADD COLUMN request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE"
         ).execute(pool).await;
         
         let _ = sqlx::query(
-            "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT 0"
+            "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE"
         ).execute(pool).await;
         
         // 创建索引以优化查询性能
@@ -838,12 +856,12 @@ impl DatabaseService {
                 description TEXT,
                 default_severity TEXT NOT NULL,
                 tags TEXT,
-                enabled BOOLEAN NOT NULL DEFAULT 0,
+                enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 plugin_code TEXT,
-                quality_score REAL,
+                quality_score DOUBLE PRECISION,
                 validation_status TEXT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -852,7 +870,7 @@ impl DatabaseService {
             r#"CREATE TABLE IF NOT EXISTS proxy_config (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -863,15 +881,15 @@ impl DatabaseService {
                 name TEXT NOT NULL,
                 target_host TEXT NOT NULL,
                 target_port INTEGER NOT NULL,
-                use_tls BOOLEAN NOT NULL DEFAULT 1,
-                override_sni BOOLEAN NOT NULL DEFAULT 0,
+                use_tls BOOLEAN NOT NULL DEFAULT TRUE,
+                override_sni BOOLEAN NOT NULL DEFAULT FALSE,
                 sni_host TEXT,
                 raw_request TEXT NOT NULL,
                 request_tab TEXT NOT NULL DEFAULT 'pretty',
                 response_tab TEXT NOT NULL DEFAULT 'pretty',
                 sort_order INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -918,13 +936,13 @@ impl DatabaseService {
                 rules_json TEXT,
                 tags_json TEXT,
                 metadata_json TEXT,
-                priority_score REAL DEFAULT 0.0,
+                priority_score DOUBLE PRECISION DEFAULT 0.0,
                 total_submissions INTEGER DEFAULT 0,
                 accepted_submissions INTEGER DEFAULT 0,
-                total_earnings REAL DEFAULT 0.0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                last_activity_at TEXT
+                total_earnings DOUBLE PRECISION DEFAULT 0.0,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_activity_at TIMESTAMP WITH TIME ZONE
             )"#
         ).execute(pool).await?;
 
@@ -938,14 +956,14 @@ impl DatabaseService {
                 description TEXT,
                 allowed_tests_json TEXT,
                 instructions_json TEXT,
-                requires_auth BOOLEAN DEFAULT 0,
+                requires_auth BOOLEAN DEFAULT FALSE,
                 test_accounts_json TEXT,
                 asset_count INTEGER DEFAULT 0,
                 finding_count INTEGER DEFAULT 0,
-                priority REAL DEFAULT 0.0,
+                priority DOUBLE PRECISION DEFAULT 0.0,
                 metadata_json TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -962,7 +980,7 @@ impl DatabaseService {
                 severity TEXT NOT NULL DEFAULT 'medium',
                 status TEXT NOT NULL DEFAULT 'new',
                 confidence TEXT NOT NULL DEFAULT 'medium',
-                cvss_score REAL,
+                cvss_score DOUBLE PRECISION,
                 cwe_id TEXT,
                 affected_url TEXT,
                 affected_parameter TEXT,
@@ -974,11 +992,11 @@ impl DatabaseService {
                 metadata_json TEXT,
                 fingerprint TEXT NOT NULL,
                 duplicate_of TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_seen_at TEXT NOT NULL,
-                verified_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                verified_at TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL
@@ -996,7 +1014,7 @@ impl DatabaseService {
                 priority TEXT NOT NULL DEFAULT 'medium',
                 vulnerability_type TEXT NOT NULL,
                 severity TEXT NOT NULL DEFAULT 'medium',
-                cvss_score REAL,
+                cvss_score DOUBLE PRECISION,
                 cwe_id TEXT,
                 description TEXT NOT NULL,
                 reproduction_steps_json TEXT,
@@ -1004,22 +1022,22 @@ impl DatabaseService {
                 remediation TEXT,
                 evidence_ids_json TEXT,
                 platform_url TEXT,
-                reward_amount REAL,
+                reward_amount DOUBLE PRECISION,
                 reward_currency TEXT,
-                bonus_amount REAL,
+                bonus_amount DOUBLE PRECISION,
                 response_time_hours INTEGER,
                 resolution_time_hours INTEGER,
-                requires_retest BOOLEAN DEFAULT 0,
+                requires_retest BOOLEAN DEFAULT FALSE,
                 retest_at TEXT,
                 last_retest_at TEXT,
                 communications_json TEXT,
                 timeline_json TEXT,
                 tags_json TEXT,
                 metadata_json TEXT,
-                created_at TEXT NOT NULL,
-                submitted_at TEXT,
-                updated_at TEXT NOT NULL,
-                closed_at TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                submitted_at TIMESTAMP WITH TIME ZONE,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TIMESTAMP WITH TIME ZONE,
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(finding_id) REFERENCES bounty_findings(id) ON DELETE CASCADE
@@ -1037,15 +1055,15 @@ impl DatabaseService {
                 file_url TEXT,
                 content TEXT,
                 mime_type TEXT,
-                file_size INTEGER,
+                file_size BIGINT,
                 http_request_json TEXT,
                 http_response_json TEXT,
                 diff TEXT,
                 tags_json TEXT,
                 metadata_json TEXT,
                 display_order INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(finding_id) REFERENCES bounty_findings(id) ON DELETE CASCADE
             )"#
         ).execute(pool).await?;
@@ -1069,11 +1087,11 @@ impl DatabaseService {
                 generated_findings_json TEXT,
                 tags_json TEXT,
                 metadata_json TEXT,
-                risk_score REAL DEFAULT 0.0,
-                auto_trigger_enabled BOOLEAN DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                resolved_at TEXT,
+                risk_score DOUBLE PRECISION DEFAULT 0.0,
+                auto_trigger_enabled BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP WITH TIME ZONE,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE SET NULL
             )"#
         ).execute(pool).await?;
@@ -1097,17 +1115,17 @@ impl DatabaseService {
                 fingerprint TEXT,
                 tags_json TEXT,
                 labels_json TEXT,
-                priority_score REAL DEFAULT 0.0,
-                risk_score REAL DEFAULT 0.0,
-                is_alive BOOLEAN DEFAULT 1,
-                last_checked_at TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_seen_at TEXT NOT NULL,
+                priority_score DOUBLE PRECISION DEFAULT 0.0,
+                risk_score DOUBLE PRECISION DEFAULT 0.0,
+                is_alive BOOLEAN DEFAULT TRUE,
+                last_checked_at TIMESTAMP WITH TIME ZONE,
+                first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 findings_count INTEGER DEFAULT 0,
                 change_events_count INTEGER DEFAULT 0,
                 metadata_json TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 
                 -- P0: Core ASM Attributes
                 -- IP Asset Attributes
@@ -1117,8 +1135,8 @@ impl DatabaseService {
                 isp TEXT,
                 country TEXT,
                 city TEXT,
-                latitude REAL,
-                longitude REAL,
+                latitude DOUBLE PRECISION,
+                longitude DOUBLE PRECISION,
                 is_cloud BOOLEAN,
                 cloud_provider TEXT,
                 
@@ -1165,9 +1183,9 @@ impl DatabaseService {
                 
                 -- Attack Surface & Risk
                 exposure_level TEXT,
-                attack_surface_score REAL,
+                attack_surface_score DOUBLE PRECISION,
                 vulnerability_count INTEGER DEFAULT 0,
-                cvss_max_score REAL,
+                cvss_max_score DOUBLE PRECISION,
                 exploit_available BOOLEAN,
                 
                 -- Asset Classification
@@ -1179,8 +1197,8 @@ impl DatabaseService {
                 -- Discovery & Monitoring
                 discovery_method TEXT,
                 data_sources_json TEXT,
-                confidence_score REAL,
-                monitoring_enabled BOOLEAN DEFAULT 0,
+                confidence_score DOUBLE PRECISION,
+                monitoring_enabled BOOLEAN DEFAULT FALSE,
                 scan_frequency TEXT,
                 last_scan_type TEXT,
                 
@@ -1206,10 +1224,10 @@ impl DatabaseService {
                 input_schema_json TEXT,
                 output_schema_json TEXT,
                 tags_json TEXT,
-                is_built_in BOOLEAN DEFAULT 0,
+                is_built_in BOOLEAN DEFAULT FALSE,
                 estimated_duration_mins INTEGER,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
 
@@ -1220,15 +1238,15 @@ impl DatabaseService {
                 program_id TEXT NOT NULL,
                 scope_id TEXT,
                 workflow_template_id TEXT NOT NULL,
-                is_enabled BOOLEAN DEFAULT 1,
-                auto_run_on_change BOOLEAN DEFAULT 0,
+                is_enabled BOOLEAN DEFAULT TRUE,
+                auto_run_on_change BOOLEAN DEFAULT FALSE,
                 trigger_conditions_json TEXT,
                 schedule_cron TEXT,
-                last_run_at TEXT,
+                last_run_at TIMESTAMP WITH TIME ZONE,
                 last_run_status TEXT,
                 run_count INTEGER DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(workflow_template_id) REFERENCES bounty_workflow_templates(id)
             )"#
@@ -1278,10 +1296,19 @@ impl DatabaseService {
         // Run ASM enhancement migration
         AsmEnhancementMigration::apply(pool).await?;
         
+        // Run float type migration (REAL -> DOUBLE PRECISION)
+        FloatTypeMigration::apply(pool).await?;
+        
+        // Run timestamp type migration (TEXT -> TIMESTAMP WITH TIME ZONE)
+        TimestampTypeMigration::apply(pool).await?;
+        
+        // Run integer type migration (INTEGER -> BIGINT)
+        IntegerTypeMigration::apply(pool).await?;
+        
         Ok(())
     }
 
-    pub async fn insert_default_data(&self, pool: &SqlitePool) -> Result<()> {
+    pub async fn insert_default_data(&self, pool: &PgPool) -> Result<()> {
         info!("Inserting default data...");
         
         // 初始化默认AI角色
@@ -1291,7 +1318,7 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn initialize_default_roles(&self, pool: &SqlitePool) -> Result<()> {
+    pub async fn initialize_default_roles(&self, pool: &PgPool) -> Result<()> {
         let roles = vec![
             ("security-analyst", "安全分析师", "分析安全漏洞和威胁", "你是一个专业的安全分析师..."),
             ("penetration-tester", "渗透测试专家", "模拟黑客攻击", "你是一个资深的渗透测试专家..."),
@@ -1300,7 +1327,7 @@ impl DatabaseService {
         for (id, title, description, prompt) in roles {
             let now = Utc::now();
             sqlx::query(
-                "INSERT OR IGNORE INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)"
+                "INSERT INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES ($1, $2, $3, $4, true, $5, $6) ON CONFLICT (id) DO NOTHING"
             )
             .bind(id)
             .bind(title)

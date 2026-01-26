@@ -3,10 +3,9 @@
 use std::sync::Arc;
 use tauri::{State, AppHandle, Emitter};
 use tokio::sync::RwLock;
-use sqlx;
 use serde::{Deserialize, Serialize};
 use sentinel_bounty::services::{MonitorScheduler, MonitorTask, MonitorStats, ChangeMonitorConfig, MonitorPluginConfig};
-use sentinel_db::{DatabaseService, BountyAssetRow};
+use sentinel_db::{DatabaseService, BountyAssetRow, Database};
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -134,7 +133,7 @@ async fn save_tasks_to_db(scheduler: &MonitorScheduler, db: &DatabaseService) ->
     
     db.set_config("monitor_scheduler", "tasks", &json, Some("Monitor tasks configuration"))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     
     Ok(())
 }
@@ -142,7 +141,7 @@ async fn save_tasks_to_db(scheduler: &MonitorScheduler, db: &DatabaseService) ->
 async fn load_tasks_from_db(scheduler: &MonitorScheduler, db: &DatabaseService) -> Result<(), String> {
     let row = db.get_config("monitor_scheduler", "tasks")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e: anyhow::Error| e.to_string())?;
     
     if let Some(json) = row {
         if !json.is_empty() {

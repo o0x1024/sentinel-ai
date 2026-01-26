@@ -812,7 +812,7 @@ impl<D: RagDatabase> RagService<D> {
         query_results = unique_results;
         
         // Apply similarity threshold filter (but skip expanded chunks)
-        let similarity_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold);
+        let similarity_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold as f64);
         info!("Applying similarity threshold: {:.2}", similarity_threshold);
         let before_filter = query_results.len();
         query_results.retain(|r| {
@@ -932,7 +932,7 @@ impl<D: RagDatabase> RagService<D> {
         info!("After chunk expansion: {} results", results.len());
 
         // Apply similarity threshold filter (but skip expanded chunks)
-        let similarity_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold);
+        let similarity_threshold = request.similarity_threshold.unwrap_or(self._config.similarity_threshold as f64);
         let before_filter = results.len();
         results.retain(|r| {
             // 扩展后的chunk跳过相似度过滤
@@ -995,7 +995,7 @@ impl<D: RagDatabase> RagService<D> {
                             if let Some(item) = results.get(rr.index) {
                                 let mut item_clone = item.clone();
                                 // overwrite score with rerank score to reflect ordering rationale
-                                item_clone.score = rr.score;
+                                item_clone.score = rr.score as f64;
                                 reordered.push(item_clone);
                             }
                         }

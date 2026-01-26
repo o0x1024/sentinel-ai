@@ -151,7 +151,7 @@ fn convert_core_to_rag(core: CoreRagConfig) -> RagConfig {
         chunk_size_chars: core.chunk_size_chars,
         chunk_overlap_chars: core.chunk_overlap_chars,
         top_k: core.top_k,
-        mmr_lambda: core.mmr_lambda,
+        mmr_lambda: core.mmr_lambda as f32,
         batch_size: core.batch_size,
         max_concurrent: core.max_concurrent,
         embedding_provider: core.embedding_provider,
@@ -162,7 +162,7 @@ fn convert_core_to_rag(core: CoreRagConfig) -> RagConfig {
         reranking_provider: core.reranking_provider,
         reranking_model: core.reranking_model,
         reranking_enabled: core.reranking_enabled,
-        similarity_threshold: core.similarity_threshold,
+        similarity_threshold: core.similarity_threshold as f32,
         augmentation_enabled: core.augmentation_enabled,
         context_window_size: core.context_window_size,
         chunk_expansion_enabled: core.chunk_expansion_enabled,
@@ -498,7 +498,7 @@ pub async fn execute_workflow_steps(
                     let collection_id = step_def.inputs.get("collection_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                     let top_k = step_def.inputs.get("top_k").and_then(|v| v.as_u64()).map(|n| n as usize);
                     let use_mmr = step_def.inputs.get("use_mmr").and_then(|v| v.as_bool());
-                    let mmr_lambda = step_def.inputs.get("mmr_lambda").and_then(|v| v.as_f64()).map(|n| n as f32);
+                    let mmr_lambda = step_def.inputs.get("mmr_lambda").and_then(|v| v.as_f64());
                     let filters_obj = step_def.inputs.get("filters").and_then(|v| v.as_object());
                     let mut filters: HashMap<String, String> = HashMap::new();
                     if let Some(obj) = filters_obj { for (k, v) in obj.iter() { if let Some(s) = v.as_str() { filters.insert(k.clone(), s.to_string()); } } }

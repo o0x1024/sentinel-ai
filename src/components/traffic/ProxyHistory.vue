@@ -2950,7 +2950,9 @@ async function exportAsHAR() {
           if (req.request_headers) {
             try {
               requestHeaders = JSON.parse(req.request_headers);
-            } catch {}
+            } catch {
+              // Ignore parse errors
+            }
           }
           
           // 解析响应头
@@ -2958,7 +2960,9 @@ async function exportAsHAR() {
           if (req.response_headers) {
             try {
               responseHeaders = JSON.parse(req.response_headers);
-            } catch {}
+            } catch {
+              // Ignore parse errors
+            }
           }
           
           // 提取查询参数

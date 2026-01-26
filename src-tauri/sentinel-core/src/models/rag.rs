@@ -60,7 +60,7 @@ pub struct IngestionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryResult { pub chunk: DocumentChunk, pub score: f32, pub rank: usize }
+pub struct QueryResult { pub chunk: DocumentChunk, pub score: f64, pub rank: usize }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionInfo {

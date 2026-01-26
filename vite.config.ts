@@ -21,7 +21,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vue-vendor': ['vue', 'vue-router', 'pinia'],
-          'ui-vendor': ['@headlessui/vue', '@heroicons/vue'], 
+          'ui-vendor': ['@headlessui/vue', '@heroicons/vue'],
           'chart-vendor': ['chart.js', 'vue-chartjs'],
           'utils-vendor': ['@vueuse/core', 'date-fns', 'axios', 'uuid']
         }
@@ -56,8 +56,8 @@ export default defineConfig({
 
   optimizeDeps: {
     include: [
-      'vue', 
-      'vue-router', 
+      'vue',
+      'vue-router',
       'pinia',
       'vue-i18n',
       '@headlessui/vue',
@@ -73,7 +73,9 @@ export default defineConfig({
       '@codemirror/state',
       '@codemirror/commands',
       '@codemirror/language',
-      '@codemirror/autocomplete'
+      '@codemirror/autocomplete',
+      '@codemirror/lang-json',
+      '@codemirror/theme-one-dark'
     ],
     exclude: ['@tauri-apps/api', '@tauri-apps/plugin-dialog', '@tauri-apps/plugin-fs', '@tauri-apps/plugin-shell']
   }

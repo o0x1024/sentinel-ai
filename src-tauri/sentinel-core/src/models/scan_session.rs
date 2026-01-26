@@ -11,7 +11,7 @@ pub struct ScanSession {
     pub scan_type: String,
     pub status: ScanSessionStatus,
     pub config: serde_json::Value,
-    pub progress: f32,
+    pub progress: f64,
     pub current_stage: String,
     pub total_stages: i32,
     pub completed_stages: i32,
@@ -50,7 +50,7 @@ pub struct UpdateScanSessionRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub status: Option<ScanSessionStatus>,
-    pub progress: Option<f32>,
+    pub progress: Option<f64>,
     pub current_stage: Option<String>,
     pub total_stages: Option<i32>,
     pub completed_stages: Option<i32>,
@@ -88,7 +88,7 @@ pub enum ScanStageStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanProgress {
     pub session_id: Uuid,
-    pub overall_progress: f32,
+    pub overall_progress: f64,
     pub current_stage: String,
     pub completed_stages: i32,
     pub total_stages: i32,
@@ -100,7 +100,7 @@ pub struct ScanProgress {
 pub struct ScanStageProgress {
     pub stage_name: String,
     pub status: ScanStageStatus,
-    pub progress: f32,
+    pub progress: f64,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub estimated_completion: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -158,7 +158,7 @@ impl ScanSession {
         self.completed_at = Some(chrono::Utc::now());
     }
 
-    pub fn update_progress(&mut self, progress: f32, current_stage: String, completed_stages: i32) {
+    pub fn update_progress(&mut self, progress: f64, current_stage: String, completed_stages: i32) {
         self.progress = progress.clamp(0.0, 100.0);
         self.current_stage = current_stage;
         self.completed_stages = completed_stages;

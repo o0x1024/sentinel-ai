@@ -1,6 +1,8 @@
 <template>
-  <div v-if="visible" class="modal modal-open">
-    <div class="modal-box max-w-2xl">
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="visible" class="modal modal-open">
+        <div class="modal-box max-w-2xl">
       <h3 class="font-bold text-lg mb-4">
         {{ editMode ? t('bugBounty.editProgram') : t('bugBounty.createProgram') }}
       </h3>
@@ -85,6 +87,8 @@
       </div>
     </div>
   </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -162,3 +166,26 @@ watch(() => props.program, () => {
   }
 }, { deep: true })
 </script>
+
+<style scoped>
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-box,
+.modal-leave-active .modal-box {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.modal-enter-from .modal-box,
+.modal-leave-to .modal-box {
+  transform: scale(0.95);
+  opacity: 0;
+}
+</style>

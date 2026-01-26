@@ -1091,8 +1091,11 @@ const rigProviderLocal = computed({
   set: (value: string) => {
     const providerKey = selectedAiProvider.value
     if (providerKey && props.aiConfig.providers && props.aiConfig.providers[providerKey]) {
-      // 直接修改对象属性，Vue 3 的响应式系统会检测到变化
-      props.aiConfig.providers[providerKey].rig_provider = value
+      const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+      if (updatedConfig.providers[providerKey]) {
+        updatedConfig.providers[providerKey].rig_provider = value
+        emit('update:aiConfig', updatedConfig)
+      }
     }
   }
 })
@@ -1127,7 +1130,11 @@ const saveCustomHeaders = () => {
 
   // 如果为空，清除 extra_headers
   if (!customHeadersJson.value.trim()) {
-    props.aiConfig.providers[providerKey].extra_headers = undefined
+    const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+    if (updatedConfig.providers[providerKey]) {
+      updatedConfig.providers[providerKey].extra_headers = undefined
+      emit('update:aiConfig', updatedConfig)
+    }
     saveAiConfig()
     return
   }
@@ -1151,7 +1158,11 @@ const saveCustomHeaders = () => {
     }
 
     // 保存到配置
-    props.aiConfig.providers[providerKey].extra_headers = headers
+    const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+    if (updatedConfig.providers[providerKey]) {
+      updatedConfig.providers[providerKey].extra_headers = headers
+      emit('update:aiConfig', updatedConfig)
+    }
     saveAiConfig()
     
   } catch (e) {

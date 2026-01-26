@@ -179,8 +179,10 @@
     </div>
 
     <!-- Create Template Modal -->
-    <div v-if="showCreateModal" class="modal modal-open">
-      <div class="modal-box max-w-2xl">
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showCreateModal" class="modal modal-open">
+          <div class="modal-box max-w-2xl">
         <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.workflowTemplates.createTitle') }}</h3>
         
         <div class="form-control mb-4">
@@ -250,10 +252,14 @@
       </div>
       <div class="modal-backdrop" @click="closeCreateModal"></div>
     </div>
+      </Transition>
+    </Teleport>
 
     <!-- Bind to Program Modal -->
-    <div v-if="showBindModal" class="modal modal-open">
-      <div class="modal-box">
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showBindModal" class="modal modal-open">
+          <div class="modal-box">
         <h3 class="font-bold text-lg mb-4">{{ t('bugBounty.workflowTemplates.bindToProgram') }}</h3>
         
         <div class="form-control mb-4">
@@ -280,6 +286,8 @@
       </div>
       <div class="modal-backdrop" @click="showBindModal = false"></div>
     </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -435,7 +443,6 @@ const createTemplate = async () => {
 }
 
 const deleteTemplate = async (template: any) => {
-  if (!confirm(t('bugBounty.workflowTemplates.confirmDelete'))) return
   try {
     await invoke('bounty_delete_workflow_template', { id: template.id })
     toast.success(t('bugBounty.workflowTemplates.deleted'))
@@ -560,3 +567,26 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .modal-box,
+.modal-leave-active .modal-box {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.modal-enter-from .modal-box,
+.modal-leave-to .modal-box {
+  transform: scale(0.95);
+  opacity: 0;
+}
+</style>

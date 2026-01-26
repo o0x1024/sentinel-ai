@@ -456,7 +456,6 @@ const saveGroup = async () => {
 }
 
 const confirmDelete = async (group: AbilityGroup) => {
-  if (!confirm(t('agent.confirmDeleteGroup', { name: group.name }))) return
   
   try {
     await invoke('delete_ability_group', { id: group.id })

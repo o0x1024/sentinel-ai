@@ -84,7 +84,9 @@ function tokenizeShellCommand(command: string): Token[] {
       },
       eatWhile(match: string | RegExp | ((char: string) => boolean)) {
         const start = this.pos
-        while (this.eat(match)) {}
+        while (this.eat(match)) {
+          // Continue eating while match succeeds
+        }
         return this.pos > start
       },
       eatSpace() {

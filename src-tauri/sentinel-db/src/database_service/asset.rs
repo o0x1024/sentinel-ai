@@ -37,7 +37,7 @@ impl DatabaseService {
                 id, project_id, asset_type, name, value, description, confidence, status,
                 source, source_scan_id, metadata, tags, risk_level,
                 last_seen, first_seen, created_at, updated_at, created_by
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             "#,
         )
         .bind(&asset.id)
@@ -53,10 +53,10 @@ impl DatabaseService {
         .bind(&metadata_json)
         .bind(&tags_json)
         .bind(asset.risk_level.as_str())
-        .bind(asset.last_seen.to_rfc3339())
-        .bind(asset.first_seen.to_rfc3339())
-        .bind(asset.created_at.to_rfc3339())
-        .bind(asset.updated_at.to_rfc3339())
+        .bind(asset.last_seen)
+        .bind(asset.first_seen)
+        .bind(asset.created_at)
+        .bind(asset.updated_at)
         .bind(&asset.created_by)
         .execute(pool)
         .await?;
@@ -72,7 +72,7 @@ impl DatabaseService {
             SELECT id, project_id, asset_type, name, value, description, confidence, status,
                    source, source_scan_id, metadata, tags, risk_level,
                    first_seen, last_seen, created_at, updated_at, created_by
-            FROM assets WHERE id = ?1
+            FROM assets WHERE id = $1
             "#,
         )
         .bind(id)
@@ -97,7 +97,7 @@ impl DatabaseService {
             SELECT id, project_id, asset_type, name, value, description, confidence, status,
                    source, source_scan_id, metadata, tags, risk_level,
                    first_seen, last_seen, created_at, updated_at, created_by
-            FROM assets WHERE asset_type = ?1 AND value = ?2
+            FROM assets WHERE asset_type = $1 AND value = $2
             "#,
         )
         .bind(asset_type.as_str())
@@ -177,7 +177,7 @@ impl DatabaseService {
             return Ok(false);
         }
 
-        query_builder.push(", updated_at = ").push_bind(Utc::now().to_rfc3339());
+        query_builder.push(", updated_at = ").push_bind(Utc::now());
         query_builder.push(" WHERE id = ").push_bind(id);
 
         let result = query_builder.build().execute(pool).await?;
@@ -188,7 +188,7 @@ impl DatabaseService {
     /// 删除资产
     pub async fn delete_asset_internal(&self, id: &str) -> Result<bool> {
         let pool = self.get_pool()?;
-        let result = sqlx::query("DELETE FROM assets WHERE id = ?1")
+        let result = sqlx::query("DELETE FROM assets WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -287,7 +287,7 @@ impl DatabaseService {
                 } else {
                     query_builder.push(" AND ");
                 }
-                query_builder.push("created_at >= ").push_bind(created_after.to_rfc3339());
+                query_builder.push("created_at >= ").push_bind(created_after);
             }
 
             if let Some(created_before) = filter.created_before {
@@ -297,7 +297,7 @@ impl DatabaseService {
                 } else {
                     query_builder.push(" AND ");
                 }
-                query_builder.push("created_at <= ").push_bind(created_before.to_rfc3339());
+                query_builder.push("created_at <= ").push_bind(created_before);
             }
 
             if let Some(last_seen_after) = filter.last_seen_after {
@@ -307,7 +307,7 @@ impl DatabaseService {
                 } else {
                     query_builder.push(" AND ");
                 }
-                query_builder.push("last_seen >= ").push_bind(last_seen_after.to_rfc3339());
+                query_builder.push("last_seen >= ").push_bind(last_seen_after);
             }
 
             if let Some(last_seen_before) = filter.last_seen_before {
@@ -316,7 +316,7 @@ impl DatabaseService {
                 } else {
                     query_builder.push(" AND ");
                 }
-                query_builder.push("last_seen <= ").push_bind(last_seen_before.to_rfc3339());
+                query_builder.push("last_seen <= ").push_bind(last_seen_before);
             }
         }
 
@@ -392,14 +392,14 @@ impl DatabaseService {
 
         // 最近24小时新增
         let recent_additions: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM assets WHERE created_at >= datetime('now', '-1 day')"
+            "SELECT COUNT(*) FROM assets WHERE CAST(created_at AS TIMESTAMP WITH TIME ZONE) >= NOW() - INTERVAL '1 day'"
         )
         .fetch_one(pool)
         .await?;
 
         // 超过30天未更新
         let stale_assets: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM assets WHERE updated_at <= datetime('now', '-30 days')"
+            "SELECT COUNT(*) FROM assets WHERE CAST(updated_at AS TIMESTAMP WITH TIME ZONE) <= NOW() - INTERVAL '30 days'"
         )
         .fetch_one(pool)
         .await?;
@@ -438,7 +438,7 @@ impl DatabaseService {
             INSERT INTO asset_relationships (
                 id, source_asset_id, target_asset_id, relationship_type,
                 description, confidence, metadata, created_at, created_by
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(&relationship.id)
@@ -448,7 +448,7 @@ impl DatabaseService {
         .bind(&relationship.description)
         .bind(relationship.confidence)
         .bind(&metadata_json)
-        .bind(relationship.created_at.to_rfc3339())
+        .bind(relationship.created_at)
         .bind(&relationship.created_by)
         .execute(pool)
         .await?;
@@ -464,7 +464,7 @@ impl DatabaseService {
             r#"
             SELECT id, source_asset_id, target_asset_id, relationship_type,
                    description, confidence, metadata, created_at, created_by
-            FROM asset_relationships WHERE source_asset_id = ?1
+            FROM asset_relationships WHERE source_asset_id = $1
             "#,
         )
         .bind(asset_id)
@@ -481,7 +481,7 @@ impl DatabaseService {
             r#"
             SELECT id, source_asset_id, target_asset_id, relationship_type,
                    description, confidence, metadata, created_at, created_by
-            FROM asset_relationships WHERE target_asset_id = ?1
+            FROM asset_relationships WHERE target_asset_id = $1
             "#,
         )
         .bind(asset_id)
@@ -563,7 +563,7 @@ impl DatabaseService {
     }
 
     /// 将数据库行转换为资产对象
-    fn row_to_asset(&self, row: &sqlx::sqlite::SqliteRow) -> Result<Asset> {
+    fn row_to_asset(&self, row: &sqlx::postgres::PgRow) -> Result<Asset> {
         let metadata_str: String = row.try_get("metadata")?;
         let metadata: HashMap<String, serde_json::Value> = 
             serde_json::from_str(&metadata_str).unwrap_or_default();
@@ -586,25 +586,10 @@ impl DatabaseService {
         let risk_level_str: String = row.try_get("risk_level")?;
         let risk_level = RiskLevel::from_str(&risk_level_str).unwrap_or(RiskLevel::Unknown);
 
-        let last_seen_str: String = row.try_get("last_seen")?;
-        let last_seen = DateTime::parse_from_rfc3339(&last_seen_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse last_seen: {}", e))?
-            .with_timezone(&Utc);
-
-        let first_seen_str: String = row.try_get("first_seen")?;
-        let first_seen = DateTime::parse_from_rfc3339(&first_seen_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse first_seen: {}", e))?
-            .with_timezone(&Utc);
-
-        let created_at_str: String = row.try_get("created_at")?;
-        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse created_at: {}", e))?
-            .with_timezone(&Utc);
-
-        let updated_at_str: String = row.try_get("updated_at")?;
-        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse updated_at: {}", e))?
-            .with_timezone(&Utc);
+        let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
+        let first_seen: DateTime<Utc> = row.try_get("first_seen")?;
+        let created_at: DateTime<Utc> = row.try_get("created_at")?;
+        let updated_at: DateTime<Utc> = row.try_get("updated_at")?;
 
         Ok(Asset {
             id: row.try_get("id")?,
@@ -613,7 +598,7 @@ impl DatabaseService {
             name: row.try_get("name")?,
             value: row.try_get("value")?,
             description: row.try_get("description").ok(),
-            confidence: row.try_get("confidence")?,
+            confidence: row.try_get::<f64, _>("confidence")?,
             status,
             source: row.try_get("source").ok(),
             source_scan_id: row.try_get("source_scan_id").ok(),
@@ -629,7 +614,7 @@ impl DatabaseService {
     }
 
     /// 将数据库行转换为关系对象
-    fn row_to_relationship(&self, row: &sqlx::sqlite::SqliteRow) -> Result<AssetRelationship> {
+    fn row_to_relationship(&self, row: &sqlx::postgres::PgRow) -> Result<AssetRelationship> {
         let metadata_str: String = row.try_get("metadata")?;
         let metadata: HashMap<String, serde_json::Value> = 
             serde_json::from_str(&metadata_str).unwrap_or_default();
@@ -647,10 +632,7 @@ impl DatabaseService {
             _ => RelationshipType::BelongsTo,
         };
 
-        let created_at_str: String = row.try_get("created_at")?;
-        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse created_at: {}", e))?
-            .with_timezone(&Utc);
+        let created_at: DateTime<Utc> = row.try_get("created_at")?;
 
         Ok(AssetRelationship {
             id: row.try_get("id")?,
@@ -658,7 +640,7 @@ impl DatabaseService {
             target_asset_id: row.try_get("target_asset_id")?,
             relationship_type,
             description: row.try_get("description")?,
-            confidence: row.try_get("confidence")?,
+            confidence: row.try_get::<f64, _>("confidence")?,
             metadata,
             created_at,
             created_by: row.try_get("created_by")?,

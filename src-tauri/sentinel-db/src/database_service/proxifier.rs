@@ -55,7 +55,7 @@ impl DatabaseService {
     pub async fn get_proxy_by_id_internal(&self, id: &str) -> Result<Option<ProxifierProxyRecord>> {
         let pool = self.get_pool()?;
         let proxy = sqlx::query_as::<_, ProxifierProxyRecord>(
-            "SELECT * FROM proxifier_proxies WHERE id = ?"
+            "SELECT * FROM proxifier_proxies WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(pool)
@@ -79,7 +79,7 @@ impl DatabaseService {
         sqlx::query(
             r#"
             INSERT INTO proxifier_proxies (id, name, host, port, proxy_type, username, password, enabled, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM proxifier_proxies))
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM proxifier_proxies))
             "#
         )
         .bind(id)
@@ -111,8 +111,8 @@ impl DatabaseService {
         sqlx::query(
             r#"
             UPDATE proxifier_proxies 
-            SET name = ?, host = ?, port = ?, proxy_type = ?, username = ?, password = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            SET name = $1, host = $2, port = $3, proxy_type = $4, username = $5, password = $6, enabled = $7, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $8
             "#
         )
         .bind(name)
@@ -131,7 +131,7 @@ impl DatabaseService {
     /// 删除代理服务器
     pub async fn delete_proxy_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM proxifier_proxies WHERE id = ?")
+        sqlx::query("DELETE FROM proxifier_proxies WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -153,7 +153,7 @@ impl DatabaseService {
             sqlx::query(
                 r#"
                 INSERT INTO proxifier_proxies (id, name, host, port, proxy_type, username, password, enabled, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 "#
             )
             .bind(&proxy.id)
@@ -192,7 +192,7 @@ impl DatabaseService {
     pub async fn get_rule_by_id_internal(&self, id: &str) -> Result<Option<ProxifierRuleRecord>> {
         let pool = self.get_pool()?;
         let rule = sqlx::query_as::<_, ProxifierRuleRecord>(
-            "SELECT * FROM proxifier_rules WHERE id = ?"
+            "SELECT * FROM proxifier_rules WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(pool)
@@ -216,7 +216,7 @@ impl DatabaseService {
         sqlx::query(
             r#"
             INSERT INTO proxifier_rules (id, name, enabled, applications, target_hosts, target_ports, action, proxy_id, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM proxifier_rules))
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM proxifier_rules))
             "#
         )
         .bind(id)
@@ -248,8 +248,8 @@ impl DatabaseService {
         sqlx::query(
             r#"
             UPDATE proxifier_rules 
-            SET name = ?, enabled = ?, applications = ?, target_hosts = ?, target_ports = ?, action = ?, proxy_id = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            SET name = $1, enabled = $2, applications = $3, target_hosts = $4, target_ports = $5, action = $6, proxy_id = $7, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $8
             "#
         )
         .bind(name)
@@ -268,7 +268,7 @@ impl DatabaseService {
     /// 删除代理规则
     pub async fn delete_rule_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM proxifier_rules WHERE id = ?")
+        sqlx::query("DELETE FROM proxifier_rules WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -290,7 +290,7 @@ impl DatabaseService {
             sqlx::query(
                 r#"
                 INSERT INTO proxifier_rules (id, name, enabled, applications, target_hosts, target_ports, action, proxy_id, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 "#
             )
             .bind(&rule.id)

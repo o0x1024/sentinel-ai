@@ -10,7 +10,7 @@ pub struct ScanTask {
     pub target: String,
     pub config: ScanConfig,
     pub status: ScanStatus,
-    pub progress: f32, // 0.0 - 1.0
+    pub progress: f64, // 0.0 - 1.0
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -67,7 +67,7 @@ pub struct ScanResult {
     pub result_type: ResultType,
     pub data: serde_json::Value,
     pub severity: Severity,
-    pub confidence: f32, // 0.0 - 1.0
+    pub confidence: f64, // 0.0 - 1.0
     pub discovered_at: DateTime<Utc>,
     pub verified: bool,
     pub false_positive: bool,

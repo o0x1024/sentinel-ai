@@ -60,7 +60,7 @@ pub fn convert_core_to_rag(core: RagConfigCore) -> RagConfigRag {
         chunk_size_chars: core.chunk_size_chars,
         chunk_overlap_chars: core.chunk_overlap_chars,
         top_k: core.top_k,
-        mmr_lambda: core.mmr_lambda,
+        mmr_lambda: core.mmr_lambda as f32,
         batch_size: core.batch_size,
         max_concurrent: core.max_concurrent,
         embedding_provider: core.embedding_provider,
@@ -71,7 +71,7 @@ pub fn convert_core_to_rag(core: RagConfigCore) -> RagConfigRag {
         reranking_provider: core.reranking_provider,
         reranking_model: core.reranking_model,
         reranking_enabled: core.reranking_enabled,
-        similarity_threshold: core.similarity_threshold,
+        similarity_threshold: core.similarity_threshold as f32,
         augmentation_enabled: core.augmentation_enabled,
         context_window_size: core.context_window_size,
         chunking_strategy: convert_chunking_strategy_core_to_rag(core.chunking_strategy),
@@ -89,7 +89,7 @@ fn convert_rag_to_core(rag: RagConfigRag) -> RagConfigCore {
         chunk_size_chars: rag.chunk_size_chars,
         chunk_overlap_chars: rag.chunk_overlap_chars,
         top_k: rag.top_k,
-        mmr_lambda: rag.mmr_lambda,
+        mmr_lambda: rag.mmr_lambda as f64,
         batch_size: rag.batch_size,
         max_concurrent: rag.max_concurrent,
         embedding_provider: rag.embedding_provider,
@@ -100,7 +100,7 @@ fn convert_rag_to_core(rag: RagConfigRag) -> RagConfigCore {
         reranking_provider: rag.reranking_provider,
         reranking_model: rag.reranking_model,
         reranking_enabled: rag.reranking_enabled,
-        similarity_threshold: rag.similarity_threshold,
+        similarity_threshold: rag.similarity_threshold as f64,
         augmentation_enabled: rag.augmentation_enabled,
         context_window_size: rag.context_window_size,
         chunking_strategy: convert_chunking_strategy_rag_to_core(rag.chunking_strategy),
@@ -191,7 +191,26 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
     }
 }
 
-/// 获取全局RAG服务实例
+/// 获取并尝试初始化全局RAG服务实例
+pub async fn get_or_init_rag_service(database: Arc<DatabaseService>) -> Result<Arc<AppRagService>, String> {
+    if let Some(service_wrapper) = GLOBAL_RAG_SERVICE.get() {
+        let service_guard = service_wrapper.read().await;
+        if let Some(service) = service_guard.as_ref() {
+            return Ok(service.clone());
+        }
+    }
+
+    // 如果未初始化或服务不可用，尝试初始化
+    initialize_global_rag_service(database.clone()).await?;
+
+    let service_wrapper = GLOBAL_RAG_SERVICE.get()
+        .ok_or("Global RAG service failed to set during auto-initialization")?;
+    
+    let service_guard = service_wrapper.read().await;
+    service_guard.as_ref().cloned().ok_or("RAG service not available after initialization".to_string())
+}
+
+/// 获取已初始化的全局RAG服务实例（如果尚未初始化则报错）
 pub async fn get_global_rag_service() -> Result<Arc<AppRagService>, String> {
     let service_wrapper = GLOBAL_RAG_SERVICE
         .get()
@@ -200,8 +219,7 @@ pub async fn get_global_rag_service() -> Result<Arc<AppRagService>, String> {
     let service_guard = service_wrapper.read().await;
     let service = service_guard.as_ref().ok_or("RAG service not available")?;
 
-    // 返回Arc的克隆
-    Ok(Arc::clone(service))
+    Ok(service.clone())
 }
 
 /// 关闭全局RAG服务
@@ -232,6 +250,7 @@ pub struct RagSystemStatus {
 /// 导入数据源到RAG系统
 #[tauri::command]
 pub async fn rag_ingest_source(
+    database: State<'_, Arc<DatabaseService>>,
     file_path: String,
     collection_id: Option<String>,
     metadata: Option<HashMap<String, String>>,
@@ -250,7 +269,7 @@ pub async fn rag_ingest_source(
         metadata,
     };
 
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     rag_service
         .ingest_source(request)
         .await
@@ -290,6 +309,7 @@ pub struct BatchIngestResponse {
 /// 批量导入数据源到RAG系统
 #[tauri::command]
 pub async fn rag_batch_ingest_sources(
+    database: State<'_, Arc<DatabaseService>>,
     file_paths: Vec<String>,
     collection_id: Option<String>,
     app: AppHandle,
@@ -304,7 +324,7 @@ pub async fn rag_batch_ingest_sources(
 
     let batch_id = uuid::Uuid::new_v4().to_string();
     let total = file_paths.len();
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     
     // 使用信号量控制并发数
     let max_concurrent = 3; // 最多同时处理3个文件
@@ -415,6 +435,7 @@ pub async fn rag_batch_ingest_sources(
 /// 手动输入文本导入到RAG系统
 #[tauri::command]
 pub async fn rag_ingest_text(
+    database: State<'_, Arc<DatabaseService>>,
     title: String,
     content: String,
     collection_id: Option<String>,
@@ -432,7 +453,7 @@ pub async fn rag_ingest_text(
         return Err("文本内容不能为空".to_string());
     }
 
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     rag_service
         .ingest_text(&title, &content, collection_id.as_deref(), metadata)
         .await
@@ -442,15 +463,16 @@ pub async fn rag_ingest_text(
 /// 查询RAG系统
 #[tauri::command]
 pub async fn rag_query(
+    database: State<'_, Arc<DatabaseService>>,
     query: String,
     collection_id: Option<String>,
     top_k: Option<usize>,
     use_mmr: Option<bool>,
-    mmr_lambda: Option<f32>,
+    mmr_lambda: Option<f64>,
     filters: Option<HashMap<String, String>>,
     use_embedding: Option<bool>,
     reranking_enabled: Option<bool>,
-    similarity_threshold: Option<f32>,
+    similarity_threshold: Option<f64>,
 ) -> Result<RagQueryResponse, String> {
     info!("RAG查询: {}", query);
 
@@ -466,13 +488,16 @@ pub async fn rag_query(
         similarity_threshold,
     };
 
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     rag_service.query(request).await.map_err(|e| e.to_string())
 }
 
 /// 清空RAG集合
 #[tauri::command]
-pub async fn rag_clear_collection(collection_id: String) -> Result<bool, String> {
+pub async fn rag_clear_collection(
+    database: State<'_, Arc<DatabaseService>>,
+    collection_id: String,
+) -> Result<bool, String> {
     info!("清空RAG集合: {}", collection_id);
 
     // License check
@@ -481,7 +506,7 @@ pub async fn rag_clear_collection(collection_id: String) -> Result<bool, String>
         return Err("License required for RAG feature".to_string());
     }
 
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     rag_service
         .clear_collection(&collection_id)
         .await
@@ -614,14 +639,17 @@ pub async fn rag_get_supported_file_types() -> Result<Vec<String>, String> {
 
 /// 获取RAG系统状态 (前端兼容命名)
 #[tauri::command]
-pub async fn get_rag_status() -> Result<RagStatus, String> {
-    let rag_service = get_global_rag_service().await?;
+pub async fn get_rag_status(
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<RagStatus, String> {
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     rag_service.get_status().await.map_err(|e| e.to_string())
 }
 
 /// 创建RAG集合
 #[tauri::command]
 pub async fn create_rag_collection(
+    database: State<'_, Arc<DatabaseService>>,
     name: String,
     description: Option<String>,
 ) -> Result<bool, String> {
@@ -633,7 +661,7 @@ pub async fn create_rag_collection(
         return Err("License required for RAG feature".to_string());
     }
 
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
     
     let _collection_id = rag_service
         .create_collection(&name, description.as_deref())
@@ -661,7 +689,7 @@ pub async fn query_rag(
         return Err("License required for RAG feature".to_string());
     }
 
-    let service = get_global_rag_service().await?;
+    let service = get_or_init_rag_service(database.inner().clone()).await?;
 
     service
         .query(request)
@@ -671,14 +699,17 @@ pub async fn query_rag(
 
 /// 前端兼容的删除集合命令
 #[tauri::command]
-pub async fn delete_rag_collection(collection_id: String) -> Result<bool, String> {
+pub async fn delete_rag_collection(
+    database: State<'_, Arc<DatabaseService>>,
+    collection_id: String,
+) -> Result<bool, String> {
     // License check
     #[cfg(not(debug_assertions))]
     if !sentinel_license::is_licensed() {
         return Err("License required for RAG feature".to_string());
     }
 
-    let service = get_global_rag_service().await?;
+    let service = get_or_init_rag_service(database.inner().clone()).await?;
 
     service
         .delete_collection(&collection_id)
@@ -905,10 +936,12 @@ pub async fn get_folder_files(
 
 /// 确保默认RAG集合存在
 #[tauri::command]
-pub async fn ensure_default_rag_collection() -> Result<String, String> {
+pub async fn ensure_default_rag_collection(
+    database: State<'_, Arc<DatabaseService>>,
+) -> Result<String, String> {
     info!("确保默认RAG集合存在");
 
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
 
     #[allow(dead_code)]
     const DEFAULT_COLLECTION_NAME: &str = "default";
@@ -1114,10 +1147,12 @@ pub const MEMORY_COLLECTION_NAME: &str = "agent_memory";
 pub const MEMORY_COLLECTION_DESCRIPTION: &str = "Long-term memory storage for AI agents. Stores important solutions, workflows, and findings for future reference.";
 
 /// 确保memory集合存在，如果不存在则创建
-pub async fn ensure_memory_collection_exists() -> Result<String, String> {
+pub async fn ensure_memory_collection_exists(
+    database: Arc<DatabaseService>,
+) -> Result<String, String> {
     info!("Ensuring memory collection exists");
     
-    let rag_service = get_global_rag_service().await?;
+    let rag_service = get_or_init_rag_service(database).await?;
     
     // 获取所有集合
     let status = rag_service.get_status().await.map_err(|e| e.to_string())?;

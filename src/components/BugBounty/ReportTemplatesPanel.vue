@@ -173,15 +173,15 @@
             </div>
             <div class="collapse-content">
               <div class="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
-                <code class="bg-base-300 px-2 py-1 rounded">{{vuln_type}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{severity}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{endpoint}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{url}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{parameter}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{program}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{date}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{cwe_id}}</code>
-                <code class="bg-base-300 px-2 py-1 rounded">{{cvss}}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}vuln_type{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}severity{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}endpoint{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}url{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}parameter{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}program{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}date{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}cwe_id{{ '}' }}{{ '}' }}</code>
+                <code class="bg-base-300 px-2 py-1 rounded">{{ '{' }}{{ '{' }}cvss{{ '}' }}{{ '}' }}</code>
               </div>
             </div>
           </div>
@@ -566,7 +566,6 @@ const saveTemplate = () => {
 }
 
 const deleteTemplate = (template: any) => {
-  if (!confirm(t('bugBounty.templates.confirmDelete'))) return
   
   customTemplates.value = customTemplates.value.filter(t => t.id !== template.id)
   saveCustomTemplates()

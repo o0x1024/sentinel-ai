@@ -1,0 +1,5 @@
+    Checking sentinel-db v0.1.0 (/Users/a1024/code/ai/sentinel-ai/src-tauri/sentinel-db)
+sentinel-db/src/database_service/scan_session.rs:166:13: warning: value assigned to `param_idx` is never read
+sentinel-db/src/database_service/migration.rs:120:14: warning: methods `table_has_foreign_keys`, `get_schema_sql`, `convert_to_postgresql_sql`, `convert_to_mysql_sql`, `import_table_selective`, and `import_single_row` are never used
+warning: `sentinel-db` (lib) generated 2 warnings
+    Finished `dev` profile [unoptimized] target(s) in 4.56s

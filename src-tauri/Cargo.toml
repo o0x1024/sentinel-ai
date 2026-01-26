@@ -74,7 +74,7 @@ walkdir = "2.5.0"
 # 数据库支持
 sqlx = { version = "0.8.6", features = [
     "runtime-tokio",
-    "sqlite",
+    "postgres",
     "chrono",
     "uuid",
 ] }

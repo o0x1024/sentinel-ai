@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::fmt;
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 
 /// 字典类型枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,8 +150,8 @@ pub struct Dictionary {
     pub source_url: Option<String>,
     pub tags: Option<String>,
     pub metadata: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl Dictionary {
@@ -161,7 +162,7 @@ impl Dictionary {
         description: Option<String>,
     ) -> Self {
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Utc::now();
 
         Self {
             id,
@@ -225,13 +226,13 @@ pub struct DictionaryWord {
     pub weight: f64,
     pub category: Option<String>,
     pub metadata: Option<String>,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 impl DictionaryWord {
     pub fn new(dictionary_id: String, word: String) -> Self {
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Utc::now();
 
         Self {
             id,
@@ -269,14 +270,14 @@ pub struct DictionarySet {
     pub service_type: Option<String>,
     pub scenario: Option<String>,
     pub is_active: bool,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl DictionarySet {
     pub fn new(name: String, service_type: Option<ServiceType>) -> Self {
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Utc::now();
 
         Self {
             id,
@@ -305,13 +306,13 @@ pub struct DictionarySetRelation {
     pub dictionary_id: String,
     pub priority: i32,
     pub is_enabled: bool,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 impl DictionarySetRelation {
     pub fn new(set_id: String, dictionary_id: String) -> Self {
         let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Utc::now();
 
         Self {
             id,

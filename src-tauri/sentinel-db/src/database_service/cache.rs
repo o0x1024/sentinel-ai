@@ -10,8 +10,8 @@ impl DatabaseService {
 
         let row = sqlx::query(
             "SELECT cache_value, expires_at FROM cache_storage 
-             WHERE cache_key = ?
-             AND (expires_at IS NULL OR expires_at > ?)",
+             WHERE cache_key = $1
+             AND (expires_at IS NULL OR expires_at > $2)",
         )
         .bind(key)
         .bind(now)
@@ -27,7 +27,7 @@ impl DatabaseService {
 
         sqlx::query(
             "INSERT INTO cache_storage (cache_key, cache_value, cache_type, expires_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+             VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT(cache_key) DO UPDATE SET
                 cache_value = excluded.cache_value,
                 cache_type = excluded.cache_type,
@@ -48,7 +48,7 @@ impl DatabaseService {
 
     pub async fn delete_cache_internal(&self, key: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM cache_storage WHERE cache_key = ?")
+        sqlx::query("DELETE FROM cache_storage WHERE cache_key = $1")
             .bind(key)
             .execute(pool)
             .await?;
@@ -60,7 +60,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let now = Utc::now();
 
-        let result = sqlx::query("DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= ?")
+        let result = sqlx::query("DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= $1")
             .bind(now)
             .execute(pool)
             .await?;
@@ -72,7 +72,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         
         let rows = if let Some(t) = cache_type {
-            sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = ?")
+            sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = $1")
                 .bind(t)
                 .fetch_all(pool)
                 .await?

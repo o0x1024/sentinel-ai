@@ -254,7 +254,7 @@ pub fn run() {
                     tracing::error!("Failed to initialize global RAG service: {}", e);
                 } else {
                     // Ensure memory collection exists
-                    match crate::commands::rag_commands::ensure_memory_collection_exists().await {
+                    match crate::commands::rag_commands::ensure_memory_collection_exists(db_service.clone()).await {
                         Ok(collection_id) => {
                             tracing::info!("Memory collection ready: {}", collection_id);
                         }
@@ -264,14 +264,16 @@ pub fn run() {
                     }
                     
                     // Initialize Memory Tool hooks via existing RAG service
-                    let store_fn = Box::new(|content: String, title: Option<String>, tags: Vec<String>| {
+                    let db_for_store = db_service.clone();
+                    let store_fn = Box::new(move |content: String, title: Option<String>, tags: Vec<String>| {
+                        let db_inner = db_for_store.clone();
                         Box::pin(async move {
-                            let service = crate::commands::rag_commands::get_global_rag_service()
+                            let service = crate::commands::rag_commands::get_or_init_rag_service(db_inner.clone())
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
                             // Get memory collection ID
-                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists()
+                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists(db_inner)
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -310,14 +312,16 @@ pub fn run() {
                             >
                     });
 
-                    let retrieve_fn = Box::new(|query: String, limit: usize| {
+                    let db_for_retrieve = db_service.clone();
+                    let retrieve_fn = Box::new(move |query: String, limit: usize| {
+                        let db_inner = db_for_retrieve.clone();
                         Box::pin(async move {
-                            let service = crate::commands::rag_commands::get_global_rag_service()
+                            let service = crate::commands::rag_commands::get_or_init_rag_service(db_inner.clone())
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
                             // Get memory collection ID
-                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists()
+                            let collection_id = crate::commands::rag_commands::ensure_memory_collection_exists(db_inner)
                                 .await
                                 .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -409,7 +413,12 @@ pub fn run() {
                 let db_for_tracker = db_service.clone();
                 let db_service_for_enrichment = db_service.clone();
 
-                handle.manage(db_service);
+                // Register as concrete type
+                handle.manage(db_service.clone());
+                // Register as trait object for commands requesting Arc<dyn Database>
+                // db_service is already Arc<DatabaseService>, so we just clone it and cast/coerce
+                let db_trait_obj: Arc<dyn Database> = db_service.clone();
+                handle.manage(db_trait_obj);
                 handle.manage(ai_manager);
                 handle.manage(asset_service);
                 handle.manage(vulnerability_service);

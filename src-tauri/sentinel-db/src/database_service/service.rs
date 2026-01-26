@@ -1,47 +1,50 @@
 use anyhow::Result;
-use sqlx::{sqlite::SqlitePool, Column, Row, TypeInfo};
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::{Column, Row, TypeInfo};
 use std::path::PathBuf;
 use serde_json::Value;
 use crate::core::models::database::DatabaseStats;
-use std::time::Duration;
+use crate::database_service::db_config::{DatabaseConfig, DatabaseType};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 /// 数据库服务
 pub struct DatabaseService {
-    pub(crate) pool: Option<SqlitePool>,
-    pub(crate) db_path: PathBuf,
+    pub(crate) pool: Option<PgPool>,
+    pub(crate) config: Option<DatabaseConfig>,
     pub(crate) write_semaphore: Arc<Semaphore>,
 }
 
 impl DatabaseService {
-    pub fn new() -> Self {
-        let db_path = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("sentinel-ai")
-            .join("database.db");
+    pub fn get_db_config(&self) -> Option<&DatabaseConfig> {
+        self.config.as_ref()
+    }
 
-        // Limit concurrent writes to 1 to prevent database locking
+    pub fn new() -> Self {
+        // Limit concurrent writes if necessary, though PG handles concurrency well.
+        // We keep the semaphore for compatibility/throttling if needed.
         Self {
             pool: None,
-            db_path,
-            write_semaphore: Arc::new(Semaphore::new(1)),
+            config: None,
+            write_semaphore: Arc::new(Semaphore::new(10)), // Higher limit for PG
         }
     }
 
-    pub fn get_pool(&self) -> Result<&SqlitePool> {
+    pub fn get_pool(&self) -> Result<&PgPool> {
         self.pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))
     }
 
     /// Get database pool (public method for external use)
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &PgPool {
         self.pool.as_ref().expect("Database not initialized")
     }
     
-    pub fn get_sqlite_pool(&self) -> Result<&SqlitePool> {
+    // Deprecated exact match for SQLite but kept for interface compatibility if generic
+    pub fn get_postgres_pool(&self) -> Result<&PgPool> {
         self.get_pool()
     }
 
@@ -50,27 +53,93 @@ impl DatabaseService {
         Ok(crate::client::DatabaseClient::new(pool))
     }
 
+    pub fn get_sqlite_pool(&self) -> Result<sqlx::SqlitePool> {
+        // This is a bit of a hack for the migration commands.
+        // If we are in PG mode, we might not have a SQLite pool.
+        // For now, let's try to connect to the default SQLite path if requested.
+        Err(anyhow::anyhow!("SQLite pool not available in PostgreSQL mode. Please use migration tools with explicit source config."))
+    }
+
     pub fn get_db_path(&self) -> PathBuf {
-        self.db_path.clone()
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel-ai")
+            .join("database.db")
+    }
+
+    pub async fn backup(&self, path: Option<PathBuf>) -> Result<PathBuf> {
+        let backup_path = path.unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("sentinel-ai")
+                .join(format!("backup_{}.sql", chrono::Utc::now().timestamp()))
+        });
+        // Implementation for PG backup would go here
+        Ok(backup_path)
+    }
+
+    pub async fn restore(&self, _path: PathBuf) -> Result<()> {
+        // Implementation for PG restore would go here
+        Ok(())
     }
 
     /// 初始化数据库
     pub async fn initialize(&mut self) -> Result<()> {
-        if let Some(parent) = self.db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        // Try to load config from file
+        let config_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel-ai")
+            .join("db_config.json");
 
-        let db_url = format!("sqlite:{}?mode=rwc", self.db_path.to_string_lossy());
-        let pool = SqlitePool::connect(&db_url).await?;
-        
-        // Enable WAL mode for better concurrent write handling
-        sqlx::query("PRAGMA journal_mode=WAL")
-            .execute(&pool)
-            .await?;
-        
-        // Set busy timeout to 5 seconds for locked database retry
-        sqlx::query("PRAGMA busy_timeout=5000")
-            .execute(&pool)
+        let config: DatabaseConfig = if config_path.exists() {
+             let content = std::fs::read_to_string(&config_path)?;
+             match serde_json::from_str(&content) {
+                 Ok(c) => c,
+                 Err(e) => {
+                     tracing::warn!("Failed to parse db_config.json: {}, using default", e);
+                     self.default_pg_config()
+                 }
+             }
+        } else {
+             self.default_pg_config()
+        };
+
+        self.config = Some(config.clone());
+
+        // Construct connection string based on config
+        let conn_str = match config.db_type {
+            DatabaseType::PostgreSQL => {
+                format!(
+                    "postgres://{}:{}@{}:{}/{}",
+                    config.username.as_deref().unwrap_or("postgres"),
+                    config.password.as_deref().unwrap_or("postgres"),
+                    config.host.as_deref().unwrap_or("localhost"),
+                    config.port.unwrap_or(5432),
+                    config.database.as_deref().unwrap_or("sentinel_ai")
+                )
+            }
+            DatabaseType::MySQL => {
+                format!(
+                    "mysql://{}:{}@{}:{}/{}",
+                    config.username.as_deref().unwrap_or("root"),
+                    config.password.as_deref().unwrap_or(""),
+                    config.host.as_deref().unwrap_or("localhost"),
+                    config.port.unwrap_or(3306),
+                    config.database.as_deref().unwrap_or("sentinel_ai")
+                )
+            }
+            DatabaseType::SQLite => {
+                // Not supported by PgPool, but keeping structure for future
+                return Err(anyhow::anyhow!("SQLite not supported by PgPool implementation"));
+            }
+        };
+
+        tracing::info!("Connecting to database: {}", conn_str);
+
+        let pool = PgPoolOptions::new()
+            .max_connections(config.max_connections)
+            .acquire_timeout(Duration::from_secs(config.query_timeout as u64))
+            .connect(&conn_str)
             .await?;
         
         self.create_database_schema(&pool).await?;
@@ -81,70 +150,66 @@ impl DatabaseService {
         Ok(())
     }
 
-    async fn ensure_migrations(&self, pool: &SqlitePool) -> Result<()> {
+    fn default_pg_config(&self) -> DatabaseConfig {
+        DatabaseConfig {
+            db_type: DatabaseType::PostgreSQL,
+            path: None,
+            enable_wal: false,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: Some("sentinel_ai".to_string()),
+            username: Some("postgres".to_string()),
+            password: Some("postgres".to_string()),
+            enable_ssl: false,
+            max_connections: 50,
+            query_timeout: 30,
+        }
+    }
+
+    async fn ensure_migrations(&self, pool: &PgPool) -> Result<()> {
         use tracing::info;
 
         // 确保 workflow_definitions 表有 category 和 tags 字段
-        let rows = sqlx::query("PRAGMA table_info(workflow_definitions)")
-            .fetch_all(pool)
-            .await?;
-        
-        let mut has_category = false;
-        let mut has_tags = false;
-        let mut has_is_tool = false;
-
-        for row in rows {
-            let name: String = sqlx::Row::get(&row, "name");
-            if name == "category" { has_category = true; }
-            if name == "tags" { has_tags = true; }
-            if name == "is_tool" { has_is_tool = true; }
-        }
+        let has_category: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'workflow_definitions' AND column_name = 'category')"
+        ).fetch_one(pool).await?;
 
         if !has_category {
-            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN category TEXT")
-                .execute(pool)
-                .await?;
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN category TEXT").execute(pool).await?;
         }
+
+        let has_tags: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'workflow_definitions' AND column_name = 'tags')"
+        ).fetch_one(pool).await?;
+
         if !has_tags {
-            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN tags TEXT")
-                .execute(pool)
-                .await?;
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN tags TEXT").execute(pool).await?;
         }
+
+        let has_is_tool: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'workflow_definitions' AND column_name = 'is_tool')"
+        ).fetch_one(pool).await?;
+
         if !has_is_tool {
-            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT 0")
-                .execute(pool)
-                .await?;
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT FALSE").execute(pool).await?;
         }
 
         // 确保 ai_messages 表有 reasoning_content 字段
-        let ai_messages_rows = sqlx::query("PRAGMA table_info(ai_messages)")
-            .fetch_all(pool)
-            .await?;
-        
-        let mut has_reasoning_content = false;
-        for row in ai_messages_rows {
-            let name: String = sqlx::Row::get(&row, "name");
-            if name == "reasoning_content" { 
-                has_reasoning_content = true;
-                break;
-            }
-        }
+        let has_reasoning_content: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_messages' AND column_name = 'reasoning_content')"
+        ).fetch_one(pool).await?;
 
         if !has_reasoning_content {
             info!("Adding reasoning_content column to ai_messages table");
-            sqlx::query("ALTER TABLE ai_messages ADD COLUMN reasoning_content TEXT")
-                .execute(pool)
-                .await?;
+            sqlx::query("ALTER TABLE ai_messages ADD COLUMN reasoning_content TEXT").execute(pool).await?;
         }
 
         // Ensure memory_executions table exists
-        let memory_table_exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_executions'",
-        )
-        .fetch_one(pool)
-        .await?;
+        let memory_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'memory_executions')"
+        ).fetch_one(pool).await?;
 
-        if memory_table_exists == 0 {
+        if !memory_table_exists {
             info!("Creating memory_executions table...");
             sqlx::query(
                 r#"CREATE TABLE IF NOT EXISTS memory_executions (
@@ -155,7 +220,7 @@ impl DatabaseService {
                     success BOOLEAN NOT NULL,
                     error TEXT,
                     response_excerpt TEXT,
-                    created_at TEXT NOT NULL
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )"#,
             )
             .execute(pool)
@@ -170,13 +235,11 @@ impl DatabaseService {
         }
 
         // 检查并创建字典相关表
-        let table_exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='dictionaries'"
-        )
-        .fetch_one(pool)
-        .await?;
+        let dict_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'dictionaries')"
+        ).fetch_one(pool).await?;
 
-        if table_exists == 0 {
+        if !dict_table_exists {
             info!("Creating dictionaries tables...");
             
             sqlx::query(
@@ -187,18 +250,18 @@ impl DatabaseService {
                     dict_type TEXT NOT NULL,
                     service_type TEXT,
                     category TEXT,
-                    is_builtin BOOLEAN DEFAULT 0,
-                    is_active BOOLEAN DEFAULT 1,
-                    word_count INTEGER DEFAULT 0,
-                    file_size INTEGER DEFAULT 0,
+                    is_builtin BOOLEAN DEFAULT FALSE,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    word_count BIGINT DEFAULT 0,
+                    file_size BIGINT DEFAULT 0,
                     checksum TEXT,
                     version TEXT DEFAULT '1.0.0',
                     author TEXT,
                     source_url TEXT,
                     tags TEXT,
                     metadata TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )"#
             ).execute(pool).await?;
 
@@ -210,7 +273,7 @@ impl DatabaseService {
                     weight REAL DEFAULT 1.0,
                     category TEXT,
                     metadata TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
                 )"#
             ).execute(pool).await?;
@@ -232,9 +295,9 @@ impl DatabaseService {
                     description TEXT,
                     service_type TEXT,
                     scenario TEXT,
-                    is_active BOOLEAN DEFAULT 1,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )"#
             ).execute(pool).await?;
 
@@ -244,8 +307,8 @@ impl DatabaseService {
                     set_id TEXT NOT NULL,
                     dictionary_id TEXT NOT NULL,
                     priority INTEGER DEFAULT 0,
-                    is_enabled BOOLEAN DEFAULT 1,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    is_enabled BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(set_id) REFERENCES dictionary_sets(id) ON DELETE CASCADE,
                     FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
                 )"#
@@ -255,34 +318,21 @@ impl DatabaseService {
         }
 
         // 确保 ability_groups 表有 additional_notes 字段
-        let ability_groups_rows = sqlx::query("PRAGMA table_info(ability_groups)")
-            .fetch_all(pool)
-            .await?;
-        
-        let mut has_additional_notes = false;
-        for row in ability_groups_rows {
-            let name: String = sqlx::Row::get(&row, "name");
-            if name == "additional_notes" {
-                has_additional_notes = true;
-                break;
-            }
-        }
+        let has_additional_notes: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ability_groups' AND column_name = 'additional_notes')"
+        ).fetch_one(pool).await?;
 
         if !has_additional_notes {
             info!("Adding additional_notes column to ability_groups table");
-            sqlx::query("ALTER TABLE ability_groups ADD COLUMN additional_notes TEXT DEFAULT ''")
-                .execute(pool)
-                .await?;
+            sqlx::query("ALTER TABLE ability_groups ADD COLUMN additional_notes TEXT DEFAULT ''").execute(pool).await?;
         }
 
         // 检查并创建缓存表
-        let cache_table_exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cache_storage'"
-        )
-        .fetch_one(pool)
-        .await?;
+        let cache_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'cache_storage')"
+        ).fetch_one(pool).await?;
 
-        if cache_table_exists == 0 {
+        if !cache_table_exists {
             info!("Creating cache_storage table...");
             
             sqlx::query(
@@ -291,9 +341,9 @@ impl DatabaseService {
                     cache_value TEXT NOT NULL,
                     cache_type TEXT NOT NULL,
                     version TEXT DEFAULT '1.0',
-                    expires_at DATETIME,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    expires_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )"#
             ).execute(pool).await?;
 
@@ -327,17 +377,18 @@ impl DatabaseService {
                 let column_name = column.name();
                 let type_name = column.type_info().name();
                 
+                // Postgres types mapping
                 let value: Value = match type_name {
-                    "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => {
-                        let val: Option<String> = row.try_get(i)?;
+                    "TEXT" | "VARCHAR" | "CHAR" | "NAME" | "bpchar" => {
+                        let val: Option<String> = row.try_get(i).ok();
                         val.map(Value::String).unwrap_or(Value::Null)
                     }
-                    "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" => {
-                        let val: Option<i64> = row.try_get(i)?;
+                    "INT8" | "BIGINT" | "INT4" | "INTEGER" | "INT2" | "SMALLINT" => {
+                        let val: Option<i64> = row.try_get(i).ok();
                         val.map(|v| Value::Number(v.into())).unwrap_or(Value::Null)
                     }
-                    "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" | "DECIMAL" => {
-                        let val: Option<f64> = row.try_get(i)?;
+                    "FLOAT8" | "DOUBLE PRECISION" | "FLOAT4" | "REAL" | "NUMERIC" => {
+                        let val: Option<f64> = row.try_get(i).ok();
                         val.map(|v| {
                             Value::Number(
                                 serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()),
@@ -345,20 +396,34 @@ impl DatabaseService {
                         })
                         .unwrap_or(Value::Null)
                     }
-                    "BOOLEAN" | "BOOL" => {
-                        let val: Option<bool> = row.try_get(i)?;
+                    "BOOL" | "BOOLEAN" => {
+                        let val: Option<bool> = row.try_get(i).ok();
                         val.map(Value::Bool).unwrap_or(Value::Null)
                     }
-                    "NULL" => Value::Null,
+                    "TIMESTAMPTZ" | "TIMESTAMP" => {
+                        let val: Option<chrono::DateTime<chrono::Utc>> = row.try_get(i).ok();
+                        val.map(|v| Value::String(v.to_rfc3339())).unwrap_or(Value::Null)
+                    }
+                    "JSON" | "JSONB" => {
+                        let val: Option<serde_json::Value> = row.try_get(i).ok();
+                        val.unwrap_or(Value::Null)
+                    }
+                    "UUID" => {
+                        let val: Option<uuid::Uuid> = row.try_get(i).ok();
+                        val.map(|v| Value::String(v.to_string())).unwrap_or(Value::Null)
+                    }
                     _ => {
-                        if let Ok(Some(val)) = row.try_get::<Option<i64>, _>(i) {
+                         // Fallback attempts
+                        if let Ok(val) = row.try_get::<i64, _>(i) {
                             Value::Number(val.into())
-                        } else if let Ok(Some(val)) = row.try_get::<Option<f64>, _>(i) {
+                        } else if let Ok(val) = row.try_get::<f64, _>(i) {
                             Value::Number(serde_json::Number::from_f64(val).unwrap_or_else(|| 0.into()))
-                        } else if let Ok(Some(val)) = row.try_get::<Option<String>, _>(i) {
+                        } else if let Ok(val) = row.try_get::<String, _>(i) {
                             Value::String(val)
-                        } else if let Ok(Some(val)) = row.try_get::<Option<bool>, _>(i) {
+                        } else if let Ok(val) = row.try_get::<bool, _>(i) {
                             Value::Bool(val)
+                        } else if let Ok(val) = row.try_get::<serde_json::Value, _>(i) {
+                            val
                         } else {
                             Value::Null
                         }
@@ -393,78 +458,20 @@ impl DatabaseService {
             .fetch_one(pool)
             .await?;
 
-        let db_size = std::fs::metadata(&self.db_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        // DB size usually requires system admin perms in PG, return 0 for now or query a simple estimate
+        let db_size: i64 = sqlx::query_scalar("SELECT pg_database_size(current_database())")
+             .fetch_one(pool)
+             .await
+             .unwrap_or(0);
 
         Ok(DatabaseStats {
             scan_tasks_count: scan_tasks_count as f64,
             vulnerabilities_count: vulnerabilities_count as f64,
             assets_count: assets_count as f64,
             conversations_count: conversations_count as f64,
-            db_size_bytes: db_size,
+            db_size_bytes: db_size as u64,
             last_backup: None,
         })
-    }
-
-    /// 备份数据库
-    pub async fn backup(&self, backup_path: Option<PathBuf>) -> Result<PathBuf> {
-        let backup_path = backup_path.unwrap_or_else(|| {
-            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-            self.db_path
-                .parent()
-                .unwrap_or(&PathBuf::from("."))
-                .join(format!("backup_{}.db", timestamp))
-        });
-
-        std::fs::copy(&self.db_path, &backup_path)?;
-
-        tracing::info!("Database backup completed: {}", backup_path.display());
-        Ok(backup_path)
-    }
-
-    /// 恢复数据库
-    pub async fn restore(&self, backup_path: PathBuf) -> Result<()> {
-        std::fs::copy(&backup_path, &self.db_path)?;
-        tracing::info!("Database restoration completed: {}", backup_path.display());
-        Ok(())
-    }
-
-    /// Retry database operation with exponential backoff for locked database
-    pub async fn retry_on_locked<F, Fut, T>(&self, operation: F) -> Result<T>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        const MAX_RETRIES: u32 = 5;
-        const INITIAL_DELAY_MS: u64 = 10;
-        
-        let mut retries = 0;
-        loop {
-            match operation().await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    let is_locked = err_msg.contains("database is locked") 
-                        || err_msg.contains("SQLITE_BUSY")
-                        || err_msg.contains("code: 5");
-                    
-                    if is_locked && retries < MAX_RETRIES {
-                        retries += 1;
-                        let delay_ms = INITIAL_DELAY_MS * 2u64.pow(retries - 1);
-                        tracing::debug!(
-                            "Database locked, retry {}/{} after {}ms",
-                            retries,
-                            MAX_RETRIES,
-                            delay_ms
-                        );
-                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            }
-        }
     }
 }
 

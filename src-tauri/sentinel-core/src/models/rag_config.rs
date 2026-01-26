@@ -7,7 +7,7 @@ pub struct RagConfig {
     pub chunk_size_chars: usize,
     pub chunk_overlap_chars: usize,
     pub top_k: usize,
-    pub mmr_lambda: f32,
+    pub mmr_lambda: f64,
     pub batch_size: usize,
     pub max_concurrent: usize,
     pub embedding_provider: String,
@@ -18,7 +18,7 @@ pub struct RagConfig {
     pub reranking_provider: Option<String>,
     pub reranking_model: Option<String>,
     pub reranking_enabled: bool,
-    pub similarity_threshold: f32,
+    pub similarity_threshold: f64,
     #[serde(default)]
     pub augmentation_enabled: bool,
     #[serde(default = "default_context_window")]

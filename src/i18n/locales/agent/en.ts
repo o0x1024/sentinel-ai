@@ -157,7 +157,8 @@ export default {
   toolManagement: 'Tool Management',
   searchToolNamesOrDescriptions: 'Search tool names or descriptions...',
   all: 'All',
-  plugins: {
+  plugins: 'Plugins',
+  pluginCategory: {
     category: 'Plugins',
     referToAi: 'Reference to AI Assistant'
   },

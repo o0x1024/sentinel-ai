@@ -126,7 +126,7 @@ pub async fn bounty_create_program(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateProgramRequest,
 ) -> Result<BountyProgramRow, String> {
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now();
     
     let program = BountyProgramRow {
         id: Uuid::new_v4().to_string(),
@@ -148,8 +148,8 @@ pub async fn bounty_create_program(
         total_submissions: 0,
         accepted_submissions: 0,
         total_earnings: 0.0,
-        created_at: now.clone(),
-        updated_at: now,
+        created_at: now.to_rfc3339(),
+        updated_at: now.to_rfc3339(),
         last_activity_at: None,
     };
 
@@ -268,7 +268,7 @@ pub async fn bounty_get_program_stats(
         by_type: std::collections::HashMap::new(),
         total_submissions: stats.total_submissions,
         total_accepted: stats.total_accepted,
-        total_earnings: stats.total_earnings,
+        total_earnings: stats.total_earnings as f64,
     })
 }
 
@@ -1563,7 +1563,7 @@ pub struct FindingExportData {
     pub reproduction_steps: Option<Vec<String>>,
     pub evidence: Vec<EvidenceExportData>,
     pub cwe_id: Option<String>,
-    pub cvss_score: Option<f64>,
+    pub cvss_score: Option<f32>,
     pub tags: Vec<String>,
     pub created_at: String,
 }
@@ -1630,7 +1630,7 @@ pub async fn bounty_export_report(
             reproduction_steps,
             evidence: evidence_data,
             cwe_id: finding.cwe_id,
-            cvss_score: finding.cvss_score,
+            cvss_score: finding.cvss_score.map(|s| s as f32),
             tags,
             created_at: finding.created_at,
         });

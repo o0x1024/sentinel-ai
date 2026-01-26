@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::sqlite::SqlitePool;
+use sqlx::postgres::PgPool;
 
 use crate::database_service::traits::Database;
 use crate::database_service::service::DatabaseService;
@@ -12,13 +12,13 @@ pub struct DatabaseClient {
 }
 
 impl DatabaseClient {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         let mut service = DatabaseService::new();
         service.pool = Some(pool);
         Self { service }
     }
 
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &PgPool {
         self.service.get_pool().expect("数据库未初始化")
     }
 

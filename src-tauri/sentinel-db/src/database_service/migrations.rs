@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::sqlite::SqlitePool;
+use sqlx::postgres::PgPool;
 use tracing::info;
 
 /// Database migration for ASM (Attack Surface Management) enhancements
@@ -7,7 +7,7 @@ pub struct AsmEnhancementMigration;
 
 impl AsmEnhancementMigration {
     /// Apply migration to add ASM fields to bounty_assets table
-    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
         info!("Applying ASM enhancement migration...");
 
         // Add IP Asset Attributes
@@ -17,8 +17,8 @@ impl AsmEnhancementMigration {
         Self::add_column_if_not_exists(pool, "bounty_assets", "isp", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "country", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "city", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "latitude", "REAL").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "longitude", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "latitude", "DOUBLE PRECISION").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "longitude", "DOUBLE PRECISION").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "is_cloud", "BOOLEAN").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "cloud_provider", "TEXT").await?;
 
@@ -65,9 +65,9 @@ impl AsmEnhancementMigration {
 
         // Add Attack Surface & Risk
         Self::add_column_if_not_exists(pool, "bounty_assets", "exposure_level", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "attack_surface_score", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "attack_surface_score", "DOUBLE PRECISION").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "vulnerability_count", "INTEGER").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "cvss_max_score", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "cvss_max_score", "DOUBLE PRECISION").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "exploit_available", "BOOLEAN").await?;
 
         // Add Asset Classification
@@ -79,7 +79,7 @@ impl AsmEnhancementMigration {
         // Add Discovery & Monitoring
         Self::add_column_if_not_exists(pool, "bounty_assets", "discovery_method", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "data_sources_json", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "confidence_score", "REAL").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "confidence_score", "DOUBLE PRECISION").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "monitoring_enabled", "BOOLEAN").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "scan_frequency", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "last_scan_type", "TEXT").await?;
@@ -112,19 +112,20 @@ impl AsmEnhancementMigration {
 
     /// Helper function to add column if it doesn't exist
     async fn add_column_if_not_exists(
-        pool: &SqlitePool,
+        pool: &PgPool,
         table: &str,
         column: &str,
         column_type: &str,
     ) -> Result<()> {
-        let query = format!(
-            "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name = '{}'",
-            table, column
-        );
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
 
-        let result: (i32,) = sqlx::query_as(&query).fetch_one(pool).await?;
-
-        if result.0 == 0 {
+        if !exists {
             info!("Adding column '{}' to table '{}'", column, table);
             let alter_query = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type);
             sqlx::query(&alter_query).execute(pool).await?;
@@ -139,11 +140,10 @@ pub struct TaskToolIntegrationMigration;
 
 impl TaskToolIntegrationMigration {
     /// Apply migration to add task-tool tracking tables
-    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
         info!("Applying task-tool integration migration...");
 
         // 1. Create task_tool_executions table for detailed execution tracking
-        // Note: Removed FOREIGN KEY constraint to allow testing with temporary task IDs
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS task_tool_executions (
                 id TEXT PRIMARY KEY,
@@ -155,18 +155,17 @@ impl TaskToolIntegrationMigration {
                 execution_count INTEGER DEFAULT 0,
                 success_count INTEGER DEFAULT 0,
                 error_count INTEGER DEFAULT 0,
-                total_execution_time_ms INTEGER DEFAULT 0,
-                avg_execution_time_ms INTEGER DEFAULT 0,
-                last_execution_time TEXT,
+                total_execution_time_ms BIGINT DEFAULT 0,
+                avg_execution_time_ms BIGINT DEFAULT 0,
+                last_execution_time TIMESTAMPTZ,
                 last_error_message TEXT,
                 metadata TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
             )"#
         ).execute(pool).await?;
 
         // 2. Create task_tool_execution_logs for individual execution records
-        // Note: Removed FOREIGN KEY constraints to allow testing with temporary task IDs
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS task_tool_execution_logs (
                 id TEXT PRIMARY KEY,
@@ -176,14 +175,14 @@ impl TaskToolIntegrationMigration {
                 tool_name TEXT NOT NULL,
                 tool_type TEXT NOT NULL,
                 status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                execution_time_ms INTEGER,
+                started_at TIMESTAMPTZ NOT NULL,
+                completed_at TIMESTAMPTZ,
+                execution_time_ms BIGINT,
                 input_params TEXT,
                 output_result TEXT,
                 error_message TEXT,
                 metadata TEXT,
-                created_at TEXT NOT NULL
+                created_at TIMESTAMPTZ NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -203,15 +202,14 @@ impl TaskToolIntegrationMigration {
         }
 
         // 4. Add new columns to scan_tasks table (if not exists)
-        // Note: SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we need to check first
-        Self::add_column_if_not_exists(
+        AsmEnhancementMigration::add_column_if_not_exists(
             pool,
             "scan_tasks",
             "active_tools_count",
             "INTEGER DEFAULT 0"
         ).await?;
 
-        Self::add_column_if_not_exists(
+        AsmEnhancementMigration::add_column_if_not_exists(
             pool,
             "scan_tasks",
             "tool_statistics",
@@ -222,40 +220,8 @@ impl TaskToolIntegrationMigration {
         Ok(())
     }
 
-    /// Helper function to add column if it doesn't exist
-    async fn add_column_if_not_exists(
-        pool: &SqlitePool,
-        table: &str,
-        column: &str,
-        column_type: &str,
-    ) -> Result<()> {
-        // Check if column exists
-        let check_query = format!(
-            "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name = '{}'",
-            table, column
-        );
-        
-        let result: (i64,) = sqlx::query_as(&check_query)
-            .fetch_one(pool)
-            .await?;
-
-        if result.0 == 0 {
-            // Column doesn't exist, add it
-            let alter_query = format!(
-                "ALTER TABLE {} ADD COLUMN {} {}",
-                table, column, column_type
-            );
-            sqlx::query(&alter_query).execute(pool).await?;
-            info!("Added column {} to table {}", column, table);
-        } else {
-            info!("Column {} already exists in table {}", column, table);
-        }
-
-        Ok(())
-    }
-
     /// Rollback migration (for testing purposes)
-    pub async fn rollback(pool: &SqlitePool) -> Result<()> {
+    pub async fn rollback(pool: &PgPool) -> Result<()> {
         info!("Rolling back task-tool integration migration...");
 
         sqlx::query("DROP TABLE IF EXISTS task_tool_execution_logs")
@@ -275,7 +241,7 @@ impl TaskToolIntegrationMigration {
 pub struct SubagentRunsMigration;
 
 impl SubagentRunsMigration {
-    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
         info!("Applying subagent runs migration...");
 
         sqlx::query(
@@ -289,10 +255,10 @@ impl SubagentRunsMigration {
                 error TEXT,
                 model_name TEXT,
                 model_provider TEXT,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                started_at TIMESTAMPTZ NOT NULL,
+                completed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -315,7 +281,7 @@ impl SubagentRunsMigration {
 pub struct SubagentMessagesMigration;
 
 impl SubagentMessagesMigration {
-    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
         info!("Applying subagent messages migration...");
 
         sqlx::query(
@@ -328,7 +294,7 @@ impl SubagentMessagesMigration {
                 tool_calls TEXT,
                 attachments TEXT,
                 reasoning_content TEXT,
-                timestamp TEXT NOT NULL,
+                timestamp TIMESTAMPTZ NOT NULL,
                 structured_data TEXT
             )"#
         ).execute(pool).await?;
@@ -351,7 +317,7 @@ impl SubagentMessagesMigration {
 pub struct AgentTodosMigration;
 
 impl AgentTodosMigration {
-    pub async fn apply(pool: &SqlitePool) -> Result<()> {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
         info!("Applying agent todos migration...");
 
         // Create agent_todos table for persistent todo storage
@@ -363,8 +329,8 @@ impl AgentTodosMigration {
                 description TEXT NOT NULL,
                 status TEXT NOT NULL,
                 result TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
             )"#
         ).execute(pool).await?;
 
@@ -379,6 +345,396 @@ impl AgentTodosMigration {
         }
 
         info!("Agent todos migration completed successfully");
+        Ok(())
+    }
+}
+
+/// Database migration to fix FLOAT4/REAL to FLOAT8/DOUBLE PRECISION type mismatch
+/// This fixes sqlx type compatibility issues where code uses f64 but database uses REAL
+pub struct FloatTypeMigration;
+
+impl FloatTypeMigration {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
+        info!("Applying float type migration (REAL -> DOUBLE PRECISION)...");
+
+        // List of (table, column) pairs that need to be migrated from REAL to DOUBLE PRECISION
+        let columns_to_migrate = vec![
+            // bounty_assets table
+            ("bounty_assets", "latitude"),
+            ("bounty_assets", "longitude"),
+            ("bounty_assets", "attack_surface_score"),
+            ("bounty_assets", "cvss_max_score"),
+            ("bounty_assets", "confidence_score"),
+            ("bounty_assets", "priority_score"),
+            ("bounty_assets", "risk_score"),
+            // bounty_programs table
+            ("bounty_programs", "priority_score"),
+            ("bounty_programs", "total_earnings"),
+            // bounty_findings table
+            ("bounty_findings", "cvss_score"),
+            // bounty_submissions table
+            ("bounty_submissions", "cvss_score"),
+            ("bounty_submissions", "reward_amount"),
+            ("bounty_submissions", "bonus_amount"),
+            // plugin_registry table
+            ("plugin_registry", "quality_score"),
+            // ai_memories table
+            ("ai_memories", "cost"),
+            ("ai_memories", "confidence"),
+            // agent_todos table
+            ("agent_todos", "confidence"),
+            // workflow_runs table
+            ("workflow_runs", "progress"),
+            // tasks table
+            ("tasks", "progress"),
+            // dictionaries table
+            ("dictionaries", "weight"),
+            // knowledge_graph_edges table
+            ("knowledge_graph_edges", "confidence"),
+            // ai_executions table
+            ("ai_executions", "cost"),
+            // model_stats table
+            ("model_stats", "cost"),
+        ];
+
+        for (table, column) in columns_to_migrate {
+            Self::migrate_column_to_double(pool, table, column).await?;
+        }
+
+        info!("Float type migration completed successfully");
+        Ok(())
+    }
+
+    /// Migrate a single column from REAL to DOUBLE PRECISION
+    async fn migrate_column_to_double(
+        pool: &PgPool,
+        table: &str,
+        column: &str,
+    ) -> Result<()> {
+        // Check if column exists and is REAL type
+        let column_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !column_exists {
+            return Ok(());
+        }
+
+        // Check if column is already DOUBLE PRECISION
+        let is_double: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+                AND data_type = 'double precision'
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if is_double {
+            info!("Column {}.{} is already DOUBLE PRECISION, skipping", table, column);
+            return Ok(());
+        }
+
+        // Check if column is REAL or FLOAT4 type
+        let is_real_or_float4: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+                AND (data_type = 'real' OR data_type = 'double precision')
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        // Check if column is REAL or FLOAT4 (numeric_precision = 24 for REAL/FLOAT4)
+        let numeric_precision: Option<i32> = sqlx::query_scalar(
+            "SELECT numeric_precision FROM information_schema.columns
+             WHERE table_name = $1 AND column_name = $2"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_optional(pool)
+        .await?;
+
+        let needs_migration = if let Some(precision) = numeric_precision {
+            // REAL/FLOAT4 has precision of 24, DOUBLE PRECISION has precision of 53
+            precision == 24
+        } else {
+            // Fallback: check data_type directly
+            is_real_or_float4 && !is_double
+        };
+
+        if !needs_migration {
+            info!("Column {}.{} does not need migration (not REAL/FLOAT4), skipping", table, column);
+            return Ok(());
+        }
+
+        // Alter column type from REAL/FLOAT4 to DOUBLE PRECISION
+        info!("Migrating column {}.{} from REAL/FLOAT4 to DOUBLE PRECISION", table, column);
+        let alter_sql = format!(
+            "ALTER TABLE {} ALTER COLUMN {} TYPE DOUBLE PRECISION USING {}::DOUBLE PRECISION",
+            table, column, column
+        );
+
+        sqlx::query(&alter_sql)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to migrate column {}.{}: {}", table, column, e))?;
+
+        Ok(())
+    }
+}
+
+/// Database migration to fix TEXT to TIMESTAMP WITH TIME ZONE type mismatch
+/// This fixes sqlx type compatibility issues where code expects TIMESTAMP WITH TIME ZONE but database uses TEXT
+pub struct TimestampTypeMigration;
+
+impl TimestampTypeMigration {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
+        info!("Applying timestamp type migration (TEXT -> TIMESTAMP WITH TIME ZONE)...");
+
+        // List of (table, column) pairs that need to be migrated from TEXT to TIMESTAMP WITH TIME ZONE
+        let columns_to_migrate = vec![
+            // bounty_programs table
+            ("bounty_programs", "created_at"),
+            ("bounty_programs", "updated_at"),
+            ("bounty_programs", "last_activity_at"),
+            // bounty_scopes table
+            ("bounty_scopes", "created_at"),
+            ("bounty_scopes", "updated_at"),
+            // bounty_findings table
+            ("bounty_findings", "first_seen_at"),
+            ("bounty_findings", "last_seen_at"),
+            ("bounty_findings", "verified_at"),
+            ("bounty_findings", "created_at"),
+            ("bounty_findings", "updated_at"),
+            // bounty_submissions table
+            ("bounty_submissions", "created_at"),
+            ("bounty_submissions", "submitted_at"),
+            ("bounty_submissions", "updated_at"),
+            ("bounty_submissions", "closed_at"),
+            ("bounty_submissions", "retest_at"),
+            ("bounty_submissions", "last_retest_at"),
+            // bounty_evidence table
+            ("bounty_evidence", "created_at"),
+            ("bounty_evidence", "updated_at"),
+            // bounty_change_events table
+            ("bounty_change_events", "created_at"),
+            ("bounty_change_events", "updated_at"),
+            ("bounty_change_events", "resolved_at"),
+            // bounty_assets table
+            ("bounty_assets", "last_checked_at"),
+            ("bounty_assets", "first_seen_at"),
+            ("bounty_assets", "last_seen_at"),
+            ("bounty_assets", "created_at"),
+            ("bounty_assets", "updated_at"),
+            // bounty_workflow_templates table
+            ("bounty_workflow_templates", "created_at"),
+            ("bounty_workflow_templates", "updated_at"),
+            // bounty_workflow_bindings table
+            ("bounty_workflow_bindings", "last_run_at"),
+            ("bounty_workflow_bindings", "created_at"),
+            ("bounty_workflow_bindings", "updated_at"),
+            // repeater_tabs table
+            ("repeater_tabs", "created_at"),
+            ("repeater_tabs", "updated_at"),
+        ];
+
+        for (table, column) in columns_to_migrate {
+            Self::migrate_column_to_timestamp(pool, table, column).await?;
+        }
+
+        info!("Timestamp type migration completed successfully");
+        Ok(())
+    }
+
+    /// Migrate a single column from TEXT to TIMESTAMP WITH TIME ZONE
+    async fn migrate_column_to_timestamp(
+        pool: &PgPool,
+        table: &str,
+        column: &str,
+    ) -> Result<()> {
+        // Check if column exists
+        let column_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !column_exists {
+            return Ok(());
+        }
+
+        // Check if column is already TIMESTAMP WITH TIME ZONE
+        let is_timestamp: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+                AND data_type = 'timestamp with time zone'
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if is_timestamp {
+            info!("Column {}.{} is already TIMESTAMP WITH TIME ZONE, skipping", table, column);
+            return Ok(());
+        }
+
+        // Check if column is TEXT type
+        let is_text: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+                AND data_type = 'text'
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !is_text {
+            info!("Column {}.{} is not TEXT type, skipping", table, column);
+            return Ok(());
+        }
+
+        // Alter column type from TEXT to TIMESTAMP WITH TIME ZONE
+        info!("Migrating column {}.{} from TEXT to TIMESTAMP WITH TIME ZONE", table, column);
+        let alter_sql = format!(
+            "ALTER TABLE {} ALTER COLUMN {} TYPE TIMESTAMP WITH TIME ZONE USING {}::TIMESTAMP WITH TIME ZONE",
+            table, column, column
+        );
+
+        sqlx::query(&alter_sql)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to migrate column {}.{}: {}", table, column, e))?;
+
+        Ok(())
+    }
+}
+
+/// Database migration to fix INTEGER to BIGINT type mismatch
+/// This fixes sqlx type compatibility issues where code uses i64 but database uses INTEGER
+pub struct IntegerTypeMigration;
+
+impl IntegerTypeMigration {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
+        info!("Applying integer type migration (INTEGER -> BIGINT)...");
+
+        // List of (table, column) pairs that need to be migrated from INTEGER to BIGINT
+        let columns_to_migrate = vec![
+            // dictionaries table
+            ("dictionaries", "word_count"),
+            ("dictionaries", "file_size"),
+            // rag_collections table
+            ("rag_collections", "document_count"),
+            ("rag_collections", "chunk_count"),
+            // rag_document_sources table
+            ("rag_document_sources", "chunk_count"),
+            ("rag_document_sources", "file_size"),
+            // bounty_evidence table
+            ("bounty_evidence", "file_size"),
+        ];
+
+        for (table, column) in columns_to_migrate {
+            Self::migrate_column_to_bigint(pool, table, column).await?;
+        }
+
+        info!("Integer type migration completed successfully");
+        Ok(())
+    }
+
+    /// Migrate a single column from INTEGER to BIGINT
+    async fn migrate_column_to_bigint(
+        pool: &PgPool,
+        table: &str,
+        column: &str,
+    ) -> Result<()> {
+        // Check if column exists
+        let column_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !column_exists {
+            return Ok(());
+        }
+
+        // Check if column is already BIGINT
+        let is_bigint: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+                AND data_type = 'bigint'
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if is_bigint {
+            info!("Column {}.{} is already BIGINT, skipping", table, column);
+            return Ok(());
+        }
+
+        // Check if column is INTEGER type
+        let is_integer: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = $1 AND column_name = $2
+                AND data_type = 'integer'
+            )"
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !is_integer {
+            info!("Column {}.{} is not INTEGER type, skipping", table, column);
+            return Ok(());
+        }
+
+        // Alter column type from INTEGER to BIGINT
+        info!("Migrating column {}.{} from INTEGER to BIGINT", table, column);
+        let alter_sql = format!(
+            "ALTER TABLE {} ALTER COLUMN {} TYPE BIGINT USING {}::BIGINT",
+            table, column, column
+        );
+
+        sqlx::query(&alter_sql)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to migrate column {}.{}: {}", table, column, e))?;
+
         Ok(())
     }
 }

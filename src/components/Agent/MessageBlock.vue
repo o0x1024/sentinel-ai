@@ -912,13 +912,14 @@ const formattedContent = computed(() => {
     case 'planning':
       return `**Planning**\n\n${content}${cursor}`
     
-    case 'tool_result':
+    case 'tool_result': {
       // Wrap result in code block if not already markdown
       let result = content
       if (!content.includes('```') && !content.includes('#')) {
         result = `\`\`\`\n${content}\n\`\`\``
       }
       return result + cursor
+    }
     
     case 'progress': {
       const step = metadata?.step_index ?? 0

@@ -1,18 +1,358 @@
 //! Bug Bounty database operations
 
 use anyhow::Result;
+use chrono;
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, Row};
 use tracing::info;
 
 use super::service::DatabaseService;
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Convert string timestamp to DateTime<Utc> for database binding
+fn timestamp_string_to_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
+    s.parse::<chrono::DateTime<chrono::Utc>>()
+        .unwrap_or_else(|_| chrono::Utc::now())
+}
+
+/// Convert optional string timestamp to Option<DateTime<Utc>> for database binding
+fn optional_timestamp_string_to_datetime(s: &Option<String>) -> Option<chrono::DateTime<chrono::Utc>> {
+    s.as_ref().and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
+}
+
+/// Convert TIMESTAMP WITH TIME ZONE to String for struct fields
+fn timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> String {
+    row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
+        .map(|dt| dt.to_rfc3339())
+        .or_else(|_| row.try_get::<String, _>(column))
+        .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339())
+}
+
+/// Convert optional TIMESTAMP WITH TIME ZONE to Option<String> for struct fields
+fn optional_timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> Option<String> {
+    row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
+        .map(|dt| Some(dt.to_rfc3339()))
+        .or_else(|_| row.try_get::<Option<String>, _>(column))
+        .unwrap_or(None)
+}
+
+/// Map PgRow to BountyProgramRow
+fn row_to_bounty_program(row: sqlx::postgres::PgRow) -> BountyProgramRow {
+    BountyProgramRow {
+        id: row.get("id"),
+        name: row.get("name"),
+        organization: row.get("organization"),
+        platform: row.get("platform"),
+        platform_handle: row.get("platform_handle"),
+        url: row.get("url"),
+        program_type: row.get("program_type"),
+        status: row.get("status"),
+        description: row.get("description"),
+        rewards_json: row.get("rewards_json"),
+        response_sla_days: row.get("response_sla_days"),
+        resolution_sla_days: row.get("resolution_sla_days"),
+        rules_json: row.get("rules_json"),
+        tags_json: row.get("tags_json"),
+        metadata_json: row.get("metadata_json"),
+        priority_score: row.get("priority_score"),
+        total_submissions: row.get("total_submissions"),
+        accepted_submissions: row.get("accepted_submissions"),
+        total_earnings: row.get("total_earnings"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+        last_activity_at: optional_timestamp_to_string(&row, "last_activity_at"),
+    }
+}
+
+/// Map PgRow to ProgramScopeRow
+fn row_to_program_scope(row: sqlx::postgres::PgRow) -> ProgramScopeRow {
+    ProgramScopeRow {
+        id: row.get("id"),
+        program_id: row.get("program_id"),
+        scope_type: row.get("scope_type"),
+        target_type: row.get("target_type"),
+        target: row.get("target"),
+        description: row.get("description"),
+        allowed_tests_json: row.get("allowed_tests_json"),
+        instructions_json: row.get("instructions_json"),
+        requires_auth: row.get("requires_auth"),
+        test_accounts_json: row.get("test_accounts_json"),
+        asset_count: row.get("asset_count"),
+        finding_count: row.get("finding_count"),
+        priority: row.get("priority"),
+        metadata_json: row.get("metadata_json"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+    }
+}
+
+/// Map PgRow to BountyFindingRow
+fn row_to_bounty_finding(row: sqlx::postgres::PgRow) -> BountyFindingRow {
+    BountyFindingRow {
+        id: row.get("id"),
+        program_id: row.get("program_id"),
+        scope_id: row.get("scope_id"),
+        asset_id: row.get("asset_id"),
+        title: row.get("title"),
+        description: row.get("description"),
+        finding_type: row.get("finding_type"),
+        severity: row.get("severity"),
+        status: row.get("status"),
+        confidence: row.get("confidence"),
+        cvss_score: row.get("cvss_score"),
+        cwe_id: row.get("cwe_id"),
+        affected_url: row.get("affected_url"),
+        affected_parameter: row.get("affected_parameter"),
+        reproduction_steps_json: row.get("reproduction_steps_json"),
+        impact: row.get("impact"),
+        remediation: row.get("remediation"),
+        evidence_ids_json: row.get("evidence_ids_json"),
+        tags_json: row.get("tags_json"),
+        metadata_json: row.get("metadata_json"),
+        fingerprint: row.get("fingerprint"),
+        duplicate_of: row.get("duplicate_of"),
+        first_seen_at: timestamp_to_string(&row, "first_seen_at"),
+        last_seen_at: timestamp_to_string(&row, "last_seen_at"),
+        verified_at: optional_timestamp_to_string(&row, "verified_at"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+        created_by: row.get("created_by"),
+    }
+}
+
+/// Map PgRow to BountySubmissionRow
+fn row_to_bounty_submission(row: sqlx::postgres::PgRow) -> BountySubmissionRow {
+    BountySubmissionRow {
+        id: row.get("id"),
+        program_id: row.get("program_id"),
+        finding_id: row.get("finding_id"),
+        platform_submission_id: row.get("platform_submission_id"),
+        title: row.get("title"),
+        status: row.get("status"),
+        priority: row.get("priority"),
+        vulnerability_type: row.get("vulnerability_type"),
+        severity: row.get("severity"),
+        cvss_score: row.get("cvss_score"),
+        cwe_id: row.get("cwe_id"),
+        description: row.get("description"),
+        reproduction_steps_json: row.get("reproduction_steps_json"),
+        impact: row.get("impact"),
+        remediation: row.get("remediation"),
+        evidence_ids_json: row.get("evidence_ids_json"),
+        platform_url: row.get("platform_url"),
+        reward_amount: row.get("reward_amount"),
+        reward_currency: row.get("reward_currency"),
+        bonus_amount: row.get("bonus_amount"),
+        response_time_hours: row.get("response_time_hours"),
+        resolution_time_hours: row.get("resolution_time_hours"),
+        requires_retest: row.get("requires_retest"),
+        retest_at: optional_timestamp_to_string(&row, "retest_at"),
+        last_retest_at: optional_timestamp_to_string(&row, "last_retest_at"),
+        communications_json: row.get("communications_json"),
+        timeline_json: row.get("timeline_json"),
+        tags_json: row.get("tags_json"),
+        metadata_json: row.get("metadata_json"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        submitted_at: optional_timestamp_to_string(&row, "submitted_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+        closed_at: optional_timestamp_to_string(&row, "closed_at"),
+        created_by: row.get("created_by"),
+    }
+}
+
+/// Map PgRow to BountyEvidenceRow
+fn row_to_bounty_evidence(row: sqlx::postgres::PgRow) -> BountyEvidenceRow {
+    BountyEvidenceRow {
+        id: row.get("id"),
+        finding_id: row.get("finding_id"),
+        evidence_type: row.get("evidence_type"),
+        title: row.get("title"),
+        description: row.get("description"),
+        file_path: row.get("file_path"),
+        file_url: row.get("file_url"),
+        content: row.get("content"),
+        mime_type: row.get("mime_type"),
+        file_size: row.get("file_size"),
+        http_request_json: row.get("http_request_json"),
+        http_response_json: row.get("http_response_json"),
+        diff: row.get("diff"),
+        tags_json: row.get("tags_json"),
+        metadata_json: row.get("metadata_json"),
+        display_order: row.get("display_order"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+    }
+}
+
+/// Map PgRow to BountyChangeEventRow
+fn row_to_bounty_change_event(row: sqlx::postgres::PgRow) -> BountyChangeEventRow {
+    BountyChangeEventRow {
+        id: row.get("id"),
+        program_id: row.get("program_id"),
+        asset_id: row.get("asset_id"),
+        event_type: row.get("event_type"),
+        severity: row.get("severity"),
+        status: row.get("status"),
+        title: row.get("title"),
+        description: row.get("description"),
+        old_value: row.get("old_value"),
+        new_value: row.get("new_value"),
+        diff: row.get("diff"),
+        affected_scope: row.get("affected_scope"),
+        detection_method: row.get("detection_method"),
+        triggered_workflows_json: row.get("triggered_workflows_json"),
+        generated_findings_json: row.get("generated_findings_json"),
+        tags_json: row.get("tags_json"),
+        metadata_json: row.get("metadata_json"),
+        risk_score: row.get("risk_score"),
+        auto_trigger_enabled: row.get("auto_trigger_enabled"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+        resolved_at: optional_timestamp_to_string(&row, "resolved_at"),
+    }
+}
+
+/// Map PgRow to BountyWorkflowTemplateRow
+fn row_to_bounty_workflow_template(row: sqlx::postgres::PgRow) -> BountyWorkflowTemplateRow {
+    BountyWorkflowTemplateRow {
+        id: row.get("id"),
+        name: row.get("name"),
+        description: row.get("description"),
+        category: row.get("category"),
+        workflow_definition_id: row.get("workflow_definition_id"),
+        steps_json: row.get("steps_json"),
+        input_schema_json: row.get("input_schema_json"),
+        output_schema_json: row.get("output_schema_json"),
+        tags_json: row.get("tags_json"),
+        is_built_in: row.get("is_built_in"),
+        estimated_duration_mins: row.get("estimated_duration_mins"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+    }
+}
+
+/// Map PgRow to BountyWorkflowBindingRow
+fn row_to_bounty_workflow_binding(row: sqlx::postgres::PgRow) -> BountyWorkflowBindingRow {
+    BountyWorkflowBindingRow {
+        id: row.get("id"),
+        program_id: row.get("program_id"),
+        scope_id: row.get("scope_id"),
+        workflow_template_id: row.get("workflow_template_id"),
+        is_enabled: row.get("is_enabled"),
+        auto_run_on_change: row.get("auto_run_on_change"),
+        trigger_conditions_json: row.get("trigger_conditions_json"),
+        schedule_cron: row.get("schedule_cron"),
+        last_run_at: optional_timestamp_to_string(&row, "last_run_at"),
+        last_run_status: row.get("last_run_status"),
+        run_count: row.get("run_count"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+    }
+}
+
+/// Map PgRow to BountyAssetRow
+fn row_to_bounty_asset(row: sqlx::postgres::PgRow) -> BountyAssetRow {
+    BountyAssetRow {
+        id: row.get("id"),
+        program_id: row.get("program_id"),
+        scope_id: row.get("scope_id"),
+        asset_type: row.get("asset_type"),
+        canonical_url: row.get("canonical_url"),
+        original_urls_json: row.get("original_urls_json"),
+        hostname: row.get("hostname"),
+        port: row.get("port"),
+        path: row.get("path"),
+        protocol: row.get("protocol"),
+        ip_addresses_json: row.get("ip_addresses_json"),
+        dns_records_json: row.get("dns_records_json"),
+        tech_stack_json: row.get("tech_stack_json"),
+        fingerprint: row.get("fingerprint"),
+        tags_json: row.get("tags_json"),
+        labels_json: row.get("labels_json"),
+        priority_score: row.get("priority_score"),
+        risk_score: row.get("risk_score"),
+        is_alive: row.get("is_alive"),
+        last_checked_at: optional_timestamp_to_string(&row, "last_checked_at"),
+        first_seen_at: timestamp_to_string(&row, "first_seen_at"),
+        last_seen_at: timestamp_to_string(&row, "last_seen_at"),
+        findings_count: row.get("findings_count"),
+        change_events_count: row.get("change_events_count"),
+        metadata_json: row.get("metadata_json"),
+        created_at: timestamp_to_string(&row, "created_at"),
+        updated_at: timestamp_to_string(&row, "updated_at"),
+        // ASM fields
+        ip_version: row.get("ip_version"),
+        asn: row.get("asn"),
+        asn_org: row.get("asn_org"),
+        isp: row.get("isp"),
+        country: row.get("country"),
+        city: row.get("city"),
+        latitude: row.get("latitude"),
+        longitude: row.get("longitude"),
+        is_cloud: row.get("is_cloud"),
+        cloud_provider: row.get("cloud_provider"),
+        service_name: row.get("service_name"),
+        service_version: row.get("service_version"),
+        service_product: row.get("service_product"),
+        banner: row.get("banner"),
+        transport_protocol: row.get("transport_protocol"),
+        cpe: row.get("cpe"),
+        domain_registrar: row.get("domain_registrar"),
+        registration_date: row.get("registration_date"),
+        expiration_date: row.get("expiration_date"),
+        nameservers_json: row.get("nameservers_json"),
+        mx_records_json: row.get("mx_records_json"),
+        txt_records_json: row.get("txt_records_json"),
+        whois_data_json: row.get("whois_data_json"),
+        is_wildcard: row.get("is_wildcard"),
+        parent_domain: row.get("parent_domain"),
+        http_status: row.get("http_status"),
+        response_time_ms: row.get("response_time_ms"),
+        content_length: row.get("content_length"),
+        content_type: row.get("content_type"),
+        title: row.get("title"),
+        favicon_hash: row.get("favicon_hash"),
+        headers_json: row.get("headers_json"),
+        waf_detected: row.get("waf_detected"),
+        cdn_detected: row.get("cdn_detected"),
+        screenshot_path: row.get("screenshot_path"),
+        body_hash: row.get("body_hash"),
+        certificate_id: row.get("certificate_id"),
+        ssl_enabled: row.get("ssl_enabled"),
+        certificate_subject: row.get("certificate_subject"),
+        certificate_issuer: row.get("certificate_issuer"),
+        certificate_valid_from: row.get("certificate_valid_from"),
+        certificate_valid_to: row.get("certificate_valid_to"),
+        certificate_san_json: row.get("certificate_san_json"),
+        exposure_level: row.get("exposure_level"),
+        attack_surface_score: row.get("attack_surface_score"),
+        vulnerability_count: row.get("vulnerability_count"),
+        cvss_max_score: row.get("cvss_max_score"),
+        exploit_available: row.get("exploit_available"),
+        asset_category: row.get("asset_category"),
+        asset_owner: row.get("asset_owner"),
+        business_unit: row.get("business_unit"),
+        criticality: row.get("criticality"),
+        discovery_method: row.get("discovery_method"),
+        data_sources_json: row.get("data_sources_json"),
+        confidence_score: row.get("confidence_score"),
+        monitoring_enabled: row.get("monitoring_enabled"),
+        scan_frequency: row.get("scan_frequency"),
+        last_scan_type: row.get("last_scan_type"),
+        parent_asset_id: row.get("parent_asset_id"),
+        related_assets_json: row.get("related_assets_json"),
+    }
+}
 
 // ============================================================================
 // Database Models
 // ============================================================================
 
 /// Bug Bounty Program database model
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyProgramRow {
     pub id: String,
     pub name: String,
@@ -39,7 +379,7 @@ pub struct BountyProgramRow {
 }
 
 /// Program Scope database model
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgramScopeRow {
     pub id: String,
     pub program_id: String,
@@ -60,7 +400,7 @@ pub struct ProgramScopeRow {
 }
 
 /// Bounty Finding database model
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyFindingRow {
     pub id: String,
     pub program_id: String,
@@ -93,7 +433,7 @@ pub struct BountyFindingRow {
 }
 
 /// Bounty Submission database model
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountySubmissionRow {
     pub id: String,
     pub program_id: String,
@@ -149,7 +489,7 @@ impl DatabaseService {
                 response_sla_days, resolution_sla_days, rules_json, tags_json,
                 metadata_json, priority_score, total_submissions, accepted_submissions,
                 total_earnings, created_at, updated_at, last_activity_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)"#
         )
         .bind(&program.id)
         .bind(&program.name)
@@ -170,9 +510,9 @@ impl DatabaseService {
         .bind(program.total_submissions)
         .bind(program.accepted_submissions)
         .bind(program.total_earnings)
-        .bind(&program.created_at)
-        .bind(&program.updated_at)
-        .bind(&program.last_activity_at)
+        .bind(timestamp_string_to_datetime(&program.created_at))
+        .bind(timestamp_string_to_datetime(&program.updated_at))
+        .bind(optional_timestamp_string_to_datetime(&program.last_activity_at))
         .execute(self.pool())
         .await?;
 
@@ -182,27 +522,48 @@ impl DatabaseService {
 
     /// Get a bounty program by ID
     pub async fn get_bounty_program(&self, id: &str) -> Result<Option<BountyProgramRow>> {
-        let row = sqlx::query_as::<_, BountyProgramRow>(
-            "SELECT * FROM bounty_programs WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_programs WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(|row| BountyProgramRow {
+            id: row.get("id"),
+            name: row.get("name"),
+            organization: row.get("organization"),
+            platform: row.get("platform"),
+            platform_handle: row.get("platform_handle"),
+            url: row.get("url"),
+            program_type: row.get("program_type"),
+            status: row.get("status"),
+            description: row.get("description"),
+            rewards_json: row.get("rewards_json"),
+            response_sla_days: row.get("response_sla_days"),
+            resolution_sla_days: row.get("resolution_sla_days"),
+            rules_json: row.get("rules_json"),
+            tags_json: row.get("tags_json"),
+            metadata_json: row.get("metadata_json"),
+            priority_score: row.get("priority_score"),
+            total_submissions: row.get("total_submissions"),
+            accepted_submissions: row.get("accepted_submissions"),
+            total_earnings: row.get("total_earnings"),
+            created_at: timestamp_to_string(&row, "created_at"),
+            updated_at: timestamp_to_string(&row, "updated_at"),
+            last_activity_at: optional_timestamp_to_string(&row, "last_activity_at"),
+        }))
     }
 
     /// Update a bounty program
     pub async fn update_bounty_program(&self, program: &BountyProgramRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_programs SET
-                name = ?, organization = ?, platform = ?, platform_handle = ?,
-                url = ?, program_type = ?, status = ?, description = ?,
-                rewards_json = ?, response_sla_days = ?, resolution_sla_days = ?,
-                rules_json = ?, tags_json = ?, metadata_json = ?, priority_score = ?,
-                total_submissions = ?, accepted_submissions = ?, total_earnings = ?,
-                updated_at = ?, last_activity_at = ?
-            WHERE id = ?"#
+                name = $1, organization = $2, platform = $3, platform_handle = $4,
+                url = $5, program_type = $6, status = $7, description = $8,
+                rewards_json = $9, response_sla_days = $10, resolution_sla_days = $11,
+                rules_json = $12, tags_json = $13, metadata_json = $14, priority_score = $15,
+                total_submissions = $16, accepted_submissions = $17, total_earnings = $18,
+                updated_at = $19, last_activity_at = $20
+            WHERE id = $21"#
         )
         .bind(&program.name)
         .bind(&program.organization)
@@ -222,8 +583,8 @@ impl DatabaseService {
         .bind(program.total_submissions)
         .bind(program.accepted_submissions)
         .bind(program.total_earnings)
-        .bind(&program.updated_at)
-        .bind(&program.last_activity_at)
+        .bind(timestamp_string_to_datetime(&program.updated_at))
+        .bind(optional_timestamp_string_to_datetime(&program.last_activity_at))
         .bind(&program.id)
         .execute(self.pool())
         .await?;
@@ -233,7 +594,7 @@ impl DatabaseService {
 
     /// Delete a bounty program
     pub async fn delete_bounty_program(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_programs WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_programs WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -255,23 +616,31 @@ impl DatabaseService {
 
         if let Some(platforms) = platforms {
             if !platforms.is_empty() {
-                let placeholders = platforms.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND platform IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in platforms {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND platform IN ({})", placeholders.join(",")));
                 params.extend(platforms.iter().cloned());
             }
         }
 
         if let Some(statuses) = statuses {
             if !statuses.is_empty() {
-                let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND status IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in statuses {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
                 params.extend(statuses.iter().cloned());
             }
         }
 
         if let Some(search) = search {
             if !search.is_empty() {
-                query.push_str(" AND (name LIKE ? OR organization LIKE ?)");
+                let p1 = params.len() + 1;
+                let p2 = params.len() + 2;
+                query.push_str(&format!(" AND (name LIKE ${} OR organization LIKE ${})", p1, p2));
                 let search_pattern = format!("%{}%", search);
                 params.push(search_pattern.clone());
                 params.push(search_pattern);
@@ -288,13 +657,36 @@ impl DatabaseService {
         }
 
         // Build dynamic query
-        let mut sqlx_query = sqlx::query_as::<_, BountyProgramRow>(&query);
+        let mut sqlx_query = sqlx::query(&query);
         for param in &params {
             sqlx_query = sqlx_query.bind(param);
         }
 
         let rows = sqlx_query.fetch_all(self.pool()).await?;
-        Ok(rows)
+        Ok(rows.into_iter().map(|row| BountyProgramRow {
+            id: row.get("id"),
+            name: row.get("name"),
+            organization: row.get("organization"),
+            platform: row.get("platform"),
+            platform_handle: row.get("platform_handle"),
+            url: row.get("url"),
+            program_type: row.get("program_type"),
+            status: row.get("status"),
+            description: row.get("description"),
+            rewards_json: row.get("rewards_json"),
+            response_sla_days: row.get("response_sla_days"),
+            resolution_sla_days: row.get("resolution_sla_days"),
+            rules_json: row.get("rules_json"),
+            tags_json: row.get("tags_json"),
+            metadata_json: row.get("metadata_json"),
+            priority_score: row.get("priority_score"),
+            total_submissions: row.get("total_submissions"),
+            accepted_submissions: row.get("accepted_submissions"),
+            total_earnings: row.get("total_earnings"),
+            created_at: timestamp_to_string(&row, "created_at"),
+            updated_at: timestamp_to_string(&row, "updated_at"),
+            last_activity_at: optional_timestamp_to_string(&row, "last_activity_at"),
+        }).collect())
     }
 
     /// Get bounty program statistics
@@ -335,7 +727,7 @@ impl DatabaseService {
                 id, program_id, scope_type, target_type, target, description,
                 allowed_tests_json, instructions_json, requires_auth, test_accounts_json,
                 asset_count, finding_count, priority, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"#
         )
         .bind(&scope.id)
         .bind(&scope.program_id)
@@ -351,8 +743,8 @@ impl DatabaseService {
         .bind(scope.finding_count)
         .bind(scope.priority)
         .bind(&scope.metadata_json)
-        .bind(&scope.created_at)
-        .bind(&scope.updated_at)
+        .bind(timestamp_string_to_datetime(&scope.created_at))
+        .bind(timestamp_string_to_datetime(&scope.updated_at))
         .execute(self.pool())
         .await?;
 
@@ -362,25 +754,23 @@ impl DatabaseService {
 
     /// Get a program scope by ID
     pub async fn get_program_scope(&self, id: &str) -> Result<Option<ProgramScopeRow>> {
-        let row = sqlx::query_as::<_, ProgramScopeRow>(
-            "SELECT * FROM bounty_scopes WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_scopes WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_program_scope))
     }
 
     /// Update a program scope
     pub async fn update_program_scope(&self, scope: &ProgramScopeRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_scopes SET
-                scope_type = ?, target_type = ?, target = ?, description = ?,
-                allowed_tests_json = ?, instructions_json = ?, requires_auth = ?,
-                test_accounts_json = ?, asset_count = ?, finding_count = ?,
-                priority = ?, metadata_json = ?, updated_at = ?
-            WHERE id = ?"#
+                scope_type = $1, target_type = $2, target = $3, description = $4,
+                allowed_tests_json = $5, instructions_json = $6, requires_auth = $7,
+                test_accounts_json = $8, asset_count = $9, finding_count = $10,
+                priority = $11, metadata_json = $12, updated_at = $13
+            WHERE id = $14"#
         )
         .bind(&scope.scope_type)
         .bind(&scope.target_type)
@@ -394,7 +784,7 @@ impl DatabaseService {
         .bind(scope.finding_count)
         .bind(scope.priority)
         .bind(&scope.metadata_json)
-        .bind(&scope.updated_at)
+        .bind(timestamp_string_to_datetime(&scope.updated_at))
         .bind(&scope.id)
         .execute(self.pool())
         .await?;
@@ -404,7 +794,7 @@ impl DatabaseService {
 
     /// Delete a program scope
     pub async fn delete_program_scope(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_scopes WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_scopes WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -419,22 +809,28 @@ impl DatabaseService {
         scope_type: Option<&str>,
     ) -> Result<Vec<ProgramScopeRow>> {
         let mut query = String::from("SELECT * FROM bounty_scopes WHERE 1=1");
+        let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = program_id {
-            query.push_str(&format!(" AND program_id = '{}'", pid));
+            params.push(pid.to_string());
+            query.push_str(&format!(" AND program_id = ${}", params.len()));
         }
 
         if let Some(st) = scope_type {
-            query.push_str(&format!(" AND scope_type = '{}'", st));
+            params.push(st.to_string());
+            query.push_str(&format!(" AND scope_type = ${}", params.len()));
         }
 
         query.push_str(" ORDER BY priority DESC, created_at DESC");
 
-        let rows = sqlx::query_as::<_, ProgramScopeRow>(&query)
-            .fetch_all(self.pool())
-            .await?;
+        let mut sqlx_query = sqlx::query(&query);
+        for param in &params {
+            sqlx_query = sqlx_query.bind(param);
+        }
+            
+        let rows = sqlx_query.fetch_all(self.pool()).await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_program_scope).collect())
     }
 }
 
@@ -449,7 +845,7 @@ pub struct BountyProgramStats {
 }
 
 /// Bounty Evidence database model
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyEvidenceRow {
     pub id: String,
     pub finding_id: String,
@@ -485,7 +881,7 @@ impl DatabaseService {
                 affected_parameter, reproduction_steps_json, impact, remediation,
                 evidence_ids_json, tags_json, metadata_json, fingerprint, duplicate_of,
                 first_seen_at, last_seen_at, verified_at, created_at, updated_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)"#
         )
         .bind(&finding.id)
         .bind(&finding.program_id)
@@ -509,11 +905,11 @@ impl DatabaseService {
         .bind(&finding.metadata_json)
         .bind(&finding.fingerprint)
         .bind(&finding.duplicate_of)
-        .bind(&finding.first_seen_at)
-        .bind(&finding.last_seen_at)
-        .bind(&finding.verified_at)
-        .bind(&finding.created_at)
-        .bind(&finding.updated_at)
+        .bind(timestamp_string_to_datetime(&finding.first_seen_at))
+        .bind(timestamp_string_to_datetime(&finding.last_seen_at))
+        .bind(optional_timestamp_string_to_datetime(&finding.verified_at))
+        .bind(timestamp_string_to_datetime(&finding.created_at))
+        .bind(timestamp_string_to_datetime(&finding.updated_at))
         .bind(&finding.created_by)
         .execute(self.pool())
         .await?;
@@ -524,39 +920,35 @@ impl DatabaseService {
 
     /// Get a bounty finding by ID
     pub async fn get_bounty_finding(&self, id: &str) -> Result<Option<BountyFindingRow>> {
-        let row = sqlx::query_as::<_, BountyFindingRow>(
-            "SELECT * FROM bounty_findings WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_findings WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_finding))
     }
 
     /// Get a bounty finding by fingerprint (for deduplication)
     pub async fn get_bounty_finding_by_fingerprint(&self, fingerprint: &str) -> Result<Option<BountyFindingRow>> {
-        let row = sqlx::query_as::<_, BountyFindingRow>(
-            "SELECT * FROM bounty_findings WHERE fingerprint = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_findings WHERE fingerprint = $1")
         .bind(fingerprint)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_finding))
     }
 
     /// Update a bounty finding
     pub async fn update_bounty_finding(&self, finding: &BountyFindingRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_findings SET
-                scope_id = ?, asset_id = ?, title = ?, description = ?, finding_type = ?,
-                severity = ?, status = ?, confidence = ?, cvss_score = ?, cwe_id = ?,
-                affected_url = ?, affected_parameter = ?, reproduction_steps_json = ?,
-                impact = ?, remediation = ?, evidence_ids_json = ?, tags_json = ?,
-                metadata_json = ?, duplicate_of = ?, last_seen_at = ?, verified_at = ?,
-                updated_at = ?
-            WHERE id = ?"#
+                scope_id = $1, asset_id = $2, title = $3, description = $4, finding_type = $5,
+                severity = $6, status = $7, confidence = $8, cvss_score = $9, cwe_id = $10,
+                affected_url = $11, affected_parameter = $12, reproduction_steps_json = $13,
+                impact = $14, remediation = $15, evidence_ids_json = $16, tags_json = $17,
+                metadata_json = $18, duplicate_of = $19, last_seen_at = $20, verified_at = $21,
+                updated_at = $22
+            WHERE id = $23"#
         )
         .bind(&finding.scope_id)
         .bind(&finding.asset_id)
@@ -577,9 +969,9 @@ impl DatabaseService {
         .bind(&finding.tags_json)
         .bind(&finding.metadata_json)
         .bind(&finding.duplicate_of)
-        .bind(&finding.last_seen_at)
-        .bind(&finding.verified_at)
-        .bind(&finding.updated_at)
+        .bind(timestamp_string_to_datetime(&finding.last_seen_at))
+        .bind(optional_timestamp_string_to_datetime(&finding.verified_at))
+        .bind(timestamp_string_to_datetime(&finding.updated_at))
         .bind(&finding.id)
         .execute(self.pool())
         .await?;
@@ -589,7 +981,7 @@ impl DatabaseService {
 
     /// Delete a bounty finding
     pub async fn delete_bounty_finding(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_findings WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_findings WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -612,34 +1004,42 @@ impl DatabaseService {
         let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = program_id {
-            query.push_str(" AND program_id = ?");
             params.push(pid.to_string());
+            query.push_str(&format!(" AND program_id = ${}", params.len()));
         }
 
         if let Some(sid) = scope_id {
-            query.push_str(" AND scope_id = ?");
             params.push(sid.to_string());
+            query.push_str(&format!(" AND scope_id = ${}", params.len()));
         }
 
         if let Some(severities) = severities {
             if !severities.is_empty() {
-                let placeholders = severities.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND severity IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in severities {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND severity IN ({})", placeholders.join(",")));
                 params.extend(severities.iter().cloned());
             }
         }
 
         if let Some(statuses) = statuses {
             if !statuses.is_empty() {
-                let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND status IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in statuses {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
                 params.extend(statuses.iter().cloned());
             }
         }
 
         if let Some(search) = search {
             if !search.is_empty() {
-                query.push_str(" AND (title LIKE ? OR description LIKE ?)");
+                let p1 = params.len() + 1;
+                let p2 = params.len() + 2;
+                query.push_str(&format!(" AND (title LIKE ${} OR description LIKE ${})", p1, p2));
                 let search_pattern = format!("%{}%", search);
                 params.push(search_pattern.clone());
                 params.push(search_pattern);
@@ -655,18 +1055,18 @@ impl DatabaseService {
             query.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut sqlx_query = sqlx::query_as::<_, BountyFindingRow>(&query);
+        let mut sqlx_query = sqlx::query(&query);
         for param in &params {
             sqlx_query = sqlx_query.bind(param);
         }
 
         let rows = sqlx_query.fetch_all(self.pool()).await?;
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_bounty_finding).collect())
     }
 
     /// Get bounty finding statistics
     pub async fn get_bounty_finding_stats(&self, program_id: Option<&str>) -> Result<BountyFindingStats> {
-        let base_where = program_id.map(|_| "WHERE program_id = ?").unwrap_or("");
+        let base_where = program_id.map(|_| "WHERE program_id = $1").unwrap_or("");
         
         let total_query = format!("SELECT COUNT(*) FROM bounty_findings {}", base_where);
         let mut q = sqlx::query_as::<_, (i64,)>(&total_query);
@@ -721,7 +1121,7 @@ impl DatabaseService {
                 id, finding_id, evidence_type, title, description, file_path, file_url,
                 content, mime_type, file_size, http_request_json, http_response_json,
                 diff, tags_json, metadata_json, display_order, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"#
         )
         .bind(&evidence.id)
         .bind(&evidence.finding_id)
@@ -739,8 +1139,8 @@ impl DatabaseService {
         .bind(&evidence.tags_json)
         .bind(&evidence.metadata_json)
         .bind(evidence.display_order)
-        .bind(&evidence.created_at)
-        .bind(&evidence.updated_at)
+        .bind(timestamp_string_to_datetime(&evidence.created_at))
+        .bind(timestamp_string_to_datetime(&evidence.updated_at))
         .execute(self.pool())
         .await?;
 
@@ -750,25 +1150,23 @@ impl DatabaseService {
 
     /// Get a bounty evidence by ID
     pub async fn get_bounty_evidence(&self, id: &str) -> Result<Option<BountyEvidenceRow>> {
-        let row = sqlx::query_as::<_, BountyEvidenceRow>(
-            "SELECT * FROM bounty_evidence WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_evidence WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_evidence))
     }
 
     /// Update a bounty evidence
     pub async fn update_bounty_evidence(&self, evidence: &BountyEvidenceRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_evidence SET
-                evidence_type = ?, title = ?, description = ?, file_path = ?,
-                file_url = ?, content = ?, mime_type = ?, file_size = ?,
-                http_request_json = ?, http_response_json = ?, diff = ?,
-                tags_json = ?, metadata_json = ?, display_order = ?, updated_at = ?
-            WHERE id = ?"#
+                evidence_type = $1, title = $2, description = $3, file_path = $4,
+                file_url = $5, content = $6, mime_type = $7, file_size = $8,
+                http_request_json = $9, http_response_json = $10, diff = $11,
+                tags_json = $12, metadata_json = $13, display_order = $14, updated_at = $15
+            WHERE id = $16"#
         )
         .bind(&evidence.evidence_type)
         .bind(&evidence.title)
@@ -784,7 +1182,7 @@ impl DatabaseService {
         .bind(&evidence.tags_json)
         .bind(&evidence.metadata_json)
         .bind(evidence.display_order)
-        .bind(&evidence.updated_at)
+        .bind(timestamp_string_to_datetime(&evidence.updated_at))
         .bind(&evidence.id)
         .execute(self.pool())
         .await?;
@@ -794,7 +1192,7 @@ impl DatabaseService {
 
     /// Delete a bounty evidence
     pub async fn delete_bounty_evidence(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_evidence WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_evidence WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -804,14 +1202,12 @@ impl DatabaseService {
 
     /// List evidence for a finding
     pub async fn list_bounty_evidence(&self, finding_id: &str) -> Result<Vec<BountyEvidenceRow>> {
-        let rows = sqlx::query_as::<_, BountyEvidenceRow>(
-            "SELECT * FROM bounty_evidence WHERE finding_id = ? ORDER BY display_order, created_at"
-        )
+        let rows = sqlx::query("SELECT * FROM bounty_evidence WHERE finding_id = $1 ORDER BY display_order, created_at")
         .bind(finding_id)
         .fetch_all(self.pool())
         .await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_bounty_evidence).collect())
     }
 
     // ------------------------------------------------------------------------
@@ -829,7 +1225,7 @@ impl DatabaseService {
                 resolution_time_hours, requires_retest, retest_at, last_retest_at,
                 communications_json, timeline_json, tags_json, metadata_json, created_at, submitted_at,
                 updated_at, closed_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)"#
         )
         .bind(&submission.id)
         .bind(&submission.program_id)
@@ -860,10 +1256,10 @@ impl DatabaseService {
         .bind(&submission.timeline_json)
         .bind(&submission.tags_json)
         .bind(&submission.metadata_json)
-        .bind(&submission.created_at)
-        .bind(&submission.submitted_at)
-        .bind(&submission.updated_at)
-        .bind(&submission.closed_at)
+        .bind(timestamp_string_to_datetime(&submission.created_at))
+        .bind(optional_timestamp_string_to_datetime(&submission.submitted_at))
+        .bind(timestamp_string_to_datetime(&submission.updated_at))
+        .bind(optional_timestamp_string_to_datetime(&submission.closed_at))
         .bind(&submission.created_by)
         .execute(self.pool())
         .await?;
@@ -874,28 +1270,26 @@ impl DatabaseService {
 
     /// Get a bounty submission by ID
     pub async fn get_bounty_submission(&self, id: &str) -> Result<Option<BountySubmissionRow>> {
-        let row = sqlx::query_as::<_, BountySubmissionRow>(
-            "SELECT * FROM bounty_submissions WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_submissions WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_submission))
     }
 
     /// Update a bounty submission
     pub async fn update_bounty_submission(&self, submission: &BountySubmissionRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_submissions SET
-                platform_submission_id = ?, title = ?, status = ?, priority = ?,
-                vulnerability_type = ?, severity = ?, cvss_score = ?, cwe_id = ?,
-                description = ?, reproduction_steps_json = ?, impact = ?, remediation = ?,
-                evidence_ids_json = ?, platform_url = ?, reward_amount = ?, reward_currency = ?,
-                bonus_amount = ?, response_time_hours = ?, resolution_time_hours = ?,
-                requires_retest = ?, retest_at = ?, last_retest_at = ?, communications_json = ?,
-                timeline_json = ?, tags_json = ?, metadata_json = ?, submitted_at = ?, updated_at = ?, closed_at = ?
-            WHERE id = ?"#
+                platform_submission_id = $1, title = $2, status = $3, priority = $4,
+                vulnerability_type = $5, severity = $6, cvss_score = $7, cwe_id = $8,
+                description = $9, reproduction_steps_json = $10, impact = $11, remediation = $12,
+                evidence_ids_json = $13, platform_url = $14, reward_amount = $15, reward_currency = $16,
+                bonus_amount = $17, response_time_hours = $18, resolution_time_hours = $19,
+                requires_retest = $20, retest_at = $21, last_retest_at = $22, communications_json = $23,
+                timeline_json = $24, tags_json = $25, metadata_json = $26, submitted_at = $27, updated_at = $28, closed_at = $29
+            WHERE id = $30"#
         )
         .bind(&submission.platform_submission_id)
         .bind(&submission.title)
@@ -917,15 +1311,15 @@ impl DatabaseService {
         .bind(submission.response_time_hours)
         .bind(submission.resolution_time_hours)
         .bind(submission.requires_retest)
-        .bind(&submission.retest_at)
-        .bind(&submission.last_retest_at)
+        .bind(optional_timestamp_string_to_datetime(&submission.retest_at))
+        .bind(optional_timestamp_string_to_datetime(&submission.last_retest_at))
         .bind(&submission.communications_json)
         .bind(&submission.timeline_json)
         .bind(&submission.tags_json)
         .bind(&submission.metadata_json)
-        .bind(&submission.submitted_at)
-        .bind(&submission.updated_at)
-        .bind(&submission.closed_at)
+        .bind(optional_timestamp_string_to_datetime(&submission.submitted_at))
+        .bind(timestamp_string_to_datetime(&submission.updated_at))
+        .bind(optional_timestamp_string_to_datetime(&submission.closed_at))
         .bind(&submission.id)
         .execute(self.pool())
         .await?;
@@ -935,7 +1329,7 @@ impl DatabaseService {
 
     /// Delete a bounty submission
     pub async fn delete_bounty_submission(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_submissions WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_submissions WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -956,19 +1350,22 @@ impl DatabaseService {
         let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = program_id {
-            query.push_str(" AND program_id = ?");
             params.push(pid.to_string());
+            query.push_str(&format!(" AND program_id = ${}", params.len()));
         }
 
         if let Some(fid) = finding_id {
-            query.push_str(" AND finding_id = ?");
             params.push(fid.to_string());
+            query.push_str(&format!(" AND finding_id = ${}", params.len()));
         }
 
         if let Some(statuses) = statuses {
             if !statuses.is_empty() {
-                let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND status IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in statuses {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
                 params.extend(statuses.iter().cloned());
             }
         }
@@ -982,18 +1379,18 @@ impl DatabaseService {
             query.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut sqlx_query = sqlx::query_as::<_, BountySubmissionRow>(&query);
+        let mut sqlx_query = sqlx::query(&query);
         for param in &params {
             sqlx_query = sqlx_query.bind(param);
         }
 
         let rows = sqlx_query.fetch_all(self.pool()).await?;
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_bounty_submission).collect())
     }
 
     /// Get bounty submission statistics
     pub async fn get_bounty_submission_stats(&self, program_id: Option<&str>) -> Result<BountySubmissionStats> {
-        let base_where = program_id.map(|_| "WHERE program_id = ?").unwrap_or("");
+        let base_where = program_id.map(|_| "WHERE program_id = $1").unwrap_or("");
         
         let total_query = format!("SELECT COUNT(*) FROM bounty_submissions {}", base_where);
         let mut q = sqlx::query_as::<_, (i64,)>(&total_query);
@@ -1054,7 +1451,7 @@ pub struct BountySubmissionStats {
 // ============================================================================
 
 /// Change Event database model for ASM monitoring
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyChangeEventRow {
     pub id: String,
     pub program_id: Option<String>,
@@ -1104,7 +1501,7 @@ impl DatabaseService {
                 old_value, new_value, diff, affected_scope, detection_method,
                 triggered_workflows_json, generated_findings_json, tags_json, metadata_json,
                 risk_score, auto_trigger_enabled, created_at, updated_at, resolved_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)"#
         )
         .bind(&event.id)
         .bind(&event.program_id)
@@ -1125,9 +1522,9 @@ impl DatabaseService {
         .bind(&event.metadata_json)
         .bind(event.risk_score)
         .bind(event.auto_trigger_enabled)
-        .bind(&event.created_at)
-        .bind(&event.updated_at)
-        .bind(&event.resolved_at)
+        .bind(timestamp_string_to_datetime(&event.created_at))
+        .bind(timestamp_string_to_datetime(&event.updated_at))
+        .bind(optional_timestamp_string_to_datetime(&event.resolved_at))
         .execute(self.pool())
         .await?;
 
@@ -1137,26 +1534,24 @@ impl DatabaseService {
 
     /// Get a change event by ID
     pub async fn get_bounty_change_event(&self, id: &str) -> Result<Option<BountyChangeEventRow>> {
-        let row = sqlx::query_as::<_, BountyChangeEventRow>(
-            "SELECT * FROM bounty_change_events WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_change_events WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_change_event))
     }
 
     /// Update a change event
     pub async fn update_bounty_change_event(&self, event: &BountyChangeEventRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_change_events SET
-                program_id = ?, asset_id = ?, event_type = ?, severity = ?, status = ?,
-                title = ?, description = ?, old_value = ?, new_value = ?, diff = ?,
-                affected_scope = ?, detection_method = ?, triggered_workflows_json = ?,
-                generated_findings_json = ?, tags_json = ?, metadata_json = ?,
-                risk_score = ?, auto_trigger_enabled = ?, updated_at = ?, resolved_at = ?
-            WHERE id = ?"#
+                program_id = $1, asset_id = $2, event_type = $3, severity = $4, status = $5,
+                title = $6, description = $7, old_value = $8, new_value = $9, diff = $10,
+                affected_scope = $11, detection_method = $12, triggered_workflows_json = $13,
+                generated_findings_json = $14, tags_json = $15, metadata_json = $16,
+                risk_score = $17, auto_trigger_enabled = $18, updated_at = $19, resolved_at = $20
+            WHERE id = $21"#
         )
         .bind(&event.program_id)
         .bind(&event.asset_id)
@@ -1176,8 +1571,8 @@ impl DatabaseService {
         .bind(&event.metadata_json)
         .bind(event.risk_score)
         .bind(event.auto_trigger_enabled)
-        .bind(&event.updated_at)
-        .bind(&event.resolved_at)
+        .bind(timestamp_string_to_datetime(&event.updated_at))
+        .bind(optional_timestamp_string_to_datetime(&event.resolved_at))
         .bind(&event.id)
         .execute(self.pool())
         .await?;
@@ -1187,7 +1582,7 @@ impl DatabaseService {
 
     /// Delete a change event
     pub async fn delete_bounty_change_event(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_change_events WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_change_events WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -1210,35 +1605,44 @@ impl DatabaseService {
         let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = program_id {
-            query.push_str(" AND program_id = ?");
             params.push(pid.to_string());
+            query.push_str(&format!(" AND program_id = ${}", params.len()));
         }
 
         if let Some(aid) = asset_id {
-            query.push_str(" AND asset_id = ?");
             params.push(aid.to_string());
+            query.push_str(&format!(" AND asset_id = ${}", params.len()));
         }
 
         if let Some(types) = event_types {
             if !types.is_empty() {
-                let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND event_type IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in types {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND event_type IN ({})", placeholders.join(",")));
                 params.extend(types.iter().cloned());
             }
         }
 
         if let Some(sevs) = severities {
             if !sevs.is_empty() {
-                let placeholders = sevs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND severity IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in sevs {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND severity IN ({})", placeholders.join(",")));
                 params.extend(sevs.iter().cloned());
             }
         }
 
         if let Some(stats) = statuses {
             if !stats.is_empty() {
-                let placeholders = stats.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND status IN ({})", placeholders));
+                let mut placeholders = Vec::new();
+                for _ in stats {
+                    placeholders.push(format!("${}", params.len() + 1 + placeholders.len()));
+                }
+                query.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
                 params.extend(stats.iter().cloned());
             }
         }
@@ -1252,18 +1656,18 @@ impl DatabaseService {
             query.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut sqlx_query = sqlx::query_as::<_, BountyChangeEventRow>(&query);
+        let mut sqlx_query = sqlx::query(&query);
         for param in &params {
             sqlx_query = sqlx_query.bind(param);
         }
 
         let rows = sqlx_query.fetch_all(self.pool()).await?;
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_bounty_change_event).collect())
     }
 
     /// Get change event statistics
     pub async fn get_bounty_change_event_stats(&self, program_id: Option<&str>) -> Result<BountyChangeEventStats> {
-        let base_where = program_id.map(|_| "WHERE program_id = ?").unwrap_or("");
+        let base_where = program_id.map(|_| "WHERE program_id = $1").unwrap_or("");
         
         // Total events
         let total_query = format!("SELECT COUNT(*) FROM bounty_change_events {}", base_where);
@@ -1360,7 +1764,7 @@ impl DatabaseService {
     ) -> Result<bool> {
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(
-            "UPDATE bounty_change_events SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?"
+            "UPDATE bounty_change_events SET status = $1, resolved_at = $2, updated_at = $3 WHERE id = $4"
         )
         .bind(status)
         .bind(resolved_at)
@@ -1431,7 +1835,7 @@ impl DatabaseService {
 // ============================================================================
 
 /// Bounty workflow template
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyWorkflowTemplateRow {
     pub id: String,
     pub name: String,
@@ -1449,7 +1853,7 @@ pub struct BountyWorkflowTemplateRow {
 }
 
 /// Bounty workflow binding (template → program/scope)
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyWorkflowBindingRow {
     pub id: String,
     pub program_id: String,
@@ -1478,7 +1882,7 @@ impl DatabaseService {
                 id, name, description, category, workflow_definition_id, steps_json,
                 input_schema_json, output_schema_json, tags_json, is_built_in,
                 estimated_duration_mins, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#
         )
         .bind(&template.id)
         .bind(&template.name)
@@ -1491,8 +1895,8 @@ impl DatabaseService {
         .bind(&template.tags_json)
         .bind(template.is_built_in)
         .bind(template.estimated_duration_mins)
-        .bind(&template.created_at)
-        .bind(&template.updated_at)
+        .bind(timestamp_string_to_datetime(&template.created_at))
+        .bind(timestamp_string_to_datetime(&template.updated_at))
         .execute(self.pool())
         .await?;
 
@@ -1502,14 +1906,12 @@ impl DatabaseService {
 
     /// Get a workflow template by ID
     pub async fn get_bounty_workflow_template(&self, id: &str) -> Result<Option<BountyWorkflowTemplateRow>> {
-        let row = sqlx::query_as::<_, BountyWorkflowTemplateRow>(
-            "SELECT * FROM bounty_workflow_templates WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_workflow_templates WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_workflow_template))
     }
 
     /// List workflow templates
@@ -1519,31 +1921,39 @@ impl DatabaseService {
         is_built_in: Option<bool>,
     ) -> Result<Vec<BountyWorkflowTemplateRow>> {
         let mut query = String::from("SELECT * FROM bounty_workflow_templates WHERE 1=1");
+        let mut params: Vec<String> = Vec::new();
 
         if let Some(cat) = category {
-            query.push_str(&format!(" AND category = '{}'", cat));
+            params.push(cat.to_string());
+            query.push_str(&format!(" AND category = ${}", params.len()));
         }
         if let Some(built_in) = is_built_in {
-            query.push_str(&format!(" AND is_built_in = {}", if built_in { 1 } else { 0 }));
+            query.push_str(&format!(" AND is_built_in = {}", built_in));
         }
 
         query.push_str(" ORDER BY name ASC");
+        
+        // Note: is_built_in is handled via literal boolean formatting for Postgres (TRUE/FALSE)
+        // category is bound.
 
-        let rows = sqlx::query_as::<_, BountyWorkflowTemplateRow>(&query)
-            .fetch_all(self.pool())
-            .await?;
+        let mut sqlx_query = sqlx::query(&query);
+        for param in &params {
+            sqlx_query = sqlx_query.bind(param.clone());
+        }
 
-        Ok(rows)
+        let rows = sqlx_query.fetch_all(self.pool()).await?;
+
+        Ok(rows.into_iter().map(row_to_bounty_workflow_template).collect())
     }
 
     /// Update a workflow template
     pub async fn update_bounty_workflow_template(&self, template: &BountyWorkflowTemplateRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_workflow_templates SET
-                name = ?, description = ?, category = ?, workflow_definition_id = ?,
-                steps_json = ?, input_schema_json = ?, output_schema_json = ?,
-                tags_json = ?, estimated_duration_mins = ?, updated_at = ?
-            WHERE id = ?"#
+                name = $1, description = $2, category = $3, workflow_definition_id = $4,
+                steps_json = $5, input_schema_json = $6, output_schema_json = $7,
+                tags_json = $8, estimated_duration_mins = $9, updated_at = $10
+            WHERE id = $11"#
         )
         .bind(&template.name)
         .bind(&template.description)
@@ -1554,7 +1964,7 @@ impl DatabaseService {
         .bind(&template.output_schema_json)
         .bind(&template.tags_json)
         .bind(template.estimated_duration_mins)
-        .bind(&template.updated_at)
+        .bind(timestamp_string_to_datetime(&template.updated_at))
         .bind(&template.id)
         .execute(self.pool())
         .await?;
@@ -1564,7 +1974,7 @@ impl DatabaseService {
 
     /// Delete a workflow template
     pub async fn delete_bounty_workflow_template(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_workflow_templates WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_workflow_templates WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -1583,7 +1993,7 @@ impl DatabaseService {
                 id, program_id, scope_id, workflow_template_id, is_enabled,
                 auto_run_on_change, trigger_conditions_json, schedule_cron,
                 last_run_at, last_run_status, run_count, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#
         )
         .bind(&binding.id)
         .bind(&binding.program_id)
@@ -1593,11 +2003,11 @@ impl DatabaseService {
         .bind(binding.auto_run_on_change)
         .bind(&binding.trigger_conditions_json)
         .bind(&binding.schedule_cron)
-        .bind(&binding.last_run_at)
+        .bind(optional_timestamp_string_to_datetime(&binding.last_run_at))
         .bind(&binding.last_run_status)
         .bind(binding.run_count)
-        .bind(&binding.created_at)
-        .bind(&binding.updated_at)
+        .bind(timestamp_string_to_datetime(&binding.created_at))
+        .bind(timestamp_string_to_datetime(&binding.updated_at))
         .execute(self.pool())
         .await?;
 
@@ -1607,14 +2017,12 @@ impl DatabaseService {
 
     /// Get a workflow binding by ID
     pub async fn get_bounty_workflow_binding(&self, id: &str) -> Result<Option<BountyWorkflowBindingRow>> {
-        let row = sqlx::query_as::<_, BountyWorkflowBindingRow>(
-            "SELECT * FROM bounty_workflow_bindings WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_workflow_bindings WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_workflow_binding))
     }
 
     /// List workflow bindings for a program
@@ -1625,44 +2033,50 @@ impl DatabaseService {
         is_enabled: Option<bool>,
     ) -> Result<Vec<BountyWorkflowBindingRow>> {
         let mut query = String::from("SELECT * FROM bounty_workflow_bindings WHERE 1=1");
+        let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = program_id {
-            query.push_str(&format!(" AND program_id = '{}'", pid));
+            params.push(pid.to_string());
+            query.push_str(&format!(" AND program_id = ${}", params.len()));
         }
         if let Some(sid) = scope_id {
-            query.push_str(&format!(" AND scope_id = '{}'", sid));
+            params.push(sid.to_string());
+            query.push_str(&format!(" AND scope_id = ${}", params.len()));
         }
         if let Some(enabled) = is_enabled {
-            query.push_str(&format!(" AND is_enabled = {}", if enabled { 1 } else { 0 }));
+            query.push_str(&format!(" AND is_enabled = {}", enabled));
         }
 
         query.push_str(" ORDER BY created_at DESC");
 
-        let rows = sqlx::query_as::<_, BountyWorkflowBindingRow>(&query)
-            .fetch_all(self.pool())
-            .await?;
+        let mut sqlx_query = sqlx::query(&query);
+        for param in &params {
+            sqlx_query = sqlx_query.bind(param.clone());
+        }
 
-        Ok(rows)
+        let rows = sqlx_query.fetch_all(self.pool()).await?;
+
+        Ok(rows.into_iter().map(row_to_bounty_workflow_binding).collect())
     }
 
     /// Update a workflow binding
     pub async fn update_bounty_workflow_binding(&self, binding: &BountyWorkflowBindingRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_workflow_bindings SET
-                scope_id = ?, is_enabled = ?, auto_run_on_change = ?,
-                trigger_conditions_json = ?, schedule_cron = ?,
-                last_run_at = ?, last_run_status = ?, run_count = ?, updated_at = ?
-            WHERE id = ?"#
+                scope_id = $1, is_enabled = $2, auto_run_on_change = $3,
+                trigger_conditions_json = $4, schedule_cron = $5,
+                last_run_at = $6, last_run_status = $7, run_count = $8, updated_at = $9
+            WHERE id = $10"#
         )
         .bind(&binding.scope_id)
         .bind(binding.is_enabled)
         .bind(binding.auto_run_on_change)
         .bind(&binding.trigger_conditions_json)
         .bind(&binding.schedule_cron)
-        .bind(&binding.last_run_at)
+        .bind(optional_timestamp_string_to_datetime(&binding.last_run_at))
         .bind(&binding.last_run_status)
         .bind(binding.run_count)
-        .bind(&binding.updated_at)
+        .bind(timestamp_string_to_datetime(&binding.updated_at))
         .bind(&binding.id)
         .execute(self.pool())
         .await?;
@@ -1672,7 +2086,7 @@ impl DatabaseService {
 
     /// Delete a workflow binding
     pub async fn delete_bounty_workflow_binding(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_workflow_bindings WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_workflow_bindings WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -1689,8 +2103,8 @@ impl DatabaseService {
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(
             r#"UPDATE bounty_workflow_bindings SET
-                last_run_at = ?, last_run_status = ?, run_count = run_count + 1, updated_at = ?
-            WHERE id = ?"#
+                last_run_at = $1, last_run_status = $2, run_count = run_count + 1, updated_at = $3
+            WHERE id = $4"#
         )
         .bind(&now)
         .bind(status)
@@ -1707,15 +2121,15 @@ impl DatabaseService {
         &self,
         program_id: &str,
     ) -> Result<Vec<BountyWorkflowBindingRow>> {
-        let rows = sqlx::query_as::<_, BountyWorkflowBindingRow>(
+        let rows = sqlx::query(
             r#"SELECT * FROM bounty_workflow_bindings
-               WHERE program_id = ? AND is_enabled = 1 AND auto_run_on_change = 1"#
+               WHERE program_id = $1 AND is_enabled = TRUE AND auto_run_on_change = TRUE"#
         )
         .bind(program_id)
         .fetch_all(self.pool())
         .await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_bounty_workflow_binding).collect())
     }
 }
 
@@ -1724,7 +2138,7 @@ impl DatabaseService {
 // ============================================================================
 
 /// Bounty asset model (Enhanced for ASM - Attack Surface Management)
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BountyAssetRow {
     pub id: String,
     pub program_id: String,
@@ -1859,7 +2273,7 @@ impl DatabaseService {
                 tech_stack_json, fingerprint, tags_json, labels_json, priority_score,
                 risk_score, is_alive, last_checked_at, first_seen_at, last_seen_at,
                 findings_count, change_events_count, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)"#
         )
         .bind(&asset.id)
         .bind(&asset.program_id)
@@ -1880,14 +2294,14 @@ impl DatabaseService {
         .bind(asset.priority_score)
         .bind(asset.risk_score)
         .bind(asset.is_alive)
-        .bind(&asset.last_checked_at)
-        .bind(&asset.first_seen_at)
-        .bind(&asset.last_seen_at)
+        .bind(optional_timestamp_string_to_datetime(&asset.last_checked_at))
+        .bind(timestamp_string_to_datetime(&asset.first_seen_at))
+        .bind(timestamp_string_to_datetime(&asset.last_seen_at))
         .bind(asset.findings_count)
         .bind(asset.change_events_count)
         .bind(&asset.metadata_json)
-        .bind(&asset.created_at)
-        .bind(&asset.updated_at)
+        .bind(timestamp_string_to_datetime(&asset.created_at))
+        .bind(timestamp_string_to_datetime(&asset.updated_at))
         .execute(self.pool())
         .await?;
 
@@ -1897,14 +2311,12 @@ impl DatabaseService {
 
     /// Get a bounty asset by ID
     pub async fn get_bounty_asset(&self, id: &str) -> Result<Option<BountyAssetRow>> {
-        let row = sqlx::query_as::<_, BountyAssetRow>(
-            "SELECT * FROM bounty_assets WHERE id = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_assets WHERE id = $1")
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_asset))
     }
 
     /// Get a bounty asset by canonical URL
@@ -1913,15 +2325,13 @@ impl DatabaseService {
         program_id: &str,
         canonical_url: &str,
     ) -> Result<Option<BountyAssetRow>> {
-        let row = sqlx::query_as::<_, BountyAssetRow>(
-            "SELECT * FROM bounty_assets WHERE program_id = ? AND canonical_url = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_assets WHERE program_id = $1 AND canonical_url = $2")
         .bind(program_id)
         .bind(canonical_url)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_asset))
     }
 
     /// Get a bounty asset by fingerprint
@@ -1930,15 +2340,13 @@ impl DatabaseService {
         program_id: &str,
         fingerprint: &str,
     ) -> Result<Option<BountyAssetRow>> {
-        let row = sqlx::query_as::<_, BountyAssetRow>(
-            "SELECT * FROM bounty_assets WHERE program_id = ? AND fingerprint = ?"
-        )
+        let row = sqlx::query("SELECT * FROM bounty_assets WHERE program_id = $1 AND fingerprint = $2")
         .bind(program_id)
         .bind(fingerprint)
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row)
+        Ok(row.map(row_to_bounty_asset))
     }
 
     /// List bounty assets
@@ -1953,18 +2361,22 @@ impl DatabaseService {
         offset: Option<i64>,
     ) -> Result<Vec<BountyAssetRow>> {
         let mut query = String::from("SELECT * FROM bounty_assets WHERE 1=1");
+        let mut params: Vec<String> = Vec::new();
 
         if let Some(pid) = program_id {
-            query.push_str(&format!(" AND program_id = '{}'", pid));
+            params.push(pid.to_string());
+            query.push_str(&format!(" AND program_id = ${}", params.len()));
         }
         if let Some(sid) = scope_id {
-            query.push_str(&format!(" AND scope_id = '{}'", sid));
+            params.push(sid.to_string());
+            query.push_str(&format!(" AND scope_id = ${}", params.len()));
         }
         if let Some(at) = asset_type {
-            query.push_str(&format!(" AND asset_type = '{}'", at));
+            params.push(at.to_string());
+            query.push_str(&format!(" AND asset_type = ${}", params.len()));
         }
         if let Some(alive) = is_alive {
-            query.push_str(&format!(" AND is_alive = {}", if alive { 1 } else { 0 }));
+            query.push_str(&format!(" AND is_alive = {}", alive));
         }
         if let Some(findings) = has_findings {
             if findings {
@@ -1983,24 +2395,27 @@ impl DatabaseService {
             query.push_str(&format!(" OFFSET {}", off));
         }
 
-        let rows = sqlx::query_as::<_, BountyAssetRow>(&query)
-            .fetch_all(self.pool())
-            .await?;
+        let mut sqlx_query = sqlx::query(&query);
+        for param in &params {
+            sqlx_query = sqlx_query.bind(param.clone());
+        }
 
-        Ok(rows)
+        let rows = sqlx_query.fetch_all(self.pool()).await?;
+
+        Ok(rows.into_iter().map(row_to_bounty_asset).collect())
     }
 
     /// Update a bounty asset
     pub async fn update_bounty_asset(&self, asset: &BountyAssetRow) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE bounty_assets SET
-                scope_id = ?, asset_type = ?, canonical_url = ?, original_urls_json = ?,
-                hostname = ?, port = ?, path = ?, protocol = ?, ip_addresses_json = ?,
-                dns_records_json = ?, tech_stack_json = ?, fingerprint = ?, tags_json = ?,
-                labels_json = ?, priority_score = ?, risk_score = ?, is_alive = ?,
-                last_checked_at = ?, last_seen_at = ?, findings_count = ?,
-                change_events_count = ?, metadata_json = ?, updated_at = ?
-            WHERE id = ?"#
+                scope_id = $1, asset_type = $2, canonical_url = $3, original_urls_json = $4,
+                hostname = $5, port = $6, path = $7, protocol = $8, ip_addresses_json = $9,
+                dns_records_json = $10, tech_stack_json = $11, fingerprint = $12, tags_json = $13,
+                labels_json = $14, priority_score = $15, risk_score = $16, is_alive = $17,
+                last_checked_at = $18, last_seen_at = $19, findings_count = $20,
+                change_events_count = $21, metadata_json = $22, updated_at = $23
+            WHERE id = $24"#
         )
         .bind(&asset.scope_id)
         .bind(&asset.asset_type)
@@ -2019,12 +2434,12 @@ impl DatabaseService {
         .bind(asset.priority_score)
         .bind(asset.risk_score)
         .bind(asset.is_alive)
-        .bind(&asset.last_checked_at)
-        .bind(&asset.last_seen_at)
+        .bind(optional_timestamp_string_to_datetime(&asset.last_checked_at))
+        .bind(timestamp_string_to_datetime(&asset.last_seen_at))
         .bind(asset.findings_count)
         .bind(asset.change_events_count)
         .bind(&asset.metadata_json)
-        .bind(&asset.updated_at)
+        .bind(timestamp_string_to_datetime(&asset.updated_at))
         .bind(&asset.id)
         .execute(self.pool())
         .await?;
@@ -2034,7 +2449,7 @@ impl DatabaseService {
 
     /// Delete a bounty asset
     pub async fn delete_bounty_asset(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM bounty_assets WHERE id = ?")
+        let result = sqlx::query("DELETE FROM bounty_assets WHERE id = $1")
             .bind(id)
             .execute(self.pool())
             .await?;
@@ -2045,32 +2460,52 @@ impl DatabaseService {
     /// Get bounty asset statistics
     pub async fn get_bounty_asset_stats(&self, program_id: Option<&str>) -> Result<BountyAssetStats> {
         let pool = self.pool();
-        let filter = program_id.map(|p| format!(" WHERE program_id = '{}'", p)).unwrap_or_default();
+        let filter = program_id.map(|_| " WHERE program_id = $1").unwrap_or_default();
 
-        let total: (i32,) = sqlx::query_as(&format!(
-            "SELECT COUNT(*) FROM bounty_assets{}", filter
-        )).fetch_one(pool).await?;
+        // Note: For stats query with simple counts, binding $1 works even if ignored by some drivers, but Postgres is strict.
+        // We need to use `bind` only if program_id exists.
 
-        let alive: (i32,) = sqlx::query_as(&format!(
-            "SELECT COUNT(*) FROM bounty_assets{} AND is_alive = 1",
+        // Total
+        let sql_total = format!("SELECT COUNT(*) FROM bounty_assets{}", filter);
+        let mut q = sqlx::query_as::<_, (i32,)>(&sql_total);
+        if let Some(p) = program_id { q = q.bind(p); }
+        let total = q.fetch_one(pool).await?;
+
+        // Alive
+        let sql_alive = format!(
+            "SELECT COUNT(*) FROM bounty_assets{} AND is_alive = TRUE",
             if filter.is_empty() { " WHERE 1=1" } else { &filter }
-        )).fetch_one(pool).await?;
+        );
+        let mut q = sqlx::query_as::<_, (i32,)>(&sql_alive);
+        if let Some(p) = program_id { q = q.bind(p); }
+        let alive = q.fetch_one(pool).await?;
 
-        let with_findings: (i32,) = sqlx::query_as(&format!(
+        // With findings
+        let sql_findings = format!(
             "SELECT COUNT(*) FROM bounty_assets{} AND findings_count > 0",
             if filter.is_empty() { " WHERE 1=1" } else { &filter }
-        )).fetch_one(pool).await?;
+        );
+        let mut q = sqlx::query_as::<_, (i32,)>(&sql_findings);
+        if let Some(p) = program_id { q = q.bind(p); }
+        let with_findings = q.fetch_one(pool).await?;
 
-        let high_priority: (i32,) = sqlx::query_as(&format!(
+        // High priority
+        let sql_high = format!(
             "SELECT COUNT(*) FROM bounty_assets{} AND priority_score >= 7.0",
             if filter.is_empty() { " WHERE 1=1" } else { &filter }
-        )).fetch_one(pool).await?;
+        );
+        let mut q = sqlx::query_as::<_, (i32,)>(&sql_high);
+        if let Some(p) = program_id { q = q.bind(p); }
+        let high_priority = q.fetch_one(pool).await?;
 
         // Get by type
-        let type_rows: Vec<(String, i32)> = sqlx::query_as(&format!(
+        let sql_by_type = format!(
             "SELECT asset_type, COUNT(*) FROM bounty_assets{} GROUP BY asset_type",
             filter
-        )).fetch_all(pool).await?;
+        );
+        let mut q = sqlx::query_as::<_, (String, i32)>(&sql_by_type);
+        if let Some(p) = program_id { q = q.bind(p); }
+        let type_rows = q.fetch_all(pool).await?;
 
         let mut by_type = std::collections::HashMap::new();
         for (t, c) in type_rows {
@@ -2118,17 +2553,17 @@ impl DatabaseService {
         program_id: &str,
         limit: i64,
     ) -> Result<Vec<BountyAssetRow>> {
-        let rows = sqlx::query_as::<_, BountyAssetRow>(
+        let rows = sqlx::query(
             r#"SELECT * FROM bounty_assets
-               WHERE program_id = ? AND is_alive = 1
+               WHERE program_id = $1 AND is_alive = TRUE
                ORDER BY priority_score DESC
-               LIMIT ?"#
+               LIMIT $2"#
         )
         .bind(program_id)
         .bind(limit)
         .fetch_all(self.pool())
         .await?;
 
-        Ok(rows)
+        Ok(rows.into_iter().map(row_to_bounty_asset).collect())
     }
 }

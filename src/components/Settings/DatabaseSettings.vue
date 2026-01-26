@@ -403,13 +403,7 @@
       </div>
     </div>
 
-    <!-- 保存按钮 -->
-    <div class="flex justify-end">
-      <button class="btn btn-primary" @click="saveDatabaseConfig" :disabled="saving">
-        <i class="fas fa-save"></i>
-        {{ saving ? t('settings.saving') : t('settings.database.saveConfig') }}
-      </button>
-    </div>
+
   </div>
 </template>
 
@@ -511,6 +505,12 @@ const optimizeDatabase = () => {
 const rebuildIndexes = () => {
   emit('rebuildIndexes')
 }
+
+// 自动保存配置
+import { watch } from 'vue'
+watch(() => props.settings.database, () => {
+  emit('saveDatabaseConfig')
+}, { deep: true })
 
 const resetDatabase = () => {
   emit('resetDatabase')

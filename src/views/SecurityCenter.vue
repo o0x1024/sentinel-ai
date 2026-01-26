@@ -57,7 +57,7 @@ const route = useRoute();
 const router = useRouter();
 
 // 当前激活的 Tab
-const activeTab = ref<'scan' | 'vulnerabilities'>('vulnerabilities');
+const activeTab = ref<'scan' | 'vulnerabilities' | 'assets'>('vulnerabilities');
 
 // 统计数据
 const overviewStats = ref({

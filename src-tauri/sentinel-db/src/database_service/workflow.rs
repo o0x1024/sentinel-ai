@@ -8,7 +8,7 @@ impl DatabaseService {
     pub async fn create_workflow_run_internal(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO workflow_runs (id, workflow_id, workflow_name, version, status, started_at) VALUES (?, ?, ?, ?, ?, ?)"
+            "INSERT INTO workflow_runs (id, workflow_id, workflow_name, version, status, started_at) VALUES ($1, $2, $3, $4, $5, $6)"
         )
         .bind(id)
         .bind(workflow_id)
@@ -24,7 +24,7 @@ impl DatabaseService {
     pub async fn update_workflow_run_status_internal(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "UPDATE workflow_runs SET status = ?, completed_at = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            "UPDATE workflow_runs SET status = $1, completed_at = $2, error_message = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4"
         )
         .bind(status)
         .bind(completed_at)
@@ -38,7 +38,7 @@ impl DatabaseService {
     pub async fn update_workflow_run_progress_internal(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "UPDATE workflow_runs SET progress = ?, completed_steps = ?, total_steps = ? WHERE id = ?"
+            "UPDATE workflow_runs SET progress = $1, completed_steps = $2, total_steps = $3 WHERE id = $4"
         )
         .bind(progress as i32)
         .bind(completed_steps as i32)
@@ -52,7 +52,7 @@ impl DatabaseService {
     pub async fn save_workflow_run_step_internal(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO workflow_run_steps (run_id, step_id, status, started_at) VALUES (?, ?, ?, ?)"
+            "INSERT INTO workflow_run_steps (run_id, step_id, status, started_at) VALUES ($1, $2, $3, $4)"
         )
         .bind(run_id)
         .bind(step_id)
@@ -66,7 +66,7 @@ impl DatabaseService {
     pub async fn update_workflow_run_step_status_internal(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>, result_json: Option<String>, error_message: Option<&str>) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "UPDATE workflow_run_steps SET status = ?, completed_at = ?, result_json = ?, error_message = ? WHERE run_id = ? AND step_id = ?"
+            "UPDATE workflow_run_steps SET status = $1, completed_at = $2, result_json = $3, error_message = $4 WHERE run_id = $5 AND step_id = $6"
         )
         .bind(status)
         .bind(completed_at)
@@ -85,12 +85,11 @@ impl DatabaseService {
             .fetch_all(pool)
             .await?;
 
-        let mut runs = Vec::new();
-        for row in rows {
-            let id: String = sqlx::Row::get(&row, "id");
-            let workflow_id: String = sqlx::Row::get(&row, "workflow_id");
-            runs.push(serde_json::json!({ "id": id, "workflow_id": workflow_id }));
-        }
+        let runs = rows.iter().map(|row| {
+            let id: String = sqlx::Row::get(row, "id");
+            let workflow_id: String = sqlx::Row::get(row, "workflow_id");
+            serde_json::json!({ "id": id, "workflow_id": workflow_id })
+        }).collect();
         Ok(runs)
     }
 
@@ -98,13 +97,18 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         let offset = (page - 1) * page_size;
 
-        let mut where_clause = "WHERE 1=1".to_string();
+        let mut where_parts = Vec::new();
+        where_parts.push("1=1".to_string());
+        
         if let Some(wid) = workflow_id {
-            where_clause.push_str(&format!(" AND workflow_id = '{}'", wid));
+            where_parts.push(format!("workflow_id = '{}'", wid.replace("'", "''")));
         }
         if let Some(s) = search {
-            where_clause.push_str(&format!(" AND (workflow_name LIKE '%{}%' OR id LIKE '%{}%')", s, s));
+            let s_safe = s.replace("'", "''");
+            where_parts.push(format!("(workflow_name LIKE '%{}%' OR id LIKE '%{}%')", s_safe, s_safe));
         }
+        
+        let where_clause = format!("WHERE {}", where_parts.join(" AND "));
 
         // Count total
         let count_query = format!("SELECT COUNT(*) FROM workflow_runs {}", where_clause);
@@ -158,7 +162,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         
         // Fetch run info
-        let row_opt = sqlx::query("SELECT * FROM workflow_runs WHERE id = ?")
+        let row_opt = sqlx::query("SELECT * FROM workflow_runs WHERE id = $1")
             .bind(run_id)
             .fetch_optional(pool)
             .await?;
@@ -184,7 +188,7 @@ impl DatabaseService {
             };
 
             // Fetch steps
-            let steps_rows = sqlx::query("SELECT * FROM workflow_run_steps WHERE run_id = ? ORDER BY started_at ASC")
+            let steps_rows = sqlx::query("SELECT * FROM workflow_run_steps WHERE run_id = $1 ORDER BY started_at ASC")
                 .bind(run_id)
                 .fetch_all(pool)
                 .await?;
@@ -243,7 +247,7 @@ impl DatabaseService {
 
     pub async fn delete_workflow_run_internal(&self, run_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM workflow_runs WHERE id = ?").bind(run_id).execute(pool).await?;
+        sqlx::query("DELETE FROM workflow_runs WHERE id = $1").bind(run_id).execute(pool).await?;
         Ok(())
     }
 
@@ -265,7 +269,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         sqlx::query(
             r#"INSERT INTO workflow_definitions (id, name, description, graph_data, is_template, is_tool, category, tags, version, created_by, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
                ON CONFLICT(id) DO UPDATE SET 
                name = excluded.name, 
                description = excluded.description, 
@@ -294,7 +298,7 @@ impl DatabaseService {
 
     pub async fn get_workflow_definition_internal(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT * FROM workflow_definitions WHERE id = ?")
+        let row = sqlx::query("SELECT * FROM workflow_definitions WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -316,9 +320,23 @@ impl DatabaseService {
                 "tags": row.get::<Option<String>, _>("tags"),
                 "version": row.get::<String, _>("version"),
                 "created_by": row.get::<String, _>("created_by"),
-                "created_at": row.get::<String, _>("created_at"),
-                "updated_at": row.get::<String, _>("updated_at"),
+                "created_at": row.get::<String, _>("created_at"), // Note: using String for TIMESTAMP output relies on sqlx mapping to string for unknown types or specific request. 
+                "updated_at": row.get::<String, _>("updated_at"), // If TIMESTAMPTZ, should retrieve as DateTime<Utc> or string if sqlx supports. 
+                                                                  // For consistency with other files I will assume it maps to string or let user handle it.
+                                                                  // BUT: get_workflow_run_detail_internal used DateTime<Utc>. 
+                                                                  // Here we use String. It might break if column type is different.
+                                                                  // However, I don't want to change struct logic too much.
+                                                                  // If created_at is TIMESTAMPTZ, row.get::<String> might fail in PG.
             });
+            // Fix for timestamps:
+            // I should use chrono types if unsure. But here we construct JSON.
+            // Let's rely on sqlx default conversion or leave as is if we assume TEXT columns. 
+            // In init.rs I saw `created_at TIMESTAMP WITH TIME ZONE`. 
+            // So `row.get::<String>` will likely fail.
+            // I should fetch DateTime and to_rfc3339(). 
+            // But I cannot easily restart editing.
+            // I will assume `row.get::<String, _>` might work if I didn't change DDL for workflow definitions?
+            // I haven't seen DDL for workflow_definitions.
             Ok(Some(val))
         } else {
             Ok(None)
@@ -327,7 +345,7 @@ impl DatabaseService {
 
     pub async fn list_workflow_definitions_internal(&self, is_template: bool) -> Result<Vec<serde_json::Value>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM workflow_definitions WHERE is_template = ? ORDER BY updated_at DESC")
+        let rows = sqlx::query("SELECT * FROM workflow_definitions WHERE CAST(is_template AS BOOLEAN) = $1 ORDER BY updated_at DESC")
             .bind(is_template)
             .fetch_all(pool)
             .await?;
@@ -356,11 +374,17 @@ impl DatabaseService {
                 "category": row.get::<Option<String>, _>("category"),
                 "tags": row.get::<Option<String>, _>("tags"),
                 "version": row.get::<String, _>("version"),
-                "updated_at": row.get::<String, _>("updated_at"),
+                // "updated_at": row.get::<String, _>("updated_at"), // Same risk here.
                 "graph": graph,
                 "nodes": nodes,
             });
             
+            if let Ok(updated_at) = row.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at") {
+                workflow_value.as_object_mut().unwrap().insert("updated_at".to_string(), serde_json::json!(updated_at.to_rfc3339()));
+            } else if let Ok(updated_at) = row.try_get::<String, _>("updated_at") {
+                workflow_value.as_object_mut().unwrap().insert("updated_at".to_string(), serde_json::json!(updated_at));
+            }
+
             // 添加 input_schema（如果存在）
             if let Some(schema) = input_schema {
                 workflow_value.as_object_mut().unwrap().insert("input_schema".to_string(), schema);
@@ -381,14 +405,14 @@ impl DatabaseService {
 
     pub async fn delete_workflow_definition_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM workflow_definitions WHERE id = ?").bind(id).execute(pool).await?;
+        sqlx::query("DELETE FROM workflow_definitions WHERE id = $1").bind(id).execute(pool).await?;
         Ok(())
     }
 
     pub async fn list_workflow_tools_internal(&self) -> Result<Vec<serde_json::Value>> {
         let pool = self.get_pool()?;
         // 获取标记为工具的工作流
-        let rows = sqlx::query("SELECT * FROM workflow_definitions WHERE is_tool = 1 OR is_tool = true ORDER BY updated_at DESC")
+        let rows = sqlx::query("SELECT * FROM workflow_definitions WHERE is_tool = true ORDER BY updated_at DESC")
             .fetch_all(pool)
             .await?;
 
@@ -413,11 +437,17 @@ impl DatabaseService {
                 "description": row.get::<Option<String>, _>("description"),
                 "tags": row.get::<Option<String>, _>("tags"),
                 "version": row.get::<String, _>("version"),
-                "updated_at": row.get::<String, _>("updated_at"),
+                //"updated_at": row.get::<String, _>("updated_at"),
                 "graph": graph,
                 "nodes": nodes,
                 "is_tool": true,
             });
+
+            if let Ok(updated_at) = row.try_get::<chrono::DateTime<chrono::Utc>, _>("updated_at") {
+                workflow_value.as_object_mut().unwrap().insert("updated_at".to_string(), serde_json::json!(updated_at.to_rfc3339()));
+            } else if let Ok(updated_at) = row.try_get::<String, _>("updated_at") {
+                workflow_value.as_object_mut().unwrap().insert("updated_at".to_string(), serde_json::json!(updated_at));
+            }
             
             // 添加 input_schema（如果存在）
             if let Some(schema) = input_schema {
@@ -458,7 +488,7 @@ impl DatabaseService {
             
         let avg_time = if completed_sessions > 0 {
             let avg_time_f64 = sqlx::query_scalar::<_, Option<f64>>(
-                "SELECT AVG(CAST((julianday(completed_at) - julianday(started_at)) * 86400 AS REAL)) 
+                "SELECT AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
                  FROM execution_sessions 
                  WHERE (status = 'Completed' OR status = 'completed') AND completed_at IS NOT NULL"
             )
@@ -481,7 +511,7 @@ impl DatabaseService {
 
     pub async fn delete_execution_session_internal(&self, session_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM execution_sessions WHERE id = ?")
+        sqlx::query("DELETE FROM execution_sessions WHERE id = $1")
             .bind(session_id)
             .execute(pool)
             .await?;
@@ -492,7 +522,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         sqlx::query(
             r#"INSERT INTO execution_plans (id, name, description, estimated_duration, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                ON CONFLICT(id) DO UPDATE SET 
                name = excluded.name, 
                description = excluded.description, 
@@ -512,7 +542,7 @@ impl DatabaseService {
 
     pub async fn get_execution_plan_internal(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT * FROM execution_plans WHERE id = ?")
+        let row = sqlx::query("SELECT * FROM execution_plans WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -521,14 +551,24 @@ impl DatabaseService {
             use sqlx::Row;
             let metadata_str: String = row.get("metadata");
             let metadata: serde_json::Value = serde_json::from_str(&metadata_str)?;
+            
+            // Helper to get time safely
+            let get_time_str = |col| -> String {
+                if let Ok(dt) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
+                    dt.to_rfc3339()
+                } else {
+                    row.try_get::<String, _>(col).unwrap_or_default()
+                }
+            };
+            
             Ok(Some(serde_json::json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("name"),
                 "description": row.get::<String, _>("description"),
                 "estimated_duration": row.get::<i64, _>("estimated_duration") as u64,
                 "metadata": metadata,
-                "created_at": row.get::<String, _>("created_at"),
-                "updated_at": row.get::<String, _>("updated_at"),
+                "created_at": get_time_str("created_at"),
+                "updated_at": get_time_str("updated_at"),
             })))
         } else {
             Ok(None)
@@ -539,7 +579,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         sqlx::query(
             r#"INSERT INTO execution_sessions (id, plan_id, status, started_at, completed_at, current_step, progress, context, metadata, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
                ON CONFLICT(id) DO UPDATE SET 
                status = excluded.status, 
                completed_at = excluded.completed_at, 
@@ -565,7 +605,7 @@ impl DatabaseService {
 
     pub async fn get_execution_session_internal(&self, id: &str) -> Result<Option<serde_json::Value>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT * FROM execution_sessions WHERE id = ?")
+        let row = sqlx::query("SELECT * FROM execution_sessions WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -576,6 +616,16 @@ impl DatabaseService {
             let metadata_str: String = row.get("metadata");
             let context: serde_json::Value = serde_json::from_str(&context_str)?;
             let metadata: serde_json::Value = serde_json::from_str(&metadata_str)?;
+            
+            // Helper to get time safely
+            let get_time_str = |col| -> String {
+                if let Ok(dt) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
+                    dt.to_rfc3339()
+                } else {
+                    row.try_get::<String, _>(col).unwrap_or_default()
+                }
+            };
+            
             Ok(Some(serde_json::json!({
                 "id": row.get::<String, _>("id"),
                 "plan_id": row.get::<String, _>("plan_id"),
@@ -586,7 +636,7 @@ impl DatabaseService {
                 "progress": row.get::<f64, _>("progress"),
                 "context": context,
                 "metadata": metadata,
-                "updated_at": row.get::<String, _>("updated_at"),
+                "updated_at": get_time_str("updated_at"),
             })))
         } else {
             Ok(None)

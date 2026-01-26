@@ -22,108 +22,269 @@
     </div>
 
     <!-- 高级筛选 -->
-    <div class="bg-base-100 rounded-lg p-4 shadow-sm border border-base-300">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-medium">{{ $t('assetManagement.filters') }}</h3>
-        <button @click="resetFilters" class="btn btn-ghost btn-xs">
-          <i class="fas fa-redo mr-1"></i>
-          {{ $t('common.reset') }}
-        </button>
-      </div>
-      
-      <!-- 第一行筛选 -->
-      <div class="grid grid-cols-1 md:grid-cols-6 gap-3 mb-3">
-        <div class="form-control">
-          <input 
-            v-model="filters.search" 
-            type="text" 
-            :placeholder="$t('common.search') + '...'"
-            class="input input-bordered input-sm"
-            @input="applyFilters"
-          />
+    <div class="bg-base-100 rounded-lg shadow-sm border border-base-300">
+      <!-- 筛选头部 -->
+      <div class="flex items-center justify-between p-4 border-b border-base-300">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-filter text-xs text-base-content/60"></i>
+          <h3 class="text-sm font-medium">{{ $t('assetManagement.filters') }}</h3>
         </div>
-        <div class="form-control">
-          <select v-model="filters.programId" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('common.allPrograms') }}</option>
-            <option v-for="program in programs" :key="program.id" :value="program.id">
-              {{ program.name }}
-            </option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.assetType" class="select select-bordered select-sm" @change="onAssetTypeChange">
-            <option value="">{{ $t('assetManagement.allTypes') }}</option>
-            <option v-for="type in assetTypes" :key="type" :value="type">
-              {{ type }}
-            </option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.riskLevel" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allRiskLevels') }}</option>
-            <option value="High">{{ $t('assetManagement.riskLevel.high') }}</option>
-            <option value="Medium">{{ $t('assetManagement.riskLevel.medium') }}</option>
-            <option value="Low">{{ $t('assetManagement.riskLevel.low') }}</option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.status" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allStatuses') }}</option>
-            <option value="Active">{{ $t('assetManagement.status.active') }}</option>
-            <option value="Inactive">{{ $t('assetManagement.status.inactive') }}</option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.exposureLevel" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('common.allExposureLevels') }}</option>
-            <option value="internet">{{ $t('common.exposureLevel.internet') }}</option>
-            <option value="intranet">{{ $t('common.exposureLevel.intranet') }}</option>
-            <option value="private">{{ $t('common.exposureLevel.private') }}</option>
-          </select>
+        <div class="flex items-center gap-2">
+          <button @click="resetFilters" class="btn btn-ghost btn-xs">
+            <i class="fas fa-redo mr-1"></i>
+            {{ $t('common.reset') }}
+          </button>
+          <button @click="showAdvancedFilters = !showAdvancedFilters" class="btn btn-ghost btn-xs">
+            <i class="fas mr-1" :class="showAdvancedFilters ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            {{ showAdvancedFilters ? $t('assetManagement.hideAdvanced') : $t('assetManagement.showAdvanced') }}
+          </button>
         </div>
       </div>
 
-      <!-- 第二行筛选 (ASM特有) -->
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
-        <div class="form-control">
-          <select v-model="filters.country" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allCountries') }}</option>
-            <option v-for="country in countries" :key="country" :value="country">
-              {{ country }}
-            </option>
-          </select>
+      <!-- 基础筛选器（始终显示） -->
+      <div class="p-4">
+        <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
+          <!-- 搜索 -->
+          <div class="form-control">
+            <input
+              v-model="filters.search"
+              type="text"
+              :placeholder="$t('common.search') + '...'"
+              class="input input-bordered input-sm"
+              @input="applyFilters"
+            />
+          </div>
+          <!-- 项目 -->
+          <div class="form-control">
+            <select v-model="filters.programId" class="select select-bordered select-sm" @change="applyFilters">
+              <option value="">{{ $t('common.allPrograms') }}</option>
+              <option v-for="program in programs" :key="program.id" :value="program.id">
+                {{ program.name }}
+              </option>
+            </select>
+          </div>
+          <!-- 资产类型 -->
+          <div class="form-control">
+            <select v-model="filters.assetType" class="select select-bordered select-sm" @change="onAssetTypeChange">
+              <option value="">{{ $t('assetManagement.allTypes') }}</option>
+              <option v-for="type in assetTypes" :key="type" :value="type">
+                {{ type }}
+              </option>
+            </select>
+          </div>
+          <!-- 风险等级 -->
+          <div class="form-control">
+            <select v-model="filters.riskLevel" class="select select-bordered select-sm" @change="applyFilters">
+              <option value="">{{ $t('assetManagement.allRiskLevels') }}</option>
+              <option value="High">{{ $t('assetManagement.riskLevel.high') }}</option>
+              <option value="Medium">{{ $t('assetManagement.riskLevel.medium') }}</option>
+              <option value="Low">{{ $t('assetManagement.riskLevel.low') }}</option>
+            </select>
+          </div>
+          <!-- 状态 -->
+          <div class="form-control">
+            <select v-model="filters.status" class="select select-bordered select-sm" @change="applyFilters">
+              <option value="">{{ $t('assetManagement.allStatuses') }}</option>
+              <option value="Active">{{ $t('assetManagement.status.active') }}</option>
+              <option value="Inactive">{{ $t('assetManagement.status.inactive') }}</option>
+            </select>
+          </div>
+          <!-- 暴露级别 -->
+          <div class="form-control">
+            <select v-model="filters.exposureLevel" class="select select-bordered select-sm" @change="applyFilters">
+              <option value="">{{ $t('common.allExposureLevels') }}</option>
+              <option value="internet">{{ $t('common.exposureLevel.internet') }}</option>
+              <option value="intranet">{{ $t('common.exposureLevel.intranet') }}</option>
+              <option value="private">{{ $t('common.exposureLevel.private') }}</option>
+            </select>
+          </div>
         </div>
-        <div class="form-control">
-          <select v-model="filters.cloudProvider" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allCloudProviders') }}</option>
-            <option v-for="provider in cloudProviders" :key="provider" :value="provider">
-              {{ provider }}
-            </option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.serviceName" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allServices') }}</option>
-            <option v-for="service in serviceNames" :key="service" :value="service">
-              {{ service }}
-            </option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.cdnDetected" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allCDNs') }}</option>
-            <option v-for="cdn in cdns" :key="cdn" :value="cdn">
-              {{ cdn }}
-            </option>
-          </select>
-        </div>
-        <div class="form-control">
-          <select v-model="filters.wafDetected" class="select select-bordered select-sm" @change="applyFilters">
-            <option value="">{{ $t('assetManagement.allWAFs') }}</option>
-            <option v-for="waf in wafs" :key="waf" :value="waf">
-              {{ waf }}
-            </option>
-          </select>
+      </div>
+
+      <!-- 高级筛选器（可折叠） -->
+      <div v-if="showAdvancedFilters" class="border-t border-base-300">
+        <div class="p-4">
+          <!-- IP/Host 类型筛选 -->
+          <div v-if="showIpFilters" class="mb-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i class="fas fa-network-wired text-xs text-base-content/60"></i>
+              <span class="text-xs font-medium">{{ $t('assetManagement.columnGroups.ip') }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 ml-4">
+              <div class="form-control">
+                <select v-model="filters.country" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allCountries') }}</option>
+                  <option v-for="country in countries" :key="country" :value="country">
+                    {{ country }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.cloudProvider" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allCloudProviders') }}</option>
+                  <option v-for="provider in cloudProviders" :key="provider" :value="provider">
+                    {{ provider }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Domain 类型筛选 -->
+          <div v-if="showDomainFilters" class="mb-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i class="fas fa-globe text-xs text-base-content/60"></i>
+              <span class="text-xs font-medium">{{ $t('assetManagement.columnGroups.domain') }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 ml-4">
+              <div class="form-control">
+                <select v-model="filters.ipAddress" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allIps') }}</option>
+                  <option v-for="ip in ipAddresses" :key="ip" :value="ip">
+                    {{ ip }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.dnsRecord" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allDnsRecords') }}</option>
+                  <option value="A">A</option>
+                  <option value="AAAA">AAAA</option>
+                  <option value="CNAME">CNAME</option>
+                  <option value="MX">MX</option>
+                  <option value="TXT">TXT</option>
+                  <option value="NS">NS</option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.expiringSoon" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allExpirationStatus') }}</option>
+                  <option value="expiring">{{ $t('assetManagement.expiringSoon') }}</option>
+                  <option value="not_expiring">{{ $t('assetManagement.notExpiringSoon') }}</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Port/Service 类型筛选 -->
+          <div v-if="showPortFilters" class="mb-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i class="fas fa-plug text-xs text-base-content/60"></i>
+              <span class="text-xs font-medium">{{ $t('assetManagement.columnGroups.port') }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 ml-4">
+              <div class="form-control">
+                <select v-model="filters.serviceType" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allServiceTypes') }}</option>
+                  <option value="SSH">SSH</option>
+                  <option value="FTP">FTP</option>
+                  <option value="HTTP">HTTP</option>
+                  <option value="HTTPS">HTTPS</option>
+                  <option value="MYSQL">MySQL</option>
+                  <option value="REDIS">Redis</option>
+                  <option value="MONGODB">MongoDB</option>
+                  <option value="RDP">RDP</option>
+                  <option value="VNC">VNC</option>
+                  <option value="TELNET">Telnet</option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.serviceName" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allServices') }}</option>
+                  <option v-for="service in serviceNames" :key="service" :value="service">
+                    {{ service }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.transportProtocol" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allProtocols') }}</option>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Web/URL 类型筛选 -->
+          <div v-if="showWebFilters" class="mb-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i class="fas fa-link text-xs text-base-content/60"></i>
+              <span class="text-xs font-medium">{{ $t('assetManagement.columnGroups.web') }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3 ml-4">
+              <div class="form-control">
+                <input
+                  v-model="filters.pageTitle"
+                  type="text"
+                  :placeholder="$t('assetManagement.titleFilter') + '...'"
+                  class="input input-bordered input-sm"
+                  @input="applyFilters"
+                />
+              </div>
+              <div class="form-control">
+                <input
+                  v-model="filters.fingerprint"
+                  type="text"
+                  :placeholder="$t('assetManagement.fingerprintFilter') + '...'"
+                  class="input input-bordered input-sm"
+                  @input="applyFilters"
+                />
+              </div>
+              <div class="form-control">
+                <select v-model="filters.httpStatus" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allHttpStatuses') }}</option>
+                  <option value="200">200 OK</option>
+                  <option value="301">301 Redirect</option>
+                  <option value="302">302 Redirect</option>
+                  <option value="403">403 Forbidden</option>
+                  <option value="404">404 Not Found</option>
+                  <option value="500">500 Error</option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.cdnDetected" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allCDNs') }}</option>
+                  <option v-for="cdn in cdns" :key="cdn" :value="cdn">
+                    {{ cdn }}
+                  </option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.wafDetected" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allWAFs') }}</option>
+                  <option v-for="waf in wafs" :key="waf" :value="waf">
+                    {{ waf }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Certificate 类型筛选 -->
+          <div v-if="showCertFilters" class="mb-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i class="fas fa-certificate text-xs text-base-content/60"></i>
+              <span class="text-xs font-medium">{{ $t('assetManagement.columnGroups.certificate') }}</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 ml-4">
+              <div class="form-control">
+                <select v-model="filters.sslEnabled" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allSslStatus') }}</option>
+                  <option value="enabled">{{ $t('assetManagement.sslEnabled') }}</option>
+                  <option value="disabled">{{ $t('assetManagement.sslDisabled') }}</option>
+                </select>
+              </div>
+              <div class="form-control">
+                <select v-model="filters.certIssuer" class="select select-bordered select-sm" @change="applyFilters">
+                  <option value="">{{ $t('assetManagement.allIssuers') }}</option>
+                  <option v-for="issuer in certIssuers" :key="issuer" :value="issuer">
+                    {{ issuer }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -562,11 +723,16 @@ interface Asset {
   content_type?: string;
   title?: string;
   favicon_hash?: string;
+  fingerprint?: string;
   waf_detected?: string;
   cdn_detected?: string;
   screenshot_path?: string;
   body_hash?: string;
   tech_stack?: string[];
+
+  // JSON fields from database
+  ip_addresses_json?: string;
+  dns_records_json?: string;
   
   // Certificate fields
   ssl_enabled?: boolean;
@@ -602,6 +768,7 @@ const currentPage = ref(1);
 const pageSize = ref(20);
 const showDetailModal = ref(false);
 const showColumnsModal = ref(false);
+const showAdvancedFilters = ref(false);
 const selectedAsset = ref<Asset | null>(null);
 
 // Filters
@@ -612,11 +779,26 @@ const filters = ref({
   riskLevel: '',
   status: '',
   exposureLevel: '',
+  // IP/Host filters
   country: '',
   cloudProvider: '',
+  // Domain filters
+  ipAddress: '',
+  dnsRecord: '',
+  expiringSoon: '',
+  // Port/Service filters
+  serviceType: '',
   serviceName: '',
+  transportProtocol: '',
+  // Web/URL filters
+  pageTitle: '',
+  fingerprint: '',
+  httpStatus: '',
   cdnDetected: '',
-  wafDetected: ''
+  wafDetected: '',
+  // Certificate filters
+  sslEnabled: '',
+  certIssuer: ''
 });
 
 // Filter options
@@ -626,6 +808,8 @@ const cloudProviders = ref<string[]>([]);
 const serviceNames = ref<string[]>([]);
 const cdns = ref<string[]>([]);
 const wafs = ref<string[]>([]);
+const certIssuers = ref<string[]>([]);
+const ipAddresses = ref<string[]>([]);
 
 // Column visibility - default visible columns
 const visibleColumns = ref<Record<string, boolean>>({
@@ -677,55 +861,136 @@ const showDomainColumns = computed(() => !filters.value.assetType || ['domain', 
 const showWebColumns = computed(() => !filters.value.assetType || ['url', 'web', 'http', 'https'].includes(filters.value.assetType.toLowerCase()));
 const showCertColumns = computed(() => !filters.value.assetType || ['certificate', 'ssl'].includes(filters.value.assetType.toLowerCase()));
 
+// Computed: Show type-specific filters based on selected asset type
+const showIpFilters = computed(() => !filters.value.assetType || ['ip', 'host'].includes(filters.value.assetType.toLowerCase()));
+const showDomainFilters = computed(() => !filters.value.assetType || ['domain', 'subdomain'].includes(filters.value.assetType.toLowerCase()));
+const showPortFilters = computed(() => !filters.value.assetType || ['port', 'service'].includes(filters.value.assetType.toLowerCase()));
+const showWebFilters = computed(() => !filters.value.assetType || ['url', 'web', 'http', 'https'].includes(filters.value.assetType.toLowerCase()));
+const showCertFilters = computed(() => !filters.value.assetType || ['certificate', 'ssl'].includes(filters.value.assetType.toLowerCase()));
+
 const filteredAssets = computed(() => {
   let filtered = assets.value;
-  
+
   if (filters.value.search) {
     const query = filters.value.search.toLowerCase();
-    filtered = filtered.filter(asset => 
+    filtered = filtered.filter(asset =>
       asset.name.toLowerCase().includes(query) ||
       asset.value.toLowerCase().includes(query) ||
       asset.service_name?.toLowerCase().includes(query) ||
       asset.title?.toLowerCase().includes(query)
     );
   }
-  
+
   if (filters.value.assetType) {
     filtered = filtered.filter(asset => asset.asset_type === filters.value.assetType);
   }
-  
+
   if (filters.value.riskLevel) {
     filtered = filtered.filter(asset => asset.risk_level === filters.value.riskLevel);
   }
-  
+
   if (filters.value.status) {
     filtered = filtered.filter(asset => asset.status === filters.value.status);
   }
-  
+
   if (filters.value.exposureLevel) {
     filtered = filtered.filter(asset => asset.exposure_level === filters.value.exposureLevel);
   }
-  
+
+  // IP/Host filters
   if (filters.value.country) {
     filtered = filtered.filter(asset => asset.country === filters.value.country);
   }
-  
+
   if (filters.value.cloudProvider) {
     filtered = filtered.filter(asset => asset.cloud_provider === filters.value.cloudProvider);
   }
-  
+
+  // Domain filters
+  if (filters.value.ipAddress) {
+    filtered = filtered.filter(asset => {
+      const ips = asset.ip_addresses_json ? JSON.parse(asset.ip_addresses_json) : [];
+      return ips.some((ip: any) => ip.ip === filters.value.ipAddress);
+    });
+  }
+
+  if (filters.value.dnsRecord) {
+    filtered = filtered.filter(asset => {
+      const records = asset.dns_records_json ? JSON.parse(asset.dns_records_json) : [];
+      return records.some((r: any) => r.type === filters.value.dnsRecord);
+    });
+  }
+
+  if (filters.value.expiringSoon) {
+    filtered = filtered.filter(asset => {
+      if (!asset.expiration_date) return false;
+      const date = new Date(asset.expiration_date);
+      const now = new Date();
+      const daysUntilExpiry = Math.floor((date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return filters.value.expiringSoon === 'expiring' ? daysUntilExpiry < 30 && daysUntilExpiry > 0 : daysUntilExpiry >= 30 || daysUntilExpiry <= 0;
+    });
+  }
+
+  // Port/Service filters
+  if (filters.value.serviceType) {
+    filtered = filtered.filter(asset => {
+      const serviceUpper = asset.service_name?.toUpperCase() || '';
+      return serviceUpper.includes(filters.value.serviceType);
+    });
+  }
+
   if (filters.value.serviceName) {
     filtered = filtered.filter(asset => asset.service_name === filters.value.serviceName);
   }
-  
+
+  if (filters.value.transportProtocol) {
+    filtered = filtered.filter(asset => asset.transport_protocol === filters.value.transportProtocol);
+  }
+
+  // Web/URL filters
+  if (filters.value.pageTitle) {
+    const query = filters.value.pageTitle.toLowerCase();
+    filtered = filtered.filter(asset =>
+      asset.title?.toLowerCase().includes(query)
+    );
+  }
+
+  if (filters.value.fingerprint) {
+    const query = filters.value.fingerprint.toLowerCase();
+    filtered = filtered.filter(asset => {
+      // Check fingerprint field
+      if (asset.fingerprint?.toLowerCase().includes(query)) return true;
+      // Check favicon hash
+      if (asset.favicon_hash?.toLowerCase().includes(query)) return true;
+      // Check body hash
+      if (asset.body_hash?.toLowerCase().includes(query)) return true;
+      return false;
+    });
+  }
+
+  if (filters.value.httpStatus) {
+    filtered = filtered.filter(asset => asset.http_status?.toString() === filters.value.httpStatus);
+  }
+
   if (filters.value.cdnDetected) {
     filtered = filtered.filter(asset => asset.cdn_detected === filters.value.cdnDetected);
   }
-  
+
   if (filters.value.wafDetected) {
     filtered = filtered.filter(asset => asset.waf_detected === filters.value.wafDetected);
   }
-  
+
+  // Certificate filters
+  if (filters.value.sslEnabled) {
+    filtered = filtered.filter(asset => {
+      return filters.value.sslEnabled === 'enabled' ? asset.ssl_enabled === true : asset.ssl_enabled === false;
+    });
+  }
+
+  if (filters.value.certIssuer) {
+    filtered = filtered.filter(asset => asset.certificate_issuer === filters.value.certIssuer);
+  }
+
   return filtered;
 });
 
@@ -849,6 +1114,23 @@ const extractFilterOptions = () => {
   serviceNames.value = Array.from(new Set(assets.value.map(a => a.service_name).filter(Boolean)));
   cdns.value = Array.from(new Set(assets.value.map(a => a.cdn_detected).filter(Boolean)));
   wafs.value = Array.from(new Set(assets.value.map(a => a.waf_detected).filter(Boolean)));
+  certIssuers.value = Array.from(new Set(assets.value.map(a => a.certificate_issuer).filter(Boolean)));
+
+  // Extract IP addresses from ip_addresses_json
+  const allIps: string[] = [];
+  assets.value.forEach(asset => {
+    if (asset.ip_addresses_json) {
+      try {
+        const ips = JSON.parse(asset.ip_addresses_json);
+        ips.forEach((ip: any) => {
+          if (ip.ip) allIps.push(ip.ip);
+        });
+      } catch (e) {
+        // Ignore parse errors
+      }
+    }
+  });
+  ipAddresses.value = Array.from(new Set(allIps));
 };
 
 const updateStats = () => {
@@ -875,11 +1157,26 @@ const resetFilters = () => {
     riskLevel: '',
     status: '',
     exposureLevel: '',
+    // IP/Host filters
     country: '',
     cloudProvider: '',
+    // Domain filters
+    ipAddress: '',
+    dnsRecord: '',
+    expiringSoon: '',
+    // Port/Service filters
+    serviceType: '',
     serviceName: '',
+    transportProtocol: '',
+    // Web/URL filters
+    pageTitle: '',
+    fingerprint: '',
+    httpStatus: '',
     cdnDetected: '',
-    wafDetected: ''
+    wafDetected: '',
+    // Certificate filters
+    sslEnabled: '',
+    certIssuer: ''
   };
   applyFilters();
   loadAssets(); // Reload assets when program filter is reset

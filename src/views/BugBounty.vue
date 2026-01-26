@@ -872,7 +872,6 @@ const batchUpdateFindingStatus = async (ids: string[], status: string) => {
 }
 
 const batchDeleteFindings = async (ids: string[]) => {
-  if (!confirm(t('bugBounty.batch.confirmDelete', { count: ids.length }))) return
   
   try {
     let successCount = 0
@@ -916,7 +915,6 @@ const batchUpdateSubmissionStatus = async (ids: string[], status: string) => {
 }
 
 const batchDeleteSubmissions = async (ids: string[]) => {
-  if (!confirm(t('bugBounty.batch.confirmDelete', { count: ids.length }))) return
   
   try {
     let successCount = 0

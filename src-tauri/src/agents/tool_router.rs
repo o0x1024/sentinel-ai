@@ -6,6 +6,8 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
+use sentinel_db::Database;
+#[allow(unused_imports)]
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -778,7 +780,7 @@ impl ToolRouter {
         task: &str,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
-        db_pool: Option<&sqlx::sqlite::SqlitePool>,
+        db_pool: Option<&sqlx::postgres::PgPool>,
     ) -> Result<ToolSelectionPlan> {
         if !config.enabled {
             return Ok(ToolSelectionPlan {
@@ -1221,7 +1223,7 @@ impl ToolRouter {
         use sentinel_db::Database;
         let plugins = db_service.get_plugins_from_registry(Some("default"))
             .await
-            .map_err(|e| format!("Failed to query database plugins: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to query database plugins: {}", e))?;
 
         for p in plugins {
             // 只查询已启用的 agent 类型插件
@@ -1489,7 +1491,7 @@ Return ONLY the tool names, one per line."#,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
         allowed_groups: &[String],
-        _db_pool: Option<&sqlx::sqlite::SqlitePool>,
+        _db_pool: Option<&sqlx::postgres::PgPool>,
     ) -> Result<ToolSelectionPlan> {
         use sentinel_db::Database;
         use sentinel_llm::{LlmClient, LlmConfig};

@@ -2,6 +2,14 @@ use anyhow::Result;
 use crate::database_service::service::DatabaseService;
 use sqlx::Row;
 
+// Helper function to convert TIMESTAMP WITH TIME ZONE to String
+fn timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> String {
+    row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
+        .map(|dt| dt.to_rfc3339())
+        .or_else(|_| row.try_get::<String, _>(column))
+        .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RagCollectionRow {
     pub id: String,
@@ -54,15 +62,15 @@ impl DatabaseService {
     ) -> Result<String> {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
         sqlx::query(
-            "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)",
+            "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES ($1, $2, $3, false, $4, $5)",
         )
         .bind(&id)
         .bind(name)
         .bind(description)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
         Ok(id)
@@ -81,11 +89,11 @@ impl DatabaseService {
                 id: row.get("id"),
                 name: row.get("name"),
                 description: row.get("description"),
-                is_active: row.get::<i64, _>("is_active") != 0,
+                is_active: row.get("is_active"),
                 document_count: row.get("document_count"),
                 chunk_count: row.get("chunk_count"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
+                created_at: timestamp_to_string(&row, "created_at"),
+                updated_at: timestamp_to_string(&row, "updated_at"),
             });
         }
         Ok(out)
@@ -94,7 +102,7 @@ impl DatabaseService {
     pub async fn get_rag_collection_by_id_internal(&self, collection_id: &str) -> Result<Option<RagCollectionRow>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT * FROM rag_collections WHERE id = ?",
+            "SELECT * FROM rag_collections WHERE id = $1",
         )
         .bind(collection_id)
         .fetch_optional(pool)
@@ -103,18 +111,18 @@ impl DatabaseService {
             id: row.get("id"),
             name: row.get("name"),
             description: row.get("description"),
-            is_active: row.get::<i64, _>("is_active") != 0,
+            is_active: row.get("is_active"),
             document_count: row.get("document_count"),
             chunk_count: row.get("chunk_count"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            created_at: timestamp_to_string(&row, "created_at"),
+            updated_at: timestamp_to_string(&row, "updated_at"),
         }))
     }
 
     pub async fn get_rag_collection_by_name_internal(&self, name: &str) -> Result<Option<RagCollectionRow>> {
         let pool = self.get_pool()?;
         let row = sqlx::query(
-            "SELECT * FROM rag_collections WHERE name = ?",
+            "SELECT * FROM rag_collections WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(pool)
@@ -123,11 +131,11 @@ impl DatabaseService {
             id: row.get("id"),
             name: row.get("name"),
             description: row.get("description"),
-            is_active: row.get::<i64, _>("is_active") != 0,
+            is_active: row.get("is_active"),
             document_count: row.get("document_count"),
             chunk_count: row.get("chunk_count"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            created_at: timestamp_to_string(&row, "created_at"),
+            updated_at: timestamp_to_string(&row, "updated_at"),
         }))
     }
 
@@ -136,25 +144,25 @@ impl DatabaseService {
         let mut tx = pool.begin().await?;
 
         // 1. Delete chunks associated with the collection
-        sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?")
+        sqlx::query("DELETE FROM rag_chunks WHERE collection_id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
 
         // 2. Delete document sources associated with the collection
-        sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?")
+        sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
 
         // 3. Delete queries associated with the collection
-        sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?")
+        sqlx::query("DELETE FROM rag_queries WHERE collection_id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
 
         // 4. Finally delete the collection itself
-        sqlx::query("DELETE FROM rag_collections WHERE id = ?")
+        sqlx::query("DELETE FROM rag_collections WHERE id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -166,7 +174,7 @@ impl DatabaseService {
     pub async fn update_rag_collection_internal(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
         let pool = self.get_pool()?;
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("UPDATE rag_collections SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE rag_collections SET name = $1, description = $2, updated_at = $3 WHERE id = $4")
             .bind(name)
             .bind(description)
             .bind(&now)
@@ -178,8 +186,8 @@ impl DatabaseService {
 
     pub async fn set_rag_collection_active_internal(&self, id: &str, active: bool) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
-            .bind(if active { 1 } else { 0 })
+        sqlx::query("UPDATE rag_collections SET is_active = $1, updated_at = $2 WHERE id = $3")
+            .bind(active)
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(id)
             .execute(pool)
@@ -190,14 +198,14 @@ impl DatabaseService {
     pub async fn update_collection_stats_internal(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
         let document_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?",
+            "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = $1",
         )
         .bind(id)
         .fetch_one(pool)
         .await?;
 
         let chunk_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?",
+            "SELECT COUNT(*) FROM rag_chunks WHERE collection_id = $1",
         )
         .bind(id)
         .fetch_one(pool)
@@ -205,7 +213,7 @@ impl DatabaseService {
 
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query(
-            "UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?",
+            "UPDATE rag_collections SET document_count = $1, chunk_count = $2, updated_at = $3 WHERE id = $4",
         )
         .bind(document_count)
         .bind(chunk_count)
@@ -221,7 +229,7 @@ impl DatabaseService {
         let rows = sqlx::query(
             r#"SELECT s.* FROM rag_document_sources s 
                JOIN rag_collections c ON s.collection_id = c.id 
-               WHERE c.name = ? ORDER BY s.created_at DESC"#
+               WHERE c.name = $1 ORDER BY s.created_at DESC"#
         )
         .bind(collection_name)
         .fetch_all(pool)
@@ -232,7 +240,7 @@ impl DatabaseService {
     pub async fn get_documents_by_collection_id_internal(&self, collection_id: &str) -> Result<Vec<RagDocumentSourceRow>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query(
-            "SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC"
+            "SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC"
         )
         .bind(collection_id)
         .fetch_all(pool)
@@ -260,7 +268,7 @@ impl DatabaseService {
             r#"INSERT INTO rag_document_sources (
                 id, collection_id, file_path, file_name, file_type, file_size, 
                 file_hash, content_hash, status, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#
         )
         .bind(id)
         .bind(collection_id)
@@ -282,15 +290,15 @@ impl DatabaseService {
     pub async fn delete_document_cascade_internal(&self, document_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
         let mut tx = pool.begin().await?;
-        sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn get_collection_id_by_document_id_internal(&self, document_id: &str) -> Result<Option<String>> {
         let pool = self.get_pool()?;
-        let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
+        let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = $1")
             .bind(document_id)
             .fetch_optional(pool)
             .await?;
@@ -316,7 +324,7 @@ impl DatabaseService {
             r#"INSERT INTO rag_chunks (
                 id, document_id, collection_id, content, content_hash, chunk_index, char_count,
                 embedding, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
         )
         .bind(id)
         .bind(document_id)
@@ -336,14 +344,14 @@ impl DatabaseService {
 
     pub async fn get_chunks_by_document_id_internal(&self, document_id: &str) -> Result<Vec<RagChunkRow>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC")
+        let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = $1 ORDER BY chunk_index ASC")
             .bind(document_id)
             .fetch_all(pool)
             .await?;
         Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
     }
 
-    fn row_to_doc_source(&self, row: sqlx::sqlite::SqliteRow) -> RagDocumentSourceRow {
+    fn row_to_doc_source(&self, row: sqlx::postgres::PgRow) -> RagDocumentSourceRow {
         RagDocumentSourceRow {
             id: row.get("id"),
             collection_id: row.get("collection_id"),
@@ -356,12 +364,12 @@ impl DatabaseService {
             status: row.get("status"),
             metadata: row.get("metadata"),
             chunk_count: row.get("chunk_count"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            created_at: timestamp_to_string(&row, "created_at"),
+            updated_at: timestamp_to_string(&row, "updated_at"),
         }
     }
 
-    fn row_to_rag_chunk(&self, row: sqlx::sqlite::SqliteRow) -> RagChunkRow {
+    fn row_to_rag_chunk(&self, row: sqlx::postgres::PgRow) -> RagChunkRow {
         RagChunkRow {
             id: row.get("id"),
             document_id: row.get("document_id"),
@@ -372,10 +380,16 @@ impl DatabaseService {
             char_count: row.get("char_count"),
             embedding: row.get("embedding"),
             metadata: row.get("metadata"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
+            created_at: timestamp_to_string(&row, "created_at"),
+            updated_at: timestamp_to_string(&row, "updated_at"), 
         }
     }
+    // Note: I will need to handle the `row_to_rag_chunk` carefuly if types mismatch.
+    // The previous implementation used `row.get("created_at")`. If it was SQLite, it accepts flexibility.
+    // In Postgres, types are strict.
+    // I will refactor `row_to_rag_chunk` logic inside `impl`.
+    
+    // ... skipping row_to_rag_chunk modification request in this block, I will replace the WHOLE file content or logic for methods.
 
     pub async fn create_rag_document_internal(
         &self,
@@ -387,12 +401,12 @@ impl DatabaseService {
     ) -> Result<String> {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
         let content_hash = format!("{:x}", md5::compute(content));
         
         sqlx::query(
             r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, status, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
         )
         .bind(&id)
         .bind(collection_id)
@@ -401,10 +415,10 @@ impl DatabaseService {
         .bind("text")
         .bind(content.len() as i64)
         .bind(content_hash)
-        .bind("Completed") // Since we are creating it with content, mark as completed
+        .bind("Completed")
         .bind(metadata)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
         Ok(id)
@@ -421,7 +435,7 @@ impl DatabaseService {
     ) -> Result<String> {
         let pool = self.get_pool()?;
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
         let content_hash = format!("{:x}", md5::compute(content));
         
         let embedding_bytes = embedding.map(|e| {
@@ -434,7 +448,7 @@ impl DatabaseService {
 
         sqlx::query(
             r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
         )
         .bind(&id)
         .bind(document_id)
@@ -445,8 +459,8 @@ impl DatabaseService {
         .bind(content.len() as i32)
         .bind(embedding_bytes)
         .bind(metadata_json)
-        .bind(&now)
-        .bind(&now)
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
         Ok(id)
@@ -454,7 +468,7 @@ impl DatabaseService {
 
     pub async fn get_rag_documents_internal(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
         let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC")
+        let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC")
             .bind(collection_id)
             .fetch_all(pool)
             .await?;
@@ -499,13 +513,13 @@ impl DatabaseService {
         // Build query with optional search
         let (query_str, count_str) = if let Some(_search) = search_query {
             (
-                "SELECT * FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?) ORDER BY created_at DESC LIMIT ? OFFSET ?".to_string(),
-                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = ? AND (file_name LIKE ? OR file_path LIKE ?)".to_string()
+                "SELECT * FROM rag_document_sources WHERE collection_id = $1 AND (file_name LIKE $2 OR file_path LIKE $3) ORDER BY created_at DESC LIMIT $4 OFFSET $5".to_string(),
+                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = $1 AND (file_name LIKE $2 OR file_path LIKE $3)".to_string()
             )
         } else {
             (
-                "SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?".to_string(),
-                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = ?".to_string()
+                "SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3".to_string(),
+                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = $1".to_string()
             )
         };
         
@@ -582,7 +596,7 @@ impl DatabaseService {
             r#"SELECT c.*, s.file_path, s.file_name, s.file_type, s.file_size 
                FROM rag_chunks c 
                JOIN rag_document_sources s ON c.document_id = s.id 
-               WHERE c.document_id = ? ORDER BY c.chunk_index ASC"#
+               WHERE c.document_id = $1 ORDER BY c.chunk_index ASC"#
         )
         .bind(document_id)
         .fetch_all(pool)
@@ -616,8 +630,8 @@ impl DatabaseService {
 
     pub async fn delete_rag_document_internal(&self, document_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
-        sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+        sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(pool).await?;
+        sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(pool).await?;
         Ok(())
     }
 
@@ -633,7 +647,7 @@ impl DatabaseService {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
             r#"INSERT INTO rag_queries (id, collection_id, conversation_id, query, response, processing_time_ms, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#
+               VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)"#
         )
         .bind(&id)
         .bind(collection_id)

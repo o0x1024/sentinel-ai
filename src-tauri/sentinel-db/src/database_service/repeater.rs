@@ -81,8 +81,8 @@ impl DatabaseService {
             name: row.get("name"),
             target_host: row.get("target_host"),
             target_port: row.get("target_port"),
-            use_tls: row.get::<i32, _>("use_tls") != 0,
-            override_sni: row.get::<i32, _>("override_sni") != 0,
+            use_tls: row.get("use_tls"),
+            override_sni: row.get("override_sni"),
             sni_host: row.get("sni_host"),
             raw_request: row.get("raw_request"),
             request_tab: row.get("request_tab"),
@@ -115,7 +115,7 @@ impl DatabaseService {
                 created_at,
                 updated_at
             FROM repeater_tabs
-            WHERE id = ?"#
+            WHERE id = $1"#
         )
         .bind(id)
         .fetch_optional(pool)
@@ -126,8 +126,8 @@ impl DatabaseService {
             name: row.get("name"),
             target_host: row.get("target_host"),
             target_port: row.get("target_port"),
-            use_tls: row.get::<i32, _>("use_tls") != 0,
-            override_sni: row.get::<i32, _>("override_sni") != 0,
+            use_tls: row.get("use_tls"),
+            override_sni: row.get("override_sni"),
             sni_host: row.get("sni_host"),
             raw_request: row.get("raw_request"),
             request_tab: row.get("request_tab"),
@@ -149,14 +149,14 @@ impl DatabaseService {
             r#"INSERT INTO repeater_tabs (
                 id, name, target_host, target_port, use_tls, override_sni, sni_host,
                 raw_request, request_tab, response_tab, sort_order, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#
         )
         .bind(&request.id)
         .bind(&request.name)
         .bind(&request.target_host)
         .bind(request.target_port)
-        .bind(if request.use_tls { 1 } else { 0 })
-        .bind(if request.override_sni { 1 } else { 0 })
+        .bind(request.use_tls)
+        .bind(request.override_sni)
         .bind(&request.sni_host)
         .bind(&request.raw_request)
         .bind(&request.request_tab)
@@ -176,58 +176,68 @@ impl DatabaseService {
         let now = chrono::Utc::now().to_rfc3339();
         
         // Build dynamic update query
-        let mut query = String::from("UPDATE repeater_tabs SET updated_at = ?");
-        let mut params: Vec<String> = vec![now.clone()];
+        let mut query = String::from("UPDATE repeater_tabs SET updated_at = $1");
+        let mut idx = 2;
         
-        if let Some(name) = &request.name {
-            query.push_str(", name = ?");
-            params.push(name.clone());
+        if request.name.is_some() {
+            query.push_str(&format!(", name = ${}", idx));
+            idx += 1;
         }
-        if let Some(target_host) = &request.target_host {
-            query.push_str(", target_host = ?");
-            params.push(target_host.clone());
+        if request.target_host.is_some() {
+            query.push_str(&format!(", target_host = ${}", idx));
+            idx += 1;
         }
-        if let Some(target_port) = request.target_port {
-            query.push_str(", target_port = ?");
-            params.push(target_port.to_string());
+        if request.target_port.is_some() {
+            query.push_str(&format!(", target_port = ${}", idx));
+            idx += 1;
         }
-        if let Some(use_tls) = request.use_tls {
-            query.push_str(", use_tls = ?");
-            params.push(if use_tls { "1" } else { "0" }.to_string());
+        if request.use_tls.is_some() {
+            query.push_str(&format!(", use_tls = ${}", idx));
+            idx += 1;
         }
-        if let Some(override_sni) = request.override_sni {
-            query.push_str(", override_sni = ?");
-            params.push(if override_sni { "1" } else { "0" }.to_string());
+        if request.override_sni.is_some() {
+            query.push_str(&format!(", override_sni = ${}", idx));
+            idx += 1;
         }
-        if let Some(sni_host) = &request.sni_host {
-            query.push_str(", sni_host = ?");
-            params.push(sni_host.clone());
+        if request.sni_host.is_some() {
+            query.push_str(&format!(", sni_host = ${}", idx));
+            idx += 1;
         }
-        if let Some(raw_request) = &request.raw_request {
-            query.push_str(", raw_request = ?");
-            params.push(raw_request.clone());
+        if request.raw_request.is_some() {
+            query.push_str(&format!(", raw_request = ${}", idx));
+            idx += 1;
         }
-        if let Some(request_tab) = &request.request_tab {
-            query.push_str(", request_tab = ?");
-            params.push(request_tab.clone());
+        if request.request_tab.is_some() {
+            query.push_str(&format!(", request_tab = ${}", idx));
+            idx += 1;
         }
-        if let Some(response_tab) = &request.response_tab {
-            query.push_str(", response_tab = ?");
-            params.push(response_tab.clone());
+        if request.response_tab.is_some() {
+            query.push_str(&format!(", response_tab = ${}", idx));
+            idx += 1;
         }
-        if let Some(sort_order) = request.sort_order {
-            query.push_str(", sort_order = ?");
-            params.push(sort_order.to_string());
+        if request.sort_order.is_some() {
+            query.push_str(&format!(", sort_order = ${}", idx));
+            idx += 1;
         }
         
-        query.push_str(" WHERE id = ?");
-        params.push(request.id.clone());
+        query.push_str(&format!(" WHERE id = ${}", idx));
         
-        // Execute the query
-        let mut q = sqlx::query(&query);
-        for param in params {
-            q = q.bind(param);
-        }
+        // Bind parameters
+        let mut q = sqlx::query(&query).bind(now);
+        
+        if let Some(val) = &request.name { q = q.bind(val); }
+        if let Some(val) = &request.target_host { q = q.bind(val); }
+        if let Some(val) = request.target_port { q = q.bind(val); }
+        if let Some(val) = request.use_tls { q = q.bind(val); }
+        if let Some(val) = request.override_sni { q = q.bind(val); }
+        if let Some(val) = &request.sni_host { q = q.bind(val); }
+        if let Some(val) = &request.raw_request { q = q.bind(val); }
+        if let Some(val) = &request.request_tab { q = q.bind(val); }
+        if let Some(val) = &request.response_tab { q = q.bind(val); }
+        if let Some(val) = request.sort_order { q = q.bind(val); }
+        
+        q = q.bind(&request.id);
+        
         q.execute(pool).await?;
         
         Ok(())
@@ -237,7 +247,7 @@ impl DatabaseService {
     pub async fn delete_repeater_tab(&self, id: &str) -> Result<()> {
         let pool = self.get_pool()?;
         
-        sqlx::query("DELETE FROM repeater_tabs WHERE id = ?")
+        sqlx::query("DELETE FROM repeater_tabs WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -261,7 +271,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         
         for id in ids {
-            sqlx::query("DELETE FROM repeater_tabs WHERE id = ?")
+            sqlx::query("DELETE FROM repeater_tabs WHERE id = $1")
                 .bind(&id)
                 .execute(pool)
                 .await?;
@@ -276,7 +286,7 @@ impl DatabaseService {
         let now = chrono::Utc::now().to_rfc3339();
         
         for (id, sort_order) in tab_orders {
-            sqlx::query("UPDATE repeater_tabs SET sort_order = ?, updated_at = ? WHERE id = ?")
+            sqlx::query("UPDATE repeater_tabs SET sort_order = $1, updated_at = $2 WHERE id = $3")
                 .bind(sort_order)
                 .bind(&now)
                 .bind(&id)

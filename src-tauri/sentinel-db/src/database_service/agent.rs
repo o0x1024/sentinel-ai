@@ -12,7 +12,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
         sqlx::query(
             r#"INSERT INTO agent_tasks (id, user_id, description, target, parameters, priority, timeout)
-               VALUES (?, ?, ?, ?, ?, ?, ?)"#
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#
         )
         .bind(&task.id)
         .bind(&task.user_id)
@@ -28,7 +28,7 @@ impl DatabaseService {
 
     pub async fn get_agent_task_internal(&self, id: &str) -> Result<Option<AgentTask>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE id = ?")
+        let row = sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -38,7 +38,7 @@ impl DatabaseService {
     pub async fn get_agent_tasks_internal(&self, user_id: Option<&str>) -> Result<Vec<AgentTask>> {
         let pool = self.get_pool()?;
         let query = if let Some(uid) = user_id {
-            sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE user_id = ? ORDER BY id DESC").bind(uid)
+            sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE user_id = $1 ORDER BY id DESC").bind(uid)
         } else {
             sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks ORDER BY id DESC")
         };
@@ -48,7 +48,7 @@ impl DatabaseService {
 
     pub async fn update_agent_task_status_internal(&self, id: &str, status: &str, _agent_name: Option<&str>, _architecture: Option<&str>) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE agent_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE agent_tasks SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
             .bind(status)
             .bind(id)
             .execute(pool)
@@ -58,7 +58,7 @@ impl DatabaseService {
 
     pub async fn update_agent_task_timing_internal(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE agent_tasks SET started_at = ?, completed_at = ?, execution_time_ms = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE agent_tasks SET started_at = $1, completed_at = $2, execution_time_ms = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4")
             .bind(started_at)
             .bind(completed_at)
             .bind(execution_time_ms.map(|ms| ms as i64))
@@ -70,7 +70,7 @@ impl DatabaseService {
 
     pub async fn update_agent_task_error_internal(&self, id: &str, error_message: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE agent_tasks SET error_message = ?, status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE agent_tasks SET error_message = $1, status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = $2")
             .bind(error_message)
             .bind(id)
             .execute(pool)
@@ -85,7 +85,7 @@ impl DatabaseService {
     pub async fn create_agent_session_internal(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO agent_sessions (id, task_id, agent_name, status) VALUES (?, ?, ?, 'active')"
+            "INSERT INTO agent_sessions (id, task_id, agent_name, status) VALUES ($1, $2, $3, 'active')"
         )
         .bind(session_id)
         .bind(task_id)
@@ -97,7 +97,7 @@ impl DatabaseService {
 
     pub async fn update_agent_session_status_internal(&self, session_id: &str, status: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("UPDATE agent_sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
             .bind(status)
             .bind(session_id)
             .execute(pool)
@@ -107,7 +107,7 @@ impl DatabaseService {
 
     pub async fn get_agent_session_internal(&self, session_id: &str) -> Result<Option<AgentSessionData>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query_as::<_, AgentSessionData>("SELECT * FROM agent_sessions WHERE id = ?")
+        let row = sqlx::query_as::<_, AgentSessionData>("SELECT * FROM agent_sessions WHERE id = $1")
             .bind(session_id)
             .fetch_optional(pool)
             .await?;
@@ -124,7 +124,7 @@ impl DatabaseService {
 
     pub async fn delete_agent_session_internal(&self, session_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
+        sqlx::query("DELETE FROM agent_sessions WHERE id = $1")
             .bind(session_id)
             .execute(pool)
             .await?;
@@ -138,7 +138,7 @@ impl DatabaseService {
     pub async fn add_agent_session_log_internal(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO agent_session_logs (id, session_id, level, message, source) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO agent_session_logs (id, session_id, level, message, source) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(session_id)
@@ -153,7 +153,7 @@ impl DatabaseService {
     pub async fn get_agent_session_logs_internal(&self, session_id: &str) -> Result<Vec<SessionLog>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query_as::<_, SessionLog>(
-            "SELECT * FROM agent_session_logs WHERE session_id = ? ORDER BY timestamp ASC"
+            "SELECT * FROM agent_session_logs WHERE session_id = $1 ORDER BY created_at ASC"
         )
         .bind(session_id)
         .fetch_all(pool)
@@ -164,7 +164,7 @@ impl DatabaseService {
     pub async fn save_agent_execution_result_internal(&self, session_id: &str, result: &AgentExecutionResult) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO agent_execution_results (id, session_id, success, data, error) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO agent_execution_results (id, session_id, success, data, error) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(&result.id)
         .bind(session_id)
@@ -179,7 +179,7 @@ impl DatabaseService {
     pub async fn get_agent_execution_result_internal(&self, session_id: &str) -> Result<Option<AgentExecutionResult>> {
         let pool = self.get_pool()?;
         let row = sqlx::query_as::<_, AgentExecutionResult>(
-            "SELECT * FROM agent_execution_results WHERE session_id = ?"
+            "SELECT * FROM agent_execution_results WHERE session_id = $1"
         )
         .bind(session_id)
         .fetch_optional(pool)
@@ -194,7 +194,7 @@ impl DatabaseService {
     pub async fn save_agent_execution_step_internal(&self, session_id: &str, step: &WorkflowStepDetail) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "INSERT INTO agent_execution_steps (step_id, session_id, step_name, status, result_data) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO agent_execution_steps (step_id, session_id, step_name, status, result_data) VALUES ($1, $2, $3, $4, $5)"
         )
         .bind(&step.step_id)
         .bind(session_id)
@@ -209,7 +209,7 @@ impl DatabaseService {
     pub async fn get_agent_execution_steps_internal(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>> {
         let pool = self.get_pool()?;
         let rows = sqlx::query_as::<_, WorkflowStepDetail>(
-            "SELECT * FROM agent_execution_steps WHERE session_id = ? ORDER BY started_at ASC"
+            "SELECT * FROM agent_execution_steps WHERE session_id = $1 ORDER BY started_at ASC"
         )
         .bind(session_id)
         .fetch_all(pool)
@@ -220,11 +220,11 @@ impl DatabaseService {
     pub async fn update_agent_execution_step_status_internal(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()> {
         let pool = self.get_pool()?;
         sqlx::query(
-            "UPDATE agent_execution_steps SET status = ?, started_at = ?, completed_at = ?, duration_ms = ?, error_message = ? WHERE step_id = ?"
+            "UPDATE agent_execution_steps SET status = $1, started_at = $2, completed_at = $3, duration_ms = $4, error_message = $5 WHERE step_id = $6"
         )
         .bind(status)
-        .bind(started_at.map(|t| t.to_rfc3339()))
-        .bind(completed_at.map(|t| t.to_rfc3339()))
+        .bind(started_at)
+        .bind(completed_at)
         .bind(duration_ms.map(|ms| ms as i64))
         .bind(error_message)
         .bind(step_id)
@@ -235,7 +235,7 @@ impl DatabaseService {
 
     pub async fn delete_agent_execution_steps_internal(&self, session_id: &str) -> Result<()> {
         let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM agent_execution_steps WHERE session_id = ?")
+        sqlx::query("DELETE FROM agent_execution_steps WHERE session_id = $1")
             .bind(session_id)
             .execute(pool)
             .await?;

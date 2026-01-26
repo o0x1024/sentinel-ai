@@ -52,6 +52,8 @@ export default {
   allWAFs: '全部WAF',
   customizeColumns: '自定义列',
   filters: '筛选器',
+  showAdvanced: '高级筛选',
+  hideAdvanced: '隐藏高级筛选',
   allExposureLevels: '全部暴露级别',
   exposureLevel: {
     internet: '互联网',

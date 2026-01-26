@@ -158,6 +158,20 @@ defineOptions({
   name: 'Settings'
 });
 
+// Database configuration interface
+interface DatabaseConfig {
+  db_type: string
+  path?: string
+  host?: string
+  port?: number
+  database?: string
+  username?: string
+  password?: string
+  enable_wal?: boolean
+  enable_ssl?: boolean
+  max_connections?: number
+  query_timeout?: number
+}
 
 // 设置分类
 const categories = [
@@ -1170,8 +1184,8 @@ const exportData = async () => {
     const format = await dialog.confirm({
       title: '选择导出格式',
       message: '请选择导出格式:\n\nJSON - 完整的数据结构\nSQL - SQL脚本文件',
-      okLabel: 'JSON',
-      cancelLabel: 'SQL'
+      confirmText: 'JSON',
+      cancelText: 'SQL'
     })
     
     const extension = format ? 'json' : 'sql'
@@ -1356,13 +1370,32 @@ const resetDatabase = async () => {
 
 const saveDatabaseConfig = async () => {
   try {
+    // 构建数据库配置对象
+    const dbConfig = {
+      db_type: settings.value.database.type,
+      path: settings.value.database.type === 'sqlite' ? settings.value.database.path : null,
+      enable_wal: settings.value.database.enableWAL,
+      host: settings.value.database.type !== 'sqlite' ? settings.value.database.host : null,
+      port: settings.value.database.type !== 'sqlite' ? settings.value.database.port : null,
+      database: settings.value.database.type !== 'sqlite' ? settings.value.database.name : null,
+      username: settings.value.database.type !== 'sqlite' ? settings.value.database.username : null,
+      password: settings.value.database.type !== 'sqlite' ? settings.value.database.password : null,
+      enable_ssl: settings.value.database.enableSSL,
+      max_connections: settings.value.database.maxConnections,
+      query_timeout: settings.value.database.queryTimeout,
+    }
+
+    // 保存到后端
+    await invoke('save_db_config', { config: dbConfig })
+
     // 保存数据库相关配置到 localStorage
     const settingsToSave = JSON.stringify(settings.value)
     localStorage.setItem('sentinel-settings', settingsToSave)
-    dialog.toast.success('数据库配置已保存')
+    
+    dialog.toast.success('数据库配置已保存，请重启应用以生效')
   } catch (error) {
     console.error('Failed to save database config:', error)
-    dialog.toast.error('保存数据库配置失败')
+    dialog.toast.error(`保存数据库配置失败: ${error}`)
   }
 }
 

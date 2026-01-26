@@ -88,7 +88,10 @@ impl DatabaseService {
         }
 
         let pool = self.get_pool()?;
-        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = (1..=ids.len())
+            .map(|i| format!("${}", i))
+            .collect::<Vec<_>>()
+            .join(",");
         let query = format!(
             "SELECT id, name, description FROM ability_groups WHERE id IN ({}) ORDER BY name",
             placeholders
@@ -116,7 +119,7 @@ impl DatabaseService {
     /// Get Level 2 detail by ID (without tool_ids)
     pub async fn get_ability_group_detail_internal(&self, id: &str) -> Result<Option<AbilityGroupDetail>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT id, name, description, instructions, additional_notes, tool_ids, created_at, updated_at FROM ability_groups WHERE id = ?")
+        let row = sqlx::query("SELECT id, name, description, instructions, additional_notes, tool_ids, created_at, updated_at FROM ability_groups WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -126,8 +129,8 @@ impl DatabaseService {
             let tool_ids: Vec<String> = serde_json::from_str(&tool_ids_str).unwrap_or_default();
             let tool_count = tool_ids.len();
 
-            let created_at_str: String = r.get("created_at");
-            let updated_at_str: String = r.get("updated_at");
+            let created_at: DateTime<Utc> = r.get("created_at");
+            let updated_at: DateTime<Utc> = r.get("updated_at");
 
             AbilityGroupDetail {
                 id: r.get("id"),
@@ -136,12 +139,8 @@ impl DatabaseService {
                 instructions: r.get("instructions"),
                 additional_notes: r.get("additional_notes"),
                 tool_count,
-                created_at: DateTime::parse_from_rfc3339(&created_at_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at,
+                updated_at,
             }
         }))
     }
@@ -149,7 +148,7 @@ impl DatabaseService {
     /// Get Level 3 full group by ID (with tool_ids)
     pub async fn get_ability_group_internal(&self, id: &str) -> Result<Option<AbilityGroup>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT * FROM ability_groups WHERE id = ?")
+        let row = sqlx::query("SELECT * FROM ability_groups WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
@@ -160,7 +159,7 @@ impl DatabaseService {
     /// Get full group by name
     pub async fn get_ability_group_by_name_internal(&self, name: &str) -> Result<Option<AbilityGroup>> {
         let pool = self.get_pool()?;
-        let row = sqlx::query("SELECT * FROM ability_groups WHERE name = ?")
+        let row = sqlx::query("SELECT * FROM ability_groups WHERE name = $1")
             .bind(name)
             .fetch_optional(pool)
             .await?;
@@ -187,7 +186,7 @@ impl DatabaseService {
 
         sqlx::query(
             "INSERT INTO ability_groups (id, name, description, instructions, additional_notes, tool_ids, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&id)
         .bind(&payload.name)
@@ -195,8 +194,8 @@ impl DatabaseService {
         .bind(&payload.instructions)
         .bind(&payload.additional_notes)
         .bind(&tool_ids_json)
-        .bind(now.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(now)
+        .bind(now)
         .execute(pool)
         .await?;
 
@@ -240,14 +239,14 @@ impl DatabaseService {
         let now = Utc::now();
 
         sqlx::query(
-            "UPDATE ability_groups SET name = ?, description = ?, instructions = ?, additional_notes = ?, tool_ids = ?, updated_at = ? WHERE id = ?",
+            "UPDATE ability_groups SET name = $1, description = $2, instructions = $3, additional_notes = $4, tool_ids = $5, updated_at = $6 WHERE id = $7",
         )
         .bind(name)
         .bind(description)
         .bind(instructions)
         .bind(additional_notes)
         .bind(&tool_ids_json)
-        .bind(now.to_rfc3339())
+        .bind(now)
         .bind(id)
         .execute(pool)
         .await?;
@@ -258,7 +257,7 @@ impl DatabaseService {
     /// Delete a group
     pub async fn delete_ability_group_internal(&self, id: &str) -> Result<bool> {
         let pool = self.get_pool()?;
-        let result = sqlx::query("DELETE FROM ability_groups WHERE id = ?")
+        let result = sqlx::query("DELETE FROM ability_groups WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await?;
@@ -266,13 +265,13 @@ impl DatabaseService {
         Ok(result.rows_affected() > 0)
     }
 
-    fn row_to_ability_group(&self, row: &sqlx::sqlite::SqliteRow) -> AbilityGroup {
+    fn row_to_ability_group(&self, row: &sqlx::postgres::PgRow) -> AbilityGroup {
         let tool_ids_str: String = row.get("tool_ids");
         let tool_ids: Vec<String> =
             serde_json::from_str(&tool_ids_str).unwrap_or_default();
 
-        let created_at_str: String = row.get("created_at");
-        let updated_at_str: String = row.get("updated_at");
+        let created_at: DateTime<Utc> = row.get("created_at");
+        let updated_at: DateTime<Utc> = row.get("updated_at");
 
         AbilityGroup {
             id: row.get("id"),
@@ -281,12 +280,8 @@ impl DatabaseService {
             instructions: row.get("instructions"),
             additional_notes: row.get("additional_notes"),
             tool_ids,
-            created_at: DateTime::parse_from_rfc3339(&created_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            created_at,
+            updated_at,
         }
     }
 }

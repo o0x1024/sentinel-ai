@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
+use sentinel_db::Database;
 
 use sentinel_traffic::{
     CertificateService, EvidenceRecord, Finding, FindingDeduplicator,
@@ -318,9 +319,8 @@ impl TrafficAnalysisState {
             let status = match db_rec.status {
                 sentinel_plugins::PluginStatus::Enabled => PluginStatus::Enabled,
                 sentinel_plugins::PluginStatus::Disabled => PluginStatus::Disabled,
-                sentinel_plugins::PluginStatus::Error(_) => PluginStatus::Disabled,
-                sentinel_plugins::PluginStatus::Loading => PluginStatus::Disabled,
-                sentinel_plugins::PluginStatus::Invalid(_) => PluginStatus::Disabled,
+                sentinel_plugins::PluginStatus::Error => PluginStatus::Disabled,
+                sentinel_plugins::PluginStatus::Loaded => PluginStatus::Disabled,
             };
 
             records.push(PluginRecord {

@@ -9,7 +9,7 @@ authors = ["Sentinel AI Team"]
 # Sentinel core for proxy support
 sentinel-core = { path = "../sentinel-core" }
 # SQLx for database queries (dictionary access)
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
 
 # Deno Core and extensions for plugin execution
 # Using deno_core 0.373.0 for stability, file system via custom ops

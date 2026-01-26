@@ -558,8 +558,6 @@ const editDictionary = (dictionary: Dictionary) => {
 }
 
 const deleteDictionary = async (dictionary: Dictionary) => {
-  const confirmed = await dialog.confirm(t('dictionary.confirmDelete', '确定要删除这个字典吗？'));
-  if (confirmed) {
     try {
       await invoke('delete_dictionary', { id: dictionary.id })
       // 删除默认字典时，清除该类型默认设置
@@ -571,7 +569,7 @@ const deleteDictionary = async (dictionary: Dictionary) => {
     } catch (error) {
       console.error('Failed to delete dictionary:', error)
     }
-  }
+  
 }
 
 const duplicateDictionary = async (dictionary: Dictionary) => {

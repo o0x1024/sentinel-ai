@@ -20,7 +20,7 @@ pub struct McpTool {
     pub install_path: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
-    pub rating: Option<f32>,
+    pub rating: Option<f64>,
     pub downloads: Option<String>,
 }
 
@@ -78,7 +78,7 @@ pub struct McpStoreItem {
     pub icon: Option<String>,
     pub category: String,
     pub author: String,
-    pub rating: f32,
+    pub rating: f64,
     pub downloads: String,
     pub tags: Vec<String>,
     pub repository_url: Option<String>,
