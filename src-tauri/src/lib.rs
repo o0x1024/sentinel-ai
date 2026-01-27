@@ -14,6 +14,7 @@ pub mod trackers;
 pub mod utils;
 
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use sentinel_db::Database;
 use tauri::{
@@ -52,10 +53,14 @@ pub fn run() {
     
     let context = tauri::generate_context!();
 
-    let logs_dir = "logs";
-    let _ = fs::create_dir_all(logs_dir);
+    let logs_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sentinel-ai")
+        .join("logs");
+    let _ = fs::create_dir_all(&logs_dir);
+    let logs_dir = logs_dir.to_string_lossy().to_string();
 
-    let file_appender = tracing_appender::rolling::daily(logs_dir, "sentinel-ai.log");
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, "sentinel-ai.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
@@ -114,7 +119,7 @@ pub fn run() {
             handle.manage(TrayProxyMenuItem(proxy_item.clone()));
             let tray_menu = Menu::with_items(app, &[&show_item, &proxy_item, &quit_item])?;
 
-            let _tray_icon = TrayIconBuilder::with_id("main")
+            let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("Sentinel AI")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
@@ -167,9 +172,11 @@ pub fn run() {
                         }
                         // Right click menu is handled automatically by .menu()
                     }
-                })
-                .icon(app.default_window_icon().unwrap().clone())
-                .build(app)?;
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray_icon = tray_builder.build(app)?;
 
             // Initialize license system (skip in debug mode)
             #[cfg(not(debug_assertions))]
@@ -225,14 +232,23 @@ pub fn run() {
                         }
                     }
                 } else {
-                    tracing::info!("No database config file found, using default SQLite");
+                    tracing::info!("No database config file found, using default PostgreSQL");
                     None
                 };
+
+                let data_dir = config_path.parent().unwrap();
+                let _ = fs::create_dir_all(data_dir);
 
                 let mut db_service = DatabaseService::new();
                 if let Err(e) = db_service.initialize().await {
                     tracing::error!("Database initialize failed: {:#}", e);
-                    panic!("Failed to initialize database: {}", e);
+                    eprintln!("Database initialization failed: {:#}", e);
+                    eprintln!(
+                        "By default the app uses PostgreSQL at localhost:5432. \
+                         Install PostgreSQL, or create db_config.json at:\n  {}",
+                        config_path.display()
+                    );
+                    std::process::exit(1);
                 }
                 let db_service = Arc::new(db_service);
 

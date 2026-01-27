@@ -136,12 +136,45 @@ impl DatabaseService {
 
         tracing::info!("Connecting to database: {}", conn_str);
 
-        let pool = PgPoolOptions::new()
+        let db_name = config.database.as_deref().unwrap_or("sentinel_ai");
+        let pool = match PgPoolOptions::new()
             .max_connections(config.max_connections)
             .acquire_timeout(Duration::from_secs(config.query_timeout as u64))
             .connect(&conn_str)
-            .await?;
-        
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("does not exist") {
+                    tracing::info!("Database \"{}\" not found, creating it", db_name);
+                    let maint_conn = format!(
+                        "postgres://{}:{}@{}:{}/postgres",
+                        config.username.as_deref().unwrap_or("postgres"),
+                        config.password.as_deref().unwrap_or("postgres"),
+                        config.host.as_deref().unwrap_or("localhost"),
+                        config.port.unwrap_or(5432),
+                    );
+                    let maint_pool = PgPoolOptions::new()
+                        .max_connections(1)
+                        .connect(&maint_conn)
+                        .await?;
+                    let quoted = db_name.replace('"', "\"\"");
+                    sqlx::query(&format!("CREATE DATABASE \"{}\"", quoted))
+                        .execute(&maint_pool)
+                        .await?;
+                    drop(maint_pool);
+                    PgPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .acquire_timeout(Duration::from_secs(config.query_timeout as u64))
+                        .connect(&conn_str)
+                        .await?
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
+
         self.create_database_schema(&pool).await?;
         self.ensure_migrations(&pool).await?;
         self.insert_default_data(&pool).await?;
