@@ -263,7 +263,6 @@ impl PluginToolAdapter {
         
         match sentinel_plugins::get_input_schema_from_code(code, metadata).await {
             Ok(schema) => {
-                tracing::info!("Successfully got input schema from plugin runtime");
                 schema
             }
             Err(e) => {

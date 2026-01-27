@@ -29,6 +29,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kali-tools-wireless \
     # Exploitation tools
     kali-tools-exploitation \
+    # Forensics tools
+    kali-tools-forensics \
+    # Reverse engineering
+    kali-tools-reverse-engineering \
+    # Sniffing and spoofing
+    kali-tools-sniffing-spoofing \
+    # Reporting tools
+    kali-tools-reporting \
     && rm -rf /var/lib/apt/lists/*
 
 
@@ -83,9 +91,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sleuthkit \
     # Crypto tools
     openssl \
+    # Binary analysis tools
+    checksec \
+    patchelf \
+    upx-ucl \
+    # Web vulnerability discovery
+    sqlmap \
+    wfuzz \
+    dirb \
+    nikto \
+    wpscan \
+    # Vulnerability fixing tools
+    cppcheck \
+    flawfinder \
+    # Emergency response tools
+    chkrootkit \
+    rkhunter \
+    logwatch \
+    logcheck \
+    goaccess \
+    # System monitoring
+    htop \
+    iotop \
+    net-tools \
+    iproute2 \
+    # Exploit database
+    exploitdb \
     # Additional utilities
     qemu-user \
     qemu-user-static \
+    # Patch and diff tools
+    patch \
+    diffutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (from NodeSource)
@@ -111,7 +148,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     php-soap \
     php-xdebug \
     composer \
-    && rm -rf /var/lib/apt/lists/*
+    # Ruby for one_gadget and other tools
+    ruby \
+    ruby-dev \
+    && rm -rf /var/lib/apt/lists/* && \
+    gem install one_gadget seccomp-tools 2>/dev/null || true
 
 # Install additional Python security and CTF tools
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -141,6 +182,10 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     volatility3 \
     frida \
     frida-tools \
+    # Code audit tools for vulnerability fixing
+    semgrep \
+    bandit \
+    safety
     || pip3 install --no-cache-dir \
     requests \
     beautifulsoup4 \
@@ -153,7 +198,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     ropgadget \
     ropper \
     pillow \
-    numpy
+    numpy \
+    semgrep \
+    bandit
 
 # Install Node.js security and CTF tools
 RUN npm install -g \
@@ -190,16 +237,30 @@ RUN export GOPATH=/tmp/go && \
     go install github.com/tomnomnom/httprobe@latest && \
     go install github.com/lc/gau/v2/cmd/gau@latest && \
     go install github.com/OJ/gobuster/v3@latest && \
+    # Web vulnerability discovery tools
+    go install github.com/lc/subjs@latest && \
+    go install github.com/hahwul/dalfox/v2@latest && \
+    go install github.com/projectdiscovery/notify/cmd/notify@latest && \
+    go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
+    # Binary analysis tools
+    go install github.com/slimtoolkit/slim@latest && \
     mv /tmp/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
     rm -rf /tmp/go
 
 # Install additional CTF tools and frameworks from GitHub
-RUN git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwntools-tutorial 2>/dev/null || true && \
+RUN mkdir -p /opt/payloads && \
+    git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwntools-tutorial 2>/dev/null || true && \
     git clone --depth 1 https://github.com/secdev/scapy /opt/scapy 2>/dev/null || true && \
     git clone --depth 1 https://github.com/pwntester/ysoserial.net /opt/ysoserial 2>/dev/null || true && \
     git clone --depth 1 https://github.com/payloadbox/sql-injection-payload-list /opt/payloads/sqli 2>/dev/null || true && \
     git clone --depth 1 https://github.com/payloadbox/xss-payload-list /opt/payloads/xss 2>/dev/null || true && \
-    git clone --depth 1 https://github.com/danielmiessler/SecLists /opt/SecLists 2>/dev/null || true
+    git clone --depth 1 https://github.com/danielmiessler/SecLists /opt/SecLists 2>/dev/null || true && \
+    # Binary analysis tools
+    git clone --depth 1 https://github.com/sashs/Ropper /opt/Ropper 2>/dev/null || true && \
+    # Vulnerability fixing and code audit tools
+    git clone --depth 1 https://github.com/securecodewarrior/secure-coding-exercises /opt/secure-coding 2>/dev/null || true && \
+    # Emergency response tools
+    git clone --depth 1 https://github.com/volatilityfoundation/volatility /opt/volatility-legacy 2>/dev/null || true
 
 # Create non-root user for execution
 RUN useradd -m -s /bin/bash sandbox && \

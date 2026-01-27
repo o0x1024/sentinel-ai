@@ -1080,11 +1080,6 @@ async fn get_plugin_input_schema_async(
     // 运行时获取 schema
     match sentinel_plugins::get_input_schema_from_code(code, metadata).await {
         Ok(schema) => {
-            tracing::info!(
-                "Got input schema from plugin runtime: {} ({})",
-                plugin_name,
-                plugin_id
-            );
             schema
         }
         Err(e) => {

@@ -1034,7 +1034,7 @@ const refreshStats = async () => {
   }
 }
 
-const loadTasks = async () => {
+const loadTasks = async (retryCount = 0) => {
   try {
     loading.value = true
     tasks.value = await invoke('monitor_list_tasks', {
@@ -1042,7 +1042,16 @@ const loadTasks = async () => {
     })
   } catch (error) {
     console.error('Failed to load tasks:', error)
+    // Retry once after a short delay if this is the first attempt
+    if (retryCount === 0) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      return loadTasks(1)
+    }
     toast.error(t('bugBounty.errors.loadFailed'))
+    // Ensure tasks is set to empty array on error to prevent stuck loading state
+    if (!tasks.value || tasks.value.length === 0) {
+      tasks.value = []
+    }
   } finally {
     loading.value = false
   }
@@ -1317,10 +1326,19 @@ const triggerTask = async (task: any) => {
     
     await invoke('monitor_trigger_task', { taskId: task.id })
     toast.success(t('bugBounty.monitor.taskTriggered'))
+    
+    // Wait a bit for task to start, then reload tasks
+    await new Promise(resolve => setTimeout(resolve, 500))
     await loadTasks()
   } catch (error) {
     console.error('Failed to trigger task:', error)
     toast.error(t('bugBounty.errors.operationFailed'))
+    // Still try to reload tasks even if trigger failed
+    try {
+      await loadTasks()
+    } catch (e) {
+      console.error('Failed to reload tasks after trigger error:', e)
+    }
   }
 }
 
