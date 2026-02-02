@@ -1,16 +1,15 @@
 <template>
   <div class="ai-assistant-view page-content-full h-full flex flex-col bg-base-100 overflow-hidden">
-    <!-- {{ t('aiAssistant.headerControlBar') }} -->
-    <div class="navbar bg-base-200 shadow-sm border-b border-base-300 flex-shrink-0">
-      <div class="navbar-start">
-        <h1 class="text-xl font-bold flex items-center gap-2">
-          <i class="fas fa-robot text-primary"></i>
-          {{ t('aiAssistant.title', 'AI智能助手') }}
-        </h1>
-      </div>
-      <div class="navbar-end">
-        <div class="flex items-center gap-2">
-          <!-- {{ t('aiAssistant.roleSelector') }} -->
+    <!-- Main Content Area -->
+    <div class="flex-1 overflow-hidden min-h-0 flex flex-col">
+      <!-- Tabs and Role Selector in same row -->
+      <div class="flex items-center bg-base-300/30 px-2 pt-2 gap-2 border-b border-base-300">
+        <div class="flex-1 min-w-0">
+          <AgentTabs @new-tab="handleNewTab" />
+        </div>
+        
+        <!-- Role Selector -->
+        <div class="flex-shrink-0 pb-2">
           <div class="dropdown dropdown-end">
             <div tabindex="0" role="button" class="btn btn-sm btn-outline gap-2">
               <i class="fas fa-user-tie"></i>
@@ -53,11 +52,7 @@
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- {{ t('aiAssistant.mainContentArea') }} -->
-    <div class="flex-1 overflow-hidden min-h-0 flex flex-col">
-      <AgentTabs @new-tab="handleNewTab" />
+      
       
       <div class="flex-1 relative overflow-hidden">
         <template v-for="session in sessions" :key="session.id">

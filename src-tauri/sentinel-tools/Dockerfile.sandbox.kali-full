@@ -37,7 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kali-tools-sniffing-spoofing \
     # Reporting tools
     kali-tools-reporting \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 
 
@@ -66,7 +67,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     exiftool \
     steghide \
     stegseek \
-    zsteg \
     file \
     binutils \
     xxd \
@@ -83,10 +83,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Reverse engineering
     ltrace \
     strace \
-    objdump \
     valgrind \
     # Forensics
-    volatility3 \
     autopsy \
     sleuthkit \
     # Crypto tools
@@ -113,22 +111,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # System monitoring
     htop \
     iotop \
+    # Network tools
+    iputils-ping \
+    openssh-client \
+    sshpass \
+    dnsutils \
+    traceroute \
+    whois \
     net-tools \
     iproute2 \
     # Exploit database
     exploitdb \
-    # Additional utilities
-    qemu-user \
+    # Additional utilities (keep qemu-user-static for emulation, drop qemu-user to avoid version conflicts)
     qemu-user-static \
     # Patch and diff tools
     patch \
     diffutils \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Install Node.js (from NodeSource)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Install PHP and extensions for CTF
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -151,11 +157,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Ruby for one_gadget and other tools
     ruby \
     ruby-dev \
-    && rm -rf /var/lib/apt/lists/* && \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
     gem install one_gadget seccomp-tools 2>/dev/null || true
 
 # Install additional Python security and CTF tools
-RUN pip3 install --no-cache-dir --break-system-packages \
+# Note: use --ignore-installed ruamel.yaml.clib to avoid trying to uninstall Debian's system package
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed ruamel.yaml.clib \
     requests \
     beautifulsoup4 \
     paramiko \
@@ -177,7 +185,6 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     numpy \
     scipy \
     sympy \
-    sage \
     yara-python \
     volatility3 \
     frida \
@@ -185,8 +192,8 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     # Code audit tools for vulnerability fixing
     semgrep \
     bandit \
-    safety
-    || pip3 install --no-cache-dir \
+    safety \
+    || pip3 install --no-cache-dir --break-system-packages --ignore-installed ruamel.yaml.clib \
     requests \
     beautifulsoup4 \
     paramiko \
@@ -212,17 +219,21 @@ RUN npm install -g \
     crypto-js \
     node-forge \
     stegcloak \
-    || true
+    || true; \
+    npm cache clean --force || true; \
+    rm -rf /root/.npm || true
 
 # Install PHP security and CTF tools via Composer
+# Note: we skip modifying /home/sandbox/.bashrc here because the sandbox user is created later
 RUN composer global require \
     phpunit/phpunit \
     squizlabs/php_codesniffer \
     vimeo/psalm \
     phpstan/phpstan \
     friendsofphp/php-cs-fixer \
-    || true && \
-    echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> /home/sandbox/.bashrc
+    || true; \
+    composer clear-cache || true; \
+    rm -rf /root/.composer/cache || true
 
 # Install additional Go tools for security and CTF
 RUN export GOPATH=/tmp/go && \
@@ -260,18 +271,22 @@ RUN mkdir -p /opt/payloads && \
     # Vulnerability fixing and code audit tools
     git clone --depth 1 https://github.com/securecodewarrior/secure-coding-exercises /opt/secure-coding 2>/dev/null || true && \
     # Emergency response tools
-    git clone --depth 1 https://github.com/volatilityfoundation/volatility /opt/volatility-legacy 2>/dev/null || true
+    git clone --depth 1 https://github.com/volatilityfoundation/volatility /opt/volatility-legacy 2>/dev/null || true && \
+    # Strip git metadata from cloned repositories to save space
+    find /opt -name ".git" -type d -prune -exec rm -rf '{}' +
+
+# Remove documentation and man pages to reduce image size
+RUN rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
 
 # Create non-root user for execution
-RUN useradd -m -s /bin/bash sandbox && \
-    mkdir -p /workspace && \
-    chown sandbox:sandbox /workspace
+RUN mkdir -p /workspace 
 
+ENV TERM=xterm-256color
 # Set working directory
 WORKDIR /workspace
 
 # Switch to non-root user
-USER sandbox
+USER root
 
 # Default command
 CMD ["/bin/bash"]

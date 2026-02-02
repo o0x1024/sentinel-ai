@@ -144,7 +144,6 @@ pub async fn delete_config(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     // 由于DatabaseService没有delete_config方法，我们需要使用execute_query
-    let _query = "DELETE FROM configurations WHERE category = ? AND key = ?";
 
     // 使用execute_query执行删除操作
     // 注意：execute_query返回结果，但我们只需要知道操作是否成功

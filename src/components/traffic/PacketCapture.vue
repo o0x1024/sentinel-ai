@@ -94,13 +94,33 @@
                 >
                     <!-- 表头 -->
                     <div class="sticky top-0 z-10 flex bg-base-200 border-b border-base-300" :style="{ height: headerHeight + 'px' }">
-                        <div class="w-12 flex items-center justify-center px-2 border-r border-base-300"></div>
-                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.no') }}</div>
-                        <div class="w-24 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.time') }}</div>
-                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.source') }}</div>
-                        <div class="w-40 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.destination') }}</div>
-                        <div class="w-20 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.protocol') }}</div>
-                        <div class="w-16 flex items-center px-2 border-r border-base-300 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.length') }}</div>
+                        <div class="flex items-center justify-center px-2 border-r border-base-300 relative column-header" :style="{ width: columnWidths.mark + 'px' }">
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'mark')"></div>
+                        </div>
+                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.no + 'px' }">
+                            {{ $t('trafficAnalysis.packetCapture.table.no') }}
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'no')"></div>
+                        </div>
+                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.time + 'px' }">
+                            {{ $t('trafficAnalysis.packetCapture.table.time') }}
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'time')"></div>
+                        </div>
+                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.source + 'px' }">
+                            {{ $t('trafficAnalysis.packetCapture.table.source') }}
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'source')"></div>
+                        </div>
+                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.dest + 'px' }">
+                            {{ $t('trafficAnalysis.packetCapture.table.destination') }}
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'dest')"></div>
+                        </div>
+                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.protocol + 'px' }">
+                            {{ $t('trafficAnalysis.packetCapture.table.protocol') }}
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'protocol')"></div>
+                        </div>
+                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.length + 'px' }">
+                            {{ $t('trafficAnalysis.packetCapture.table.length') }}
+                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'length')"></div>
+                        </div>
                         <div class="flex-1 flex items-center px-2 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.info') }}</div>
                     </div>
 
@@ -122,19 +142,19 @@
                         @click="selectPacket(item.data)"
                         @contextmenu.prevent="showContextMenu($event, item.data)"
                     >
-                        <div class="w-12 flex items-center justify-center px-2 border-r border-base-300">
+                        <div class="flex items-center justify-center px-2 border-r border-base-300" :style="{ width: columnWidths.mark + 'px' }">
                             <i v-if="markedPackets.has(item.data.id)" class="fas fa-bookmark text-warning text-xs"></i>
                         </div>
-                        <div class="w-16 flex items-center px-2 border-r border-base-300 font-mono text-xs">{{ item.data.id }}</div>
-                        <div class="w-24 flex items-center px-2 border-r border-base-300 font-mono text-xs">{{ formatTime(item.data.timestamp) }}</div>
-                        <div class="w-40 flex items-center px-2 border-r border-base-300 font-mono text-xs truncate">{{ item.data.src }}</div>
-                        <div class="w-40 flex items-center px-2 border-r border-base-300 font-mono text-xs truncate">{{ item.data.dst }}</div>
-                        <div class="w-20 flex items-center px-2 border-r border-base-300">
+                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.no + 'px' }">{{ item.data.id }}</div>
+                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.time + 'px' }">{{ formatTime(item.data.timestamp) }}</div>
+                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.source + 'px' }">{{ item.data.src }}</div>
+                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.dest + 'px' }">{{ item.data.dst }}</div>
+                        <div class="flex items-center px-2 border-r border-base-300" :style="{ width: columnWidths.protocol + 'px' }">
                             <span class="badge badge-sm" :class="getProtocolBadgeClass(item.data.protocol)">
                                 {{ item.data.protocol }}
                             </span>
                         </div>
-                        <div class="w-16 flex items-center px-2 border-r border-base-300 font-mono text-xs">{{ item.data.length }}</div>
+                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.length + 'px' }">{{ item.data.length }}</div>
                         <div class="flex-1 flex items-center px-2 text-xs truncate">{{ item.data.info }}</div>
                     </div>
                 </div>
@@ -410,8 +430,18 @@
                     </div>
                 </div>
                 
-                <div class="flex-1 overflow-auto bg-base-200 rounded-lg p-4">
-                    <pre class="text-sm font-mono whitespace-pre-wrap">{{ getStreamContent() }}</pre>
+                <div class="flex-1 overflow-auto bg-base-200 rounded-lg p-2 stream-content">
+                    <template v-for="(segment, idx) in streamSegments" :key="idx">
+                        <div 
+                            class="stream-segment font-mono text-sm p-2 mb-1 rounded"
+                            :class="segment.isClient ? 'stream-client' : 'stream-server'"
+                        >
+                            <pre class="m-0 whitespace-pre-wrap break-all overflow-x-auto">{{ segment.content }}</pre>
+                        </div>
+                    </template>
+                    <div v-if="streamSegments.length === 0" class="text-center text-base-content/50 py-8">
+                        {{ $t('trafficAnalysis.packetCapture.streamDialog.noData') || '无有效数据' }}
+                    </div>
                 </div>
 
                 <div class="flex items-center justify-between mt-4">
@@ -749,6 +779,26 @@ const containerHeight = ref(300)
 const bufferSize = 5 // 缓冲区大小
 let scrollTimer: number | null = null
 
+// 列宽状态（可拖动调整）
+const columnWidths = reactive({
+    mark: 48,      // 标记列
+    no: 64,        // 序号
+    time: 96,      // 时间
+    source: 160,   // 源地址
+    dest: 160,     // 目的地址
+    protocol: 80,  // 协议
+    length: 64,    // 长度
+    // info 列是 flex-1，自动填充剩余空间
+})
+
+// 列拖拽调整状态
+const columnResizing = reactive({
+    active: false,
+    column: '' as keyof typeof columnWidths | '',
+    startX: 0,
+    startWidth: 0,
+})
+
 // 高级过滤
 const advancedFilter = reactive<AdvancedFilter>({
     protocols: [],
@@ -916,6 +966,36 @@ function matchPort(addr: string, portFilter: string): boolean {
         return port >= min && port <= max
     }
     return port === parseInt(portFilter)
+}
+
+// 列宽拖动调整
+function startColumnResize(e: MouseEvent, column: keyof typeof columnWidths) {
+    e.preventDefault()
+    e.stopPropagation()
+    columnResizing.active = true
+    columnResizing.column = column
+    columnResizing.startX = e.clientX
+    columnResizing.startWidth = columnWidths[column]
+    document.addEventListener('mousemove', doColumnResize)
+    document.addEventListener('mouseup', stopColumnResize)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+}
+
+function doColumnResize(e: MouseEvent) {
+    if (!columnResizing.active || !columnResizing.column) return
+    const delta = e.clientX - columnResizing.startX
+    const newWidth = Math.max(40, Math.min(columnResizing.startWidth + delta, 400))
+    columnWidths[columnResizing.column as keyof typeof columnWidths] = newWidth
+}
+
+function stopColumnResize() {
+    columnResizing.active = false
+    columnResizing.column = ''
+    document.removeEventListener('mousemove', doColumnResize)
+    document.removeEventListener('mouseup', stopColumnResize)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
 }
 
 // 拖动调整大小
@@ -1181,20 +1261,121 @@ function closeStreamDialog() {
     streamDialog.packets = []
 }
 
-function getStreamContent(): string {
-    const lines: string[] = []
+interface StreamSegment {
+    isClient: boolean
+    content: string
+    packetId: number
+}
+
+const streamSegments = computed<StreamSegment[]>(() => {
+    const segments: StreamSegment[] = []
+    
     for (const p of streamDialog.packets) {
         const isClient = p.src === streamDialog.srcEndpoint
-        const prefix = isClient ? `[→ ${p.src}]` : `[← ${p.src}]`
+        let content = ''
+        
+        // 尝试提取应用层数据
+        const payload = extractApplicationPayload(p)
         
         if (streamDialog.displayMode === 'ascii') {
-            const text = p.raw.map(b => (b >= 32 && b <= 126) || b === 10 || b === 13 ? String.fromCharCode(b) : '').join('')
-            if (text.trim()) lines.push(`${prefix}\n${text}`)
+            // 只显示可打印的 ASCII 字符和换行，并检测是否为有效文本
+            const text = payload
+                .map(b => (b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9 ? String.fromCharCode(b) : '')
+                .join('')
+            
+            // 只有当文本有足够可读内容时才显示
+            if (text.trim().length > 0 && isLikelyText(payload)) {
+                content = text
+            }
         } else if (streamDialog.displayMode === 'hex') {
-            lines.push(`${prefix}\n${formatHex(p.raw)}`)
+            if (payload.length > 0) {
+                content = formatHex(payload)
+            }
         } else {
-            lines.push(`#${p.id} ${p.src} → ${p.dst} [${p.protocol}] Len=${p.length}`)
+            // raw 模式显示包信息
+            content = `#${p.id} [${p.protocol}] Len=${p.length}`
         }
+        
+        if (content.trim()) {
+            segments.push({ isClient, content, packetId: p.id })
+        }
+    }
+    
+    return segments
+})
+
+// 提取应用层数据（跳过协议头）
+function extractApplicationPayload(p: Packet): number[] {
+    const raw = p.raw
+    
+    // 尝试从 layers 中找到应用层数据的偏移
+    // 首先检查是否有 HTTP/应用层数据
+    const httpLayer = p.layers.find(l => l.name === 'HTTP' || l.name === 'http')
+    const tcpLayer = p.layers.find(l => l.name === 'TCP' || l.name === 'tcp')
+    const udpLayer = p.layers.find(l => l.name === 'UDP' || l.name === 'udp')
+    
+    // 简单的偏移计算：以太网头(14) + IP头(20-60) + TCP头(20-60) 或 UDP头(8)
+    // 如果有应用层协议标识，尝试寻找应用层数据的起点
+    
+    let offset = 0
+    
+    // 检查是否为以太网帧：前 14 字节是以太网头
+    if (raw.length > 14) {
+        offset = 14
+    }
+    
+    // 检查 IP 版本和头长度
+    if (raw.length > offset) {
+        const ipVersion = (raw[offset] >> 4) & 0xF
+        if (ipVersion === 4) {
+            const ipHeaderLen = (raw[offset] & 0xF) * 4
+            offset += ipHeaderLen
+        } else if (ipVersion === 6) {
+            offset += 40 // IPv6 固定头长度
+        }
+    }
+    
+    // 检查传输层协议
+    if (tcpLayer && raw.length > offset + 12) {
+        // TCP 数据偏移在第 12-13 字节的高 4 位
+        const dataOffset = ((raw[offset + 12] >> 4) & 0xF) * 4
+        offset += dataOffset
+    } else if (udpLayer && raw.length > offset + 8) {
+        offset += 8 // UDP 头固定 8 字节
+    }
+    
+    if (offset >= raw.length) {
+        return []
+    }
+    
+    return raw.slice(offset)
+}
+
+// 判断数据是否可能是文本内容
+function isLikelyText(data: number[]): boolean {
+    if (data.length === 0) return false
+    
+    let printableCount = 0
+    let totalCount = Math.min(data.length, 200) // 只检查前 200 字节
+    
+    for (let i = 0; i < totalCount; i++) {
+        const b = data[i]
+        // 可打印字符、换行、回车、制表符
+        if ((b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9) {
+            printableCount++
+        }
+    }
+    
+    // 如果超过 70% 是可打印字符，认为是文本
+    return (printableCount / totalCount) > 0.7
+}
+
+function getStreamContent(): string {
+    // 保留此函数用于复制功能
+    const lines: string[] = []
+    for (const segment of streamSegments.value) {
+        const direction = segment.isClient ? '>>>' : '<<<'
+        lines.push(`${direction}\n${segment.content}`)
     }
     return lines.join('\n\n') || '无数据'
 }
@@ -1636,7 +1817,7 @@ function getInterfaceDisplayName(iface: NetworkInterface): string {
 function getProtocolRowClass(proto: string): string {
     const map: Record<string, string> = {
         'TCP': 'row-tcp', 'UDP': 'row-udp', 'HTTP': 'row-http', 'HTTPS': 'row-https',
-        'TLS': 'row-https', 'DNS': 'row-dns', 'ICMP': 'row-icmp', 'ARP': 'row-arp'
+        'TLS': 'row-https', 'DNS': 'row-dns', 'ICMP': 'row-icmp', 'ICMPv6': 'row-icmp', 'ARP': 'row-arp'
     }
     return map[proto] || 'row-other'
 }
@@ -1645,7 +1826,7 @@ function getProtocolBadgeClass(proto: string): string {
     const map: Record<string, string> = {
         'TCP': 'badge-secondary', 'UDP': 'badge-info', 'HTTP': 'badge-success', 
         'HTTPS': 'badge-warning', 'TLS': 'badge-warning', 'DNS': 'badge-accent', 
-        'ICMP': 'badge-error', 'ARP': 'badge-neutral'
+        'ICMP': 'badge-error', 'ICMPv6': 'badge-error', 'ARP': 'badge-neutral'
     }
     return map[proto] || 'badge-ghost'
 }
@@ -1656,7 +1837,7 @@ function getLayerBgClass(name: string): string {
         'IPv4': 'layer-ip', 'IPv6': 'layer-ip',
         'TCP': 'layer-tcp', 'UDP': 'layer-udp', 
         'HTTP': 'layer-http', 'DNS': 'layer-dns', 
-        'ICMP': 'layer-icmp', 'ARP': 'layer-arp'
+        'ICMP': 'layer-icmp', 'ICMPv6': 'layer-icmp', 'ARP': 'layer-arp'
     }
     return map[name] || ''
 }
@@ -1713,6 +1894,28 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 列宽拖拽手柄 */
+.column-header {
+    position: relative;
+    flex-shrink: 0;
+}
+.column-resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 5;
+}
+.column-resize-handle:hover {
+    background: oklch(var(--p) / 0.3);
+}
+.column-resize-handle:active {
+    background: oklch(var(--p) / 0.5);
+}
+
 .packet-row { 
     transition: background-color 0.1s;
     border-bottom: 1px solid oklch(var(--bc) / 0.1);
@@ -1823,16 +2026,91 @@ onUnmounted(() => {
 :global(.dark) .layer-arp { background-color: #2a2a1a; }
 
 /* 右键子菜单 - 右侧弹出 */
-.submenu-parent { @apply relative; }
-.submenu-parent > a { @apply flex; }
+.submenu-parent { 
+    position: relative;
+}
+
+/* 保持 DaisyUI 原生菜单项的对齐和内边距，仅确保宽度填充 */
+.submenu-parent > a { 
+    width: 100%;
+    display: flex !important;
+    align-items: center;
+}
+
 .submenu { 
-    @apply absolute invisible opacity-0 menu menu-sm bg-base-100 rounded-lg shadow-xl border border-base-300 p-1 w-32;
+    position: absolute;
+    visibility: hidden;
+    opacity: 0;
     left: 100%;
     top: 0;
     margin-left: 2px;
-    transition: opacity 0.1s, visibility 0.1s;
+    min-width: 140px;
+    background: oklch(var(--b1));
+    border: 1px solid oklch(var(--bc) / 0.1);
+    border-radius: 0.5rem;
+    box-shadow: var(--shadow-xl);
+    padding: 0.25rem;
+    z-index: 100;
+    transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
 }
-.submenu-parent:hover > .submenu { @apply visible opacity-100; }
+.submenu li {
+    list-style: none;
+}
+.submenu li a {
+    display: block;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.submenu li a:hover {
+    background: oklch(var(--bc) / 0.1);
+}
+.submenu-parent:hover > .submenu { 
+    visibility: visible;
+    opacity: 1;
+}
+
+/* 追踪流方向背景色 - Wireshark 风格 */
+.stream-content {
+    background-color: #f5f5f5;
+}
+.stream-segment {
+    border-left: 3px solid transparent;
+    max-width: 100%;
+    overflow: hidden;
+}
+.stream-segment pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-all;
+    max-width: 100%;
+    overflow-wrap: break-word;
+}
+/* 客户端 -> 服务器: 红/粉色 */
+.stream-client {
+    background-color: rgba(255, 190, 190, 0.6);
+    border-left-color: #e57373;
+}
+/* 服务器 -> 客户端: 蓝色 */
+.stream-server {
+    background-color: rgba(187, 222, 251, 0.6);
+    border-left-color: #64b5f6;
+}
+/* 暗色模式 */
+:global(.dark) .stream-content {
+    background-color: #1a1a1a;
+}
+:global(.dark) .stream-client {
+    background-color: rgba(180, 80, 80, 0.35);
+    border-left-color: #ef5350;
+}
+:global(.dark) .stream-server {
+    background-color: rgba(66, 135, 180, 0.35);
+    border-left-color: #42a5f5;
+}
 
 :global(.dark) .row-tcp { background-color: rgba(100, 100, 160, 0.25); }
 :global(.dark) .row-udp { background-color: rgba(80, 120, 160, 0.25); }

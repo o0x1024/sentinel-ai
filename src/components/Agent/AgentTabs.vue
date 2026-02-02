@@ -1,5 +1,5 @@
 <template>
-  <div class="agent-tabs flex items-center bg-base-300/30 px-2 pt-2 gap-1 overflow-x-auto no-scrollbar border-b border-base-300">
+  <div class="agent-tabs flex items-center gap-1 overflow-x-auto no-scrollbar">
     <div 
       v-for="session in sessions" 
       :key="session.id"
@@ -18,7 +18,7 @@
     </div>
     
     <button 
-      class="btn btn-ghost btn-sm btn-circle ml-1 mb-2 hover:bg-base-300"
+      class="btn btn-ghost btn-sm btn-circle ml-1 hover:bg-base-300"
       @click="$emit('new-tab')"
       :title="t('agent.newTab')"
     >

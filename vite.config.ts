@@ -12,15 +12,26 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@components': fileURLToPath(new URL('./src/components', import.meta.url)),
       '@views': fileURLToPath(new URL('./src/views', import.meta.url)),
-      '@assets': fileURLToPath(new URL('./src/assets', import.meta.url))
+      '@assets': fileURLToPath(new URL('./src/assets', import.meta.url)),
+      // Force use of the full ESM bundler build (includes message compiler)
+      // This is required for proper i18n functionality in production builds
+      'vue-i18n': 'vue-i18n/dist/vue-i18n.esm-bundler.js'
     }
+  },
+
+  // Define vue-i18n feature flags for proper bundling
+  define: {
+    __VUE_I18N_FULL_INSTALL__: true,
+    __VUE_I18N_LEGACY_API__: false,
+    __INTLIFY_PROD_DEVTOOLS__: false,
+    __VUE_PROD_DEVTOOLS__: false,
   },
 
   build: {
     rollupOptions: {
       output: {
         manualChunks: {
-          'vue-vendor': ['vue', 'vue-router', 'pinia'],
+          'vue-vendor': ['vue', 'vue-router', 'pinia', 'vue-i18n'],
           'ui-vendor': ['@headlessui/vue', '@heroicons/vue'],
           'chart-vendor': ['chart.js', 'vue-chartjs'],
           'utils-vendor': ['@vueuse/core', 'date-fns', 'axios', 'uuid']

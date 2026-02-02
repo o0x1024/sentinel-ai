@@ -2517,7 +2517,7 @@ pub async fn agent_execute(
                     rig_provider: provider_for_closure.clone(),
                     api_key: provider_config_for_closure.api_key.clone(),
                     api_base: provider_config_for_closure.api_base.clone(),
-                    max_iterations: config.max_iterations.unwrap_or(10),
+                    max_iterations: config.max_iterations.unwrap_or(provider_config.max_turns.unwrap_or(50)).max(200),
                     timeout_secs: config.timeout_secs.unwrap_or(300),
                     tool_config: effective_tool_config.clone(),
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
@@ -2527,6 +2527,7 @@ pub async fn agent_execute(
                     persist_messages: true,
                     subagent_run_id: None,
                     context_policy: None,
+                    recursion_depth: 0,
                 };
 
                 // 调用工具支持的代理执行器

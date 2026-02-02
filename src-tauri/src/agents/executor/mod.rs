@@ -46,6 +46,7 @@ pub struct AgentExecuteParams {
     pub persist_messages: bool,
     pub subagent_run_id: Option<String>,
     pub context_policy: Option<ContextPolicy>,
+    pub recursion_depth: usize,
 }
 
 /// Execute agent task.
@@ -54,7 +55,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     let execution_id = params.execution_id.clone();
 
     tracing::info!(
-        "Executing agent - rig_provider: {}, model: {}, execution_id: {}, tools_enabled: {}",
+        "Executing agent - rig_provider: {}, model: {}, execution_id: {}, tools_enabled: {}, recursion_depth: {}",
         rig_provider,
         params.model,
         params.execution_id,
@@ -62,7 +63,8 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
             .tool_config
             .as_ref()
             .map(|c| c.enabled)
-            .unwrap_or(false)
+            .unwrap_or(false),
+        params.recursion_depth
     );
 
     let parent_context = crate::agents::subagent_executor::SubagentParentContext {
@@ -75,6 +77,7 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         max_iterations: params.max_iterations,
         timeout_secs: params.timeout_secs,
         task_context: params.task.clone(),
+        recursion_depth: params.recursion_depth,
     };
     crate::agents::subagent_executor::set_parent_context(execution_id.clone(), parent_context).await;
 

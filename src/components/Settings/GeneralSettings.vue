@@ -467,8 +467,9 @@
 import { computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import i18n, { setLanguage } from '@/i18n' // Import i18n instance and setLanguage for direct access
 
-const { t } = useI18n()
+const { t, locale } = useI18n({ useScope: 'global' })
 
 // Props
 interface Props {
@@ -611,13 +612,11 @@ const applyLanguagePreview = (language: string) => {
     }
   }
   
-  const { locale } = useI18n()
-  // Map to supported locales (zh, en)
-  if (finalLang.startsWith('zh')) {
-    locale.value = 'zh'
-  } else {
-    locale.value = 'en'
-  }
+  // Map to supported locales (zh, en) and apply using the exported setLanguage function
+  const targetLocale = (finalLang.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en'
+  
+  // Use the setLanguage function for reliable locale switching in production
+  setLanguage(targetLocale)
 }
 
 // 监听窗口置顶设置

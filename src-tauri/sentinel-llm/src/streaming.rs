@@ -572,21 +572,20 @@ impl StreamingLlmClient {
         let mut tool_call_names: HashMap<String, String> = HashMap::new();
         info!("Starting stream iteration...");
 
-        let max_turns = self.config.get_max_turns();
-        info!("Using max_turns: {}", max_turns);
+
 
         let stream_result = if chat_history.is_empty() {
             info!("Using stream_prompt for empty chat history");
             tokio::time::timeout(
                 timeout,
-                agent.stream_prompt(user_message).multi_turn(max_turns),
+                agent.stream_prompt(user_message).multi_turn(1000),
             )
             .await
         } else {
             info!("Using stream_chat with {} history messages", chat_history.len());
             tokio::time::timeout(
                 timeout,
-                agent.stream_chat(user_message, chat_history).multi_turn(max_turns),
+                agent.stream_chat(user_message, chat_history).multi_turn(1000),
             )
             .await
         };

@@ -13,6 +13,7 @@ use serde_json::json;
 use tauri::Emitter;
 use tauri::Manager;
 use tokio::sync::{watch, RwLock, Semaphore};
+use tokio::task::AbortHandle;
 
 use sentinel_tools::buildin_tools::subagent_tool::{
     set_subagent_spawn_executor, set_subagent_wait_executor, set_subagent_run_executor,
@@ -48,6 +49,7 @@ static PARENT_SEMAPHORES: Lazy<Arc<RwLock<HashMap<String, Arc<Semaphore>>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 const MAX_SUBAGENTS_PER_PARENT: usize = 3;
+const MAX_RECURSION_DEPTH: usize = 3;
 
 // ============================================================================
 // Types
@@ -64,6 +66,7 @@ pub struct SubagentParentContext {
     pub max_iterations: usize,
     pub timeout_secs: u64,
     pub task_context: String,
+    pub recursion_depth: usize,
 }
 
 /// Internal task entry with completion channel
@@ -73,6 +76,8 @@ struct SubagentTaskEntry {
     completion_tx: watch::Sender<Option<TaskCompletion>>,
     /// Receiver to wait for completion
     completion_rx: watch::Receiver<Option<TaskCompletion>>,
+    /// Handle to abort task on cleanup
+    abort_handle: Option<AbortHandle>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,7 +106,17 @@ pub async fn clear_parent_context(execution_id: &str) {
     
     // Also cleanup any orphaned tasks for this parent
     let mut tasks = TASK_REGISTRY.write().await;
-    tasks.retain(|_, entry| entry.info.parent_execution_id != execution_id);
+    tasks.retain(|_, entry| {
+        if entry.info.parent_execution_id == execution_id {
+            // Abort running task to prevent zombie processes
+            if let Some(handle) = &entry.abort_handle {
+                handle.abort();
+            }
+            false
+        } else {
+            true
+        }
+    });
     
     // Remove parent semaphore
     let mut parent_sems = PARENT_SEMAPHORES.write().await;
@@ -118,38 +133,58 @@ fn default_subagent_tool_config() -> ToolConfig {
         selection_strategy: ToolSelectionStrategy::All,
         max_tools: 50,
         fixed_tools: vec![],
-        // Disable all subagent tools in subagent to prevent recursion
-        disabled_tools: vec![
-            "subagent_run".to_string(),
-            "subagent_spawn".to_string(),
-            "subagent_wait".to_string(),
-        ],
+        disabled_tools: vec![],
     }
 }
 
-fn normalize_tool_config(mut config: ToolConfig) -> ToolConfig {
-    // Always disable subagent tools in subagent
-    for tool in ["subagent_run", "subagent_spawn", "subagent_wait"] {
-        if !config.disabled_tools.contains(&tool.to_string()) {
-            config.disabled_tools.push(tool.to_string());
+fn normalize_tool_config(mut config: ToolConfig, allow_subagents: bool) -> ToolConfig {
+    if !allow_subagents {
+        // Disable subagent tools if recursion limit reached
+        for tool in ["subagent_run", "subagent_spawn", "subagent_wait"] {
+            if !config.disabled_tools.contains(&tool.to_string()) {
+                config.disabled_tools.push(tool.to_string());
+            }
         }
     }
     config
 }
 
-fn build_subagent_task(parent_task: &str, subagent_task: &str) -> String {
+/// Build subagent task with parent context reference
+/// This function creates a task description that includes a summary of the parent task
+/// and instructions on how to access the full parent context via shell tools.
+fn build_subagent_task(
+    parent_task: &str, 
+    subagent_task: &str, 
+    parent_execution_id: &str,
+    context_dir: &str,
+) -> String {
     let parent = parent_task.trim();
     let subagent = subagent_task.trim();
+    
     if parent.is_empty() {
         return subagent.to_string();
     }
     if subagent.is_empty() {
         return parent.to_string();
     }
+    
     let brief = condense_text(parent, ContextPolicy::subagent().task_brief_max_chars);
+    let parent_history_path = format!("{}/history_{}.txt", context_dir, &parent_execution_id[..12.min(parent_execution_id.len())]);
+    
     format!(
-        "Parent task context:\n{}\n\nSubagent task:\n{}",
+        "[Parent Context Summary]\n\
+        {}\n\n\
+        [Parent Context History Access]\n\
+        The parent agent's full conversation history is available at:\n\
+        - Path: {}\n\
+        - Usage: You can use shell tools (cat, grep, less, etc.) to search this file if you need more context\n\
+        - Example: `grep -i \"specific topic\" {}`\n\
+        - Note: This contains the complete dialogue history from the parent agent\n\n\
+        [Your Subagent Task]\n\
+        {}",
         brief,
+        parent_history_path,
+        parent_history_path,
         subagent
     )
 }
@@ -237,6 +272,20 @@ async fn create_subagent_message(
         };
         if let Err(e) = db.create_subagent_message_internal(&msg).await {
             tracing::warn!("Failed to create subagent message: {}", e);
+        } else {
+            // Emit event for real-time update
+            let _ = app_handle.emit(
+                "subagent:message",
+                &json!({
+                    "subagent_run_id": subagent_run_id,
+                    "message_id": msg.id,
+                    "role": role,
+                    "content": content,
+                    "tool_calls": null,
+                    "reasoning_content": null,
+                    "timestamp": msg.timestamp.to_rfc3339(),
+                }),
+            );
         }
     }
 }
@@ -247,31 +296,109 @@ async fn create_subagent_message(
 
 async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, SubagentToolError> {
     let app_handle = get_app_handle()?;
-    let parent = get_parent_context(&args.parent_execution_id).await?;
-    let task_with_context = build_subagent_task(&parent.task_context, &args.task);
     
+    // Determine execution context (host or docker) for parent history export
+    let (context_dir, is_docker) = {
+        use sentinel_tools::shell::get_shell_config;
+        use sentinel_tools::output_storage::{get_host_context_dir, CONTAINER_CONTEXT_DIR};
+        
+        let shell_config = get_shell_config().await;
+        let docker_available = sentinel_tools::DockerSandbox::is_docker_available().await;
+        let docker_enabled = shell_config.default_execution_mode == sentinel_tools::shell::ShellExecutionMode::Docker
+            && shell_config.docker_config.is_some()
+            && docker_available;
+        
+        if docker_enabled {
+            (CONTAINER_CONTEXT_DIR.to_string(), true)
+        } else {
+            (get_host_context_dir().display().to_string(), false)
+        }
+    };
+    let parent = get_parent_context(&args.parent_execution_id).await?;
+    
+    // Export parent's conversation history to file for subagent access
+    if let Some(_db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        // Load parent's sliding window to get full conversation history
+        use crate::agents::sliding_window::SlidingWindowManager;
+        
+        if let Ok(parent_sliding_window) = SlidingWindowManager::new(
+            &app_handle,
+            &args.parent_execution_id,
+            None,
+        ).await {
+            if let Ok(parent_history_content) = parent_sliding_window.export_history().await {
+                // Store parent history based on execution environment
+                if is_docker {
+                    use sentinel_tools::shell::get_shell_config;
+                    let shell_config = get_shell_config().await;
+                    if let Some(docker_config) = shell_config.docker_config {
+                        let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
+                        if let Err(e) = sentinel_tools::output_storage::store_history_in_container_with_id(
+                            &sandbox,
+                            &parent_history_content,
+                            Some(&args.parent_execution_id),
+                        ).await {
+                            tracing::warn!("Failed to export parent history to container: {}", e);
+                        } else {
+                            tracing::info!("Parent history exported to container for subagent access");
+                        }
+                    }
+                } else {
+                    if let Err(e) = sentinel_tools::output_storage::store_history_on_host(
+                        &parent_history_content,
+                        Some(&args.parent_execution_id),
+                    ).await {
+                        tracing::warn!("Failed to export parent history to host: {}", e);
+                    } else {
+                        tracing::info!("Parent history exported to host for subagent access");
+                    }
+                }
+            }
+        }
+    }
+    
+    // Build subagent task with parent context reference
+    let task_with_context = build_subagent_task(
+        &parent.task_context, 
+        &args.task, 
+        &args.parent_execution_id,
+        &context_dir,
+    );
+    
+    // Check recursion depth
+    let new_recursion_depth = parent.recursion_depth + 1;
+    let allow_subagents = new_recursion_depth < MAX_RECURSION_DEPTH;
+
+    // Generate task ID first so we can use it for queued event
+    let task_id = uuid::Uuid::new_v4().to_string();
+
     if !args.inherit_parent_llm {
         return Err(SubagentToolError::InvalidArguments(
             "Custom LLM config is not supported yet".to_string(),
         ));
     }
     
-    // Try to acquire semaphores (non-blocking check)
-    let global_permit = GLOBAL_SEMAPHORE.clone().try_acquire_owned()
+    // Emit queued event
+    let _ = app_handle.emit("subagent:queued", &json!({
+        "task_id": task_id,
+        "execution_id": task_id,
+        "parent_execution_id": args.parent_execution_id,
+    }));
+
+    // Try to acquire semaphores (waiting if necessary)
+    let global_permit = GLOBAL_SEMAPHORE.clone().acquire_owned().await
         .map_err(|_| SubagentToolError::ConcurrencyLimitReached)?;
     
     let parent_sem = get_or_create_parent_semaphore(&args.parent_execution_id).await;
-    let parent_permit = parent_sem.clone().try_acquire_owned()
+    let parent_permit = parent_sem.clone().acquire_owned().await
         .map_err(|_| SubagentToolError::ConcurrencyLimitReached)?;
     
-    // Generate task ID
-    let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     
     // Create completion channel
     let (tx, rx) = watch::channel(None);
     
-    // Create task entry
+    // Create task entry info
     let task_info = SubagentTaskInfo {
         task_id: task_id.clone(),
         parent_execution_id: args.parent_execution_id.clone(),
@@ -310,34 +437,32 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
     )
     .await;
     
-    // Register task
-    {
-        let mut tasks = TASK_REGISTRY.write().await;
-        tasks.insert(task_id.clone(), SubagentTaskEntry {
-            info: task_info.clone(),
-            completion_tx: tx,
-            completion_rx: rx,
-        });
-    }
-    
-    // Emit start event
-    let _ = app_handle.emit("subagent:start", &json!({
-        "task_id": task_id,
-        "execution_id": task_id,
-        "parent_execution_id": args.parent_execution_id,
-        "role": args.role,
-        "task": task_with_context,
-        "mode": "async",
-    }));
-    
-    // Spawn background task
+    // Spawn background task ensuring we have an abort handle
     let task_id_clone = task_id.clone();
     let app_clone = app_handle.clone();
-    
-    // Clone values needed for the spawned task
     let args_task = task_with_context.clone();
+    let parent_execution_id = args.parent_execution_id.clone();
     
-    tokio::spawn(async move {
+    // Build tool config eagerly to pass into closure (avoids clone issues)
+    let tool_config = if let Some(raw) = args.tool_config {
+        match serde_json::from_value::<ToolConfig>(raw) {
+            Ok(parsed) => normalize_tool_config(parsed, allow_subagents),
+            Err(e) => {
+                tracing::error!("Invalid tool_config: {}", e);
+                default_subagent_tool_config()
+            }
+        }
+    } else if args.inherit_parent_tools {
+        normalize_tool_config(parent.tool_config.clone(), allow_subagents)
+    } else {
+        default_subagent_tool_config()
+    };
+    
+    let system_prompt = args.system_prompt.unwrap_or_else(|| parent.system_prompt.clone());
+    let max_iterations = args.max_iterations.unwrap_or(parent.max_iterations.max(200));
+    let timeout_secs = args.timeout_secs.unwrap_or(parent.timeout_secs);
+    
+    let task_handle = tokio::spawn(async move {
         // Keep permits alive until task completes
         let _global = global_permit;
         let _parent = parent_permit;
@@ -349,25 +474,6 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
                 entry.info.status = SubagentStatus::Running;
             }
         }
-        
-        // Build tool config
-        let tool_config = if let Some(raw) = args.tool_config {
-            match serde_json::from_value::<ToolConfig>(raw) {
-                Ok(parsed) => normalize_tool_config(parsed),
-                Err(e) => {
-                    tracing::error!("Invalid tool_config: {}", e);
-                    default_subagent_tool_config()
-                }
-            }
-        } else if args.inherit_parent_tools {
-            normalize_tool_config(parent.tool_config.clone())
-        } else {
-            default_subagent_tool_config()
-        };
-        
-        let system_prompt = args.system_prompt.unwrap_or_else(|| parent.system_prompt.clone());
-        let max_iterations = args.max_iterations.unwrap_or(6);
-        let timeout_secs = args.timeout_secs.unwrap_or(parent.timeout_secs);
         
         let params = super::AgentExecuteParams {
             execution_id: task_id_clone.clone(),
@@ -387,6 +493,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
             persist_messages: false,
             subagent_run_id: Some(task_id_clone.clone()),
             context_policy: Some(ContextPolicy::subagent()),
+            recursion_depth: new_recursion_depth,
         };
         
         // Execute agent
@@ -400,7 +507,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
                 let _ = app_clone.emit("subagent:done", &json!({
                     "task_id": task_id_clone,
                     "execution_id": task_id_clone,
-                    "parent_execution_id": args.parent_execution_id,
+                    "parent_execution_id": parent_execution_id,
                     "success": true,
                     "output": output,
                 }));
@@ -427,7 +534,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
                 let _ = app_clone.emit("subagent:error", &json!({
                     "task_id": task_id_clone,
                     "execution_id": task_id_clone,
-                    "parent_execution_id": args.parent_execution_id,
+                    "parent_execution_id": parent_execution_id,
                     "error": error,
                 }));
 
@@ -467,6 +574,28 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
             }
         }
     });
+    
+    // Register task with abort handle
+    let abort_handle = task_handle.abort_handle();
+    {
+        let mut tasks = TASK_REGISTRY.write().await;
+        tasks.insert(task_id.clone(), SubagentTaskEntry {
+            info: task_info,
+            completion_tx: tx,
+            completion_rx: rx,
+            abort_handle: Some(abort_handle),
+        });
+    }
+
+    // Emit start event
+    let _ = app_handle.emit("subagent:start", &json!({
+        "task_id": task_id,
+        "execution_id": task_id,
+        "parent_execution_id": args.parent_execution_id,
+        "role": args.role,
+        "task": task_with_context,
+        "mode": "async",
+    }));
     
     Ok(SubagentSpawnOutput {
         task_id,
@@ -589,134 +718,46 @@ async fn execute_wait(args: SubagentWaitArgs) -> Result<SubagentWaitOutput, Suba
 // ============================================================================
 
 async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, SubagentToolError> {
-    let app_handle = get_app_handle()?;
-    let parent = get_parent_context(&args.parent_execution_id).await?;
-    let task_with_context = build_subagent_task(&parent.task_context, &args.task);
-    
-    if !args.inherit_parent_llm {
-        return Err(SubagentToolError::InvalidArguments(
-            "Custom LLM config is not supported yet".to_string(),
-        ));
-    }
-    
-    // Build tool config
-    let tool_config = if let Some(raw) = args.tool_config {
-        let parsed: ToolConfig = serde_json::from_value(raw)
-            .map_err(|e| SubagentToolError::InvalidArguments(format!("Invalid tool_config: {}", e)))?;
-        normalize_tool_config(parsed)
-    } else if args.inherit_parent_tools {
-        normalize_tool_config(parent.tool_config.clone())
-    } else {
-        default_subagent_tool_config()
-    };
-    
-    let execution_id = uuid::Uuid::new_v4().to_string();
-    let system_prompt = args.system_prompt.unwrap_or_else(|| parent.system_prompt.clone());
-    let max_iterations = args.max_iterations.unwrap_or(6);
-    let timeout_secs = args.timeout_secs.unwrap_or(parent.timeout_secs);
-    
-    let now_dt = chrono::Utc::now();
-    let run_record = SubagentRun {
-        id: execution_id.clone(),
+    // 1. Spawn the task
+    let spawn_args = SubagentSpawnArgs {
         parent_execution_id: args.parent_execution_id.clone(),
-        role: args.role.clone(),
-        task: task_with_context.clone(),
-        status: "running".to_string(),
-        output: None,
-        error: None,
-        model_name: Some(parent.model.clone()),
-        model_provider: Some(parent.rig_provider.clone()),
-        started_at: now_dt,
-        completed_at: None,
-        created_at: now_dt,
-        updated_at: now_dt,
-    };
-    create_subagent_run(app_handle, &run_record).await;
-
-    create_subagent_message(
-        app_handle,
-        &execution_id,
-        "user",
-        &task_with_context,
-    )
-    .await;
-    
-    // Emit start event
-    let _ = app_handle.emit("subagent:start", &json!({
-        "task_id": execution_id,
-        "execution_id": execution_id,
-        "parent_execution_id": args.parent_execution_id,
-        "role": args.role,
-        "task": task_with_context,
-        "mode": "sync",
-    }));
-    
-    let params = super::AgentExecuteParams {
-        execution_id: execution_id.clone(),
-        model: parent.model,
-        system_prompt,
-        task: task_with_context,
-        rig_provider: parent.rig_provider,
-        api_key: parent.api_key,
-        api_base: parent.api_base,
-        max_iterations,
-        timeout_secs,
-        tool_config: Some(tool_config),
-        enable_tenth_man_rule: false,
-        tenth_man_config: None,
-        document_attachments: None,
-        image_attachments: None,
-        persist_messages: false,
-        subagent_run_id: Some(execution_id.clone()),
-        context_policy: Some(ContextPolicy::subagent()),
+        role: args.role,
+        task: args.task,
+        inherit_parent_llm: args.inherit_parent_llm,
+        inherit_parent_tools: args.inherit_parent_tools,
+        tool_config: args.tool_config,
+        system_prompt: args.system_prompt,
+        max_iterations: args.max_iterations,
+        timeout_secs: args.timeout_secs,
     };
     
-    match execute_agent(app_handle, params).await {
-        Ok(response) => {
-            let completed_at = chrono::Utc::now();
-            let _ = app_handle.emit("subagent:done", &json!({
-                "task_id": execution_id,
-                "execution_id": execution_id,
-                "parent_execution_id": args.parent_execution_id,
-                "success": true,
-                "output": response,
-            }));
-            update_subagent_run_result(
-                app_handle,
-                &execution_id,
-                "completed",
-                Some(&response),
-                None,
-                Some(completed_at),
-            )
-            .await;
+    let spawn_output = execute_spawn(spawn_args).await?;
+    let task_id = spawn_output.task_id;
+    
+    // 2. Wait for completion
+    let wait_args = SubagentWaitArgs {
+        parent_execution_id: args.parent_execution_id.clone(),
+        task_ids: vec![task_id.clone()],
+        timeout_secs: args.timeout_secs.unwrap_or(300), // Default 5 mins wait
+    };
+    
+    let wait_output = execute_wait(wait_args).await?;
+    
+    // 3. Process result
+    if let Some(result) = wait_output.results.first() {
+        if result.success {
             Ok(SubagentRunOutput {
                 success: true,
-                execution_id,
-                output: Some(response),
+                execution_id: task_id,
+                output: result.output.clone(),
                 error: None,
             })
+        } else {
+            let err_msg = result.error.clone().unwrap_or_else(|| "Unknown error".to_string());
+            Err(SubagentToolError::ExecutionFailed(err_msg))
         }
-        Err(e) => {
-            let error = e.to_string();
-            let completed_at = chrono::Utc::now();
-            let _ = app_handle.emit("subagent:error", &json!({
-                "task_id": execution_id,
-                "execution_id": execution_id,
-                "parent_execution_id": args.parent_execution_id,
-                "error": error,
-            }));
-            update_subagent_run_result(
-                app_handle,
-                &execution_id,
-                "failed",
-                None,
-                Some(&error),
-                Some(completed_at),
-            )
-            .await;
-            Err(SubagentToolError::ExecutionFailed(error))
-        }
+    } else {
+        Err(SubagentToolError::ExecutionFailed("Task lost during wait".to_string()))
     }
 }
 

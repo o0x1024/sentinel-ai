@@ -1535,10 +1535,14 @@ Return ONLY the tool names, one per line."#,
             .join("\n");
 
         let system_prompt = format!(
-            r#"Available ability groups (choose exactly ONE that best fits the task):
+            r#"Available ability groups:
 {}
 
-Return ONLY the ability group name (one line, no explanation)."#,
+Instructions:
+- If the task requires specialized tools or workflows from a specific group, choose the best fitting group.
+- If the task is general chat (e.g., "who are you", "hello"), simple Q&A, or does not require any tools, choose "General".
+
+Return ONLY the group name or "General" (one line, no explanation)."#,
             groups_summary
         );
 
@@ -1562,6 +1566,17 @@ Return ONLY the ability group name (one line, no explanation)."#,
                 });
             }
         };
+
+        // Check for General/None response
+        if selected_group_name.trim().eq_ignore_ascii_case("General") 
+            || selected_group_name.trim().eq_ignore_ascii_case("None") {
+            tracing::info!("Tool Router: 'General' mode selected, skipping specialized tools.");
+            return Ok(ToolSelectionPlan {
+                tool_ids: vec![],
+                injected_system_prompt: None,
+                selected_ability_group: None,
+            });
+        }
 
         // tracing::info!("LLM selected ability group: '{}'", selected_group_name);
 

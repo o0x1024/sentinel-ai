@@ -15,6 +15,7 @@ use pnet::datalink::{self, Channel::Ethernet, NetworkInterface};
 use pnet::packet::arp::ArpPacket;
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::icmp::IcmpPacket;
+use pnet::packet::icmpv6::Icmpv6Packet;
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::ipv6::Ipv6Packet;
@@ -334,7 +335,10 @@ impl PacketCaptureService {
                 IpNextHeaderProtocols::Tcp => Self::parse_tcp(ipv4.payload(), layers, &src, &dst),
                 IpNextHeaderProtocols::Udp => Self::parse_udp(ipv4.payload(), layers, &src, &dst),
                 IpNextHeaderProtocols::Icmp => Self::parse_icmp(ipv4.payload(), layers, &src, &dst),
-                proto => (src, dst, format!("{:?}", proto), format!("IP Protocol: {:?}", proto)),
+                proto => {
+                    let proto_name = get_ip_protocol_name(proto.0);
+                    (src, dst, proto_name.clone(), format!("IP Protocol: {}", proto_name))
+                }
             }
         } else {
             ("".to_string(), "".to_string(), "IPv4".to_string(), "Malformed IPv4".to_string())
@@ -367,7 +371,11 @@ impl PacketCaptureService {
             match next_header {
                 IpNextHeaderProtocols::Tcp => Self::parse_tcp(ipv6.payload(), layers, &src, &dst),
                 IpNextHeaderProtocols::Udp => Self::parse_udp(ipv6.payload(), layers, &src, &dst),
-                proto => (src, dst, format!("{:?}", proto), format!("IPv6 Protocol: {:?}", proto)),
+                IpNextHeaderProtocols::Icmpv6 => Self::parse_icmpv6(ipv6.payload(), layers, &src, &dst),
+                proto => {
+                    let proto_name = get_ip_protocol_name(proto.0);
+                    (src, dst, proto_name.clone(), format!("IPv6 Next Header: {}", proto_name))
+                }
             }
         } else {
             ("".to_string(), "".to_string(), "IPv6".to_string(), "Malformed IPv6".to_string())
@@ -525,6 +533,33 @@ impl PacketCaptureService {
             (src_ip.to_string(), dst_ip.to_string(), "ICMP".to_string(), info)
         } else {
             (src_ip.to_string(), dst_ip.to_string(), "ICMP".to_string(), "Malformed ICMP".to_string())
+        }
+    }
+
+    /// Parse ICMPv6 packet
+    fn parse_icmpv6(data: &[u8], layers: &mut Vec<ProtocolLayer>, src_ip: &str, dst_ip: &str) -> (String, String, String, String) {
+        if let Some(icmpv6) = Icmpv6Packet::new(data) {
+            let icmpv6_type = icmpv6.get_icmpv6_type();
+            let icmpv6_code = icmpv6.get_icmpv6_code();
+            let checksum = icmpv6.get_checksum();
+            
+            let type_name = get_icmpv6_type_name(icmpv6_type.0);
+            let icmpv6_display = format!("Internet Control Message Protocol v6 ({})", type_name);
+            
+            layers.push(ProtocolLayer {
+                name: "ICMPv6".to_string(),
+                display: icmpv6_display,
+                fields: vec![
+                    ProtocolField::new("Type", &format!("{} ({})", icmpv6_type.0, type_name)),
+                    ProtocolField::new("Code", &icmpv6_code.0.to_string()),
+                    ProtocolField::new("Checksum", &format!("0x{:04x}", checksum)),
+                ],
+            });
+
+            let info = format!("{} (type={}, code={})", type_name, icmpv6_type.0, icmpv6_code.0);
+            (src_ip.to_string(), dst_ip.to_string(), "ICMPv6".to_string(), info)
+        } else {
+            (src_ip.to_string(), dst_ip.to_string(), "ICMPv6".to_string(), "Malformed ICMPv6".to_string())
         }
     }
 
@@ -1673,6 +1708,49 @@ fn get_icmp_type_name(t: u8) -> &'static str {
         13 => "Timestamp Request",
         14 => "Timestamp Reply",
         _ => "Unknown",
+    }
+}
+
+/// Get ICMPv6 type name
+fn get_icmpv6_type_name(t: u8) -> String {
+    match t {
+        1 => "Destination Unreachable".to_string(),
+        2 => "Packet Too Big".to_string(),
+        3 => "Time Exceeded".to_string(),
+        4 => "Parameter Problem".to_string(),
+        128 => "Echo Request".to_string(),
+        129 => "Echo Reply".to_string(),
+        130 => "Multicast Listener Query".to_string(),
+        131 => "Multicast Listener Report".to_string(),
+        132 => "Multicast Listener Done".to_string(),
+        133 => "Router Solicitation".to_string(),
+        134 => "Router Advertisement".to_string(),
+        135 => "Neighbor Solicitation".to_string(),
+        136 => "Neighbor Advertisement".to_string(),
+        137 => "Redirect Message".to_string(),
+        143 => "Multicast Listener Report v2".to_string(),
+        _ => format!("Unknown ({})", t),
+    }
+}
+
+/// Get standard IP protocol name from protocol number
+fn get_ip_protocol_name(p: u8) -> String {
+    match p {
+        1 => "ICMP".to_string(),
+        2 => "IGMP".to_string(),
+        6 => "TCP".to_string(),
+        17 => "UDP".to_string(),
+        41 => "IPv6".to_string(),
+        43 => "IPv6-Route".to_string(),
+        44 => "IPv6-Frag".to_string(),
+        50 => "ESP".to_string(),
+        51 => "AH".to_string(),
+        58 => "ICMPv6".to_string(),
+        59 => "IPv6-NoNxt".to_string(),
+        60 => "IPv6-Opts".to_string(),
+        89 => "OSPF".to_string(),
+        115 => "L2TP".to_string(),
+        _ => format!("Protocol({})", p),
     }
 }
 

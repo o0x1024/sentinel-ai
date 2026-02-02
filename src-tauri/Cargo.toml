@@ -225,7 +225,7 @@ signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 # 开发环境优化 
 opt-level = 0
 debug = 0               # 完全禁用调试信息
-split-debuginfo = "off"
+split-debuginfo = "unpacked" # macOS上使用unpacked通常更快
 
 # Windows 特定开发配置 - 避免 PDB 限制问题
 [profile.dev.package."*"]
@@ -233,8 +233,8 @@ debug = 0
 
 [profile.release]
 panic = "abort"   # 在发布版本中遇到panic时中止
-codegen-units = 1 # 生成更优化的代码*-
-lto = true        # 启用链接时优化
+codegen-units = 16 # 并行编译以加快构建速度 (was 1)
+lto = "thin"      # 启用 ThinLTO，构建速度更快 (was true)
 opt-level = "s"   # 优化代码大小
 strip = true      # 从二进制文件中剥离符号信息
 

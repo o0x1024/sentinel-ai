@@ -1066,11 +1066,6 @@ const customProviderValidationError = computed(() => {
   if (!p.model_id || !p.model_id.trim()) {
     return '请输入默认模型 ID'
   }
-  // Ollama 不需要 API Key
-  const noApiKeyProviders = ['ollama']
-  if (!noApiKeyProviders.includes(p.rig_provider) && (!p.api_key || !p.api_key.trim())) {
-    return '请输入 API Key'
-  }
   // 验证 extra_headers_json 是否为有效 JSON
   if (p.extra_headers_json && p.extra_headers_json.trim()) {
     try {
@@ -1436,18 +1431,6 @@ const needsApiKey = (provider: string) => {
   if (['Ollama'].includes(provider)) {
     return false
   }
-  
-  // Check if this is a local OpenAI-compatible service (like LM Studio)
-  const providerConfig = selectedProviderConfig.value
-  if (providerConfig && providerConfig.rig_provider === 'openai') {
-    const apiBase = providerConfig.api_base || ''
-    if (apiBase.startsWith('http://localhost') || 
-        apiBase.startsWith('http://127.0.0.1') ||
-        apiBase.startsWith('http://0.0.0.0')) {
-      return false
-    }
-  }
-  
   return true
 }
 

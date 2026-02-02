@@ -617,7 +617,7 @@ impl AiService {
             timeout,
             agent
                 .stream_chat(user_message, chat_history)
-                .multi_turn(max_turns),
+                .multi_turn(1000),
         )
         .await;
 

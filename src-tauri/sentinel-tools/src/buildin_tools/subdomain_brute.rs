@@ -103,18 +103,6 @@ impl SubdomainBruteTool {
     pub const NAME: &'static str = "subdomain_brute";
     pub const DESCRIPTION: &'static str = "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.";
 
-    #[cfg(unix)]
-    fn is_root() -> bool {
-        unsafe { libc::geteuid() == 0 }
-    }
-
-    #[cfg(not(unix))]
-    fn is_root() -> bool {
-        // On Windows, raw socket support varies, but usually requires Admin. 
-        // For simplicity/safety, we might skip strict check or assume OK until failure.
-        // But for now, let's assume true to let it try, or strict if we want.
-        true 
-    }
 }
 
 impl Tool for SubdomainBruteTool {
@@ -134,12 +122,6 @@ impl Tool for SubdomainBruteTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         // Check for root privileges on Unix-like systems to prevent panic
-        #[cfg(unix)]
-        if !Self::is_root() {
-            return Err(SubdomainBruteError::ScanFailed(
-                "Root privileges are required to run this tool (it uses raw sockets). Please run the application with sudo.".to_string()
-            ));
-        }
 
         let start_time = Instant::now();
 

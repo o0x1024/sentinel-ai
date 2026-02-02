@@ -53,11 +53,25 @@ pub fn run() {
     
     let context = tauri::generate_context!();
 
-    let logs_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sentinel-ai")
-        .join("logs");
-    let _ = fs::create_dir_all(&logs_dir);
+    // Configure log directory:
+    // - Debug: project working directory `logs/`
+    // - Release: system data directory `<data_dir>/sentinel-ai/logs`
+    #[cfg(debug_assertions)]
+    let logs_dir = {
+        let path = PathBuf::from("logs");
+        let _ = fs::create_dir_all(&path);
+        path
+    };
+
+    #[cfg(not(debug_assertions))]
+    let logs_dir = {
+        let path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel-ai")
+            .join("logs");
+        let _ = fs::create_dir_all(&path);
+        path
+    };
     let logs_dir = logs_dir.to_string_lossy().to_string();
 
     let file_appender = tracing_appender::rolling::daily(&logs_dir, "sentinel-ai.log");

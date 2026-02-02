@@ -35,6 +35,7 @@ pub async fn execute_agent_with_tools(
     let rig_provider = params.rig_provider.to_lowercase();
     let mut llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
+        .with_max_turns(params.max_iterations)
         .with_rig_provider(&rig_provider);
 
     if let Some(ref api_key) = params.api_key {

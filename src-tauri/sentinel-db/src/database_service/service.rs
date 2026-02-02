@@ -267,6 +267,22 @@ impl DatabaseService {
             .await?;
         }
 
+        let agent_run_states_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'agent_run_states')"
+        ).fetch_one(pool).await?;
+        if !agent_run_states_exists {
+            info!("Creating agent_run_states table...");
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS agent_run_states (
+                    execution_id TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )"#,
+            )
+            .execute(pool)
+            .await?;
+        }
+
         // 检查并创建字典相关表
         let dict_table_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'dictionaries')"

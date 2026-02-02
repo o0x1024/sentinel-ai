@@ -2469,43 +2469,13 @@ pub async fn test_plugin(
     // 如果插件未启用或不存在，保持原有提示逻辑。
     let db = state.get_db_service();
 
-    let row: Option<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        bool,
-    )> = sqlx::query_as(
-        r#"
-        SELECT id, name, version, author, main_category, category, description,
-               default_severity, tags, enabled
-        FROM plugin_registry
-        WHERE id = ?
-        "#,
-    )
-    .bind(&plugin_id)
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| format!("Failed to query plugin: {}", e))?;
+    let plugin_record = db.get_plugin_from_registry(&plugin_id).await
+        .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
-    if let Some((
-        _id,
-        name,
-        version,
-        _author,
-        main_category,
-        _category,
-        _description,
-        _sev,
-        _tags,
-        enabled,
-    )) = row
-    {
+    if let Some(record) = plugin_record {
+        let main_category = record.metadata.main_category.clone();
+        let enabled = record.status == sentinel_plugins::PluginStatus::Enabled;
+
         // 如果是 Agent 插件，提示使用 Agent 测试入口
         if main_category == "agent" {
             return Ok(CommandResponse::ok(TestPluginResult {
@@ -2523,54 +2493,41 @@ pub async fn test_plugin(
             // 如果内存中尚未注册插件元数据或代码，尝试从数据库加载
             if plugin_manager.get_plugin(&plugin_id).await.is_none() {
                 // 加载代码
-                let code_opt = sqlx::query_scalar::<_, Option<String>>(
-                    "SELECT plugin_code FROM plugin_registry WHERE id = ?",
-                )
-                .bind(&plugin_id)
-                .fetch_optional(db.pool())
-                .await
-                .map_err(|e| format!("Failed to load plugin code: {}", e))?;
-                if let Some(code) = code_opt.flatten() {
-                    // 构造 PluginMetadata 供注册（保持与 list_plugins_internal 构建一致）
-                    let tags_json: Option<String> =
-                        sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = ?")
-                            .bind(&plugin_id)
-                            .fetch_optional(db.pool())
-                            .await
-                            .map_err(|e| format!("Failed to query plugin tags: {}", e))?;
-                    let tags: Vec<String> = tags_json
-                        .and_then(|t| serde_json::from_str(&t).ok())
-                        .unwrap_or_default();
-                    let (name, version, author, main_category, category, description, default_severity) = sqlx::query_as::<_, (String,String,Option<String>,String,String,Option<String>,String)>(
-                        "SELECT name, version, author, main_category, category, description, default_severity FROM plugin_registry WHERE id = ?"
-                    )
-                    .bind(&plugin_id)
-                    .fetch_optional(db.pool())
+                let code_opt = db.get_plugin_code(&plugin_id)
                     .await
-                    .map_err(|e| format!("Failed to query plugin metadata: {}", e))?
-                    .ok_or_else(|| format!("Plugin metadata not found for id {}", plugin_id))?;
-                    let severity = match default_severity.to_lowercase().as_str() {
-                        "critical" => sentinel_traffic::types::Severity::Critical,
-                        "high" => sentinel_traffic::types::Severity::High,
-                        "medium" => sentinel_traffic::types::Severity::Medium,
-                        "low" => sentinel_traffic::types::Severity::Low,
-                        "info" => sentinel_traffic::types::Severity::Info,
-                        _ => sentinel_traffic::types::Severity::Medium,
+                    .map_err(|e| format!("Failed to load plugin code: {}", e))?;
+                
+                if let Some(code) = code_opt {
+                    // 构造 PluginMetadata 供注册
+                    let metadata = db.get_plugin_from_registry(&plugin_id)
+                        .await
+                        .map_err(|e| format!("Failed to query plugin metadata: {}", e))?
+                        .ok_or_else(|| format!("Plugin metadata not found for id {}", plugin_id))?
+                        .metadata;
+                    
+                    let severity = match metadata.default_severity {
+                        sentinel_plugins::Severity::Critical => sentinel_traffic::types::Severity::Critical,
+                        sentinel_plugins::Severity::High => sentinel_traffic::types::Severity::High,
+                        sentinel_plugins::Severity::Medium => sentinel_traffic::types::Severity::Medium,
+                        sentinel_plugins::Severity::Low => sentinel_traffic::types::Severity::Low,
+                        sentinel_plugins::Severity::Info => sentinel_traffic::types::Severity::Info,
                     };
-                    let metadata = PluginMetadata {
-                        id: plugin_id.clone(),
-                        name,
-                        version,
-                        author,
-                        main_category,
-                        category,
-                        description,
+
+                    let traffic_metadata = PluginMetadata {
+                        id: metadata.id.clone(),
+                        name: metadata.name.clone(),
+                        version: metadata.version.clone(),
+                        author: metadata.author.clone(),
+                        main_category: metadata.main_category.clone(),
+                        category: metadata.category.clone(),
+                        description: metadata.description.clone(),
                         default_severity: severity,
-                        tags,
+                        tags: metadata.tags.clone(),
                     };
                     // 注册并缓存代码（忽略可能的并发注册错误）
+                    // 使用 traffic_metadata 进行注册以避免所有权冲突
                     let _ = plugin_manager
-                        .register_plugin(plugin_id.clone(), metadata, enabled)
+                        .register_plugin(plugin_id.clone(), traffic_metadata, enabled)
                         .await;
                     let _ = plugin_manager
                         .set_plugin_code(plugin_id.clone(), code)
@@ -2641,8 +2598,8 @@ pub async fn test_plugin(
                     success: true,
                     message: Some(format!(
                         "插件 '{}' (v{}) 执行测试完成。发现数量: {}。",
-                        name,
-                        version,
+                        record.metadata.name,
+                        record.metadata.version,
                         mapped.len()
                     )),
                     findings: Some(mapped),
@@ -2966,13 +2923,9 @@ pub async fn test_agent_plugin(
     // 移除启用状态检查，允许测试未启用的插件
 
     // 获取插件代码
-    let code: Option<String> =
-        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = ?")
-            .bind(&plugin_id)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| format!("Failed to query plugin code: {}", e))?
-            .flatten();
+    let code = db.get_plugin_code(&plugin_id)
+        .await
+        .map_err(|e| format!("Failed to query plugin code: {}", e))?;
 
     let code = match code {
         Some(c) => c,
@@ -2988,13 +2941,10 @@ pub async fn test_agent_plugin(
     };
 
     // 获取插件名称
-    let name: Option<String> = sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
-        .bind(&plugin_id)
-        .fetch_optional(db.pool())
+    let name = db.get_plugin_name(&plugin_id)
         .await
         .map_err(|e| format!("Failed to query plugin name: {}", e))?
-        .flatten();
-    let name = name.unwrap_or_else(|| plugin_id.clone());
+        .unwrap_or_else(|| plugin_id.clone());
 
     // 注册插件上下文
     let ctx = sentinel_tools::plugin_adapter::PluginContext {
@@ -3104,7 +3054,7 @@ pub async fn get_plugin_input_schema(
 
     // 获取插件代码
     let code: Option<String> =
-        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = $1")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
             .await
@@ -3123,7 +3073,7 @@ pub async fn get_plugin_input_schema(
 
     // 获取插件名称
     let plugin_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
+        sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = $1")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
             .await
@@ -3160,7 +3110,7 @@ pub async fn get_plugin_output_schema(
 
     // 获取插件代码
     let code: Option<String> =
-        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+        sqlx::query_scalar("SELECT plugin_code FROM plugin_registry WHERE id = $1")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
             .await
@@ -3183,7 +3133,7 @@ pub async fn get_plugin_output_schema(
 
     // 获取插件名称
     let plugin_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = ?")
+        sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = $1")
             .bind(&plugin_id)
             .fetch_optional(db.pool())
             .await

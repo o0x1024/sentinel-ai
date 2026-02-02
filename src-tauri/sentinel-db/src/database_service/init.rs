@@ -320,6 +320,14 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
+                execution_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at BIGINT NOT NULL
+            )"#
+        ).execute(pool).await?;
+
         // Memory executions (agent memory persistence)
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS memory_executions (

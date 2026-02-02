@@ -6,7 +6,7 @@ import "./style.css";
 import 'driver.js/dist/driver.css';
 import { performanceService } from './services/performance';
 import { initializeCache } from './services/cache';
-import i18n from './i18n'; // 导入i18n配置
+import i18n, { setLanguage } from './i18n'; // 导入i18n配置和setLanguage函数
 import DialogPlugin from './composables/useDialog'; // 导入对话框插件
 import ToastPlugin from './composables/useToast'; // 导入Toast插件
 import { open as openExternal } from '@tauri-apps/plugin-shell'
@@ -48,14 +48,12 @@ const applyStartupSettings = () => {
           finalLang = 'zh-CN'
         }
       }
-      const langCode = finalLang.split('-')[0]
-      // 使用 i18n 实例设置语言
+      const langCode = (finalLang.startsWith('zh') ? 'zh' : 'en') as 'zh' | 'en'
+      // 使用导出的 setLanguage 函数来确保一致性
       try {
-        // i18n 在下方 app.use(i18n) 前，这里直接设置全局值可能无效；
-        // 但我们先把本地值存起来，i18n 初始化会读取。
-        localStorage.setItem('sentinel-language', langCode)
+        setLanguage(langCode)
       } catch {
-        console.warn('Failed to set language in localStorage')
+        console.warn('Failed to set language')
       }
     }
   } catch (e) {

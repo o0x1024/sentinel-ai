@@ -1,6 +1,6 @@
 [build]
 # 禁用增量编译以减少PDB文件大小
-incremental = false
+# incremental = false # Commented out to improve build speed on non-Windows platforms
 
 [target.x86_64-pc-windows-msvc]
 # 完全禁用调试信息以避免PDB限制问题 (LNK1318)
