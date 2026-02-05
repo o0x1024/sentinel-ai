@@ -8,6 +8,11 @@ use sentinel_db::{
     BountyWorkflowTemplateRow, BountyWorkflowBindingRow,
     BountyAssetRow, BountyAssetStats,
 };
+use sentinel_bounty::services::{
+    FindingService, CreateFindingInput, UpdateFindingInput,
+    ProgramDbService, CreateProgramInput, UpdateProgramInput,
+    SubmissionDbService, CreateSubmissionInput, UpdateSubmissionInput,
+};
 use sentinel_traffic::PluginManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -126,35 +131,19 @@ pub async fn bounty_create_program(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateProgramRequest,
 ) -> Result<BountyProgramRow, String> {
-    let now = Utc::now();
-    
-    let program = BountyProgramRow {
-        id: Uuid::new_v4().to_string(),
+    let input = CreateProgramInput {
         name: request.name,
         organization: request.organization,
-        platform: request.platform.unwrap_or_else(|| "private".to_string()),
+        platform: request.platform,
         platform_handle: request.platform_handle,
         url: request.url,
-        program_type: request.program_type.unwrap_or_else(|| "public".to_string()),
-        status: "active".to_string(),
+        program_type: request.program_type,
         description: request.description,
-        rewards_json: request.rewards.map(|r| serde_json::to_string(&r).unwrap_or_default()),
-        response_sla_days: None,
-        resolution_sla_days: None,
-        rules_json: request.rules.map(|r| serde_json::to_string(&r).unwrap_or_default()),
-        tags_json: request.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
-        metadata_json: None,
-        priority_score: 0.0,
-        total_submissions: 0,
-        accepted_submissions: 0,
-        total_earnings: 0.0,
-        created_at: now.to_rfc3339(),
-        updated_at: now.to_rfc3339(),
-        last_activity_at: None,
+        rewards: request.rewards,
+        rules: request.rules,
+        tags: request.tags,
     };
-
-    db_service.create_bounty_program(&program).await.map_err(|e| e.to_string())?;
-    Ok(program)
+    ProgramDbService::create_program(db_service.inner().as_ref(), input).await
 }
 
 /// Get a program by ID
@@ -173,59 +162,23 @@ pub async fn bounty_update_program(
     id: String,
     request: UpdateProgramRequest,
 ) -> Result<bool, String> {
-    let existing = db_service.get_bounty_program(&id).await.map_err(|e| e.to_string())?;
-    
-    let Some(mut program) = existing else {
-        return Ok(false);
+    let input = UpdateProgramInput {
+        name: request.name,
+        organization: request.organization,
+        platform: request.platform,
+        platform_handle: request.platform_handle,
+        url: request.url,
+        program_type: request.program_type,
+        status: request.status,
+        description: request.description,
+        rewards: request.rewards,
+        response_sla_days: request.response_sla_days,
+        resolution_sla_days: request.resolution_sla_days,
+        rules: request.rules,
+        tags: request.tags,
+        priority_score: request.priority_score,
     };
-
-    // Apply updates
-    if let Some(name) = request.name {
-        program.name = name;
-    }
-    if let Some(organization) = request.organization {
-        program.organization = organization;
-    }
-    if let Some(platform) = request.platform {
-        program.platform = platform;
-    }
-    if request.platform_handle.is_some() {
-        program.platform_handle = request.platform_handle;
-    }
-    if request.url.is_some() {
-        program.url = request.url;
-    }
-    if let Some(program_type) = request.program_type {
-        program.program_type = program_type;
-    }
-    if let Some(status) = request.status {
-        program.status = status;
-    }
-    if request.description.is_some() {
-        program.description = request.description;
-    }
-    if let Some(rewards) = request.rewards {
-        program.rewards_json = Some(serde_json::to_string(&rewards).unwrap_or_default());
-    }
-    if request.response_sla_days.is_some() {
-        program.response_sla_days = request.response_sla_days;
-    }
-    if request.resolution_sla_days.is_some() {
-        program.resolution_sla_days = request.resolution_sla_days;
-    }
-    if let Some(rules) = request.rules {
-        program.rules_json = Some(serde_json::to_string(&rules).unwrap_or_default());
-    }
-    if let Some(tags) = request.tags {
-        program.tags_json = Some(serde_json::to_string(&tags).unwrap_or_default());
-    }
-    if let Some(priority_score) = request.priority_score {
-        program.priority_score = priority_score;
-    }
-
-    program.updated_at = Utc::now().to_rfc3339();
-
-    db_service.update_bounty_program(&program).await.map_err(|e| e.to_string())
+    ProgramDbService::update_program(db_service.inner().as_ref(), &id, input).await
 }
 
 /// Delete a program
@@ -234,7 +187,7 @@ pub async fn bounty_delete_program(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
-    db_service.delete_bounty_program(&id).await.map_err(|e| e.to_string())
+    ProgramDbService::delete_program(db_service.inner().as_ref(), &id).await
 }
 
 /// List programs with optional filter
@@ -489,6 +442,8 @@ pub struct FindingFilter {
     pub severities: Option<Vec<String>>,
     pub statuses: Option<Vec<String>>,
     pub search: Option<String>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -503,57 +458,25 @@ pub async fn bounty_create_finding(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateFindingRequest,
 ) -> Result<BountyFindingRow, String> {
-    let now = Utc::now().to_rfc3339();
-    
-    // Generate fingerprint for deduplication
-    let fingerprint = format!(
-        "{}:{}:{}:{}",
-        request.program_id,
-        request.finding_type,
-        request.affected_url.as_deref().unwrap_or(""),
-        request.affected_parameter.as_deref().unwrap_or("")
-    );
-    let fingerprint = format!("{:x}", md5::compute(fingerprint.as_bytes()));
-    
-    // Check for duplicate
-    if let Some(existing) = db_service.get_bounty_finding_by_fingerprint(&fingerprint)
-        .await.map_err(|e| e.to_string())? {
-        return Err(format!("Duplicate finding exists: {}", existing.id));
-    }
-    
-    let finding = BountyFindingRow {
-        id: Uuid::new_v4().to_string(),
+    let input = CreateFindingInput {
         program_id: request.program_id,
         scope_id: request.scope_id,
         asset_id: request.asset_id,
         title: request.title,
         description: request.description,
         finding_type: request.finding_type,
-        severity: request.severity.unwrap_or_else(|| "medium".to_string()),
-        status: "new".to_string(),
-        confidence: request.confidence.unwrap_or_else(|| "medium".to_string()),
+        severity: request.severity,
+        confidence: request.confidence,
         cvss_score: request.cvss_score,
         cwe_id: request.cwe_id,
         affected_url: request.affected_url,
         affected_parameter: request.affected_parameter,
-        reproduction_steps_json: request.reproduction_steps.map(|s| serde_json::to_string(&s).unwrap_or_default()),
+        reproduction_steps: request.reproduction_steps,
         impact: request.impact,
         remediation: request.remediation,
-        evidence_ids_json: None,
-        tags_json: request.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
-        metadata_json: None,
-        fingerprint,
-        duplicate_of: None,
-        first_seen_at: now.clone(),
-        last_seen_at: now.clone(),
-        verified_at: None,
-        created_at: now.clone(),
-        updated_at: now,
-        created_by: "user".to_string(),
+        tags: request.tags,
     };
-
-    db_service.create_bounty_finding(&finding).await.map_err(|e| e.to_string())?;
-    Ok(finding)
+    FindingService::create_finding(db_service.inner().as_ref(), input).await
 }
 
 /// Get a finding by ID
@@ -572,36 +495,24 @@ pub async fn bounty_update_finding(
     id: String,
     request: UpdateFindingRequest,
 ) -> Result<bool, String> {
-    let existing = db_service.get_bounty_finding(&id).await.map_err(|e| e.to_string())?;
-    
-    let Some(mut finding) = existing else {
-        return Ok(false);
+    let input = UpdateFindingInput {
+        title: request.title,
+        description: request.description,
+        finding_type: request.finding_type,
+        severity: request.severity,
+        status: request.status,
+        confidence: request.confidence,
+        cvss_score: request.cvss_score,
+        cwe_id: request.cwe_id,
+        affected_url: request.affected_url,
+        affected_parameter: request.affected_parameter,
+        reproduction_steps: request.reproduction_steps,
+        impact: request.impact,
+        remediation: request.remediation,
+        tags: request.tags,
+        duplicate_of: request.duplicate_of,
     };
-
-    if let Some(title) = request.title { finding.title = title; }
-    if let Some(description) = request.description { finding.description = description; }
-    if let Some(finding_type) = request.finding_type { finding.finding_type = finding_type; }
-    if let Some(severity) = request.severity { finding.severity = severity; }
-    if let Some(status) = request.status { finding.status = status; }
-    if let Some(confidence) = request.confidence { finding.confidence = confidence; }
-    if request.cvss_score.is_some() { finding.cvss_score = request.cvss_score; }
-    if request.cwe_id.is_some() { finding.cwe_id = request.cwe_id; }
-    if request.affected_url.is_some() { finding.affected_url = request.affected_url; }
-    if request.affected_parameter.is_some() { finding.affected_parameter = request.affected_parameter; }
-    if let Some(steps) = request.reproduction_steps {
-        finding.reproduction_steps_json = Some(serde_json::to_string(&steps).unwrap_or_default());
-    }
-    if request.impact.is_some() { finding.impact = request.impact; }
-    if request.remediation.is_some() { finding.remediation = request.remediation; }
-    if let Some(tags) = request.tags {
-        finding.tags_json = Some(serde_json::to_string(&tags).unwrap_or_default());
-    }
-    if request.duplicate_of.is_some() { finding.duplicate_of = request.duplicate_of; }
-
-    finding.last_seen_at = Utc::now().to_rfc3339();
-    finding.updated_at = Utc::now().to_rfc3339();
-
-    db_service.update_bounty_finding(&finding).await.map_err(|e| e.to_string())
+    FindingService::update_finding(db_service.inner().as_ref(), &id, input).await
 }
 
 /// Delete a finding
@@ -627,6 +538,8 @@ pub async fn bounty_list_findings(
         filter.severities.as_deref(),
         filter.statuses.as_deref(),
         filter.search.as_deref(),
+        filter.sort_by.as_deref(),
+        filter.sort_dir.as_deref(),
         filter.limit,
         filter.offset,
     ).await.map_err(|e| e.to_string())
@@ -827,6 +740,9 @@ pub struct SubmissionFilter {
     pub program_id: Option<String>,
     pub finding_id: Option<String>,
     pub statuses: Option<Vec<String>>,
+    pub search: Option<String>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -841,47 +757,22 @@ pub async fn bounty_create_submission(
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateSubmissionRequest,
 ) -> Result<BountySubmissionRow, String> {
-    let now = Utc::now().to_rfc3339();
-    
-    let submission = BountySubmissionRow {
-        id: Uuid::new_v4().to_string(),
+    let input = CreateSubmissionInput {
         program_id: request.program_id,
         finding_id: request.finding_id,
-        platform_submission_id: None,
         title: request.title,
-        status: "draft".to_string(),
-        priority: "medium".to_string(),
         vulnerability_type: request.vulnerability_type,
-        severity: request.severity.unwrap_or_else(|| "medium".to_string()),
+        severity: request.severity,
         cvss_score: request.cvss_score,
         cwe_id: request.cwe_id,
         description: request.description,
-        reproduction_steps_json: request.reproduction_steps.map(|s| serde_json::to_string(&s).unwrap_or_default()),
+        reproduction_steps: request.reproduction_steps,
         impact: request.impact,
         remediation: request.remediation,
-        evidence_ids_json: request.evidence_ids.map(|e| serde_json::to_string(&e).unwrap_or_default()),
-        platform_url: None,
-        reward_amount: None,
-        reward_currency: None,
-        bonus_amount: None,
-        response_time_hours: None,
-        resolution_time_hours: None,
-        requires_retest: false,
-        retest_at: None,
-        last_retest_at: None,
-        communications_json: None,
-        timeline_json: None,
-        tags_json: request.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
-        metadata_json: None,
-        created_at: now.clone(),
-        submitted_at: None,
-        updated_at: now,
-        closed_at: None,
-        created_by: "user".to_string(),
+        evidence_ids: request.evidence_ids,
+        tags: request.tags,
     };
-
-    db_service.create_bounty_submission(&submission).await.map_err(|e| e.to_string())?;
-    Ok(submission)
+    SubmissionDbService::create_submission(db_service.inner().as_ref(), input).await
 }
 
 /// Get a submission by ID
@@ -900,50 +791,27 @@ pub async fn bounty_update_submission(
     id: String,
     request: UpdateSubmissionRequest,
 ) -> Result<bool, String> {
-    let existing = db_service.get_bounty_submission(&id).await.map_err(|e| e.to_string())?;
-    
-    let Some(mut submission) = existing else {
-        return Ok(false);
+    let input = UpdateSubmissionInput {
+        platform_submission_id: request.platform_submission_id,
+        title: request.title,
+        status: request.status,
+        priority: request.priority,
+        vulnerability_type: request.vulnerability_type,
+        severity: request.severity,
+        cvss_score: request.cvss_score,
+        cwe_id: request.cwe_id,
+        description: request.description,
+        reproduction_steps: request.reproduction_steps,
+        impact: request.impact,
+        remediation: request.remediation,
+        evidence_ids: request.evidence_ids,
+        platform_url: request.platform_url,
+        reward_amount: request.reward_amount,
+        reward_currency: request.reward_currency,
+        bonus_amount: request.bonus_amount,
+        tags: request.tags,
     };
-
-    if request.platform_submission_id.is_some() { submission.platform_submission_id = request.platform_submission_id; }
-    if let Some(title) = request.title { submission.title = title; }
-    if let Some(status) = request.status {
-        // Track submission time
-        if status == "submitted" && submission.submitted_at.is_none() {
-            submission.submitted_at = Some(Utc::now().to_rfc3339());
-        }
-        // Track closed time
-        if ["accepted", "rejected", "duplicate", "closed"].contains(&status.as_str()) && submission.closed_at.is_none() {
-            submission.closed_at = Some(Utc::now().to_rfc3339());
-        }
-        submission.status = status;
-    }
-    if let Some(priority) = request.priority { submission.priority = priority; }
-    if let Some(vulnerability_type) = request.vulnerability_type { submission.vulnerability_type = vulnerability_type; }
-    if let Some(severity) = request.severity { submission.severity = severity; }
-    if request.cvss_score.is_some() { submission.cvss_score = request.cvss_score; }
-    if request.cwe_id.is_some() { submission.cwe_id = request.cwe_id; }
-    if let Some(description) = request.description { submission.description = description; }
-    if let Some(steps) = request.reproduction_steps {
-        submission.reproduction_steps_json = Some(serde_json::to_string(&steps).unwrap_or_default());
-    }
-    if let Some(impact) = request.impact { submission.impact = impact; }
-    if request.remediation.is_some() { submission.remediation = request.remediation; }
-    if let Some(evidence_ids) = request.evidence_ids {
-        submission.evidence_ids_json = Some(serde_json::to_string(&evidence_ids).unwrap_or_default());
-    }
-    if request.platform_url.is_some() { submission.platform_url = request.platform_url; }
-    if request.reward_amount.is_some() { submission.reward_amount = request.reward_amount; }
-    if request.reward_currency.is_some() { submission.reward_currency = request.reward_currency; }
-    if request.bonus_amount.is_some() { submission.bonus_amount = request.bonus_amount; }
-    if let Some(tags) = request.tags {
-        submission.tags_json = Some(serde_json::to_string(&tags).unwrap_or_default());
-    }
-
-    submission.updated_at = Utc::now().to_rfc3339();
-
-    db_service.update_bounty_submission(&submission).await.map_err(|e| e.to_string())
+    SubmissionDbService::update_submission(db_service.inner().as_ref(), &id, input).await
 }
 
 /// Delete a submission
@@ -967,6 +835,9 @@ pub async fn bounty_list_submissions(
         filter.program_id.as_deref(),
         filter.finding_id.as_deref(),
         filter.statuses.as_deref(),
+        filter.search.as_deref(),
+        filter.sort_by.as_deref(),
+        filter.sort_dir.as_deref(),
         filter.limit,
         filter.offset,
     ).await.map_err(|e| e.to_string())
@@ -3110,6 +2981,9 @@ pub struct AssetFilter {
     pub asset_type: Option<String>,
     pub is_alive: Option<bool>,
     pub has_findings: Option<bool>,
+    pub search: Option<String>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -3236,6 +3110,9 @@ pub async fn bounty_list_assets(
         filter.asset_type.as_deref(),
         filter.is_alive,
         filter.has_findings,
+        filter.search.as_deref(),
+        filter.sort_by.as_deref(),
+        filter.sort_dir.as_deref(),
         filter.limit,
         filter.offset,
     ).await.map_err(|e| e.to_string())
@@ -3578,7 +3455,7 @@ pub async fn bounty_get_assets_by_label(
     // Get all assets for program
     let assets = db_service.list_bounty_assets(
         Some(&program_id),
-        None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None,
     ).await.map_err(|e| e.to_string())?;
     
     // Filter by label
@@ -3605,7 +3482,7 @@ pub async fn bounty_get_assets_by_tech(
 ) -> Result<Vec<BountyAssetRow>, String> {
     let assets = db_service.list_bounty_assets(
         Some(&program_id),
-        None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None,
     ).await.map_err(|e| e.to_string())?;
     
     let tech_lower = tech_name.to_lowercase();
@@ -3728,7 +3605,7 @@ pub async fn bounty_recalculate_all_asset_priorities(
 ) -> Result<i32, String> {
     let assets = db_service.list_bounty_assets(
         Some(&program_id),
-        None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None,
     ).await.map_err(|e| e.to_string())?;
     
     let mut count = 0;

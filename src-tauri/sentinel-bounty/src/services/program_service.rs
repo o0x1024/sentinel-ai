@@ -5,6 +5,9 @@ use crate::models::*;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use sentinel_db::{BountyProgramRow, DatabaseService};
+use chrono::Utc;
+use uuid::Uuid;
 
 #[async_trait]
 pub trait ProgramServiceTrait: Send + Sync {
@@ -357,4 +360,162 @@ impl ProgramServiceTrait for ProgramService {
             })
         }
     }
+}
+
+// ============================================================================
+// Database-backed service (used by commands)
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct CreateProgramInput {
+    pub name: String,
+    pub organization: String,
+    pub platform: Option<String>,
+    pub platform_handle: Option<String>,
+    pub url: Option<String>,
+    pub program_type: Option<String>,
+    pub description: Option<String>,
+    pub rewards: Option<serde_json::Value>,
+    pub rules: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateProgramInput {
+    pub name: Option<String>,
+    pub organization: Option<String>,
+    pub platform: Option<String>,
+    pub platform_handle: Option<String>,
+    pub url: Option<String>,
+    pub program_type: Option<String>,
+    pub status: Option<String>,
+    pub description: Option<String>,
+    pub rewards: Option<serde_json::Value>,
+    pub response_sla_days: Option<i32>,
+    pub resolution_sla_days: Option<i32>,
+    pub rules: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+    pub priority_score: Option<f64>,
+}
+
+pub struct ProgramDbService;
+
+impl ProgramDbService {
+    pub async fn create_program(
+        db: &DatabaseService,
+        input: CreateProgramInput,
+    ) -> Result<BountyProgramRow, String> {
+        validate_required(&input.name, "name")?;
+        validate_required(&input.organization, "organization")?;
+
+        let now = Utc::now();
+        let program = BountyProgramRow {
+            id: Uuid::new_v4().to_string(),
+            name: input.name,
+            organization: input.organization,
+            platform: input.platform.unwrap_or_else(|| "private".to_string()),
+            platform_handle: input.platform_handle,
+            url: input.url,
+            program_type: input.program_type.unwrap_or_else(|| "public".to_string()),
+            status: "active".to_string(),
+            description: input.description,
+            rewards_json: input.rewards.map(|r| serde_json::to_string(&r).unwrap_or_default()),
+            response_sla_days: None,
+            resolution_sla_days: None,
+            rules_json: input.rules.map(|r| serde_json::to_string(&r).unwrap_or_default()),
+            tags_json: input.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
+            metadata_json: None,
+            priority_score: 0.0,
+            total_submissions: 0,
+            accepted_submissions: 0,
+            total_earnings: 0.0,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+            last_activity_at: None,
+        };
+
+        db.create_bounty_program(&program)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(program)
+    }
+
+    pub async fn update_program(
+        db: &DatabaseService,
+        id: &str,
+        input: UpdateProgramInput,
+    ) -> Result<bool, String> {
+        let existing = db
+            .get_bounty_program(id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let Some(mut program) = existing else {
+            return Ok(false);
+        };
+
+        if let Some(name) = input.name {
+            validate_required(&name, "name")?;
+            program.name = name;
+        }
+        if let Some(organization) = input.organization {
+            validate_required(&organization, "organization")?;
+            program.organization = organization;
+        }
+        if let Some(platform) = input.platform {
+            program.platform = platform;
+        }
+        if input.platform_handle.is_some() {
+            program.platform_handle = input.platform_handle;
+        }
+        if input.url.is_some() {
+            program.url = input.url;
+        }
+        if let Some(program_type) = input.program_type {
+            program.program_type = program_type;
+        }
+        if let Some(status) = input.status {
+            program.status = status;
+        }
+        if input.description.is_some() {
+            program.description = input.description;
+        }
+        if let Some(rewards) = input.rewards {
+            program.rewards_json = Some(serde_json::to_string(&rewards).unwrap_or_default());
+        }
+        if input.response_sla_days.is_some() {
+            program.response_sla_days = input.response_sla_days;
+        }
+        if input.resolution_sla_days.is_some() {
+            program.resolution_sla_days = input.resolution_sla_days;
+        }
+        if let Some(rules) = input.rules {
+            program.rules_json = Some(serde_json::to_string(&rules).unwrap_or_default());
+        }
+        if let Some(tags) = input.tags {
+            program.tags_json = Some(serde_json::to_string(&tags).unwrap_or_default());
+        }
+        if let Some(priority_score) = input.priority_score {
+            program.priority_score = priority_score;
+        }
+
+        program.updated_at = Utc::now().to_rfc3339();
+
+        db.update_bounty_program(&program)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn delete_program(db: &DatabaseService, id: &str) -> Result<bool, String> {
+        db.delete_bounty_program(id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn validate_required(value: &str, field: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{} is required", field));
+    }
+    Ok(())
 }

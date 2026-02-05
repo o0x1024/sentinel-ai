@@ -221,6 +221,9 @@ pub async fn monitor_start_scheduler(
                 Some("domain"),         // asset_type
                 None,                   // is_alive
                 None,                   // has_findings
+                None,                   // search
+                None,                   // sort_by
+                None,                   // sort_dir
                 Some(10000),            // limit
                 Some(0)                 // offset
             ).await {
@@ -905,6 +908,9 @@ pub async fn monitor_trigger_task(
         Some(&task.program_id),
         None,
         Some("domain"),
+        None,
+        None,
+        None,
         None,
         None,
         Some(10000),

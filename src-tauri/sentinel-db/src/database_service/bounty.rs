@@ -892,6 +892,21 @@ impl DatabaseService {
         Ok(row.map(row_to_bounty_finding))
     }
 
+    /// Get a bounty finding by fingerprint excluding a specific ID
+    pub async fn get_bounty_finding_by_fingerprint_excluding(
+        &self,
+        fingerprint: &str,
+        exclude_id: &str,
+    ) -> Result<Option<BountyFindingRow>> {
+        let row = sqlx::query("SELECT * FROM bounty_findings WHERE fingerprint = $1 AND id <> $2")
+            .bind(fingerprint)
+            .bind(exclude_id)
+            .fetch_optional(self.pool())
+            .await?;
+
+        Ok(row.map(row_to_bounty_finding))
+    }
+
     /// Update a bounty finding
     pub async fn update_bounty_finding(&self, finding: &BountyFindingRow) -> Result<bool> {
         let result = sqlx::query(
@@ -951,6 +966,8 @@ impl DatabaseService {
         severities: Option<&[String]>,
         statuses: Option<&[String]>,
         search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_dir: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<BountyFindingRow>> {
@@ -1000,7 +1017,21 @@ impl DatabaseService {
             }
         }
 
-        query.push_str(" ORDER BY created_at DESC");
+        let order_by = match sort_by.unwrap_or("created_at") {
+            "created_at" => "created_at",
+            "updated_at" => "updated_at",
+            "severity" => "severity",
+            "status" => "status",
+            "title" => "title",
+            "cvss_score" => "cvss_score",
+            "last_seen_at" => "last_seen_at",
+            _ => "created_at",
+        };
+        let direction = match sort_dir.unwrap_or("desc").to_lowercase().as_str() {
+            "asc" => "ASC",
+            _ => "DESC",
+        };
+        query.push_str(&format!(" ORDER BY {} {}", order_by, direction));
 
         if let Some(limit) = limit {
             query.push_str(&format!(" LIMIT {}", limit));
@@ -1015,6 +1046,25 @@ impl DatabaseService {
         }
 
         let rows = sqlx_query.fetch_all(self.pool()).await?;
+        Ok(rows.into_iter().map(row_to_bounty_finding).collect())
+    }
+
+    /// List recent findings for similarity checks
+    pub async fn list_bounty_findings_for_similarity(
+        &self,
+        program_id: &str,
+        finding_type: &str,
+        limit: i64,
+    ) -> Result<Vec<BountyFindingRow>> {
+        let rows = sqlx::query(
+            "SELECT * FROM bounty_findings WHERE program_id = $1 AND finding_type = $2 ORDER BY created_at DESC LIMIT $3",
+        )
+        .bind(program_id)
+        .bind(finding_type)
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?;
+
         Ok(rows.into_iter().map(row_to_bounty_finding).collect())
     }
 
@@ -1297,6 +1347,9 @@ impl DatabaseService {
         program_id: Option<&str>,
         finding_id: Option<&str>,
         statuses: Option<&[String]>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_dir: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<BountySubmissionRow>> {
@@ -1324,7 +1377,32 @@ impl DatabaseService {
             }
         }
 
-        query.push_str(" ORDER BY created_at DESC");
+        if let Some(search) = search {
+            if !search.is_empty() {
+                let p1 = params.len() + 1;
+                let p2 = params.len() + 2;
+                query.push_str(&format!(" AND (title ILIKE ${} OR description ILIKE ${})", p1, p2));
+                let search_pattern = format!("%{}%", search);
+                params.push(search_pattern.clone());
+                params.push(search_pattern);
+            }
+        }
+
+        let order_by = match sort_by.unwrap_or("created_at") {
+            "created_at" => "created_at",
+            "updated_at" => "updated_at",
+            "severity" => "severity",
+            "status" => "status",
+            "priority" => "priority",
+            "reward_amount" => "reward_amount",
+            "submitted_at" => "submitted_at",
+            _ => "created_at",
+        };
+        let direction = match sort_dir.unwrap_or("desc").to_lowercase().as_str() {
+            "asc" => "ASC",
+            _ => "DESC",
+        };
+        query.push_str(&format!(" ORDER BY {} {}", order_by, direction));
 
         if let Some(limit) = limit {
             query.push_str(&format!(" LIMIT {}", limit));
@@ -2311,6 +2389,9 @@ impl DatabaseService {
         asset_type: Option<&str>,
         is_alive: Option<bool>,
         has_findings: Option<bool>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_dir: Option<&str>,
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<BountyAssetRow>> {
@@ -2340,7 +2421,38 @@ impl DatabaseService {
             }
         }
 
-        query.push_str(" ORDER BY priority_score DESC, last_seen_at DESC");
+        if let Some(search) = search {
+            if !search.is_empty() {
+                let p1 = params.len() + 1;
+                let p2 = params.len() + 2;
+                let p3 = params.len() + 3;
+                let p4 = params.len() + 4;
+                query.push_str(&format!(
+                    " AND (hostname ILIKE ${} OR canonical_url ILIKE ${} OR service_name ILIKE ${} OR title ILIKE ${})",
+                    p1, p2, p3, p4
+                ));
+                let search_pattern = format!("%{}%", search);
+                params.push(search_pattern.clone());
+                params.push(search_pattern.clone());
+                params.push(search_pattern.clone());
+                params.push(search_pattern);
+            }
+        }
+
+        let order_by = match sort_by.unwrap_or("priority_score") {
+            "priority_score" => "priority_score",
+            "risk_score" => "risk_score",
+            "last_seen_at" => "last_seen_at",
+            "created_at" => "created_at",
+            "hostname" => "hostname",
+            "canonical_url" => "canonical_url",
+            _ => "priority_score",
+        };
+        let direction = match sort_dir.unwrap_or("desc").to_lowercase().as_str() {
+            "asc" => "ASC",
+            _ => "DESC",
+        };
+        query.push_str(&format!(" ORDER BY {} {}", order_by, direction));
 
         if let Some(lim) = limit {
             query.push_str(&format!(" LIMIT {}", lim));

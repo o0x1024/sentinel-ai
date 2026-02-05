@@ -151,6 +151,14 @@
             </tbody>
           </table>
         </div>
+
+        <div v-if="findings.length > 0" class="flex justify-center py-4">
+          <div class="join">
+            <button class="join-item btn btn-sm" :disabled="page <= 1" @click="goToPrevPage">«</button>
+            <button class="join-item btn btn-sm">{{ page }}</button>
+            <button class="join-item btn btn-sm" :disabled="!hasNext" @click="goToNextPage">»</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -166,6 +174,9 @@ const props = defineProps<{
   findings: any[]
   programs: any[]
   loading: boolean
+  page: number
+  pageSize: number
+  hasNext: boolean
 }>()
 
 const emit = defineEmits<{
@@ -176,6 +187,7 @@ const emit = defineEmits<{
   (e: 'filter-change', filter: any): void
   (e: 'batch-update-status', ids: string[], status: string): void
   (e: 'batch-delete', ids: string[]): void
+  (e: 'page-change', page: number): void
 }>()
 
 const filter = reactive({
@@ -229,6 +241,16 @@ const batchDelete = () => {
   if (selectedIds.value.length === 0) return
   emit('batch-delete', [...selectedIds.value])
   clearSelection()
+}
+
+const goToPrevPage = () => {
+  if (props.page <= 1) return
+  emit('page-change', props.page - 1)
+}
+
+const goToNextPage = () => {
+  if (!props.hasNext) return
+  emit('page-change', props.page + 1)
 }
 
 const getProgramName = (programId: string) => {

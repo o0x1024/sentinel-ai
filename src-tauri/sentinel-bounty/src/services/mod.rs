@@ -11,9 +11,9 @@ pub mod retry_executor;
 pub mod workflow_orchestrator;
 pub mod asset_enrichment;
 
-pub use program_service::{ProgramService, ProgramServiceTrait};
-pub use finding_service::FindingService;
-pub use submission_service::SubmissionService;
+pub use program_service::{ProgramService, ProgramServiceTrait, ProgramDbService, CreateProgramInput, UpdateProgramInput};
+pub use finding_service::{FindingService, CreateFindingInput, UpdateFindingInput};
+pub use submission_service::{SubmissionDbService, CreateSubmissionInput, UpdateSubmissionInput};
 pub use change_monitor::{ChangeMonitor, ChangeMonitorConfig, AssetSnapshot, MonitorPluginConfig};
 pub use monitor_scheduler::{MonitorScheduler, MonitorTask, MonitorStats};
 pub use workflow_artifact::*;

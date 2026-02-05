@@ -132,6 +132,9 @@
         :findings="findings"
         :programs="programs"
         :loading="loadingFindings"
+        :page="findingPage"
+        :page-size="pageSize"
+        :has-next="findingHasNext"
         @create="showCreateFindingModal = true"
         @view="viewFinding"
         @delete="deleteFinding"
@@ -139,6 +142,7 @@
         @filter-change="onFindingFilterChange"
         @batch-update-status="batchUpdateFindingStatus"
         @batch-delete="batchDeleteFindings"
+        @page-change="onFindingPageChange"
       />
 
       <!-- Submissions Tab -->
@@ -146,6 +150,9 @@
         v-if="activeTab === 'submissions'"
         :submissions="submissions"
         :loading="loadingSubmissions"
+        :page="submissionPage"
+        :page-size="pageSize"
+        :has-next="submissionHasNext"
         @create="showCreateSubmissionModal = true"
         @view="viewSubmission"
         @edit="editSubmission"
@@ -153,6 +160,7 @@
         @filter-change="onSubmissionFilterChange"
         @batch-update-status="batchUpdateSubmissionStatus"
         @batch-delete="batchDeleteSubmissions"
+        @page-change="onSubmissionPageChange"
       />
 
       <!-- Statistics Tab -->
@@ -354,6 +362,11 @@ const programs = ref<any[]>([])
 const findings = ref<any[]>([])
 const submissions = ref<any[]>([])
 const programFindings = ref<any[]>([])
+const findingPage = ref(1)
+const submissionPage = ref(1)
+const pageSize = ref(20)
+const findingHasNext = ref(false)
+const submissionHasNext = ref(false)
 
 const stats = ref({
   total_programs: 0,
@@ -399,6 +412,7 @@ const findingFilter = ref({
 
 const submissionFilter = ref({
   status: '',
+  search: '',
 })
 
 // Computed
@@ -449,7 +463,12 @@ const loadFindings = async () => {
     if (findingFilter.value.search) {
       filter.search = findingFilter.value.search
     }
+    filter.sort_by = 'created_at'
+    filter.sort_dir = 'desc'
+    filter.limit = pageSize.value
+    filter.offset = (findingPage.value - 1) * pageSize.value
     findings.value = await invoke('bounty_list_findings', { filter: Object.keys(filter).length > 0 ? filter : null })
+    findingHasNext.value = findings.value.length === pageSize.value
   } catch (error) {
     console.error('Failed to load findings:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
@@ -473,7 +492,15 @@ const loadSubmissions = async () => {
     if (submissionFilter.value.status) {
       filter.statuses = [submissionFilter.value.status]
     }
+    if (submissionFilter.value.search) {
+      filter.search = submissionFilter.value.search
+    }
+    filter.sort_by = 'created_at'
+    filter.sort_dir = 'desc'
+    filter.limit = pageSize.value
+    filter.offset = (submissionPage.value - 1) * pageSize.value
     submissions.value = await invoke('bounty_list_submissions', { filter: Object.keys(filter).length > 0 ? filter : null })
+    submissionHasNext.value = submissions.value.length === pageSize.value
   } catch (error) {
     console.error('Failed to load submissions:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
@@ -759,11 +786,23 @@ const editSubmission = (submission: any) => {
 
 const onFindingFilterChange = (filter: any) => {
   findingFilter.value = filter
+  findingPage.value = 1
   loadFindings()
 }
 
 const onSubmissionFilterChange = (filter: any) => {
   submissionFilter.value = filter
+  submissionPage.value = 1
+  loadSubmissions()
+}
+
+const onFindingPageChange = (page: number) => {
+  findingPage.value = page
+  loadFindings()
+}
+
+const onSubmissionPageChange = (page: number) => {
+  submissionPage.value = page
   loadSubmissions()
 }
 

@@ -47,6 +47,13 @@
               <option value="duplicate">{{ t('bugBounty.submissionStatus.duplicate') }}</option>
               <option value="resolved">{{ t('bugBounty.submissionStatus.resolved') }}</option>
             </select>
+            <input
+              v-model="filter.search"
+              type="text"
+              class="input input-sm input-bordered w-48"
+              :placeholder="t('bugBounty.search')"
+              @input="$emit('filter-change', filter)"
+            />
             <button class="btn btn-sm btn-primary" @click="$emit('create')">
               <i class="fas fa-plus mr-2"></i>
               {{ t('bugBounty.createSubmission') }}
@@ -141,6 +148,14 @@
           </table>
         </div>
 
+        <div v-if="filteredSubmissions.length > 0" class="flex justify-center py-4">
+          <div class="join">
+            <button class="join-item btn btn-sm" :disabled="page <= 1" @click="goToPrevPage">«</button>
+            <button class="join-item btn btn-sm">{{ page }}</button>
+            <button class="join-item btn btn-sm" :disabled="!hasNext" @click="goToNextPage">»</button>
+          </div>
+        </div>
+
         <!-- Batch Summary -->
         <div v-if="selectedIds.length > 0" class="mt-4 p-3 bg-primary/10 rounded-lg flex items-center justify-between">
           <div class="text-sm">
@@ -164,6 +179,9 @@ const { t } = useI18n()
 const props = defineProps<{
   submissions: any[]
   loading: boolean
+  page: number
+  pageSize: number
+  hasNext: boolean
 }>()
 
 const emit = defineEmits<{
@@ -174,19 +192,18 @@ const emit = defineEmits<{
   (e: 'filter-change', filter: any): void
   (e: 'batch-update-status', ids: string[], status: string): void
   (e: 'batch-delete', ids: string[]): void
+  (e: 'page-change', page: number): void
 }>()
 
 const filter = reactive({
   status: '',
+  search: '',
 })
 
 const selectedIds = ref<string[]>([])
 
 // Computed
-const filteredSubmissions = computed(() => {
-  if (!filter.status) return props.submissions
-  return props.submissions.filter(s => s.status === filter.status)
-})
+const filteredSubmissions = computed(() => props.submissions)
 
 const isAllSelected = computed(() => {
   return filteredSubmissions.value.length > 0 && selectedIds.value.length === filteredSubmissions.value.length
@@ -236,6 +253,16 @@ const batchDelete = () => {
   if (selectedIds.value.length === 0) return
   emit('batch-delete', [...selectedIds.value])
   clearSelection()
+}
+
+const goToPrevPage = () => {
+  if (props.page <= 1) return
+  emit('page-change', props.page - 1)
+}
+
+const goToNextPage = () => {
+  if (!props.hasNext) return
+  emit('page-change', props.page + 1)
 }
 
 const formatDate = (dateStr: string) => {

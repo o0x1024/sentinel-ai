@@ -733,6 +733,8 @@ interface Asset {
   // JSON fields from database
   ip_addresses_json?: string;
   dns_records_json?: string;
+  ip_addresses?: Array<{ ip?: string }>;
+  dns_records?: Array<{ type?: string }>;
   
   // Certificate fields
   ssl_enabled?: boolean;
@@ -868,6 +870,16 @@ const showPortFilters = computed(() => !filters.value.assetType || ['port', 'ser
 const showWebFilters = computed(() => !filters.value.assetType || ['url', 'web', 'http', 'https'].includes(filters.value.assetType.toLowerCase()));
 const showCertFilters = computed(() => !filters.value.assetType || ['certificate', 'ssl'].includes(filters.value.assetType.toLowerCase()));
 
+const safeJsonParse = <T>(value: string | undefined | null, fallback: T): T => {
+  if (!value) return fallback;
+  try {
+    const parsed = JSON.parse(value);
+    return (parsed ?? fallback) as T;
+  } catch {
+    return fallback;
+  }
+};
+
 const filteredAssets = computed(() => {
   let filtered = assets.value;
 
@@ -909,14 +921,14 @@ const filteredAssets = computed(() => {
   // Domain filters
   if (filters.value.ipAddress) {
     filtered = filtered.filter(asset => {
-      const ips = asset.ip_addresses_json ? JSON.parse(asset.ip_addresses_json) : [];
+      const ips = asset.ip_addresses || [];
       return ips.some((ip: any) => ip.ip === filters.value.ipAddress);
     });
   }
 
   if (filters.value.dnsRecord) {
     filtered = filtered.filter(asset => {
-      const records = asset.dns_records_json ? JSON.parse(asset.dns_records_json) : [];
+      const records = asset.dns_records || [];
       return records.some((r: any) => r.type === filters.value.dnsRecord);
     });
   }
@@ -1058,7 +1070,7 @@ const loadAssets = async () => {
       domain_registrar: row.domain_registrar,
       registration_date: row.registration_date,
       expiration_date: row.expiration_date,
-      nameservers: row.nameservers_json ? JSON.parse(row.nameservers_json) : null,
+      nameservers: safeJsonParse<string[] | null>(row.nameservers_json, null),
       is_wildcard: row.is_wildcard,
       parent_domain: row.parent_domain,
       
@@ -1073,7 +1085,7 @@ const loadAssets = async () => {
       cdn_detected: row.cdn_detected,
       screenshot_path: row.screenshot_path,
       body_hash: row.body_hash,
-      tech_stack: row.tech_stack_json ? JSON.parse(row.tech_stack_json) : null,
+      tech_stack: safeJsonParse<string[] | null>(row.tech_stack_json, null),
       
       // Certificate fields
       ssl_enabled: row.ssl_enabled,
@@ -1081,7 +1093,7 @@ const loadAssets = async () => {
       certificate_issuer: row.certificate_issuer,
       certificate_valid_from: row.certificate_valid_from,
       certificate_valid_to: row.certificate_valid_to,
-      certificate_san: row.certificate_san_json ? JSON.parse(row.certificate_san_json) : null,
+      certificate_san: safeJsonParse<string[] | null>(row.certificate_san_json, null),
       
       // Attack Surface & Risk
       exposure_level: row.exposure_level,
@@ -1092,7 +1104,13 @@ const loadAssets = async () => {
       
       // Discovery
       discovery_method: row.discovery_method,
-      data_sources: row.data_sources_json ? JSON.parse(row.data_sources_json) : null,
+      data_sources: safeJsonParse<string[] | null>(row.data_sources_json, null),
+
+      // Parsed JSON fields for safe filtering
+      ip_addresses_json: row.ip_addresses_json,
+      dns_records_json: row.dns_records_json,
+      ip_addresses: safeJsonParse<Array<{ ip?: string }>>(row.ip_addresses_json, []),
+      dns_records: safeJsonParse<Array<{ type?: string }>>(row.dns_records_json, []),
     }));
     
     updateStats();
@@ -1119,16 +1137,9 @@ const extractFilterOptions = () => {
   // Extract IP addresses from ip_addresses_json
   const allIps: string[] = [];
   assets.value.forEach(asset => {
-    if (asset.ip_addresses_json) {
-      try {
-        const ips = JSON.parse(asset.ip_addresses_json);
-        ips.forEach((ip: any) => {
-          if (ip.ip) allIps.push(ip.ip);
-        });
-      } catch (e) {
-        // Ignore parse errors
-      }
-    }
+    (asset.ip_addresses || []).forEach((ip: any) => {
+      if (ip.ip) allIps.push(ip.ip);
+    });
   });
   ipAddresses.value = Array.from(new Set(allIps));
 };

@@ -33,6 +33,9 @@ tracing = "0.1"
 # URL parsing
 url = "2.4"
 
+# Hashing
+md5 = "0.7"
+
 # Regex for scope matching
 regex = "1"
 
