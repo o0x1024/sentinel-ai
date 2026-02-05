@@ -14,7 +14,7 @@ use crate::core::models::rag_config::RagConfig;
 use crate::core::models::asset::*;
 use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
-use crate::database_service::ability::{AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
+use crate::database_service::skills::{Skill, SkillDetail, SkillSummary, CreateSkill, UpdateSkill};
 use crate::core::models::scan_session::{
     ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
     ScanSessionStatus,
@@ -515,6 +515,10 @@ impl Database for DatabaseService {
         self.delete_conversation_segments_internal(segment_ids).await
     }
 
+    async fn delete_sliding_window_summaries(&self, conversation_id: &str) -> Result<()> {
+        self.delete_sliding_window_summaries_internal(conversation_id).await
+    }
+
     // RAG
     async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String> {
         Self::create_rag_collection_internal(self, name, description).await
@@ -603,33 +607,33 @@ impl Database for DatabaseService {
         Self::import_assets_internal(self, request, created_by).await
     }
 
-    // Ability
-    async fn list_ability_groups_summary(&self) -> Result<Vec<AbilityGroupSummary>> {
-        Self::list_ability_groups_summary_internal(self).await
+    // Skills
+    async fn list_skills_summary(&self) -> Result<Vec<SkillSummary>> {
+        Self::list_skills_summary_internal(self).await
     }
-    async fn list_ability_groups_summary_by_ids(&self, ids: &[String]) -> Result<Vec<AbilityGroupSummary>> {
-        Self::list_ability_groups_summary_by_ids_internal(self, ids).await
+    async fn list_skills_summary_by_ids(&self, ids: &[String]) -> Result<Vec<SkillSummary>> {
+        Self::list_skills_summary_by_ids_internal(self, ids).await
     }
-    async fn get_ability_group_detail(&self, id: &str) -> Result<Option<AbilityGroupDetail>> {
-        Self::get_ability_group_detail_internal(self, id).await
+    async fn get_skill_detail(&self, id: &str) -> Result<Option<SkillDetail>> {
+        Self::get_skill_detail_internal(self, id).await
     }
-    async fn get_ability_group(&self, id: &str) -> Result<Option<AbilityGroup>> {
-        Self::get_ability_group_internal(self, id).await
+    async fn get_skill(&self, id: &str) -> Result<Option<Skill>> {
+        Self::get_skill_internal(self, id).await
     }
-    async fn get_ability_group_by_name(&self, name: &str) -> Result<Option<AbilityGroup>> {
-        Self::get_ability_group_by_name_internal(self, name).await
+    async fn get_skill_by_name(&self, name: &str) -> Result<Option<Skill>> {
+        Self::get_skill_by_name_internal(self, name).await
     }
-    async fn list_all_ability_groups(&self) -> Result<Vec<AbilityGroup>> {
-        Self::list_all_ability_groups_internal(self).await
+    async fn list_all_skills(&self) -> Result<Vec<Skill>> {
+        Self::list_all_skills_internal(self).await
     }
-    async fn create_ability_group(&self, payload: &CreateAbilityGroup) -> Result<AbilityGroup> {
-        Self::create_ability_group_internal(self, payload).await
+    async fn create_skill(&self, payload: &CreateSkill) -> Result<Skill> {
+        Self::create_skill_internal(self, payload).await
     }
-    async fn update_ability_group(&self, id: &str, payload: &UpdateAbilityGroup) -> Result<bool> {
-        Self::update_ability_group_internal(self, id, payload).await
+    async fn update_skill(&self, id: &str, payload: &UpdateSkill) -> Result<bool> {
+        Self::update_skill_internal(self, id, payload).await
     }
-    async fn delete_ability_group(&self, id: &str) -> Result<bool> {
-        Self::delete_ability_group_internal(self, id).await
+    async fn delete_skill(&self, id: &str) -> Result<bool> {
+        Self::delete_skill_internal(self, id).await
     }
 
     // Proxifier

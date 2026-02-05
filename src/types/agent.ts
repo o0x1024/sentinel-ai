@@ -38,6 +38,10 @@ export interface MessageMetadata {
     citations?: any[]
   }
   execution_id?: string
+  skill_id?: string
+  skill_name?: string
+  tools?: any[]
+  tools_preview?: string
   kind?: string  // 消息类型标识（如 'segment_summary', 'global_summary', 'tenth_man_critique'）
   segment_index?: number  // 段落摘要：段落索引
   summary_tokens?: number  // 摘要：token数

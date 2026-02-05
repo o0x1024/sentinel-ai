@@ -30,6 +30,11 @@ pub fn create_llm_config(ai_service: &AiService) -> LlmConfig {
         llm_config = llm_config.with_rig_provider(rig_provider.clone());
     }
 
+    // 传递 temperature
+    if let Some(temperature) = config.temperature {
+        llm_config = llm_config.with_temperature(temperature);
+    }
+
     // 传递 max_tokens（用于 Anthropic 等需要显式设置的提供商）
     if let Some(max_tokens) = config.max_tokens {
         llm_config = llm_config.with_max_tokens(max_tokens);

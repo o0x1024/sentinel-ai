@@ -12,6 +12,7 @@ use crate::agents::ContextPolicy;
 use crate::agents::DocumentAttachmentInfo;
 use crate::agents::tenth_man::TenthManConfig;
 use crate::agents::tool_router::ToolConfig;
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 use self::run_simple::execute_agent_simple;
 use self::run_with_tools::execute_agent_with_tools;
@@ -101,13 +102,18 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
 
     let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
-        .with_rig_provider(&rig_provider);
+        .with_rig_provider(&rig_provider)
+        .with_conversation_id(&params.execution_id);
 
     if let Some(ref api_key) = params.api_key {
         tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);
     }
     if let Some(ref api_base) = params.api_base {
         tenth_man_llm_config = tenth_man_llm_config.with_base_url(api_base);
+    }
+
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        tenth_man_llm_config = apply_generation_settings_from_db(db.as_ref(), tenth_man_llm_config).await;
     }
 
     tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config).await;
@@ -144,6 +150,10 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
                 }
                 if let Some(ref api_base) = params.api_base {
                     llm_config = llm_config.with_base_url(api_base);
+                }
+
+                if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+                    llm_config = apply_generation_settings_from_db(db.as_ref(), llm_config).await;
                 }
 
                 let we_tool = WebExplorerTool::new(llm_config)
@@ -196,4 +206,3 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
 
     result
 }
-

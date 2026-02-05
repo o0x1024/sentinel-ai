@@ -9,6 +9,7 @@ use tracing::{info}; // Removed warn
 
 use sentinel_db::Database; // Added Database trait
 use sentinel_llm::{ChatMessage, LlmClient, LlmConfig};
+use crate::agents::context_engineering::tool_digest::condense_text;
 
 /// Configuration for sliding window manager
 #[derive(Debug, Clone)]
@@ -67,6 +68,9 @@ pub struct SlidingWindowManager {
     // Metadata
     total_processed_messages: i32,
 }
+
+const SAFE_CONTEXT_RATIO: f64 = 0.85;
+const SUMMARY_INPUT_MAX_CHARS: usize = 12_000;
 
 impl SlidingWindowManager {
     /// Initialize manager, ensuring tables exist and loading state
@@ -232,9 +236,8 @@ impl SlidingWindowManager {
             })
             .sum();
         
-        // Reserve 30% for system prompt + tool definitions + safety margin
-        // History can use at most 70% minus summary allocations
-        let history_ratio = 1.0 - self.config.global_summary_ratio - self.config.segment_summary_ratio - 0.30;
+        // Align with builder safe limit ratio and reserve summary allocations
+        let history_ratio = SAFE_CONTEXT_RATIO - self.config.global_summary_ratio - self.config.segment_summary_ratio;
         let threshold_tokens = (self.config.max_context_tokens as f64 * history_ratio.max(0.3)) as usize;
         
         let should_segment = self.recent_messages.len() > self.config.recent_message_count 
@@ -264,7 +267,8 @@ impl SlidingWindowManager {
 
         // Determine how many messages to summarize
         // We keep the most recent 'recent_message_count' / 2 messages to maintain context continuity
-        let keep_count = self.config.recent_message_count / 2;
+        let mut keep_count = (self.config.recent_message_count / 2).min(self.recent_messages.len());
+        keep_count = self.adjust_keep_count_for_tool_boundaries(keep_count);
         if self.recent_messages.len() <= keep_count {
             return Ok(());
         }
@@ -420,8 +424,12 @@ impl SlidingWindowManager {
             }
         }
 
+        if content.len() > SUMMARY_INPUT_MAX_CHARS {
+            content = condense_text(&content, SUMMARY_INPUT_MAX_CHARS);
+        }
+
         let prompt = format!(
-            "Summarize the following conversation segment. Focus on task key facts, decisions, and tool results. For shell/interactive_shell, keep command, completion status, and only short output snippets; omit long logs. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section.\n\n{}",
+            "Summarize the following conversation segment. Use only facts explicitly present in the messages; do not infer completion or success unless a tool result or assistant message states it. If uncertain, label as Unknown. Focus on task key facts, decisions, and tool results. For shell/interactive_shell, keep command, completion status, and only short output snippets; omit long logs. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section.\n\n{}",
             content
         );
 
@@ -430,6 +438,31 @@ impl SlidingWindowManager {
             Some("You are a conversation summarizer. Create a concise, structured summary of the events."),
             &prompt
         ).await
+    }
+
+    fn adjust_keep_count_for_tool_boundaries(&self, keep_count: usize) -> usize {
+        if self.recent_messages.is_empty() || keep_count == 0 {
+            return keep_count;
+        }
+
+        let mut adjusted = keep_count;
+        loop {
+            let boundary = self.recent_messages.len().saturating_sub(adjusted);
+            if boundary >= self.recent_messages.len() {
+                break;
+            }
+            let msg = &self.recent_messages[boundary];
+            if msg.role == "tool" {
+                if adjusted == 0 {
+                    break;
+                }
+                adjusted = adjusted.saturating_sub(1);
+                continue;
+            }
+            break;
+        }
+
+        adjusted
     }
 
     /// Export full conversation history to formatted string
@@ -464,15 +497,15 @@ fn estimate_tokens(text: &str) -> usize {
     let mut total: f64 = 0.0;
     for c in text.chars() {
         if c.is_ascii() {
-            // More conservative: ~0.35 tokens per ASCII char
-            total += 0.35;
+            // More conservative: ~0.4 tokens per ASCII char
+            total += 0.4;
         } else {
-            // CJK and other non-ASCII: ~1.5 tokens per char
-            total += 1.5;
+            // CJK and other non-ASCII: ~1.6 tokens per char
+            total += 1.6;
         }
     }
-    // Add 10% safety margin
-    (total * 1.1).ceil() as usize
+    // Add 20% safety margin
+    (total * 1.2).ceil() as usize
 }
 
 fn condense_tool_output(raw: &str) -> Option<String> {

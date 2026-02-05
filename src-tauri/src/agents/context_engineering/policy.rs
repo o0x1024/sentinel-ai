@@ -14,7 +14,7 @@ pub struct ContextPolicy {
     pub include_task_mainline: bool,
     pub include_run_state: bool,
     pub include_document_attachments: bool,
-    pub include_ability_instructions: bool,
+    pub include_skill_instructions: bool,
     pub run_state_max_digests: usize,
     pub run_state_max_chars: usize,
     pub task_brief_max_chars: usize,
@@ -30,7 +30,7 @@ impl Default for ContextPolicy {
             include_task_mainline: true,
             include_run_state: true,
             include_document_attachments: true,
-            include_ability_instructions: true,
+            include_skill_instructions: true,
             run_state_max_digests: 6,
             run_state_max_chars: 2400,
             task_brief_max_chars: 600,
@@ -48,7 +48,7 @@ impl ContextPolicy {
             include_task_mainline: false,
             include_run_state: true,
             include_document_attachments: false,
-            include_ability_instructions: false,
+            include_skill_instructions: false,
             run_state_max_digests: 4,
             run_state_max_chars: 1600,
             task_brief_max_chars: 400,
@@ -56,4 +56,3 @@ impl ContextPolicy {
         }
     }
 }
-

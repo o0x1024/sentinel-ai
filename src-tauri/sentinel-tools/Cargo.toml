@@ -15,6 +15,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["full"] }
@@ -38,6 +39,7 @@ url = "2.4"
 dirs = "5.0"
 toml = "0.8"
 glob = "0.3"
+walkdir = "2.5"
 sqlx = { version = "0.8.6", features = [
     "runtime-tokio",
     "postgres",

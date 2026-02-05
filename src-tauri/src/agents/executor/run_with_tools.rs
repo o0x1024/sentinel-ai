@@ -9,6 +9,9 @@ use sentinel_db::Database;
 use sentinel_llm::{ChatMessage, StreamContent, StreamingLlmClient, parse_image_from_json};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::ToolServer;
+use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::buildin_tools::SkillsTool;
+use sentinel_db::DatabaseService;
 
 use crate::agents::{append_tool_digest, build_context, build_tool_digest, ContextBuildInput};
 use crate::agents::executor::message_store::save_assistant_message;
@@ -16,7 +19,102 @@ use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
 use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
 use crate::agents::tool_router::ToolRouter;
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use super::AgentExecuteParams;
+
+async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
+    match db.get_config("agent", "skills_enabled").await {
+        Ok(Some(val)) => {
+            let v = val.trim().to_lowercase();
+            matches!(v.as_str(), "true" | "1" | "yes" | "on")
+        }
+        _ => true,
+    }
+}
+
+async fn is_skill_enabled_in_db(db: &DatabaseService, skill_id: &str) -> bool {
+    let key = format!("enabled::{}", skill_id);
+    match db.get_config("skills", &key).await {
+        Ok(Some(val)) => {
+            let v = val.trim().to_lowercase();
+            matches!(v.as_str(), "true" | "1" | "yes" | "on")
+        }
+        _ => true,
+    }
+}
+
+async fn register_skills_tool_guard(
+    tool_server: &ToolServer,
+    db: Arc<DatabaseService>,
+) -> Result<()> {
+    let Some(info) = tool_server.get_tool(SkillsTool::NAME).await else {
+        return Ok(());
+    };
+
+    let input_schema = info.input_schema.clone();
+    let description = info.description.clone();
+
+    tool_server.unregister_tool(SkillsTool::NAME).await;
+
+    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+        let db = db.clone();
+        Box::pin(async move {
+            use sentinel_tools::buildin_tools::skills::{SkillsAction, SkillsTool, SkillsToolArgs};
+            use rig::tool::Tool;
+
+            let tool_args: SkillsToolArgs = serde_json::from_value(args)
+                .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+            if !is_skills_enabled_in_db(&db).await {
+                return Err("Skills tool is disabled".to_string());
+            }
+
+            let skill_id = tool_args.skill_id.as_deref();
+            let requires_skill = matches!(tool_args.action, SkillsAction::Load | SkillsAction::ReadFile);
+            if requires_skill {
+                if let Some(id) = skill_id {
+                    if !is_skill_enabled_in_db(&db, id).await {
+                        return Err(format!("Skill '{}' is disabled", id));
+                    }
+                }
+            }
+
+            let tool = SkillsTool;
+            let mut result = tool
+                .call(tool_args)
+                .await
+                .map_err(|e| format!("Skills operation failed: {}", e))?;
+
+            if matches!(result.action.as_str(), "list") {
+                if let Some(skills) = result.skills.take() {
+                    let mut filtered = Vec::new();
+                    for skill in skills {
+                        if is_skill_enabled_in_db(&db, &skill.id).await {
+                            filtered.push(skill);
+                        }
+                    }
+                    result.skills = Some(filtered);
+                }
+            }
+
+            serde_json::to_value(result)
+                .map_err(|e| format!("Failed to serialize result: {}", e))
+        })
+    });
+
+    let def = DynamicToolDef {
+        name: SkillsTool::NAME.to_string(),
+        description,
+        input_schema,
+        output_schema: None,
+        source: ToolSource::Builtin,
+        category: "system".to_string(),
+        executor,
+    };
+
+    tool_server.register_tool(def).await;
+    Ok(())
+}
 
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
@@ -36,7 +134,8 @@ pub async fn execute_agent_with_tools(
     let mut llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
         .with_max_turns(params.max_iterations)
-        .with_rig_provider(&rig_provider);
+        .with_rig_provider(&rig_provider)
+        .with_conversation_id(&params.execution_id);
 
     if let Some(ref api_key) = params.api_key {
         llm_config = llm_config.with_api_key(api_key);
@@ -46,7 +145,11 @@ pub async fn execute_agent_with_tools(
         llm_config = llm_config.with_base_url(api_base);
     }
 
-    // Use plan_tools to support Ability mode with injected context
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        llm_config = apply_generation_settings_from_db(db.as_ref(), llm_config).await;
+    }
+
+    // Use plan_tools to support Skills mode with injected context
     let db_pool = db_service.get_pool().ok();
     let selection_plan = tool_router
         .plan_tools(&params.task, &tool_config, Some(&llm_config), db_pool)
@@ -61,14 +164,14 @@ pub async fn execute_agent_with_tools(
         selected_tool_ids
     );
 
-    // Emit ability_selected event if applicable
-    if let Some(ref group) = selection_plan.selected_ability_group {
+    // Emit skill_selected event if applicable
+    if let Some(ref skill) = selection_plan.selected_skill {
         let _ = app_handle.emit(
-            "agent:ability_selected",
+            "agent:skill_selected",
             &json!({
                 "execution_id": params.execution_id,
-                "group_id": group.id,
-                "group_name": group.name,
+                "skill_id": skill.id,
+                "skill_name": skill.name,
             }),
         );
     }
@@ -83,12 +186,7 @@ pub async fn execute_agent_with_tools(
     );
 
     // 3. 获取 DynamicTool 实例（用于 rig-core 原生工具调用）
-    let dynamic_tools = tool_server.get_dynamic_tools(&selected_tool_ids).await;
-
-    tracing::info!(
-        "Got {} dynamic tool instances for rig-core native tool calling",
-        dynamic_tools.len()
-    );
+    let mut current_tool_ids = selected_tool_ids.clone();
 
     // 4. Build context via Context Engineering
     let context_policy = params.context_policy.clone().unwrap_or_default();
@@ -96,7 +194,7 @@ pub async fn execute_agent_with_tools(
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
         base_system_prompt: params.system_prompt.clone(),
-        injected_ability_prompt: selection_plan.injected_system_prompt.clone(),
+        injected_skill_prompt: selection_plan.injected_system_prompt.clone(),
         task: params.task.clone(),
         rig_provider: rig_provider.clone(),
         llm_config: llm_config.clone(),
@@ -131,7 +229,7 @@ pub async fn execute_agent_with_tools(
 
     // 用于收集工具调用信息
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     let tool_calls_collector: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     let pending_calls: Arc<Mutex<std::collections::HashMap<String, (String, String, i64, u32)>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -148,19 +246,26 @@ pub async fn execute_agent_with_tools(
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
 
+    // Ensure skills tool enforces per-skill enable flags at execution time.
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        register_skills_tool_guard(tool_server, db.inner().clone()).await?;
+    }
+
     // 7. 调用带动态工具的流式方法，增加重试机制以应对模型抖动或解析错误
     let mut retries = 0;
     let max_retries = 2; // 最多重试 2 次
     let mut last_error: Option<anyhow::Error> = None;
+    let mut skill_reload_count = 0;
+    let max_skill_reload = 3;
     
     // 累积的工具调用记录（跨重试保留）
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     // 累积的助手输出（跨重试保留）
     let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let base_history_messages = history_chat_messages.clone();
-    let build_retry_history = |attempt: u32| -> Vec<ChatMessage> {
+    let build_retry_history = |attempt: u32, include_accumulated: bool| -> Vec<ChatMessage> {
         let mut history = base_history_messages.clone();
-        if attempt == 0 {
+        if attempt == 0 && !include_accumulated {
             return history;
         }
 
@@ -198,7 +303,11 @@ pub async fn execute_agent_with_tools(
             )
             .unwrap_or_default();
 
-            let mut tool_calls_msg = ChatMessage::assistant("");
+            tracing::info!(
+                "Building assistant tool_calls message: tool_calls={}, content_empty=true",
+                ordered_calls.len()
+            );
+            let mut tool_calls_msg = ChatMessage::assistant(".");
             tool_calls_msg.tool_calls = Some(tool_calls_json);
             tool_calls_msg.reasoning_content = Some(String::new());
             history.push(tool_calls_msg);
@@ -217,7 +326,18 @@ pub async fn execute_agent_with_tools(
         history
     };
 
+    let skill_reload_requested = Arc::new(AtomicBool::new(false));
+    let loaded_skill_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let mut force_history_with_tools = false;
     while retries <= max_retries {
+        let dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
+
+        tracing::info!(
+            "Got {} dynamic tool instances for rig-core native tool calling",
+            dynamic_tools.len()
+        );
+
         if retries > 0 {
             // 保存当前已完成的工具调用到累积记录
             if let Ok(current_calls) = tool_calls_collector.lock() {
@@ -266,7 +386,9 @@ pub async fn execute_agent_with_tools(
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         }
 
-        let history_for_retry = build_retry_history(retries);
+        let include_accumulated = retries > 0 || force_history_with_tools;
+        let history_for_retry = build_retry_history(retries, include_accumulated);
+        force_history_with_tools = false;
         let result = client
             .stream_chat_with_dynamic_tools(
                 final_system_prompt_content.as_deref(),
@@ -384,6 +506,15 @@ pub async fn execute_agent_with_tools(
                             arguments,
                         } => {
                             tracing::debug!("Tool call complete via rig-core: {} ({})", name, id);
+                            sentinel_llm::log::log_tool_call(
+                                &execution_id,
+                                Some(&execution_id),
+                                &params.rig_provider,
+                                &params.model,
+                                &name,
+                                &id,
+                                &arguments,
+                            );
 
                             // 记录 pending 的工具调用，等待结果
                             if let Ok(mut pending_map) = pending.lock() {
@@ -519,9 +650,9 @@ pub async fn execute_agent_with_tools(
                         StreamContent::ToolResult { id, result } => {
                             // tracing::info!(
                             //     "Tool result via rig-core: id={}, result_preview={}",
-                            //     id,
-                            //     &result.chars().take(500).collect::<String>()
-                            // );
+                //     id,
+                //     &result.chars().take(500).collect::<String>()
+                // );
 
                             // 将工具调用完整信息添加到收集器
                             if let Ok(mut pending_map) = pending.lock() {
@@ -532,6 +663,17 @@ pub async fn execute_agent_with_tools(
                                     let duration_ms = completed_at_ms.saturating_sub(started_at_ms);
                                     let name_for_meta = name.clone();
                                     let args_for_meta = arguments.clone();
+                                    sentinel_llm::log::log_tool_result(
+                                        &execution_id,
+                                        Some(&execution_id),
+                                        &params.rig_provider,
+                                        &params.model,
+                                        &name_for_meta,
+                                        &id,
+                                        Some(duration_ms),
+                                        !result.to_lowercase().contains("error"),
+                                        &result,
+                                    );
                                     if let Ok(mut records) = collector.lock() {
                                         records.push(ToolCallRecord {
                                             id: id.clone(),
@@ -597,6 +739,30 @@ pub async fn execute_agent_with_tools(
                                                 );
                                             }
                                         });
+                                    }
+
+                                    if name_for_meta == "skills" {
+                                        if let Ok(args_json) =
+                                            serde_json::from_str::<serde_json::Value>(&args_for_meta)
+                                        {
+                                            if args_json
+                                                .get("action")
+                                                .and_then(|v| v.as_str())
+                                                .map(|a| a == "load")
+                                                .unwrap_or(false)
+                                            {
+                                                if let Some(skill_id) = args_json
+                                                    .get("skill_id")
+                                                    .and_then(|v| v.as_str())
+                                                {
+                                                    if let Ok(mut slot) = loaded_skill_id.lock() {
+                                                        *slot = Some(skill_id.to_string());
+                                                    }
+                                                    skill_reload_requested
+                                                        .store(true, Ordering::SeqCst);
+                                                }
+                                            }
+                                        }
                                     }
 
                                     // Update run state with tool digest for resumption context
@@ -696,10 +862,133 @@ pub async fn execute_agent_with_tools(
                                 .unwrap_or_default();
                         }
                     }
+                    if skill_reload_requested.load(Ordering::SeqCst) {
+                        return false;
+                    }
                     true
                 },
             )
             .await;
+
+        if skill_reload_requested.load(Ordering::SeqCst) {
+            if skill_reload_count >= max_skill_reload {
+                skill_reload_requested.store(false, Ordering::SeqCst);
+            } else {
+                skill_reload_count += 1;
+
+                if let Ok(current_calls) = tool_calls_collector.lock() {
+                    if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                        acc.extend(current_calls.clone());
+                    }
+                }
+                if let Ok(current_output) = assistant_segment_buf.lock() {
+                    if !current_output.is_empty() {
+                        if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                            if !acc.is_empty() {
+                                acc.push_str("\n\n");
+                            }
+                            acc.push_str(current_output.as_str());
+                        }
+                    }
+                }
+
+                if let Ok(mut pending_map) = pending.lock() {
+                    pending_map.clear();
+                }
+
+                let skill_id = if let Ok(mut slot) = loaded_skill_id.lock() {
+                    slot.take()
+                } else {
+                    None
+                };
+                if let Some(skill_id) = skill_id {
+                    if let Some(db) = app_handle.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
+                        if let Ok(Some(skill)) = db.get_skill(&skill_id).await {
+                            let mut next_tools = vec![
+                                "skills".to_string(),
+                                "todos".to_string(),
+                            ];
+                            next_tools.extend(skill.allowed_tools.clone());
+                            next_tools.extend(tool_config.fixed_tools.clone());
+                            let available_tools = tool_server
+                                .list_tools()
+                                .await
+                                .into_iter()
+                                .map(|t| t.name)
+                                .collect::<std::collections::HashSet<_>>();
+                            let mut seen = std::collections::HashSet::new();
+                            next_tools.retain(|id| seen.insert(id.clone()));
+                            next_tools.retain(|id| available_tools.contains(id));
+                            next_tools.retain(|id| !tool_config.disabled_tools.contains(id));
+                            current_tool_ids = next_tools.clone();
+
+                            let _ = app_handle.emit(
+                                "agent:tools_selected",
+                                &json!({
+                                    "execution_id": params.execution_id,
+                                    "tools": current_tool_ids,
+                                }),
+                            );
+                            let _ = app_handle.emit(
+                                "agent:skill_loaded",
+                                &json!({
+                                    "execution_id": params.execution_id,
+                                    "skill_id": skill.id,
+                                    "skill_name": skill.name,
+                                    "tools": current_tool_ids,
+                                }),
+                            );
+
+                            if let Some(db) = app_handle.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
+                                use sentinel_core::models::database as core_db;
+                                let tools_preview = {
+                                    let preview = current_tool_ids.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
+                                    let suffix = if current_tool_ids.len() > 6 {
+                                        format!(" +{}", current_tool_ids.len() - 6)
+                                    } else {
+                                        String::new()
+                                    };
+                                    format!("{}{}", preview, suffix)
+                                };
+                                let meta = json!({
+                                    "kind": "skill_loaded",
+                                    "skill_id": skill.id,
+                                    "skill_name": skill.name,
+                                    "tools": current_tool_ids,
+                                    "tools_preview": tools_preview,
+                                });
+                                let msg = core_db::AiMessage {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    conversation_id: params.execution_id.clone(),
+                                    role: "system".to_string(),
+                                    content: format!("Skill loaded: {} ({})", skill.name, skill.id),
+                                    metadata: Some(meta.to_string()),
+                                    token_count: None,
+                                    cost: None,
+                                    tool_calls: None,
+                                    attachments: None,
+                                    reasoning_content: None,
+                                    timestamp: chrono::Utc::now(),
+                                    architecture_type: None,
+                                    architecture_meta: None,
+                                    structured_data: None,
+                                };
+                                let db_clone = db.inner().clone();
+                                tauri::async_runtime::spawn(async move {
+                                    if let Err(e) = db_clone.upsert_ai_message_append(&msg).await {
+                                        tracing::warn!("Failed to persist skill_loaded message: {}", e);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+
+                skill_reload_requested.store(false, Ordering::SeqCst);
+                force_history_with_tools = true;
+                continue;
+            }
+        }
 
         match result {
             Ok(response) => {

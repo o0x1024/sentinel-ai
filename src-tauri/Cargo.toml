@@ -63,7 +63,7 @@ petgraph = "0.6"
 rmcp = { workspace = true }
 
 # RAG and Vector Database
-lancedb = "0.22.3"
+lancedb = "0.23.1"
 
 # Document parsing
 docx-rs = "0.4.17"
@@ -187,8 +187,8 @@ rsubdomain = "1.2.6"
 notify = "6.1"
 fastrand = "2.3.0"
 
-rig-core = { version = "0.28.0", features = ["derive"] }
-rig-lancedb = "0.2.30"
+rig-core = { version = "0.30.0", features = ["derive"] }
+rig-lancedb = "0.2.33"
 arrow-array = "55.2.0"
 arrow-schema = "55.2.0"
 
@@ -284,5 +284,5 @@ rmcp = { version = "0.9.1", features = [
     "uuid",
     "base64",
 ] }
-rig-core = { version = "0.28.0", features = ["derive"] }
-rig-lancedb = "0.2.30"
+rig-core = { version = "0.30.0", features = ["derive"] }
+rig-lancedb = "0.2.33"

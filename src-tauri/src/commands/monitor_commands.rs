@@ -477,8 +477,8 @@ pub async fn monitor_start_scheduler(
                                 asset_type: asset_type.to_string(),
                                 canonical_url: canonical_url.to_string(),
                                 original_urls_json: None,
-                                hostname: hostname,
-                                port: port,
+                                hostname,
+                                port,
                                 path: None,
                                 protocol: None,
                                 is_alive: asset_obj.get("is_alive").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -575,7 +575,7 @@ pub async fn monitor_start_scheduler(
         })
     }).await;
 
-    scheduler.start().await?;
+    // scheduler.start().await?; // Removed as it was already called above
     
     // Emit scheduler started event
     let _ = app.emit("monitor:scheduler-started", ());
@@ -853,14 +853,248 @@ pub async fn monitor_disable_task(
     Ok(true)
 }
 
-/// Trigger a monitoring task immediately
+/// Trigger a monitoring task immediately (executes now, not waiting for scheduler)
 #[tauri::command]
 pub async fn monitor_trigger_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    db_service: State<'_, Arc<DatabaseService>>,
     task_id: String,
 ) -> Result<bool, String> {
+    tracing::info!("Manually triggering task for immediate execution: task_id={}", task_id);
+    
     let state_guard = state.read().await;
-    state_guard.scheduler.trigger_task(&task_id).await?;
+    
+    // Get task to execute
+    let task = match state_guard.scheduler.get_task(&task_id).await {
+        Some(t) => {
+            tracing::info!(
+                "Found task to execute: name='{}', enabled={}, program_id={}",
+                t.name, t.enabled, t.program_id
+            );
+            if !t.enabled {
+                tracing::warn!("Task '{}' is disabled, cannot execute", t.name);
+                return Err(format!("Task '{}' is disabled", t.name));
+            }
+            t
+        }
+        None => {
+            tracing::warn!("Task not found: {}", task_id);
+            return Err(format!("Task not found: {}", task_id));
+        }
+    };
+    
+    // Execute the task immediately using the same logic as the scheduler
+    tracing::info!("Executing task '{}' immediately...", task.name);
+    
+    // Get executor
+    let tool_server = sentinel_tools::get_tool_server();
+    
+    // 1. Resolve targets from Program Scope
+    let scopes = db_service.list_program_scopes(Some(&task.program_id), None).await
+        .map_err(|e| e.to_string())?;
+    
+    let mut targets = Vec::new();
+    for scope in scopes {
+        if scope.target_type == "wildcard" || scope.target_type == "domain" || scope.target_type == "url" {
+            targets.push(scope.target);
+        }
+    }
+    
+    // Also fetch all discovered subdomains/assets for this program
+    match db_service.list_bounty_assets(
+        Some(&task.program_id),
+        None,
+        Some("domain"),
+        None,
+        None,
+        Some(10000),
+        Some(0)
+    ).await {
+        Ok(assets) => {
+            for asset in assets {
+                if asset.asset_type == "domain" && asset.is_wildcard != Some(true) {
+                    if !targets.contains(&asset.canonical_url) {
+                        targets.push(asset.canonical_url);
+                    }
+                }
+            }
+        },
+        Err(e) => tracing::warn!("Failed to fetch existing assets for task targets: {}", e),
+    }
+    
+    if targets.is_empty() {
+        tracing::warn!("No targets found for program {}, aborting manual execution", task.program_id);
+        return Err(format!("No targets found for program {}", task.program_id));
+    }
+    
+    let target_domains = targets.join(",");
+    tracing::info!("Task '{}' will scan {} targets", task.name, targets.len());
+    
+    // 2. Gather plugins to run (clone them for 'static lifetime)
+    let mut plugins_to_run = Vec::new();
+    
+    if task.config.enable_dns_monitoring {
+        for p in &task.config.dns_plugins { plugins_to_run.push(p.clone()); }
+    }
+    if task.config.enable_cert_monitoring {
+        for p in &task.config.cert_plugins { plugins_to_run.push(p.clone()); }
+    }
+    if task.config.enable_content_monitoring {
+        for p in &task.config.content_plugins { plugins_to_run.push(p.clone()); }
+    }
+    if task.config.enable_api_monitoring {
+        for p in &task.config.api_plugins { plugins_to_run.push(p.clone()); }
+    }
+    if task.config.enable_port_monitoring {
+        for p in &task.config.port_plugins { plugins_to_run.push(p.clone()); }
+    }
+    if task.config.enable_web_monitoring {
+        for p in &task.config.web_plugins { plugins_to_run.push(p.clone()); }
+    }
+    if task.config.enable_vuln_monitoring {
+        for p in &task.config.vuln_plugins { plugins_to_run.push(p.clone()); }
+    }
+    
+    tracing::info!("Task '{}' will execute {} plugins", task.name, plugins_to_run.len());
+    
+    // 3. Execute Plugins (spawn async to not block the UI)
+    let db_clone = db_service.inner().clone();
+    let task_clone = task.clone();
+    let task_id_clone = task_id.clone();
+    let scheduler = state_guard.scheduler.clone();
+    
+    tokio::spawn(async move {
+        tracing::info!("Background execution started for task '{}'", task_clone.name);
+        let mut total_imported = 0;
+        
+        for plugin in plugins_to_run {
+            tracing::info!("Running plugin: {} for task {}", plugin.plugin_id, task_clone.name);
+            
+            // Prepare input
+            let mut input = plugin.plugin_params.clone();
+            if !input.is_object() { input = serde_json::json!({}); }
+            
+            // Inject targets
+            if input.get("domains").is_none() {
+                input["domains"] = serde_json::Value::String(target_domains.clone());
+            }
+            if input.get("domain").is_none() {
+                if let Some(first) = targets.first() {
+                    input["domain"] = serde_json::Value::String(first.clone());
+                }
+            }
+            if input.get("urls").is_none() {
+                input["urls"] = serde_json::Value::String(target_domains.clone());
+            }
+            if input.get("targets").is_none() {
+                input["targets"] = serde_json::to_value(&targets).unwrap_or(serde_json::json!([]));
+            }
+            if input.get("url").is_none() {
+                if let Some(first) = targets.first() {
+                    let url = if first.starts_with("http") { first.clone() } else { format!("https://{}", first) };
+                    input["url"] = serde_json::Value::String(url);
+                }
+            }
+            
+            // Execute
+            let result = tool_server.execute(&plugin.plugin_id, input).await;
+            
+            if !result.success {
+                tracing::error!("Plugin {} failed: {:?}", plugin.plugin_id, result.error);
+                continue;
+            }
+            
+            // Process output (simplified asset import logic)
+            if let Some(output) = &result.output {
+                let data = output.get("data").unwrap_or(output);
+                
+                // Import discovered subdomains
+                if let Some(subdomains) = data.get("subdomains").and_then(|v| v.as_array()) {
+                    for sub in subdomains {
+                        let sub_str = sub.as_str()
+                            .or_else(|| sub.get("domain").and_then(|s| s.as_str()))
+                            .unwrap_or("");
+                        if sub_str.is_empty() { continue; }
+                        
+                        let clean_domain = sub_str.trim_start_matches("http://").trim_start_matches("https://").trim_matches('/');
+                        
+                        // Check existence
+                        let exists = db_clone.get_bounty_asset_by_canonical_url(&task_clone.program_id, clean_domain).await
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+                        
+                        if !exists {
+                            let now = Utc::now().to_rfc3339();
+                            let asset = BountyAssetRow {
+                                id: Uuid::new_v4().to_string(),
+                                program_id: task_clone.program_id.clone(),
+                                scope_id: None,
+                                asset_type: "domain".to_string(),
+                                canonical_url: clean_domain.to_string(),
+                                hostname: Some(clean_domain.to_string()),
+                                is_alive: true,
+                                created_at: now.clone(),
+                                updated_at: now.clone(),
+                                first_seen_at: now.clone(),
+                                last_seen_at: now.clone(),
+                                labels_json: Some("[\"manual-trigger\"]".to_string()),
+                                discovery_method: Some("monitor-manual".to_string()),
+                                monitoring_enabled: Some(true),
+                                // ... other fields with defaults
+                                original_urls_json: None, port: None, path: None, protocol: None,
+                                priority_score: Some(0.0), risk_score: Some(0.0),
+                                findings_count: 0, change_events_count: 0,
+                                ip_addresses_json: None, dns_records_json: None, tech_stack_json: None,
+                                fingerprint: None, tags_json: None, metadata_json: None,
+                                ip_version: None, asn: None, asn_org: None, isp: None,
+                                country: None, city: None, latitude: None, longitude: None,
+                                is_cloud: None, cloud_provider: None, service_name: None,
+                                service_version: None, service_product: None, banner: None,
+                                transport_protocol: None, cpe: None, domain_registrar: None,
+                                registration_date: None, expiration_date: None,
+                                nameservers_json: None, mx_records_json: None, txt_records_json: None,
+                                whois_data_json: None, is_wildcard: None, parent_domain: None,
+                                http_status: None, response_time_ms: None, content_length: None,
+                                content_type: None, title: None, favicon_hash: None,
+                                headers_json: None, waf_detected: None, cdn_detected: None,
+                                screenshot_path: None, body_hash: None, certificate_id: None,
+                                ssl_enabled: None, certificate_subject: None, certificate_issuer: None,
+                                certificate_valid_from: None, certificate_valid_to: None,
+                                certificate_san_json: None, exposure_level: None,
+                                attack_surface_score: None, vulnerability_count: None,
+                                cvss_max_score: None, exploit_available: None, asset_category: None,
+                                asset_owner: None, business_unit: None, criticality: None,
+                                data_sources_json: None, confidence_score: None,
+                                scan_frequency: None, last_scan_type: None, last_checked_at: None,
+                                parent_asset_id: None, related_assets_json: None,
+                            };
+                            
+                            if let Err(e) = db_clone.create_bounty_asset(&asset).await {
+                                tracing::error!("Failed to save asset: {}", e);
+                            } else {
+                                total_imported += 1;
+                                tracing::info!("Manual trigger imported new asset: {}", clean_domain);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Update task statistics
+        let _ = scheduler.update_task(&task_id_clone, |t| {
+            t.last_run_at = Some(Utc::now());
+            t.run_count += 1;
+            t.calculate_next_run();
+        }).await;
+        
+        tracing::info!(
+            "Manual execution of task '{}' completed: {} assets imported",
+            task_clone.name, total_imported
+        );
+    });
+    
+    tracing::info!("Task '{}' execution started in background", task.name);
     Ok(true)
 }
 
@@ -1864,7 +2098,7 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
             }
         };
         
-        tracing::info!("Matched plugin: {} -> monitor_type={}", tool.name, monitor_type);
+        // tracing::info!("Matched plugin: {} -> monitor_type={}", tool.name, monitor_type);
         
         plugins.push(MonitorPluginInfo {
             id: tool.name.clone(),

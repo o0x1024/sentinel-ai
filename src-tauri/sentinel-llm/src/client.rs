@@ -5,6 +5,7 @@ use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
+use serde_json::json;
 use rig::providers::gemini::completion::gemini_api_types::{AdditionalParameters, GenerationConfig};
 use rig::streaming::{StreamedAssistantContent, StreamingChat, StreamingPrompt};
 use tracing::{debug, error, info};
@@ -30,6 +31,68 @@ impl LlmClient {
     /// 获取配置
     pub fn config(&self) -> &LlmConfig {
         &self.config
+    }
+
+
+
+    fn moonshot_thinking_params(&self, model: &str) -> Option<serde_json::Value> {
+        let model_lower = model.to_lowercase();
+        if !model_lower.contains("kimi-k2.5") {
+            return None;
+        }
+        let provider = self.config.provider.to_lowercase();
+        let base = self
+            .config
+            .base_url
+            .as_ref()
+            .map(|u| u.to_lowercase())
+            .unwrap_or_default();
+        if provider.contains("moonshot") || provider.contains("moonshut") || base.contains("moonshot") {
+            Some(json!({ "thinking": { "type": "disabled" } }))
+        } else {
+            None
+        }
+    }
+
+    fn validate_moonshot_temperature(&self) -> Result<()> {
+        let provider = self.config.provider.to_lowercase();
+        let base = self
+            .config
+            .base_url
+            .as_ref()
+            .map(|u| u.to_lowercase())
+            .unwrap_or_default();
+        let model = self.config.model.to_lowercase();
+        if !(provider.contains("moonshot") || base.contains("moonshot")) {
+            return Ok(());
+        }
+        if !model.contains("kimi-k2.5") {
+            return Ok(());
+        }
+
+        let temp = self.config.temperature.unwrap_or(0.7);
+        if (temp - 0.6).abs() > f32::EPSILON {
+            return Err(anyhow!(
+                "Moonshot kimi-k2.5 requires temperature=0.6. Set it in AI Settings."
+            ));
+        }
+        Ok(())
+    }
+
+    fn apply_generation_settings<M>(
+        &self,
+        mut builder: rig::agent::AgentBuilder<M>,
+    ) -> rig::agent::AgentBuilder<M>
+    where
+        M: rig::completion::CompletionModel,
+    {
+        if let Some(temp) = self.config.temperature {
+            builder = builder.temperature(temp as f64);
+        }
+        if let Some(max_tokens) = self.config.max_tokens {
+            builder = builder.max_tokens(max_tokens as u64);
+        }
+        builder
     }
 
     /// 简单调用 LLM，返回完整响应
@@ -74,10 +137,27 @@ impl LlmClient {
             image.is_some()
         );
 
-        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+        let mut system_prompt_with_hack = system_prompt.unwrap_or("You are a helpful AI assistant.").to_string();
+        
+        // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
+        let provider_lower = provider_for_agent.to_lowercase();
+        if provider_lower.contains("moonshot") || provider_lower.contains("deepseek") || provider_lower.contains("kimi") {
+            if !system_prompt_with_hack.contains("text response") {
+                system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
+            }
+        }
+        let preamble = &system_prompt_with_hack;
 
         // 记录请求日志（含图片标记）
-        log_request_with_image(&session_id, None, &provider, model, Some(preamble), user_prompt, image.is_some());
+        log_request_with_image(
+            &session_id,
+            self.config.conversation_id.as_deref(),
+            &provider,
+            model,
+            Some(preamble),
+            user_prompt,
+            image.is_some(),
+        );
 
         // 设置环境变量
         self.config.setup_env_vars();
@@ -94,6 +174,9 @@ impl LlmClient {
         let content = match provider_for_agent.as_str() {
             "openai" | "lm studio" | "lmstudio" | "lm_studio" => {
                 self.chat_with_openai(model, preamble, user_message, chat_history, timeout).await?
+            }
+            "moonshot" => {
+                self.chat_with_moonshot(model, preamble, user_message, chat_history, timeout).await?
             }
             "anthropic" => {
                 self.chat_with_anthropic(model, preamble, user_message, chat_history, timeout).await?
@@ -124,7 +207,13 @@ impl LlmClient {
         };
 
         // 记录响应日志
-        log_response(&session_id, None, &provider_for_agent, model, &content);
+        log_response(
+            &session_id,
+            self.config.conversation_id.as_deref(),
+            &provider_for_agent,
+            model,
+            &content,
+        );
 
         info!("LlmClient: Response length: {} chars", content.len());
         Ok(content)
@@ -168,7 +257,8 @@ impl LlmClient {
         let client = builder.build()
             .map_err(|e| anyhow::anyhow!("Failed to build generic client: {}", e))?;
         
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -196,7 +286,8 @@ impl LlmClient {
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
             
-            let agent = client.agent(model).preamble(preamble).build();
+            let builder = client.agent(model).preamble(preamble);
+            let agent = self.apply_generation_settings(builder).build();
             self.execute_chat(agent, user_message, chat_history, timeout).await
         } else {
             info!("Using Responses API for official OpenAI");
@@ -205,9 +296,59 @@ impl LlmClient {
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
             
-            let agent = client.agent(model).preamble(preamble).build();
+            let builder = client.agent(model).preamble(preamble);
+            let agent = self.apply_generation_settings(builder).build();
             self.execute_chat(agent, user_message, chat_history, timeout).await
         }
+    }
+
+    async fn chat_with_moonshot(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        use rig::providers::moonshot;
+
+        let api_key = self
+            .config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
+            .ok_or_else(|| anyhow::anyhow!("MOONSHOT_API_KEY not set"))?;
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let builder_req = reqwest::Client::builder().default_headers(headers);
+        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
+        let http_client = builder_req
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+
+        let mut builder = moonshot::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+
+        if let Some(base_url) = &self.config.base_url {
+            builder = builder.base_url(base_url);
+        }
+
+        let client = builder
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Moonshot client: {:?}", e))?;
+
+        let mut builder = client.agent(model).preamble(preamble);
+        if let Some(params) = self.moonshot_thinking_params(model) {
+            builder = builder.additional_params(params);
+        }
+        let agent = self.apply_generation_settings(builder).build();
+        self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
     async fn chat_with_anthropic(
@@ -252,7 +393,11 @@ impl LlmClient {
         let client = builder.build()
             .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
         
-        let agent = client.agent(model).preamble(preamble).max_tokens(4096).build();
+        let builder = client
+            .agent(model)
+            .preamble(preamble)
+            .max_tokens(self.config.get_max_tokens() as u64);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -268,10 +413,10 @@ impl LlmClient {
         let client = gemini::Client::from_env();
         let gen_cfg = GenerationConfig::default();
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
-        let agent = client.agent(model)
+        let builder = client.agent(model)
             .preamble(preamble)
-            .additional_params(serde_json::to_value(cfg).unwrap())
-            .build();
+            .additional_params(serde_json::to_value(cfg).unwrap());
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -285,7 +430,8 @@ impl LlmClient {
     ) -> Result<String> {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -329,7 +475,8 @@ impl LlmClient {
         let client = builder.build()
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
         
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -343,7 +490,8 @@ impl LlmClient {
     ) -> Result<String> {
         use rig::providers::openrouter;
         let client = openrouter::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -357,7 +505,8 @@ impl LlmClient {
     ) -> Result<String> {
         use rig::providers::xai;
         let client = xai::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -371,7 +520,8 @@ impl LlmClient {
     ) -> Result<String> {
         use rig::providers::groq;
         let client = groq::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = self.apply_generation_settings(builder).build();
         self.execute_chat(agent, user_message, chat_history, timeout).await
     }
 
@@ -386,6 +536,7 @@ impl LlmClient {
         M: rig::completion::CompletionModel + 'static,
         M::StreamingResponse: Clone + Unpin + rig::completion::GetTokenUsage,
     {
+        self.validate_moonshot_temperature()?;
         // Get max_turns from config
         let max_turns = self.config.get_max_turns();
         info!("Using max_turns: {}", max_turns);

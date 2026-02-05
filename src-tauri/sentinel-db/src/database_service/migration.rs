@@ -117,6 +117,7 @@ impl DatabaseMigration {
     }
 
     /// Check if a table has foreign key constraints
+    #[allow(dead_code)]
     async fn table_has_foreign_keys(&self, _table_name: &str) -> Result<bool> {
         match &self.source_pool {
             DatabasePool::PostgreSQL(_) | DatabasePool::SQLite(_) => {
@@ -261,6 +262,7 @@ impl DatabaseMigration {
 
     
     /// Get schema SQL from source database
+    #[allow(dead_code)]
     async fn get_schema_sql(&self) -> Result<Vec<String>> {
         match &self.source_pool {
             _ => {
@@ -270,6 +272,7 @@ impl DatabaseMigration {
     }
     
     /// Convert SQLite SQL to PostgreSQL SQL
+    #[allow(dead_code)]
     fn convert_to_postgresql_sql(&self, sqlite_sql: &[String]) -> Vec<String> {
         info!("Converting {} SQLite statements to PostgreSQL", sqlite_sql.len());
         sqlite_sql.iter().map(|sql| {
@@ -315,6 +318,7 @@ impl DatabaseMigration {
     }
     
     /// Convert SQLite SQL to MySQL SQL
+    #[allow(dead_code)]
     fn convert_to_mysql_sql(&self, sqlite_sql: &[String]) -> Vec<String> {
         info!("Converting {} SQLite statements to MySQL", sqlite_sql.len());
         sqlite_sql.iter().map(|sql| {
@@ -625,6 +629,7 @@ impl DatabaseMigration {
     }
 
     /// Import table data selectively, skipping records with foreign key violations
+    #[allow(dead_code)]
     async fn import_table_selective(&self, table_name: &str, table_data: &TableData, pool: &DatabasePool) -> Result<()> {
         if table_data.rows.is_empty() {
             return Ok(());
@@ -656,6 +661,7 @@ impl DatabaseMigration {
     }
 
     /// Import a single row into the specified table
+    #[allow(dead_code)]
     async fn import_single_row(&self, table_name: &str, row_data: &HashMap<String, Value>, pool: &DatabasePool) -> Result<()> {
         let columns: Vec<&String> = row_data.keys().collect();
 

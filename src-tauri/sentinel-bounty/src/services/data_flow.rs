@@ -51,14 +51,15 @@ impl Default for PluginPortRegistry {
 
 impl PluginPortRegistry {
     pub fn new() -> Self {
-        let mut registry = Self {
+        let registry = Self {
             output_specs: HashMap::new(),
             input_specs: HashMap::new(),
         };
-        registry.register_builtin_plugins();
+        // registry.register_builtin_plugins();
         registry
     }
     
+    #[allow(dead_code)]
     fn register_builtin_plugins(&mut self) {
         // Subdomain Enumerator
         self.output_specs.insert("subdomain_enumerator".to_string(), vec![

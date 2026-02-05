@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
     HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool,
+    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
 };
 
 use crate::terminal::server::TerminalServer;
@@ -413,6 +413,36 @@ impl ToolServer {
             .expect("Failed to build todos tool");
 
         self.registry.register(todos_def).await;
+
+        // Register skills tool
+        let skills_def = DynamicToolBuilder::new(SkillsTool::NAME.to_string())
+            .description(SkillsTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::skills::SkillsToolArgs
+            ))
+            .unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("system")
+            .executor(|args| async move {
+                use crate::buildin_tools::skills::{SkillsTool, SkillsToolArgs};
+                use rig::tool::Tool;
+
+                let tool_args: SkillsToolArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = SkillsTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Skills operation failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build skills tool");
+
+        self.registry.register(skills_def).await;
 
         // Register memory_manager tool
         let memory_manager_def = DynamicToolBuilder::new(MemoryManagerTool::NAME.to_string())

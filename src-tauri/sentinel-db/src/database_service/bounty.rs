@@ -3,7 +3,7 @@
 use anyhow::Result;
 use chrono;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Row};
+use sqlx::Row;
 use tracing::info;
 
 use super::service::DatabaseService;
@@ -527,30 +527,7 @@ impl DatabaseService {
         .fetch_optional(self.pool())
         .await?;
 
-        Ok(row.map(|row| BountyProgramRow {
-            id: row.get("id"),
-            name: row.get("name"),
-            organization: row.get("organization"),
-            platform: row.get("platform"),
-            platform_handle: row.get("platform_handle"),
-            url: row.get("url"),
-            program_type: row.get("program_type"),
-            status: row.get("status"),
-            description: row.get("description"),
-            rewards_json: row.get("rewards_json"),
-            response_sla_days: row.get("response_sla_days"),
-            resolution_sla_days: row.get("resolution_sla_days"),
-            rules_json: row.get("rules_json"),
-            tags_json: row.get("tags_json"),
-            metadata_json: row.get("metadata_json"),
-            priority_score: row.get("priority_score"),
-            total_submissions: row.get("total_submissions"),
-            accepted_submissions: row.get("accepted_submissions"),
-            total_earnings: row.get("total_earnings"),
-            created_at: timestamp_to_string(&row, "created_at"),
-            updated_at: timestamp_to_string(&row, "updated_at"),
-            last_activity_at: optional_timestamp_to_string(&row, "last_activity_at"),
-        }))
+        Ok(row.map(row_to_bounty_program))
     }
 
     /// Update a bounty program
@@ -663,30 +640,7 @@ impl DatabaseService {
         }
 
         let rows = sqlx_query.fetch_all(self.pool()).await?;
-        Ok(rows.into_iter().map(|row| BountyProgramRow {
-            id: row.get("id"),
-            name: row.get("name"),
-            organization: row.get("organization"),
-            platform: row.get("platform"),
-            platform_handle: row.get("platform_handle"),
-            url: row.get("url"),
-            program_type: row.get("program_type"),
-            status: row.get("status"),
-            description: row.get("description"),
-            rewards_json: row.get("rewards_json"),
-            response_sla_days: row.get("response_sla_days"),
-            resolution_sla_days: row.get("resolution_sla_days"),
-            rules_json: row.get("rules_json"),
-            tags_json: row.get("tags_json"),
-            metadata_json: row.get("metadata_json"),
-            priority_score: row.get("priority_score"),
-            total_submissions: row.get("total_submissions"),
-            accepted_submissions: row.get("accepted_submissions"),
-            total_earnings: row.get("total_earnings"),
-            created_at: timestamp_to_string(&row, "created_at"),
-            updated_at: timestamp_to_string(&row, "updated_at"),
-            last_activity_at: optional_timestamp_to_string(&row, "last_activity_at"),
-        }).collect())
+        Ok(rows.into_iter().map(row_to_bounty_program).collect())
     }
 
     /// Get bounty program statistics

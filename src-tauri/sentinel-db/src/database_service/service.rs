@@ -67,6 +67,13 @@ impl DatabaseService {
             .join("database.db")
     }
 
+    pub fn get_skills_root_dir(&self) -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel-ai")
+            .join("skills")
+    }
+
     pub async fn backup(&self, path: Option<PathBuf>) -> Result<PathBuf> {
         let backup_path = path.unwrap_or_else(|| {
             dirs::data_dir()
@@ -366,14 +373,69 @@ impl DatabaseService {
             info!("Dictionaries tables created successfully");
         }
 
-        // 确保 ability_groups 表有 additional_notes 字段
-        let has_additional_notes: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ability_groups' AND column_name = 'additional_notes')"
+        // Ensure skills table exists and includes required columns
+        let skills_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'skills')"
         ).fetch_one(pool).await?;
 
-        if !has_additional_notes {
-            info!("Adding additional_notes column to ability_groups table");
-            sqlx::query("ALTER TABLE ability_groups ADD COLUMN additional_notes TEXT DEFAULT ''").execute(pool).await?;
+        if !skills_table_exists {
+            info!("Creating skills table...");
+            sqlx::query(
+                r#"CREATE TABLE IF NOT EXISTS skills (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    argument_hint TEXT NOT NULL DEFAULT '',
+                    disable_model_invocation BOOLEAN NOT NULL DEFAULT FALSE,
+                    user_invocable BOOLEAN NOT NULL DEFAULT TRUE,
+                    allowed_tools TEXT NOT NULL DEFAULT '[]',
+                    model TEXT NOT NULL DEFAULT '',
+                    context TEXT NOT NULL DEFAULT '',
+                    agent TEXT NOT NULL DEFAULT '',
+                    hooks TEXT NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                )"#
+            ).execute(pool).await?;
+        } else {
+            let required_columns = [
+                ("source_path", "TEXT NOT NULL DEFAULT ''"),
+                ("content", "TEXT NOT NULL DEFAULT ''"),
+                ("argument_hint", "TEXT NOT NULL DEFAULT ''"),
+                ("disable_model_invocation", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("user_invocable", "BOOLEAN NOT NULL DEFAULT TRUE"),
+                ("allowed_tools", "TEXT NOT NULL DEFAULT '[]'"),
+                ("model", "TEXT NOT NULL DEFAULT ''"),
+                ("context", "TEXT NOT NULL DEFAULT ''"),
+                ("agent", "TEXT NOT NULL DEFAULT ''"),
+                ("hooks", "TEXT NOT NULL DEFAULT '{}'"),
+            ];
+
+            for (column, column_type) in required_columns {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'skills' AND column_name = $1)"
+                )
+                .bind(column)
+                .fetch_one(pool)
+                .await?;
+
+                if !exists {
+                    let alter_query = format!("ALTER TABLE skills ADD COLUMN {} {}", column, column_type);
+                    info!("Adding column '{}' to skills table", column);
+                    sqlx::query(&alter_query).execute(pool).await?;
+                }
+            }
+        }
+
+        // Drop legacy ability_groups table if it exists
+        let ability_groups_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'ability_groups')"
+        ).fetch_one(pool).await?;
+
+        if ability_groups_exists {
+            info!("Dropping legacy ability_groups table");
+            sqlx::query("DROP TABLE IF EXISTS ability_groups").execute(pool).await?;
         }
 
         // 检查并创建缓存表

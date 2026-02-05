@@ -46,6 +46,7 @@ export default defineConfig({
       }
     },
     sourcemap: false,
+    chunkSizeWarningLimit: 2000,
     target: 'esnext'
   },
 

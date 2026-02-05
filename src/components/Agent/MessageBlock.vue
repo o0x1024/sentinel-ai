@@ -87,6 +87,27 @@
     </div>
   </div>
 
+  <!-- Skill Loaded Message -->
+  <div v-else-if="isSkillLoaded" class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2">
+    <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
+      <div class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm">
+        <i class="fas fa-lightbulb text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-success">
+          {{ t('agent.skillLoadedTitle') }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{ message.metadata?.skill_name }} ({{ message.metadata?.skill_id }})
+        </div>
+      </div>
+      <span class="badge badge-sm badge-ghost">{{ message.metadata?.tools?.length || 0 }}</span>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/70">
+      {{ message.metadata?.tools_preview }}
+    </div>
+  </div>
+
   <!-- Shell Tool - Render as independent message block -->
   <ShellToolResult
     v-else-if="isShellTool && message.type === 'tool_call'"
@@ -576,6 +597,12 @@ const isSegmentSummary = computed(() => {
 const isGlobalSummary = computed(() => {
   return props.message.type === 'system' && 
          props.message.metadata?.kind === 'global_summary'
+})
+
+// Check if this is a skill loaded system message
+const isSkillLoaded = computed(() => {
+  return props.message.type === 'system' &&
+         props.message.metadata?.kind === 'skill_loaded'
 })
 
 // Check if this is a Tenth Man Critique message

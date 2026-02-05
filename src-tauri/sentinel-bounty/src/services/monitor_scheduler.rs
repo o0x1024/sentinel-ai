@@ -18,7 +18,10 @@ use crate::services::change_monitor::{ChangeMonitor, ChangeMonitorConfig, AssetS
 use crate::models::ChangeEvent;
 
 /// Callback for executing a monitor task
-pub type TaskExecutor = Box<dyn Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync>;
+pub type TaskExecutor = Arc<dyn Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync>;
+
+/// Callback for change events
+pub type EventCallback = Arc<dyn Fn(ChangeEvent) + Send + Sync>;
 
 /// Monitoring task configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +100,7 @@ pub struct MonitorScheduler {
     /// Scheduler start time
     start_time: Arc<RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
     /// Event callback
-    event_callback: Arc<Mutex<Option<Box<dyn Fn(ChangeEvent) + Send + Sync>>>>,
+    event_callback: Arc<Mutex<Option<EventCallback>>>,
     /// Task execution handler
     task_executor: Arc<Mutex<Option<TaskExecutor>>>,
 }
@@ -142,7 +145,6 @@ impl MonitorScheduler {
 
         // Spawn background task
         let tasks = self.tasks.clone();
-        let monitors = self.monitors.clone();
         let is_running = self.is_running.clone();
         let event_callback = self.event_callback.clone();
         let task_executor = self.task_executor.clone();
@@ -159,37 +161,48 @@ impl MonitorScheduler {
                     break;
                 }
 
-                // Process tasks
-                let mut tasks_guard = tasks.write().await;
-                let monitors_guard = monitors.read().await;
+                // Get task IDs to check
+                let task_ids: Vec<String> = {
+                    let guard = tasks.read().await;
+                    guard.keys().cloned().collect()
+                };
 
-                for (task_id, task) in tasks_guard.iter_mut() {
-
-
-                    // Check if it's time to run
-                    let should_run = task.next_run_at
-                        .map(|next| Utc::now() >= next)
-                        .unwrap_or(false);
-
-                    if !should_run {
-                        continue;
+                for task_id in task_ids {
+                    // Check if should stop
+                    if !*is_running.read().await {
+                        break;
                     }
+
+                    // 1. Check if task should run
+                    let task_to_run = {
+                        let guard = tasks.read().await;
+                        guard.get(&task_id).and_then(|t| {
+                            let should_run = t.enabled && t.next_run_at
+                                .map(|next| Utc::now() >= next)
+                                .unwrap_or(false);
+                            if should_run { Some(t.clone()) } else { None }
+                        })
+                    };
+
+                    let task = match task_to_run {
+                        Some(t) => t,
+                        None => continue,
+                    };
 
                     info!("Running monitor task: {} ({})", task.name, task_id);
 
-                    // Get or create monitor for this program
-                    let _monitor = monitors_guard.get(&task.program_id)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            Arc::new(ChangeMonitor::with_config(task.config.clone()))
-                        });
+                    // 2. Get executor and monitor without holding task locks
+                    let executor = {
+                        let guard = task_executor.lock().await;
+                        guard.clone()
+                    };
 
                     // Run monitoring check
                     let mut detected_events = Vec::new();
                     
-                    if let Some(executor) = task_executor.lock().await.as_ref() {
+                    if let Some(exec) = executor {
                         info!("Executing task logic via registered executor...");
-                        match executor(task.clone()).await {
+                        match exec(task.clone()).await {
                             Ok(events) => {
                                 info!("Task execution successful, {} events generated", events.len());
                                 detected_events = events;
@@ -199,33 +212,40 @@ impl MonitorScheduler {
                             }
                         }
                     } else {
-                        // Fallback/Placeholder if no executor registered
                         info!("No task executor registered, skipping actual execution");
                     }
                     
-                    task.last_run_at = Some(Utc::now());
-                    task.run_count += 1;
-                    task.calculate_next_run();
-
-                    // Get pending events from monitor (if used by executor)
-                    // let events = monitor.take_pending_events().await;
-                    // detected_events.extend(events);
-                    
-                    task.events_detected += detected_events.len() as u64;
-
-                    // Trigger callbacks for each event
-                    if let Some(callback) = event_callback.lock().await.as_ref() {
-                        for event in detected_events {
-                            callback(event);
+                    // 3. Update task status with a brief write lock
+                    {
+                        let mut guard = tasks.write().await;
+                        if let Some(t) = guard.get_mut(&task_id) {
+                            t.last_run_at = Some(Utc::now());
+                            t.run_count += 1;
+                            t.calculate_next_run();
+                            t.events_detected += detected_events.len() as u64;
+                            
+                            info!(
+                                "Monitor task '{}' completed: {} events detected, next run at {:?}",
+                                t.name,
+                                detected_events.len(),
+                                t.next_run_at
+                            );
                         }
                     }
 
-                    info!(
-                        "Monitor task '{}' completed: {} events detected, next run at {:?}",
-                        task.name,
-                        task.events_detected,
-                        task.next_run_at
-                    );
+                    // 4. Trigger callbacks
+                    if !detected_events.is_empty() {
+                        let callback = {
+                            let guard = event_callback.lock().await;
+                            guard.clone()
+                        };
+                        
+                        if let Some(cb) = callback {
+                            for event in detected_events {
+                                cb(event);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -341,7 +361,7 @@ impl MonitorScheduler {
         F: Fn(ChangeEvent) + Send + Sync + 'static,
     {
         let mut cb = self.event_callback.lock().await;
-        *cb = Some(Box::new(callback));
+        *cb = Some(Arc::new(callback));
     }
 
     /// Set task executor
@@ -350,7 +370,7 @@ impl MonitorScheduler {
         F: Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync + 'static,
     {
         let mut exec = self.task_executor.lock().await;
-        *exec = Some(Box::new(executor));
+        *exec = Some(Arc::new(executor));
     }
 
     /// Store asset snapshot for a program

@@ -4,6 +4,7 @@ use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
+use serde_json::json;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
@@ -53,6 +54,67 @@ pub struct StreamingLlmClient {
 impl StreamingLlmClient {
     pub fn new(config: LlmConfig) -> Self {
         Self { config }
+    }
+
+    fn apply_generation_settings<M>(
+        &self,
+        mut builder: rig::agent::AgentBuilder<M>,
+    ) -> rig::agent::AgentBuilder<M>
+    where
+        M: rig::completion::CompletionModel,
+    {
+        if let Some(temp) = self.config.temperature {
+            builder = builder.temperature(temp as f64);
+        }
+        if let Some(max_tokens) = self.config.max_tokens {
+            builder = builder.max_tokens(max_tokens as u64);
+        }
+        builder
+    }
+
+
+    fn moonshot_thinking_params(&self, model: &str) -> Option<serde_json::Value> {
+        let model_lower = model.to_lowercase();
+        if !model_lower.contains("kimi-k2.5") {
+            return None;
+        }
+        let provider = self.config.provider.to_lowercase();
+        let base = self
+            .config
+            .base_url
+            .as_ref()
+            .map(|u| u.to_lowercase())
+            .unwrap_or_default();
+        if provider.contains("moonshot") || provider.contains("moonshut") || base.contains("moonshot") {
+            Some(json!({ "thinking": { "type": "disabled" } }))
+        } else {
+            None
+        }
+    }
+
+    fn validate_moonshot_temperature(&self) -> Result<()> {
+        let provider = self.config.provider.to_lowercase();
+        let base = self
+            .config
+            .base_url
+            .as_ref()
+            .map(|u| u.to_lowercase())
+            .unwrap_or_default();
+        let model = self.config.model.to_lowercase();
+        if !(provider.contains("moonshot") || base.contains("moonshot")) {
+            return Ok(());
+        }
+        if !model.contains("kimi-k2.5") {
+            return Ok(());
+        }
+
+        let temp = self.config.temperature.unwrap_or(0.7);
+        if (temp - 0.6).abs() > f32::EPSILON {
+            return Err(anyhow!(
+                "Moonshot kimi-k2.5 requires temperature=0.6. Set it in AI Settings."
+            ));
+        }
+        Ok(())
     }
 
     /// 流式对话（无工具）
@@ -106,11 +168,21 @@ impl StreamingLlmClient {
             history.len()
         );
 
-        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+        let mut system_prompt_with_hack = system_prompt.unwrap_or("You are a helpful AI assistant.").to_string();
+        
+        // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
+        // We add a system-level instruction to help them comply, and we'll also use placeholders in history.
+        let provider_lower = provider_for_agent.to_lowercase();
+        if provider_lower.contains("moonshot") || provider_lower.contains("deepseek") || provider_lower.contains("kimi") {
+            if !system_prompt_with_hack.contains("text response") {
+                system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
+            }
+        }
+        let preamble = &system_prompt_with_hack;
 
         log_request(
             &session_id,
-            None,
+            self.config.conversation_id.as_deref(),
             &provider,
             model,
             Some(preamble),
@@ -159,6 +231,9 @@ impl StreamingLlmClient {
             "openai" => {
                 self.stream_with_openai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
+            "moonshot" => {
+                self.stream_with_moonshot(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+            }
             "anthropic" => {
                 self.stream_with_anthropic(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
             }
@@ -189,7 +264,13 @@ impl StreamingLlmClient {
             }
         };
 
-        log_response(&session_id, None, &provider, model, &content);
+        log_response(
+            &session_id,
+            self.config.conversation_id.as_deref(),
+            &provider,
+            model,
+            &content,
+        );
         info!(
             "StreamingLlmClient: Response length: {} chars",
             content.len()
@@ -241,9 +322,11 @@ impl StreamingLlmClient {
             .map_err(|e| anyhow::anyhow!("Failed to build generic client: {}", e))?;
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
-            .preamble(preamble)
+            .preamble(preamble);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -281,9 +364,11 @@ impl StreamingLlmClient {
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
             
-            let agent = client
+            let builder = client
                 .agent(model)
-                .preamble(preamble)
+                .preamble(preamble);
+            let agent = self
+                .apply_generation_settings(builder)
                 .tool_server_handle(tool_server_handle)
                 .build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
@@ -294,13 +379,74 @@ impl StreamingLlmClient {
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
             
-            let agent = client
+            let builder = client
                 .agent(model)
-                .preamble(preamble)
+                .preamble(preamble);
+            let agent = self
+                .apply_generation_settings(builder)
                 .tool_server_handle(tool_server_handle)
                 .build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
         }
+    }
+
+    async fn stream_with_moonshot<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        dynamic_tools: Vec<DynamicTool>,
+        on_content: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamContent) -> bool,
+    {
+        use rig::providers::moonshot;
+
+        let api_key = self
+            .config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
+            .ok_or_else(|| anyhow::anyhow!("MOONSHOT_API_KEY not set"))?;
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let builder_req = reqwest::Client::builder().default_headers(headers);
+        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
+        let http_client = builder_req
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+
+        let mut builder = moonshot::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+
+        if let Some(base_url) = &self.config.base_url {
+            builder = builder.base_url(base_url);
+        }
+
+        let client = builder
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Moonshot client: {:?}", e))?;
+
+        let tool_server_handle = Self::build_tool_server(dynamic_tools);
+        let mut builder = client.agent(model).preamble(preamble);
+        if let Some(params) = self.moonshot_thinking_params(model) {
+            builder = builder.additional_params(params);
+        }
+        let agent = self
+            .apply_generation_settings(builder)
+            .tool_server_handle(tool_server_handle)
+            .build();
+
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
     }
 
     async fn stream_with_anthropic<F>(
@@ -348,10 +494,12 @@ impl StreamingLlmClient {
             .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
             .preamble(preamble)
-            .max_tokens(self.config.get_max_tokens() as u64)
+            .max_tokens(self.config.get_max_tokens() as u64);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -377,10 +525,12 @@ impl StreamingLlmClient {
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
             .preamble(preamble)
-            .additional_params(serde_json::to_value(cfg).unwrap())
+            .additional_params(serde_json::to_value(cfg).unwrap());
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -431,9 +581,11 @@ impl StreamingLlmClient {
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
-            .preamble(preamble)
+            .preamble(preamble);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -457,9 +609,11 @@ impl StreamingLlmClient {
         let client = ollama::Client::from_env();
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
-            .preamble(preamble)
+            .preamble(preamble);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -483,9 +637,11 @@ impl StreamingLlmClient {
         let client = openrouter::Client::from_env();
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
-            .preamble(preamble)
+            .preamble(preamble);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -509,9 +665,11 @@ impl StreamingLlmClient {
         let client = xai::Client::from_env();
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
-            .preamble(preamble)
+            .preamble(preamble);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -535,9 +693,11 @@ impl StreamingLlmClient {
         let client = groq::Client::from_env();
         
         let tool_server_handle = Self::build_tool_server(dynamic_tools);
-        let agent = client
+        let builder = client
             .agent(model)
-            .preamble(preamble)
+            .preamble(preamble);
+        let agent = self
+            .apply_generation_settings(builder)
             .tool_server_handle(tool_server_handle)
             .build();
             
@@ -572,20 +732,26 @@ impl StreamingLlmClient {
         let mut tool_call_names: HashMap<String, String> = HashMap::new();
         info!("Starting stream iteration...");
 
+        self.validate_moonshot_temperature()?;
+        let max_turns = self.config.get_max_turns();
+        info!("Using max_turns: {}", max_turns);
 
-
+        let chat_history = chat_history;
+        
+        tracing::info!("Final chat_history has {} messages", chat_history.len());
+        
         let stream_result = if chat_history.is_empty() {
             info!("Using stream_prompt for empty chat history");
             tokio::time::timeout(
                 timeout,
-                agent.stream_prompt(user_message).multi_turn(1000),
+                agent.stream_prompt(user_message).multi_turn(max_turns),
             )
             .await
         } else {
             info!("Using stream_chat with {} history messages", chat_history.len());
             tokio::time::timeout(
                 timeout,
-                agent.stream_chat(user_message, chat_history).multi_turn(1000),
+                agent.stream_chat(user_message, chat_history).multi_turn(max_turns),
             )
             .await
         };
@@ -631,7 +797,7 @@ impl StreamingLlmClient {
                 }
                 // 完整的工具调用
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCall(tool_call),
+                    StreamedAssistantContent::ToolCall { tool_call, .. },
                 )) => {
                     info!(
                         "Tool call received: id={}, name={}, args={}",
@@ -649,7 +815,7 @@ impl StreamingLlmClient {
                 }
                 // 工具调用增量
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCallDelta { id, content },
+                    StreamedAssistantContent::ToolCallDelta { id, content, .. },
                 )) => {
                     use rig::streaming::ToolCallDeltaContent;
                     let delta_str = match &content {
@@ -667,7 +833,9 @@ impl StreamingLlmClient {
                 }
                 // 工具执行结果
                 Ok(MultiTurnStreamItem::StreamUserItem(user_content)) => {
-                    let rig::streaming::StreamedUserContent::ToolResult(tool_result) = user_content;
+                    let rig::streaming::StreamedUserContent::ToolResult {
+                        tool_result, ..
+                    } = user_content;
                     let result_str = serde_json::to_string(&tool_result.content).unwrap_or_default();
                     info!(
                         "Tool result received: id={}, result_len={}, content_preview={}",

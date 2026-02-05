@@ -17,6 +17,10 @@ pub struct LlmConfig {
     pub timeout_secs: u64,
     /// rig 提供商类型（决定使用哪个 client）
     pub rig_provider: Option<String>,
+    /// 对话/执行标识（用于日志与上下文关联）
+    pub conversation_id: Option<String>,
+    /// 温度参数（控制随机性）
+    pub temperature: Option<f32>,
     /// 最大 token 数（用于 Anthropic 等需要显式设置 max_tokens 的提供商）
     pub max_tokens: Option<u32>,
     /// 最大对话轮数（工具调用循环次数）
@@ -32,6 +36,8 @@ impl Default for LlmConfig {
             base_url: None,
             timeout_secs: 120,
             rig_provider: None,
+            conversation_id: None,
+            temperature: Some(0.7),
             max_tokens: Some(4096),
             max_turns: Some(100),
         }
@@ -78,10 +84,27 @@ impl LlmConfig {
         self
     }
 
+    /// 设置 conversation_id
+    pub fn with_conversation_id(mut self, conversation_id: impl Into<String>) -> Self {
+        self.conversation_id = Some(conversation_id.into());
+        self
+    }
+
+    /// 设置温度
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
     /// 设置最大 token 数
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = Some(max_tokens);
         self
+    }
+
+    /// 获取温度（默认 0.7）
+    pub fn get_temperature(&self) -> f32 {
+        self.temperature.unwrap_or(0.7)
     }
 
     /// 获取最大 token 数（默认 4096）
@@ -145,6 +168,9 @@ impl LlmConfig {
                 "openrouter" => {
                     std::env::set_var("OPENROUTER_API_KEY", api_key);
                 }
+                "moonshot" => {
+                    std::env::set_var("MOONSHOT_API_KEY", api_key);
+                }
                 _ => {
                     // 默认使用 OpenAI 兼容
                     std::env::set_var("OPENAI_API_KEY", api_key);
@@ -160,6 +186,9 @@ impl LlmConfig {
                 }
                 "anthropic" => {
                     std::env::set_var("ANTHROPIC_API_BASE", base_url);
+                }
+                "moonshot" => {
+                    std::env::set_var("MOONSHOT_API_BASE", base_url);
                 }
                 _ => {
                     // OpenAI 及兼容提供商

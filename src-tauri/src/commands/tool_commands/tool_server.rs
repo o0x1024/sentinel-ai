@@ -4,6 +4,7 @@ use std::sync::Arc;
 use sentinel_db::Database;
 
 use sentinel_tools::get_tool_server;
+use sentinel_tools::buildin_tools::SkillsTool;
 
 /// Initialize the global tool server with builtin tools
 #[tauri::command]
@@ -22,7 +23,12 @@ pub async fn init_tool_server() -> Result<(), String> {
 pub async fn list_tool_server_tools() -> Result<Vec<sentinel_tools::ToolInfo>, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
-    Ok(server.list_tools().await)
+    Ok(server
+        .list_tools()
+        .await
+        .into_iter()
+        .filter(|t| t.name != SkillsTool::NAME)
+        .collect())
 }
 
 /// List tools by source type (builtin, mcp, plugin, workflow)
@@ -32,12 +38,20 @@ pub async fn list_tools_by_source(
 ) -> Result<Vec<sentinel_tools::ToolInfo>, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
-    Ok(server.list_tools_by_source(&source_type).await)
+    Ok(server
+        .list_tools_by_source(&source_type)
+        .await
+        .into_iter()
+        .filter(|t| t.name != SkillsTool::NAME)
+        .collect())
 }
 
 /// Get tool info by name
 #[tauri::command]
 pub async fn get_tool_server_tool(tool_name: String) -> Result<Option<sentinel_tools::ToolInfo>, String> {
+    if tool_name == SkillsTool::NAME {
+        return Ok(None);
+    }
     let server = get_tool_server();
     server.init_builtin_tools().await;
     Ok(server.get_tool(&tool_name).await)
@@ -48,6 +62,10 @@ pub async fn get_tool_server_tool(tool_name: String) -> Result<Option<sentinel_t
 pub async fn get_tool_input_schema(tool_id: String) -> Result<serde_json::Value, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
+
+    if tool_id == SkillsTool::NAME {
+        return Err("Tool not found: skills".to_string());
+    }
     
     // Get tool info
     let tool_info = server.get_tool(&tool_id).await
@@ -62,6 +80,10 @@ pub async fn get_tool_input_schema(tool_id: String) -> Result<serde_json::Value,
 pub async fn get_tool_output_schema(tool_id: String) -> Result<serde_json::Value, String> {
     let server = get_tool_server();
     server.init_builtin_tools().await;
+
+    if tool_id == SkillsTool::NAME {
+        return Err("Tool not found: skills".to_string());
+    }
     
     // Get tool info
     let tool_info = server.get_tool(&tool_id).await
@@ -270,4 +292,3 @@ pub async fn refresh_all_dynamic_tools(
         "message": "Dynamic tools refreshed. MCP and plugin tools will be registered when connected/enabled."
     }))
 }
-

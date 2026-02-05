@@ -9,6 +9,7 @@ pub mod generators;
 pub mod managers;
 pub mod models;
 pub mod services;
+pub mod skills;
 pub mod tools;
 pub mod trackers;
 pub mod utils;
@@ -37,6 +38,7 @@ use commands::{
     rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
     packet_capture_commands::{self, PacketCaptureState},
 };
+use crate::skills::scan_and_upsert_skills;
 
 // Workflow engine and scheduler
 use sentinel_workflow::{WorkflowEngine, WorkflowScheduler};
@@ -77,21 +79,36 @@ pub fn run() {
     let file_appender = tracing_appender::rolling::daily(&logs_dir, "sentinel-ai.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
+    let mut env_filter = tracing_subscriber::EnvFilter::from_default_env()
+        .add_directive("sentinel_ai=info".parse().unwrap())
+        .add_directive("sentinel_plugins=info".parse().unwrap())
+        .add_directive("sentinel_workflow=info".parse().unwrap())
+        .add_directive("sentinel_traffic=info".parse().unwrap())
+        .add_directive("sentinel_rag=info".parse().unwrap())
+        .add_directive("sentinel_llm=info".parse().unwrap())
+        .add_directive("hudsucker=off".parse().unwrap())
+        .add_directive(
+            "rig::agent::prompt_request::streaming=warn"
+                .parse()
+                .unwrap(),
+        );
+
+    let rig_debug = std::env::var("SENTINEL_RIG_DEBUG")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
+    if rig_debug {
+        env_filter = env_filter
+            .add_directive("sentinel_llm=debug".parse().unwrap())
+            .add_directive("rig=debug".parse().unwrap())
+            .add_directive(
+                "rig::agent::prompt_request::streaming=debug"
+                    .parse()
+                    .unwrap(),
+            );
+    }
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("sentinel_ai=info".parse().unwrap())
-                .add_directive("sentinel_plugins=info".parse().unwrap())
-                .add_directive("sentinel_workflow=info".parse().unwrap())
-                .add_directive("sentinel_traffic=info".parse().unwrap())
-                .add_directive("sentinel_rag=info".parse().unwrap())
-                .add_directive("hudsucker=off".parse().unwrap())
-                .add_directive(
-                    "rig::agent::prompt_request::streaming=warn"
-                        .parse()
-                        .unwrap(),
-                ),
-        )
+        .with_env_filter(env_filter)
         .with_writer(non_blocking)
         .without_time()
         .with_line_number(true)
@@ -275,6 +292,10 @@ pub fn run() {
                 // Initialize agent configuration from database
                 if let Err(e) = tool_commands::init_agent_config(&db_service).await {
                     tracing::error!("Failed to initialize agent config: {}", e);
+                }
+
+                if let Err(e) = scan_and_upsert_skills(&db_service).await {
+                    tracing::warn!("Skills scan warning: {}", e);
                 }
 
                 if let Err(e) =
@@ -1152,14 +1173,26 @@ pub fn run() {
             // Agent config commands
             tool_commands::get_agent_config,
             tool_commands::save_agent_config,
-            // Ability group commands
-            tool_commands::list_ability_groups,
-            tool_commands::list_ability_groups_full,
-            tool_commands::get_ability_group_detail,
-            tool_commands::get_ability_group,
-            tool_commands::create_ability_group,
-            tool_commands::update_ability_group,
-            tool_commands::delete_ability_group,
+            // Skill commands
+            tool_commands::list_skills,
+            tool_commands::list_skills_full,
+            tool_commands::get_skill_detail,
+            tool_commands::get_skill,
+            tool_commands::get_skill_markdown,
+            tool_commands::create_skill,
+            tool_commands::update_skill,
+            tool_commands::delete_skill,
+            tool_commands::refresh_skills_index,
+            tool_commands::list_skill_files,
+            tool_commands::read_skill_file,
+            tool_commands::save_skill_file,
+            tool_commands::delete_skill_file,
+            tool_commands::import_skill_file,
+            tool_commands::discover_skills_from_path,
+            tool_commands::discover_skills_from_git,
+            tool_commands::install_skills_from_path,
+            tool_commands::list_skill_install_history,
+            tool_commands::delete_skill_install_history,
             // Tool Server commands
             tool_commands::tool_server::init_tool_server,
             tool_commands::tool_server::list_tool_server_tools,

@@ -3,6 +3,8 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 
+const TOOL_LOG_MAX_CHARS: usize = 8000;
+
 /// 写入 LLM 日志
 pub fn write_llm_log(
     session_id: &str,
@@ -52,6 +54,115 @@ pub fn write_llm_log(
             tracing::error!("Failed to open LLM log file {}: {}", log_file_path, e);
         }
     }
+}
+
+/// 写入工具调用日志
+pub fn write_tool_log(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    log_type: &str,
+    content: &str,
+) {
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
+    let log_entry = format!(
+        "[{}] [{}] [Session: {}] [Conversation: {}] [Provider: {}] [Model: {}] {}\n",
+        timestamp,
+        log_type,
+        session_id,
+        conversation_id.unwrap_or("N/A"),
+        provider,
+        model,
+        content
+    );
+
+    if let Err(e) = std::fs::create_dir_all("logs") {
+        tracing::error!("Failed to create logs directory: {}", e);
+        return;
+    }
+
+    let log_file_path = format!(
+        "logs/llm-tool-calls-{}.log",
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(log_entry.as_bytes()) {
+                tracing::error!(
+                    "Failed to write to tool log file {}: {}",
+                    log_file_path,
+                    e
+                );
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to open tool log file {}: {}", log_file_path, e);
+        }
+    }
+}
+
+pub fn log_tool_call(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    tool_name: &str,
+    tool_call_id: &str,
+    arguments: &str,
+) {
+    write_tool_log(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        "TOOL CALL",
+        &format!(
+            "\nTool: {}\nCall ID: {}\nArguments: {}\n",
+            tool_name, tool_call_id, arguments
+        ),
+    );
+}
+
+pub fn log_tool_result(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    tool_name: &str,
+    tool_call_id: &str,
+    duration_ms: Option<i64>,
+    success: bool,
+    result: &str,
+) {
+    let mut result_trimmed = result.to_string();
+    if result_trimmed.len() > TOOL_LOG_MAX_CHARS {
+        result_trimmed.truncate(TOOL_LOG_MAX_CHARS);
+        result_trimmed.push_str("\n...[truncated]");
+    }
+
+    let duration_str = duration_ms
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    write_tool_log(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        "TOOL RESULT",
+        &format!(
+            "\nTool: {}\nCall ID: {}\nDuration: {} ms\nSuccess: {}\nResult:\n{}\n",
+            tool_name, tool_call_id, duration_str, success, result_trimmed
+        ),
+    );
 }
 
 /// 记录 LLM 请求
@@ -116,4 +227,3 @@ pub fn log_response(
         &format!("\n{}\n", response),
     );
 }
-

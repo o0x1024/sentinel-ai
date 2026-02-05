@@ -142,7 +142,7 @@ pub fn topo_order(nodes: &[NodeDef], edges: &[(String, String)]) -> Vec<String> 
             }
         }
     }
-    if order.len() != nodes.len() { order } else { order }
+    order
 }
 
 fn convert_core_to_rag(core: CoreRagConfig) -> RagConfig {

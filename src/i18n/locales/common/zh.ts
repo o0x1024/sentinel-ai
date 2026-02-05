@@ -23,6 +23,8 @@ export default {
   time: '时间',
   status: '状态',
   actions: '操作',
+  enabled: '已启用',
+  disabled: '已禁用',
   name: '名称',
   target: '目标',
   saveSettings: '保存设置',

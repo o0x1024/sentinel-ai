@@ -122,7 +122,6 @@ impl DictionaryService {
             }
             if let Some(search_term) = filter.search_term {
                 query.push_str(&format!(" AND (name LIKE ${0} OR description LIKE ${0})", param_idx));
-                param_idx += 1;
                 let search_pattern = format!("%{}%", search_term);
                 params.push(search_pattern);
             }

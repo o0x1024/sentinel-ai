@@ -543,15 +543,25 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
-        // 能力组表
+        // Drop legacy ability_groups table if exists
+        sqlx::query("DROP TABLE IF EXISTS ability_groups").execute(pool).await?;
+
+        // Skills 表
         sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS ability_groups (
+            r#"CREATE TABLE IF NOT EXISTS skills (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT NOT NULL DEFAULT '',
-                instructions TEXT NOT NULL DEFAULT '',
-                additional_notes TEXT NOT NULL DEFAULT '',
-                tool_ids TEXT NOT NULL DEFAULT '[]',
+                source_path TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT '',
+                argument_hint TEXT NOT NULL DEFAULT '',
+                disable_model_invocation BOOLEAN NOT NULL DEFAULT FALSE,
+                user_invocable BOOLEAN NOT NULL DEFAULT TRUE,
+                allowed_tools TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL DEFAULT '',
+                context TEXT NOT NULL DEFAULT '',
+                agent TEXT NOT NULL DEFAULT '',
+                hooks TEXT NOT NULL DEFAULT '{}',
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#

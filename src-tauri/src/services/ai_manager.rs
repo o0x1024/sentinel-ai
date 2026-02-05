@@ -178,6 +178,7 @@ impl AiServiceManager {
 
     /// 从数据库获取 AI 提供商配置
     pub async fn get_provider_config(&self, provider: &str) -> Result<Option<AiConfig>> {
+        let (temperature, max_tokens) = self.load_generation_settings().await;
         if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
             if let Ok(providers) =
                 serde_json::from_str::<HashMap<String, serde_json::Value>>(&providers_json)
@@ -218,8 +219,8 @@ impl AiServiceManager {
                                     api_key,
                                     api_base,
                                     organization,
-                                    temperature: Some(0.7),
-                                    max_tokens: Some(4096),
+                                    temperature: Some(temperature),
+                                    max_tokens: Some(max_tokens),
                                     rig_provider,
                                     max_turns: self.db.get_config("ai", "max_turns").await.ok().flatten().and_then(|s| s.parse().ok()),
                                 }));
@@ -284,8 +285,8 @@ impl AiServiceManager {
                 api_key,
                 api_base,
                 organization: None,
-                temperature: Some(0.7),
-                max_tokens: Some(4096),
+                temperature: Some(temperature),
+                max_tokens: Some(max_tokens),
                 rig_provider,
                 max_turns: self.db.get_config("ai", "max_turns").await.ok().flatten().and_then(|s| s.parse().ok()),
             }));
@@ -346,6 +347,7 @@ impl AiServiceManager {
             .ok()
             .flatten()
             .unwrap_or_default();
+        let (temperature, max_tokens) = self.load_generation_settings().await;
 
         if let Ok(Some(config_str)) = self.db.get_config("ai", "providers_config").await {
             match serde_json::from_str::<HashMap<String, ProviderConfig>>(&config_str) {
@@ -420,8 +422,8 @@ impl AiServiceManager {
                             api_key,
                             api_base,
                             organization,
-                            temperature: Some(0.7),
-                            max_tokens: Some(4096),
+                            temperature: Some(temperature),
+                            max_tokens: Some(max_tokens),
                             rig_provider: Some(rig_provider),
                             max_turns,
                         };
@@ -558,19 +560,40 @@ impl AiServiceManager {
 
     async fn create_minimal_default_service(&self) -> anyhow::Result<()> {
         warn!("Creating minimal default service - no AI providers configured!");
+        let (temperature, max_tokens) = self.load_generation_settings().await;
         let config = AiConfig {
             provider: "unconfigured".to_string(),
             model: "no-model-configured".to_string(),
             api_key: None,
             api_base: None,
             organization: None,
-            temperature: Some(0.7),
-            max_tokens: Some(1000),
+            temperature: Some(temperature),
+            max_tokens: Some(max_tokens),
             rig_provider: None,
             max_turns: self.db.get_config("ai", "max_turns").await.ok().flatten().and_then(|s| s.parse().ok()),
         };
         self.add_service("default".to_string(), config).await?;
         Ok(())
+    }
+
+    async fn load_generation_settings(&self) -> (f32, u32) {
+        let temperature = self.db
+            .get_config("ai", "temperature")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.7);
+
+        let max_tokens = self.db
+            .get_config("ai", "max_tokens")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(4096);
+
+        (temperature, max_tokens)
     }
 
 }
@@ -726,4 +749,3 @@ pub struct ModelInfo {
 
 // 为兼容性提供类型别名
 pub type LegacyAiService = AiServiceWrapper;
-

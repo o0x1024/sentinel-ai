@@ -1,12 +1,14 @@
 //! Simple execution path without tools.
 
 use anyhow::Result;
-use tauri::{AppHandle, Emitter};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 
 use crate::agents::executor::message_store::save_assistant_message;
 use crate::agents::executor::utils::cleanup_container_context_async;
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use super::AgentExecuteParams;
 
 pub async fn execute_agent_simple(
@@ -17,7 +19,8 @@ pub async fn execute_agent_simple(
 
     let mut config = LlmConfig::new(&rig_provider, &params.model)
         .with_timeout(params.timeout_secs)
-        .with_rig_provider(&rig_provider);
+        .with_rig_provider(&rig_provider)
+        .with_conversation_id(&params.execution_id);
 
     if let Some(ref api_key) = params.api_key {
         config = config.with_api_key(api_key);
@@ -25,6 +28,10 @@ pub async fn execute_agent_simple(
 
     if let Some(ref api_base) = params.api_base {
         config = config.with_base_url(api_base);
+    }
+
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        config = apply_generation_settings_from_db(db.as_ref(), config).await;
     }
 
     let system_prompt = params.system_prompt.clone();
@@ -104,4 +111,3 @@ pub async fn execute_agent_simple(
         }
     }
 }
-

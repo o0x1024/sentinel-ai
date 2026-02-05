@@ -468,6 +468,13 @@ pub async fn get_ai_config(
         }
     }
 
+    if let Ok(Some(output_storage_threshold_str)) = db.get_config_internal("ai", "output_storage_threshold").await {
+        if let Ok(output_storage_threshold) = output_storage_threshold_str.parse::<u64>() {
+            ai_config["output_storage_threshold"] =
+                serde_json::Value::Number(serde_json::Number::from(output_storage_threshold));
+        }
+    }
+
     tracing::info!("Successfully retrieved AI configuration");
     Ok(ai_config)
 }
@@ -782,14 +789,7 @@ async fn test_anthropic_connection(
         .map_err(|e| format!("Failed to connect to Anthropic: {}", e))?;
 
     if response.status().is_success() {
-        let models = vec![
-            "claude-3-opus-20240229".to_string(),
-            "claude-3-sonnet-20240229".to_string(),
-            "claude-3-haiku-20240307".to_string(),
-            "claude-2.1".to_string(),
-            "claude-2.0".to_string(),
-            "claude-instant-1.2".to_string(),
-        ];
+        let models = vec![];
 
         Ok(TestConnectionResponse {
             success: true,
@@ -1439,4 +1439,3 @@ fn default_providers_config() -> serde_json::Value {
     }
     serde_json::Value::Object(map)
 }
-

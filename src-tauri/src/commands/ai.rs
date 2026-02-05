@@ -4,6 +4,7 @@ use crate::commands::tool_commands;
 use crate::models::database::{AiConversation, AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use crate::utils::ordered_message::ChunkType;
 use anyhow::Result;
 use chrono::Utc;
@@ -132,7 +133,8 @@ async fn perform_rag_enhancement(
                 let llm_config = sentinel_llm::LlmConfig::new(&provider, &model)
                     .with_api_key(provider_cfg.api_key.as_deref().unwrap_or_default())
                     .with_base_url(provider_cfg.api_base.as_deref().unwrap_or_default());
-                
+
+                let llm_config = apply_generation_settings_from_db(db.as_ref(), llm_config).await;
                 let client = sentinel_llm::LlmClient::new(llm_config);
                 
                 let rewrite_prompt = "you are a search query rewrite expert. Please rewrite the user's latest question into a independent and complete search query for retrieval in the vector database. If the user's question is already independent, return it as is. Only return the rewritten query text, no additional explanation.";
@@ -227,7 +229,7 @@ async fn perform_rag_enhancement(
 pub(crate) fn reconstruct_chat_history(
     messages: &[sentinel_core::models::database::AiMessage],
 ) -> Vec<LlmChatMessage> {
-    use serde_json::Value;
+use serde_json::{json, Value};
     use std::collections::HashSet;
     
     let mut result = Vec::new();
@@ -279,9 +281,15 @@ pub(crate) fn reconstruct_chat_history(
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string();
-                                        let tool_args = metadata.get("tool_args")
+                                        let tool_args_raw = metadata.get("tool_args")
                                             .cloned()
                                             .unwrap_or(Value::Object(serde_json::Map::new()));
+                                        // Normalize tool_args: some paths persist args as a JSON string.
+                                        let tool_args = match tool_args_raw {
+                                            Value::String(s) => serde_json::from_str::<Value>(&s)
+                                                .unwrap_or_else(|_| json!({ "raw": s })),
+                                            other => other,
+                                        };
 
                                         // 构建 tool_call JSON
                                         tool_calls_json.push(serde_json::json!({
@@ -303,19 +311,28 @@ pub(crate) fn reconstruct_chat_history(
                     j += 1;
                 }
                 
-                // 创建 assistant 消息
-                let mut chat_msg = LlmChatMessage::new("assistant", &msg.content);
-                
-                // 如果有工具调用，添加 tool_calls 和 reasoning_content
-                if !tool_calls_json.is_empty() {
-                    chat_msg.tool_calls = Some(serde_json::to_string(&tool_calls_json).unwrap_or_default());
-                    // 确保有 reasoning_content（即使为空）
-                    chat_msg.reasoning_content = Some(reasoning_content.unwrap_or_default());
-                } else if reasoning_content.is_some() {
-                    chat_msg.reasoning_content = reasoning_content;
+                let has_content = !msg.content.trim().is_empty();
+                let has_tool_calls = !tool_calls_json.is_empty();
+                let has_reasoning = reasoning_content
+                    .as_ref()
+                    .is_some_and(|r| !r.trim().is_empty());
+
+                if has_content || has_tool_calls || has_reasoning {
+                    // 创建 assistant 消息
+                    let mut chat_msg = LlmChatMessage::new("assistant", msg.content.as_str());
+
+                    // 如果有工具调用，添加 tool_calls 和 reasoning_content
+                    if has_tool_calls {
+                        chat_msg.tool_calls =
+                            Some(serde_json::to_string(&tool_calls_json).unwrap_or_default());
+                        // 确保有 reasoning_content（即使为空）
+                        chat_msg.reasoning_content = Some(reasoning_content.unwrap_or_default());
+                    } else if has_reasoning {
+                        chat_msg.reasoning_content = reasoning_content;
+                    }
+
+                    result.push(chat_msg);
                 }
-                
-                result.push(chat_msg);
                 
                 // 添加 tool result 消息
                 for (tool_call_id, tool_result) in tool_results {
@@ -339,6 +356,8 @@ pub(crate) fn reconstruct_chat_history(
     
     result
 }
+
+
 
 /// 使用 sentinel_llm::StreamingLlmClient 处理 LLM 调用
 async fn stream_chat_with_llm(
@@ -388,7 +407,7 @@ async fn stream_chat_with_llm(
     }
 
     // 创建 LLM 客户端
-    let llm_config = service.service.to_llm_config();
+    let llm_config = apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await;
     let streaming_client = StreamingLlmClient::new(llm_config);
 
     // -------------------
@@ -787,7 +806,11 @@ pub async fn generate_plugin_stream(
     let history = request.history.unwrap_or_default();
 
     // Build LLM config with correct model
-    let mut llm_config = service.service.to_llm_config();
+    let mut llm_config = if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await
+    } else {
+        service.service.to_llm_config()
+    };
     llm_config = llm_config.with_model(&model_to_use);
 
     tokio::spawn(async move {
@@ -884,7 +907,11 @@ pub async fn generate_ai_role(
         .or_else(|| ai_manager.get_service("default"))
         .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
 
-    let llm_config = service.service.to_llm_config();
+    let llm_config = if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await
+    } else {
+        service.service.to_llm_config()
+    };
     let client = sentinel_llm::LlmClient::new(llm_config);
 
     let system_prompt = r#"You are a professional AI Assistant Role Creator. 
@@ -972,12 +999,17 @@ pub async fn plugin_assistant_chat_stream(
     let stream_id = request.stream_id.clone();
     let user_message = request.message.clone();
     let system_prompt = request.system_prompt.clone();
-    let service_clone = service.clone();
 
     let _cancellation_token = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
     let history = request.history.unwrap_or_default();
+
+    let llm_config = if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
+        apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await
+    } else {
+        service.service.to_llm_config()
+    };
 
     tokio::spawn(async move {
         let _guard = CancellationGuard(sid.clone());
@@ -985,7 +1017,6 @@ pub async fn plugin_assistant_chat_stream(
         let _ = app_clone.emit("plugin_assistant_start", &serde_json::json!({ "stream_id": sid }));
 
         // Create LLM client and stream
-        let llm_config = service_clone.service.to_llm_config();
         let streaming_client = StreamingLlmClient::new(llm_config);
         let app_for_callback = app_clone.clone();
         let sid_for_callback = sid.clone();
@@ -1544,6 +1575,15 @@ pub async fn clear_conversation_messages(
             )
         })?;
 
+    // Clear sliding window summaries to avoid stale RECENT ACTIVITY SUMMARY on empty chats.
+    if let Err(e) = db_service.delete_sliding_window_summaries(&conversation_id).await {
+        tracing::warn!(
+            "Failed to clear sliding window summaries for {}: {}",
+            conversation_id,
+            e
+        );
+    }
+
     // Also clear agent run state to prevent cross-run leakage (tool digests, etc).
     if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
         tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
@@ -1602,7 +1642,11 @@ pub async fn generate_workflow_from_nl(
 
     // 将 AiConfig 转换为 AiService，再获取 LlmConfig
     let ai_service = sentinel_llm::AiService::new(ai_config);
-    let llm_config = ai_service.to_llm_config();
+    let llm_config = apply_generation_settings_from_db(
+        ai_manager.get_db_arc().as_ref(),
+        ai_service.to_llm_config(),
+    )
+    .await;
     let llm_client = sentinel_llm::LlmClient::new(llm_config);
 
     // 可用工具与节点摘要（提高生成命中率）

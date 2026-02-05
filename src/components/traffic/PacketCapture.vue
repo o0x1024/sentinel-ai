@@ -1356,7 +1356,7 @@ function isLikelyText(data: number[]): boolean {
     if (data.length === 0) return false
     
     let printableCount = 0
-    let totalCount = Math.min(data.length, 200) // 只检查前 200 字节
+    const totalCount = Math.min(data.length, 200) // 只检查前 200 字节
     
     for (let i = 0; i < totalCount; i++) {
         const b = data[i]

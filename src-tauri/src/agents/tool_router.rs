@@ -5,6 +5,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use serde_json;
 #[allow(unused_imports)]
 use sentinel_db::Database;
 #[allow(unused_imports)]
@@ -16,7 +17,7 @@ use tokio::sync::RwLock;
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
     HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, SubagentTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool,
+    browser::constants as browser_constants, TenthManTool, SubagentTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
 };
 
 use crate::engines::web_explorer::WebExplorerTool;
@@ -100,16 +101,16 @@ pub enum ToolSelectionStrategy {
     Hybrid,
     /// 用户手动指定
     Manual(Vec<String>),
-    /// 能力组模式（渐进式披露）
-    /// Vec<String> 为允许参与选择的 ability_group_id 列表；空表示全部
-    Ability(Vec<String>),
+    /// Skills 模式（渐进式披露）
+    /// Vec<String> 为允许参与选择的 skill_id 列表；空表示全部
+    Skills(Vec<String>),
     /// 不使用工具
     None,
 }
 
-/// 选中的 Ability Group 摘要
+/// 选中的 Skill 摘要
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SelectedAbilityGroup {
+pub struct SelectedSkill {
     pub id: String,
     pub name: String,
 }
@@ -119,10 +120,10 @@ pub struct SelectedAbilityGroup {
 pub struct ToolSelectionPlan {
     /// 最终选中的工具 ID 列表
     pub tool_ids: Vec<String>,
-    /// 需要注入到 system_prompt 的额外内容（来自 Ability instructions）
+    /// 需要注入到 system_prompt 的额外内容（来自 Skill content）
     pub injected_system_prompt: Option<String>,
-    /// 选中的 Ability 组信息
-    pub selected_ability_group: Option<SelectedAbilityGroup>,
+    /// 选中的 Skill 信息
+    pub selected_skill: Option<SelectedSkill>,
 }
 
 
@@ -316,7 +317,7 @@ impl ToolRouter {
                 category: ToolCategory::System,
                 tags: vec!["time".to_string(), "date".to_string(), "clock".to_string()],
                 cost_estimate: ToolCost::Low,
-                always_available: false,
+                always_available: true,
             },
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
@@ -330,7 +331,7 @@ impl ToolRouter {
                     "bash".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
-                always_available: false,
+                always_available: true,
             },
             ToolMetadata {
                 id: TerminalServer::NAME.to_string(),
@@ -349,6 +350,21 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
+            ToolMetadata {
+                id: SkillsTool::NAME.to_string(),
+                name: SkillsTool::NAME.to_string(),
+                description: SkillsTool::DESCRIPTION.to_string(),
+                category: ToolCategory::System,
+                tags: vec![
+                    "skills".to_string(),
+                    "list".to_string(),
+                    "load".to_string(),
+                    "read".to_string(),
+                    "progressive".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: true,
+            },
             // Todos tool
             ToolMetadata {
                 id: TodosTool::NAME.to_string(),
@@ -357,7 +373,7 @@ impl ToolRouter {
                 category: ToolCategory::System,
                 tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string(), "todos".to_string()],
                 cost_estimate: ToolCost::Low,
-                always_available: false,
+                always_available: true,
             },
             // AI工具
             ToolMetadata {
@@ -706,12 +722,12 @@ impl ToolRouter {
             return Ok(vec![]);
         }
 
-        match &config.selection_strategy {
-            ToolSelectionStrategy::None => Ok(vec![]),
+        let selected = match &config.selection_strategy {
+            ToolSelectionStrategy::None => vec![],
             ToolSelectionStrategy::All => {
                 let mut all = self.get_all_available_tools();
                 all.retain(|t| !config.disabled_tools.contains(&t.id));
-                Ok(all.into_iter().map(|t| t.id).collect())
+                all.into_iter().map(|t| t.id).collect()
             }
             ToolSelectionStrategy::Manual(tools) => {
                 let all_tools = self.get_all_available_tools();
@@ -759,51 +775,170 @@ impl ToolRouter {
                         unknown_tools
                     );
                 }
-                Ok(result)
+                result
             }
-            ToolSelectionStrategy::Keyword => self.select_by_keywords(task, config),
-            ToolSelectionStrategy::LLM => self.select_by_llm(task, config, llm_config).await,
-            ToolSelectionStrategy::Hybrid => self.select_hybrid(task, config, llm_config).await,
-            ToolSelectionStrategy::Ability(allowed_groups) => {
-                // Ability mode: delegate to plan_tools and return only tool_ids
-                let plan = self
-                    .plan_tools_ability(task, config, llm_config, allowed_groups, None)
-                    .await?;
-                Ok(plan.tool_ids)
+            ToolSelectionStrategy::Keyword => self.select_by_keywords(task, config)?,
+            ToolSelectionStrategy::LLM => self.select_by_llm(task, config, llm_config).await?,
+            ToolSelectionStrategy::Hybrid => self.select_hybrid(task, config, llm_config).await?,
+            ToolSelectionStrategy::Skills(_allowed_groups) => {
+                if !self.is_skills_enabled().await {
+                    tracing::info!("Skills tool disabled via config; returning no tools.");
+                    return Ok(self.merge_always_available_tools(vec![]));
+                }
+                // Claude-style Skills mode: expose full toolset and let model call skills tool
+                let mut base_tools = vec![
+                    SkillsTool::NAME.to_string(),
+                    ShellTool::NAME.to_string(),
+                ];
+                if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
+                    base_tools.push(TodosTool::NAME.to_string());
+                }
+                base_tools
             }
-        }
+        };
+
+        Ok(self.merge_always_available_tools(selected))
     }
 
-    /// Plan tools with full selection plan (supports Ability context injection)
+    /// Plan tools with full selection plan (supports Skills context injection)
     pub async fn plan_tools(
         &self,
         task: &str,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
-        db_pool: Option<&sqlx::postgres::PgPool>,
+        _db_pool: Option<&sqlx::postgres::PgPool>,
     ) -> Result<ToolSelectionPlan> {
         if !config.enabled {
             return Ok(ToolSelectionPlan {
                 tool_ids: vec![],
                 injected_system_prompt: None,
-                selected_ability_group: None,
+                selected_skill: None,
             });
         }
 
         match &config.selection_strategy {
-            ToolSelectionStrategy::Ability(allowed_groups) => {
-                self.plan_tools_ability(task, config, llm_config, allowed_groups, db_pool)
-                    .await
+            ToolSelectionStrategy::Skills(_allowed_groups) => {
+                if !self.is_skills_enabled().await {
+                    tracing::info!("Skills tool disabled via config; skipping skills injection.");
+                    return Ok(ToolSelectionPlan {
+                        tool_ids: vec![],
+                        injected_system_prompt: None,
+                        selected_skill: None,
+                    });
+                }
+                // Claude-style Skills mode: no skill pre-selection or injection
+                let mut all = vec![
+                    SkillsTool::NAME.to_string(),
+                    ShellTool::NAME.to_string(),
+                ];
+                if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
+                    all.push(TodosTool::NAME.to_string());
+                }
+                let injected = if let Some(db_service) = &self.db_service {
+                    let root = db_service.get_skills_root_dir();
+                    let mut summaries = Vec::new();
+                    if let Ok(entries) = std::fs::read_dir(&root) {
+                        for entry in entries.flatten() {
+                            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                continue;
+                            }
+                            let skill_dir = entry.path();
+                            let skill_id = entry.file_name().to_string_lossy().to_string();
+                            if !self.is_skill_enabled(&skill_id).await {
+                                continue;
+                            }
+                            let skill_md = skill_dir.join("SKILL.md");
+                            if !skill_md.exists() {
+                                continue;
+                            }
+                            let content = match std::fs::read_to_string(&skill_md) {
+                                Ok(c) => c,
+                                Err(_) => continue,
+                            };
+                            let doc = match crate::skills::parse_skill_markdown(&content) {
+                                Ok(doc) => doc,
+                                Err(_) => continue,
+                            };
+                            if doc.frontmatter.description.trim().is_empty()
+                                && doc.frontmatter.when_to_use.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+                            {
+                                continue;
+                            }
+                            let name = doc.frontmatter.name.trim().to_string();
+                            if name.is_empty() {
+                                continue;
+                            }
+                            let description = if let Some(when) = doc.frontmatter.when_to_use.as_ref() {
+                                if when.trim().is_empty() {
+                                    doc.frontmatter.description.trim().to_string()
+                                } else {
+                                    format!(
+                                        "{} - {}",
+                                        doc.frontmatter.description.trim(),
+                                        when.trim()
+                                    )
+                                }
+                            } else {
+                                doc.frontmatter.description.trim().to_string()
+                            };
+                            summaries.push(format!("\"{}\": {}", name, description));
+                        }
+                    }
+                    summaries.sort();
+                    let skills_block = if summaries.is_empty() {
+                        "No skills available.".to_string()
+                    } else {
+                        summaries.join("\n")
+                    };
+                    Some(format!(
+                        "<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
+                        skills_block
+                    ))
+                } else {
+                    Some("When a task requires specialized workflows, use the `skills` tool. If <available_skills> is provided, you can call action=load directly; otherwise call action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.".to_string())
+                };
+                Ok(ToolSelectionPlan {
+                    tool_ids: self.merge_always_available_tools(all),
+                    injected_system_prompt: injected,
+                    selected_skill: None,
+                })
             }
             _ => {
-                // For non-Ability strategies, just wrap select_tools result
+                // For non-Skills strategies, just wrap select_tools result
                 let tool_ids = self.select_tools(task, config, llm_config).await?;
                 Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt: None,
-                    selected_ability_group: None,
+                    selected_skill: None,
                 })
             }
+        }
+    }
+
+    async fn is_skills_enabled(&self) -> bool {
+        let Some(db) = &self.db_service else {
+            return true;
+        };
+        match db.get_config("agent", "skills_enabled").await {
+            Ok(Some(val)) => {
+                let v = val.trim().to_lowercase();
+                matches!(v.as_str(), "true" | "1" | "yes" | "on")
+            }
+            _ => true,
+        }
+    }
+
+    async fn is_skill_enabled(&self, skill_id: &str) -> bool {
+        let Some(db) = &self.db_service else {
+            return true;
+        };
+        let key = format!("enabled::{}", skill_id);
+        match db.get_config("skills", &key).await {
+            Ok(Some(val)) => {
+                let v = val.trim().to_lowercase();
+                matches!(v.as_str(), "true" | "1" | "yes" | "on")
+            }
+            _ => true,
         }
     }
 
@@ -819,6 +954,19 @@ impl ToolRouter {
         tools.retain(|t| seen.insert(t.id.clone()));
         
         tools
+    }
+
+    fn merge_always_available_tools(&self, selected: Vec<String>) -> Vec<String> {
+        let mut merged = std::collections::HashSet::new();
+        for id in selected {
+            merged.insert(id);
+        }
+        for tool in self.get_all_available_tools() {
+            if tool.always_available {
+                merged.insert(tool.id);
+            }
+        }
+        merged.into_iter().collect()
     }
 
     /// 关键词匹配选择工具（快速，无额外成本）
@@ -1482,173 +1630,216 @@ Return ONLY the tool names, one per line."#,
         }
     }
 
-    /// Ability mode: two-phase progressive disclosure
-    /// Phase 1: Show group summaries to LLM, let it pick one
-    /// Phase 2: Load full group (instructions + tools), inject context
-    async fn plan_tools_ability(
+    /// Skills mode: two-phase progressive disclosure
+    /// Phase 1: Show skill summaries to LLM, let it pick one
+    /// Phase 2: Load full skill (content + tools), inject context
+    #[allow(dead_code)]
+    async fn plan_tools_skills(
         &self,
         task: &str,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
-        allowed_groups: &[String],
+        _allowed_groups: &[String],
         _db_pool: Option<&sqlx::postgres::PgPool>,
     ) -> Result<ToolSelectionPlan> {
         use sentinel_db::Database;
         use sentinel_llm::{LlmClient, LlmConfig};
 
-        // Need DB service for ability group queries
+        // Need DB service for skill queries
         let db = match &self.db_service {
             Some(db) => db,
             None => {
-                tracing::warn!("Ability mode requires db_service, falling back to Keyword");
+                tracing::warn!("Skills mode requires db_service, falling back to Keyword");
                 let tool_ids = self.select_by_keywords(task, config)?;
                 return Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt: None,
-                    selected_ability_group: None,
+                    selected_skill: None,
                 });
             }
         };
 
-        // Phase 1: Load group summaries
-        let groups = if allowed_groups.is_empty() {
-            db.list_ability_groups_summary().await?
-        } else {
-            db.list_ability_groups_summary_by_ids(allowed_groups).await?
-        };
+        // Phase 1: Load all skill summaries (Claude-style auto discovery)
+        let skills = db.list_skills_summary().await?;
+        let mut enabled_skills = Vec::new();
+        for skill in skills {
+            if self.is_skill_enabled(&skill.id).await {
+                enabled_skills.push(skill);
+            }
+        }
 
-        if groups.is_empty() {
-            tracing::warn!("No ability groups found, falling back to Keyword");
+        if enabled_skills.is_empty() {
+            tracing::warn!("No skills found, falling back to Keyword");
             let tool_ids = self.select_by_keywords(task, config)?;
             return Ok(ToolSelectionPlan {
                 tool_ids,
                 injected_system_prompt: None,
-                selected_ability_group: None,
+                selected_skill: None,
             });
         }
 
-        // Build group selection prompt
-        let groups_summary = groups
+        // Build skill selection prompt
+        let skills_summary = enabled_skills
             .iter()
-            .map(|g| format!("- {}: {}", g.name, g.description))
+            .map(|s| format!("- {}: {}", s.name, s.description))
             .collect::<Vec<_>>()
             .join("\n");
 
         let system_prompt = format!(
-            r#"Available ability groups:
+            r#"Available skills:
 {}
 
 Instructions:
-- If the task requires specialized tools or workflows from a specific group, choose the best fitting group.
+- If the task requires specialized tools or workflows, select the most relevant skills.
+- If multiple skills are needed, return a JSON array of skill names (max 3).
 - If the task is general chat (e.g., "who are you", "hello"), simple Q&A, or does not require any tools, choose "General".
 
-Return ONLY the group name or "General" (one line, no explanation)."#,
-            groups_summary
+Return ONLY:
+- "General" (one word), or
+- A JSON array of skill names (example: ["ctf-pwn","binary-analysis"]), or
+- A single skill name."#,
+            skills_summary
         );
 
         let user_prompt = format!("Task: {}", task);
 
-        // Call LLM to select group
+        // Call LLM to select skill
         let llm_cfg = llm_config.cloned().unwrap_or_else(|| {
             LlmConfig::new("openai", "gpt-3.5-turbo").with_timeout(30)
         });
         let client = LlmClient::new(llm_cfg);
 
-        let selected_group_name = match client.completion(Some(&system_prompt), &user_prompt).await {
+        let selected_skill_raw = match client.completion(Some(&system_prompt), &user_prompt).await {
             Ok(response) => response.trim().to_string(),
             Err(e) => {
-                tracing::warn!("Ability group selection LLM call failed: {}, falling back to Keyword", e);
+                tracing::warn!("Skill selection LLM call failed: {}, falling back to Keyword", e);
                 let tool_ids = self.select_by_keywords(task, config)?;
                 return Ok(ToolSelectionPlan {
                     tool_ids,
                     injected_system_prompt: None,
-                    selected_ability_group: None,
+                    selected_skill: None,
                 });
             }
         };
 
         // Check for General/None response
-        if selected_group_name.trim().eq_ignore_ascii_case("General") 
-            || selected_group_name.trim().eq_ignore_ascii_case("None") {
+        let selected_skill_raw = selected_skill_raw.trim().to_string();
+        if selected_skill_raw.eq_ignore_ascii_case("General")
+            || selected_skill_raw.eq_ignore_ascii_case("None")
+        {
             tracing::info!("Tool Router: 'General' mode selected, skipping specialized tools.");
             return Ok(ToolSelectionPlan {
                 tool_ids: vec![],
                 injected_system_prompt: None,
-                selected_ability_group: None,
+                selected_skill: None,
             });
         }
 
-        // tracing::info!("LLM selected ability group: '{}'", selected_group_name);
+        let mut requested_names: Vec<String> = if selected_skill_raw.starts_with('[') {
+            match serde_json::from_str::<Vec<String>>(&selected_skill_raw) {
+                Ok(list) => list,
+                Err(_) => vec![selected_skill_raw.clone()],
+            }
+        } else {
+            vec![selected_skill_raw.clone()]
+        };
 
-        // Phase 2: Match and load full group
-        // Try exact match first, then fuzzy
-        let matched_group = groups.iter().find(|g| {
-            g.name.eq_ignore_ascii_case(&selected_group_name)
-                || g.id == selected_group_name
-        });
+        requested_names.retain(|s| !s.trim().is_empty());
+        if requested_names.is_empty() {
+            tracing::warn!("Empty skill selection, falling back to Keyword");
+            let tool_ids = self.select_by_keywords(task, config)?;
+            return Ok(ToolSelectionPlan {
+                tool_ids,
+                injected_system_prompt: None,
+                selected_skill: None,
+            });
+        }
 
-        let group_id = match matched_group {
-            Some(g) => g.id.clone(),
-            None => {
-                // Fuzzy match: check if response contains group name
-                let fuzzy_match = groups.iter().find(|g| {
-                    selected_group_name.to_lowercase().contains(&g.name.to_lowercase())
-                });
-                match fuzzy_match {
-                    Some(g) => {
-                        tracing::info!("Fuzzy matched ability group: '{}'", g.name);
-                        g.id.clone()
-                    }
-                    None => {
-                        tracing::warn!(
-                            "Could not match LLM response '{}' to any group, falling back to Keyword",
-                            selected_group_name
-                        );
-                        let tool_ids = self.select_by_keywords(task, config)?;
-                        return Ok(ToolSelectionPlan {
-                            tool_ids,
-                            injected_system_prompt: None,
-                            selected_ability_group: None,
-                        });
-                    }
+        if requested_names.len() > 3 {
+            requested_names.truncate(3);
+        }
+
+        let mut matched_skill_ids: Vec<String> = Vec::new();
+        for name in requested_names.iter() {
+            // Try exact match by name or id
+            if let Some(s) = enabled_skills
+                .iter()
+                .find(|s| s.name.eq_ignore_ascii_case(name) || s.id.eq_ignore_ascii_case(name))
+            {
+                matched_skill_ids.push(s.id.clone());
+                continue;
+            }
+            // Fuzzy match: contains skill name
+            if let Some(s) = enabled_skills.iter().find(|s| {
+                name.to_lowercase().contains(&s.name.to_lowercase())
+                    || name.to_lowercase().contains(&s.id.to_lowercase())
+            }) {
+                tracing::info!("Fuzzy matched skill: '{}'", s.name);
+                matched_skill_ids.push(s.id.clone());
+            }
+        }
+
+        matched_skill_ids.sort();
+        matched_skill_ids.dedup();
+
+        if matched_skill_ids.is_empty() {
+            tracing::warn!(
+                "Could not match LLM response '{}' to any skill, falling back to Keyword",
+                selected_skill_raw
+            );
+            let tool_ids = self.select_by_keywords(task, config)?;
+            return Ok(ToolSelectionPlan {
+                tool_ids,
+                injected_system_prompt: None,
+                selected_skill: None,
+            });
+        }
+
+        let mut full_skills = Vec::new();
+        for skill_id in matched_skill_ids.iter() {
+            if !self.is_skill_enabled(skill_id).await {
+                tracing::info!("Skill {} is disabled; skipping", skill_id);
+                continue;
+            }
+            match db.get_skill(skill_id).await? {
+                Some(s) => full_skills.push(s),
+                None => {
+                    tracing::warn!("Skill {} not found, skipping", skill_id);
                 }
             }
-        };
+        }
 
-        // Load full group details
-        let full_group = match db.get_ability_group(&group_id).await? {
-            Some(g) => g,
-            None => {
-                tracing::warn!("Ability group {} not found, falling back to Keyword", group_id);
-                let tool_ids = self.select_by_keywords(task, config)?;
-                return Ok(ToolSelectionPlan {
-                    tool_ids,
-                    injected_system_prompt: None,
-                    selected_ability_group: None,
-                });
-            }
-        };
+        if full_skills.is_empty() {
+            tracing::warn!("No skills loaded, falling back to Keyword");
+            let tool_ids = self.select_by_keywords(task, config)?;
+            return Ok(ToolSelectionPlan {
+                tool_ids,
+                injected_system_prompt: None,
+                selected_skill: None,
+            });
+        }
 
-        // Compute final tool_ids: fixed_tools + group.tool_ids - disabled_tools
+        // Compute final tool_ids: fixed_tools + skill.allowed_tools - disabled_tools
         let all_available = self.get_all_available_tools();
         let available_ids: std::collections::HashSet<_> = all_available.iter().map(|t| &t.id).collect();
 
         let mut final_tools: Vec<String> = config.fixed_tools.clone();
 
-        // Add group tools (filter out non-existent and disabled)
-        for tool_id in &full_group.tool_ids {
-            if config.disabled_tools.contains(tool_id) {
-                continue;
-            }
-            // Check if tool exists
-            let normalized_id = tool_id.replace("::", "__");
-            let exists = available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
-            if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id) {
-                final_tools.push(if available_ids.contains(&normalized_id) {
-                    normalized_id
-                } else {
-                    tool_id.clone()
-                });
+        // Add skill tools (filter out non-existent and disabled)
+        for skill in &full_skills {
+            for tool_id in &skill.allowed_tools {
+                if config.disabled_tools.contains(tool_id) {
+                    continue;
+                }
+                let normalized_id = tool_id.replace("::", "__");
+                let exists = available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
+                if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id) {
+                    final_tools.push(if available_ids.contains(&normalized_id) {
+                        normalized_id
+                    } else {
+                        tool_id.clone()
+                    });
+                }
             }
         }
 
@@ -1660,42 +1851,58 @@ Return ONLY the group name or "General" (one line, no explanation)."#,
             final_tools.truncate(config.max_tools);
         }
 
-        // Log if no tools available (this is valid - ability group may not need tools)
+        // Log if no tools available (this is valid - skill may not need tools)
         if final_tools.is_empty() {
             tracing::info!(
-                "Ability group '{}' has no tools configured, proceeding without tools",
-                full_group.name
+                "Selected skills have no tools configured, proceeding without tools"
             );
         }
 
-        // Build injected system prompt
-        let mut injected_content = full_group.instructions.clone();
-        
-        // Append additional_notes if present
-        if !full_group.additional_notes.is_empty() {
-            injected_content.push_str("\n\n");
-            injected_content.push_str(&full_group.additional_notes);
+        // Build injected system prompt (load SKILL.md body only, one block per skill)
+        let mut injected_blocks: Vec<String> = Vec::new();
+        if let Some(db_service) = &self.db_service {
+            let root = db_service.get_skills_root_dir();
+            for skill in &full_skills {
+                let skill_path = if !skill.source_path.is_empty() {
+                    root.join(&skill.source_path)
+                } else {
+                    root.join(&skill.id).join("SKILL.md")
+                };
+                match crate::skills::read_skill_markdown(&skill_path) {
+                    Ok(doc) => {
+                        let mut body = doc.body;
+                        if body.contains("$ARGUMENTS") {
+                            body = body.replace("$ARGUMENTS", task);
+                        }
+                        injected_blocks.push(format!(
+                            "\n\n[SkillContentBegin: {}]\n{}\n[SkillContentEnd]",
+                            skill.name, body
+                        ));
+                    }
+                    Err(e) => tracing::warn!("Failed to load SKILL.md for {}: {}", skill.id, e),
+                }
+            }
         }
-        
-        let injected = format!(
-            "\n\n[AbilityInstructionsBegin: {}]\n{}\n[AbilityInstructionsEnd]",
-            full_group.name, injected_content
-        );
+
+        let injected = if injected_blocks.is_empty() {
+            None
+        } else {
+            Some(injected_blocks.join(""))
+        };
 
         tracing::info!(
-            "Ability selection: group='{}', tools={:?}, instructions_len={}, additional_notes_len={}",
-            full_group.name,
+            "Skills selection: skills={:?}, tools={:?}, content_blocks={}",
+            full_skills.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
             final_tools,
-            full_group.instructions.len(),
-            full_group.additional_notes.len()
+            injected_blocks.len()
         );
 
         Ok(ToolSelectionPlan {
             tool_ids: final_tools,
-            injected_system_prompt: Some(injected),
-            selected_ability_group: Some(SelectedAbilityGroup {
-                id: full_group.id,
-                name: full_group.name,
+            injected_system_prompt: injected,
+            selected_skill: Some(SelectedSkill {
+                id: full_skills[0].id.clone(),
+                name: full_skills[0].name.clone(),
             }),
         })
     }

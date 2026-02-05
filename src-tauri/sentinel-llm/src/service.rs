@@ -15,6 +15,7 @@ use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
 };
 use rig::streaming::{StreamedAssistantContent, StreamingChat};
+use serde_json::json;
 use tracing::{debug, error, info};
 
 use crate::agent::validate_config;
@@ -52,6 +53,12 @@ impl AiService {
         }
         if let Some(ref rig_provider) = self.config.rig_provider {
             config = config.with_rig_provider(rig_provider);
+        }
+        if let Some(temperature) = self.config.temperature {
+            config = config.with_temperature(temperature);
+        }
+        if let Some(max_tokens) = self.config.max_tokens {
+            config = config.with_max_tokens(max_tokens);
         }
         if let Some(max_turns) = self.config.max_turns {
             config = config.with_max_turns(max_turns);
@@ -201,7 +208,16 @@ impl AiService {
         let chat_history = Self::convert_history(history);
         debug!("Chat history: {} messages converted", chat_history.len());
 
-        let preamble = system_prompt.unwrap_or("You are a helpful AI assistant.");
+        let mut system_prompt_with_hack = system_prompt.unwrap_or("You are a helpful AI assistant.").to_string();
+        
+        // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
+        let provider_lower = provider_for_agent.to_lowercase();
+        if provider_lower.contains("moonshot") || provider_lower.contains("deepseek") || provider_lower.contains("kimi") {
+            if !system_prompt_with_hack.contains("text response") {
+                system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
+            }
+        }
+        let preamble = &system_prompt_with_hack;
         let timeout = std::time::Duration::from_secs(120);
 
         // 记录请求日志
@@ -224,6 +240,17 @@ impl AiService {
         let content = match provider_for_agent.as_str() {
             "openai" => {
                 self.stream_with_openai(
+                    &model,
+                    preamble,
+                    user_message,
+                    chat_history,
+                    timeout,
+                    &mut on_chunk,
+                )
+                .await?
+            }
+            "moonshot" => {
+                self.stream_with_moonshot(
                     &model,
                     preamble,
                     user_message,
@@ -386,6 +413,60 @@ impl AiService {
             self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
                 .await
         }
+    }
+
+    async fn stream_with_moonshot<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_chunk: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamChunk) -> bool,
+    {
+        use rig::providers::moonshot;
+
+        let api_key = self
+            .config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
+            .ok_or_else(|| anyhow::anyhow!("MOONSHOT_API_KEY not set"))?;
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+
+        let builder_req = reqwest::Client::builder().default_headers(headers);
+        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
+        let http_client = builder_req
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
+
+        let mut builder = moonshot::Client::<reqwest::Client>::builder()
+            .api_key(api_key)
+            .http_client(http_client);
+
+        if let Some(base_url) = &self.config.api_base {
+            builder = builder.base_url(base_url);
+        }
+
+        let client = builder
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Moonshot client: {:?}", e))?;
+
+        let mut builder = client.agent(model).preamble(preamble);
+        if model.to_lowercase().contains("kimi-k2.5") {
+            builder = builder.additional_params(json!({ "thinking": { "type": "disabled" } }));
+        }
+        let agent = builder.build();
+        self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
+            .await
     }
 
     async fn stream_with_anthropic<F>(
@@ -617,7 +698,7 @@ impl AiService {
             timeout,
             agent
                 .stream_chat(user_message, chat_history)
-                .multi_turn(1000),
+                .multi_turn(max_turns),
         )
         .await;
 
@@ -654,7 +735,7 @@ impl AiService {
                         }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
-                    StreamedAssistantContent::ToolCall(_),
+                    StreamedAssistantContent::ToolCall { .. },
                 )) => {}
                 Ok(MultiTurnStreamItem::FinalResponse(resp)) => {
                     let usage = resp.usage();

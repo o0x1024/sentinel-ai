@@ -16,5 +16,5 @@ mod tenth_man_tests;
 pub use agent_builder::*;
 pub use context_engineering::*;
 pub use executor::{execute_agent, AgentExecuteParams};
-pub use tool_router::{ToolConfig, ToolRouter, ToolSelectionStrategy, ToolSelectionPlan, SelectedAbilityGroup};
+pub use tool_router::{ToolConfig, ToolRouter, ToolSelectionStrategy, ToolSelectionPlan, SelectedSkill};
 pub use types::DocumentAttachmentInfo;

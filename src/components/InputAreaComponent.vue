@@ -147,14 +147,14 @@
           <div class="flex items-center gap-2 shrink-0">
             <!-- Context usage indicator -->
             <div 
-              v-if="props.contextUsage" 
+              v-if="effectiveContextUsage" 
               class="context-usage-indicator flex items-center gap-1 px-2 py-1 rounded-md text-xs cursor-default"
               :class="contextUsageClass"
               :title="contextUsageTooltip"
             >
               <span class="font-medium">{{ contextUsagePercentage }}%</span>
               <span class="opacity-70">·</span>
-              <span class="opacity-80">{{ formatTokenCount(props.contextUsage.usedTokens) }} / {{ formatTokenCount(props.contextUsage.maxTokens) }}</span>
+              <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
             </div>
             <!-- 未处理文档提示 -->
@@ -349,9 +349,58 @@ const hasUnprocessedDocuments = computed(() => {
 })
 
 // Context usage computed properties
+const estimateTokens = (text: string): number => {
+  if (!text) return 0
+  // Heuristic: CJK chars are closer to 1 token each, others ~4 chars/token
+  const cjkCount = (text.match(/[\u4e00-\u9fff]/g) || []).length
+  const nonCjk = Math.max(0, text.length - cjkCount)
+  const cjkTokens = cjkCount
+  const nonCjkTokens = Math.ceil(nonCjk / 4)
+  return cjkTokens + nonCjkTokens
+}
+
+const inputTokenEstimate = computed(() => estimateTokens(props.inputMessage || ''))
+
+const effectiveContextUsage = computed(() => {
+  const base = props.contextUsage
+  const inputTokens = inputTokenEstimate.value
+  if (!base) {
+    if (inputTokens === 0) return null
+    const maxTokens = 128000
+    const usedTokens = inputTokens
+    const usagePercentage = maxTokens > 0
+      ? Math.min(100, (usedTokens / maxTokens) * 100)
+      : 0
+    return {
+      usedTokens,
+      maxTokens,
+      usagePercentage,
+      systemPromptTokens: 0,
+      historyTokens: inputTokens,
+      historyCount: 0,
+      summaryTokens: 0,
+      summaryGlobalTokens: 0,
+      summarySegmentTokens: 0,
+      summarySegmentCount: 0,
+    }
+  }
+  if (inputTokens === 0) return base
+  const usedTokens = base.usedTokens + inputTokens
+  const historyTokens = base.historyTokens + inputTokens
+  const usagePercentage = base.maxTokens > 0
+    ? Math.min(100, (usedTokens / base.maxTokens) * 100)
+    : 0
+  return {
+    ...base,
+    usedTokens,
+    historyTokens,
+    usagePercentage,
+  }
+})
+
 const contextUsagePercentage = computed(() => {
-  if (!props.contextUsage) return 0
-  return Math.round(props.contextUsage.usagePercentage * 10) / 10
+  if (!effectiveContextUsage.value) return 0
+  return Math.round(effectiveContextUsage.value.usagePercentage * 10) / 10
 })
 
 const contextUsageClass = computed(() => {
@@ -363,7 +412,7 @@ const contextUsageClass = computed(() => {
 })
 
 const contextUsageTooltip = computed(() => {
-  if (!props.contextUsage) return ''
+  if (!effectiveContextUsage.value) return ''
   const { 
     usedTokens, 
     maxTokens, 
@@ -374,7 +423,8 @@ const contextUsageTooltip = computed(() => {
     summaryGlobalTokens, 
     summarySegmentTokens, 
     summarySegmentCount 
-  } = props.contextUsage
+  } = effectiveContextUsage.value
+  const inputHint = inputTokenEstimate.value > 0 ? `\n${t('agent.inputTokens')}: ~${formatTokenCount(inputTokenEstimate.value)}` : ''
   return `${t('agent.contextUsageDetails')}
 ${t('agent.systemPromptTokens')}: ${formatTokenCount(systemPromptTokens)}
 ${t('agent.summaryTokens')}: ${formatTokenCount(summaryTokens)}
@@ -382,7 +432,7 @@ ${t('agent.summaryGlobalTokens')}: ${formatTokenCount(summaryGlobalTokens)}
 ${t('agent.summarySegmentTokens')}: ${formatTokenCount(summarySegmentTokens)} (${t('agent.summarySegments')}: ${summarySegmentCount})
 ${t('agent.historyTokens')}: ${formatTokenCount(historyTokens)}
 ${t('agent.historyMessages')}: ${historyCount}
-${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}`
+${t('agent.totalUsed')}: ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)}${inputHint}`
 })
 
 const formatTokenCount = (count: number): string => {

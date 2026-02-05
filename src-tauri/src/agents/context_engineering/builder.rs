@@ -22,7 +22,7 @@ pub struct ContextBuildInput {
     pub app_handle: AppHandle,
     pub execution_id: String,
     pub base_system_prompt: String,
-    pub injected_ability_prompt: Option<String>,
+    pub injected_skill_prompt: Option<String>,
     pub task: String,
     pub rig_provider: String,
     pub llm_config: LlmConfig,
@@ -108,8 +108,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let mut system_prompt = input.base_system_prompt;
     let execution_context = resolve_execution_context(&input.app_handle).await;
 
-    if input.policy.include_ability_instructions {
-        if let Some(injected) = input.injected_ability_prompt {
+    if input.policy.include_skill_instructions {
+        if let Some(injected) = input.injected_skill_prompt {
             system_prompt.push_str(&injected);
         }
     }
@@ -219,6 +219,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     let max_context_length =
         get_provider_max_context_length(&input.app_handle, &input.rig_provider).await?;
+    system_prompt = trim_system_prompt_to_budget(system_prompt, max_context_length);
 
     let sw_config = SlidingWindowConfig {
         max_context_tokens: max_context_length as usize,
@@ -279,32 +280,27 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     let context_messages = sliding_window.build_context(&system_prompt);
-    let (system_prompt_content, mut history_messages) = split_context_messages(
+    let (mut system_prompt_content, mut history_messages) = split_context_messages(
         &system_prompt,
         context_messages,
     );
+    system_prompt_content = trim_system_prompt_to_budget(system_prompt_content, max_context_length);
+
+    if history_messages.is_empty() {
+        if let Some(fallback) = load_fallback_history(&input.app_handle, &input.execution_id, 6).await {
+            history_messages = fallback;
+        }
+    }
 
     // Enforce context limit: truncate history if total exceeds max_context_length
     // Reserve 15% for model output and safety margin
     let safe_limit = (max_context_length as f64 * 0.85) as usize;
-    let system_tokens = estimate_tokens(&system_prompt_content);
+    let system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
     let available_for_history = safe_limit.saturating_sub(system_tokens);
     
     // Truncate history from oldest messages if needed
     let mut history_tokens: usize = history_messages.iter()
-        .map(|m| {
-            let mut tokens = estimate_tokens(&m.content);
-            if let Some(ref tc) = m.tool_calls {
-                tokens += estimate_tokens(tc);
-            }
-            if let Some(ref rc) = m.reasoning_content {
-                tokens += estimate_tokens(rc);
-            }
-            if let Some(ref tid) = m.tool_call_id {
-                tokens += estimate_tokens(tid);
-            }
-            tokens
-        })
+        .map(estimate_message_tokens)
         .sum();
     
     if history_tokens > available_for_history {
@@ -317,19 +313,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         // Remove oldest messages until we're under the limit
         while history_tokens > available_for_history && !history_messages.is_empty() {
             if let Some(removed) = history_messages.first() {
-                let removed_tokens = {
-                    let mut tokens = estimate_tokens(&removed.content);
-                    if let Some(ref tc) = removed.tool_calls {
-                        tokens += estimate_tokens(tc);
-                    }
-                    if let Some(ref rc) = removed.reasoning_content {
-                        tokens += estimate_tokens(rc);
-                    }
-                    if let Some(ref tid) = removed.tool_call_id {
-                        tokens += estimate_tokens(tid);
-                    }
-                    tokens
-                };
+                let removed_tokens = estimate_message_tokens(removed);
                 history_tokens = history_tokens.saturating_sub(removed_tokens);
                 history_messages.remove(0);
             }
@@ -344,26 +328,11 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     // Calculate context usage for frontend display
     // Include all message components: content, tool_calls, reasoning_content
-    let system_prompt_tokens = estimate_tokens(&system_prompt_content);
+    let system_prompt_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
     let summary_stats = sliding_window.summary_stats();
     let summary_tokens = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
     let history_tokens: usize = history_messages.iter()
-        .map(|m| {
-            let mut tokens = estimate_tokens(&m.content);
-            // Include tool_calls if present
-            if let Some(ref tc) = m.tool_calls {
-                tokens += estimate_tokens(tc);
-            }
-            // Include reasoning_content if present
-            if let Some(ref rc) = m.reasoning_content {
-                tokens += estimate_tokens(rc);
-            }
-            // Include tool_call_id if present (small but should be counted)
-            if let Some(ref tid) = m.tool_call_id {
-                tokens += estimate_tokens(tid);
-            }
-            tokens
-        })
+        .map(estimate_message_tokens)
         .sum();
     let used_tokens = system_prompt_tokens + history_tokens;
     let max_tokens = max_context_length as usize;
@@ -388,6 +357,15 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "summary_segment_tokens": summary_stats.segment_summary_tokens,
             "summary_segment_count": summary_stats.segment_count,
         }),
+    );
+    tracing::info!(
+        "Context usage - execution_id: {}, system: {}, history: {}, summary: {}, used: {}, max: {}",
+        input.execution_id,
+        system_prompt_tokens,
+        history_tokens,
+        summary_tokens,
+        used_tokens,
+        max_tokens
     );
 
     let _ = input.app_handle.emit(
@@ -505,6 +483,24 @@ async fn load_execution_todos(
     }
 }
 
+async fn load_fallback_history(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    limit: usize,
+) -> Option<Vec<ChatMessage>> {
+    let db = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()?;
+    let messages = db.get_ai_messages_by_conversation(execution_id).await.ok()?;
+    if messages.is_empty() {
+        return None;
+    }
+    let chat_messages = crate::commands::ai::reconstruct_chat_history(&messages);
+    if chat_messages.is_empty() {
+        return None;
+    }
+    let start = chat_messages.len().saturating_sub(limit);
+    Some(chat_messages[start..].to_vec())
+}
+
 fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) -> String {
     let mut context = String::new();
     context.push_str("\n\n[Document Attachments]\n");
@@ -552,6 +548,43 @@ fn inject_task_mainline_summary(mut system_prompt: String, task: &str) -> String
     system_prompt
 }
 
+fn trim_system_prompt_to_budget(system_prompt: String, max_context_length: u32) -> String {
+    let safe_limit = (max_context_length as f64 * 0.85) as usize;
+    let max_system_tokens = (safe_limit as f64 * 0.55) as usize;
+    let system_tokens = estimate_tokens(&system_prompt);
+    if system_tokens <= max_system_tokens {
+        return system_prompt;
+    }
+
+    let current_chars = system_prompt.chars().count().max(1);
+    let ratio = max_system_tokens as f64 / system_tokens as f64;
+    let target_chars = ((current_chars as f64) * ratio).floor() as usize;
+    let target_chars = target_chars.max(200);
+    condense_text(&system_prompt, target_chars)
+}
+
+const SYSTEM_MESSAGE_OVERHEAD_TOKENS: usize = 10;
+const MESSAGE_OVERHEAD_TOKENS: usize = 12;
+const TOOL_CALLS_OVERHEAD_TOKENS: usize = 16;
+
+fn estimate_message_tokens(msg: &ChatMessage) -> usize {
+    let mut tokens = estimate_tokens(&msg.content);
+    tokens += MESSAGE_OVERHEAD_TOKENS;
+
+    if let Some(ref tc) = msg.tool_calls {
+        tokens += estimate_tokens(tc);
+        tokens += TOOL_CALLS_OVERHEAD_TOKENS;
+    }
+    if let Some(ref rc) = msg.reasoning_content {
+        tokens += estimate_tokens(rc);
+    }
+    if let Some(ref tid) = msg.tool_call_id {
+        tokens += estimate_tokens(tid);
+    }
+
+    tokens
+}
+
 /// Estimate token count for text (improved heuristic)
 /// Uses a more conservative estimate to avoid context overflow
 fn estimate_tokens(text: &str) -> usize {
@@ -561,15 +594,15 @@ fn estimate_tokens(text: &str) -> usize {
     let mut total: f64 = 0.0;
     for c in text.chars() {
         if c.is_ascii() {
-            // More conservative: ~0.3 tokens per ASCII char (accounts for subword tokenization)
-            total += 0.35;
+            // More conservative: ~0.4 tokens per ASCII char (accounts for subword tokenization)
+            total += 0.4;
         } else {
-            // CJK and other non-ASCII: ~1.5 tokens per char (more conservative)
-            total += 1.5;
+            // CJK and other non-ASCII: ~1.6 tokens per char (more conservative)
+            total += 1.6;
         }
     }
-    // Add 10% safety margin
-    (total * 1.1).ceil() as usize
+    // Add 20% safety margin
+    (total * 1.2).ceil() as usize
 }
 
 async fn get_provider_max_context_length(
@@ -610,4 +643,3 @@ async fn get_provider_max_context_length(
 
     Ok(default)
 }
-

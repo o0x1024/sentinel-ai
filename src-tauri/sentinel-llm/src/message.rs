@@ -103,48 +103,130 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
             }
             "assistant" => {
                 let has_content = !content.is_empty();
-                let has_tool_calls = msg.tool_calls.as_ref().map(|tc| !tc.trim().is_empty()).unwrap_or(false);
-                
-                if has_content || has_tool_calls {
+                let parsed_tool_calls = msg
+                    .tool_calls
+                    .as_ref()
+                    .and_then(|tc_str| serde_json::from_str::<Vec<ToolCall>>(tc_str).ok());
+                let has_tool_calls = parsed_tool_calls
+                    .as_ref()
+                    .map(|tc| !tc.is_empty())
+                    .unwrap_or(false);
+                let has_reasoning = msg
+                    .reasoning_content
+                    .as_ref()
+                    .map(|r| !r.trim().is_empty())
+                    .unwrap_or(false);
+
+                if has_content || has_tool_calls || has_reasoning {
                     let mut contents = Vec::new();
+                    let mut has_non_empty_text = false;
                     
                     // Add reasoning content if present (required for DeepSeek)
-                    if has_tool_calls {
-                        let reasoning = msg.reasoning_content.as_ref()
-                            .map(|r| r.trim())
-                            .filter(|r| !r.is_empty())
-                            .unwrap_or("");
-                        contents.push(AssistantContent::reasoning(reasoning));
-                    } else if let Some(ref reasoning) = msg.reasoning_content {
-                        if !reasoning.trim().is_empty() {
-                            contents.push(AssistantContent::reasoning(reasoning.clone()));
+                    // CRITICAL: Only add reasoning if it's not empty!
+                    if let Some(ref reasoning) = msg.reasoning_content {
+                        let trimmed = reasoning.trim();
+                        if !trimmed.is_empty() {
+                            contents.push(AssistantContent::reasoning(trimmed.to_string()));
                         }
                     }
                     
                     // Add tool calls and track valid tool_call_ids
                     if has_tool_calls {
-                        if let Some(ref tc_str) = msg.tool_calls {
-                            if let Ok(tool_calls) = serde_json::from_str::<Vec<ToolCall>>(tc_str) {
-                                for tc in tool_calls {
-                                    // Track this tool_call_id as valid
-                                    valid_tool_call_ids.insert(tc.id.clone());
-                                    
-                                    contents.push(AssistantContent::tool_call(
-                                        tc.id.clone(),
-                                        tc.function.name.clone(),
-                                        tc.function.arguments.clone(),
-                                    ));
-                                }
+                        if let Some(tool_calls) = parsed_tool_calls {
+                            for tc in tool_calls {
+                                // Normalize tool call arguments: some persisted payloads store JSON as a string.
+                                let args = match &tc.function.arguments {
+                                    Value::String(s) => serde_json::from_str::<Value>(s)
+                                        .unwrap_or_else(|_| serde_json::json!({ "raw": s })),
+                                    _ => tc.function.arguments.clone(),
+                                };
+                                // Track this tool_call_id as valid
+                                valid_tool_call_ids.insert(tc.id.clone());
+                                
+                                contents.push(AssistantContent::tool_call(
+                                    tc.id.clone(),
+                                    tc.function.name.clone(),
+                                    args,
+                                ));
                             }
                         }
                     }
                     
-                    // Add text content
+                    // Add text content - CRITICAL: Only add if actually non-empty after trim!
                     if has_content {
-                        contents.push(AssistantContent::Text(rig::message::Text::from(content.to_string())));
+                        let text = content.to_string();
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            has_non_empty_text = true;
+                            contents.push(AssistantContent::Text(rig::message::Text::from(trimmed.to_string())));
+                        }
+                    }
+
+                    // CRITICAL: Skip if contents is empty (no reasoning, no tool_calls, no text)
+                    if contents.is_empty() {
+                        tracing::warn!("convert_chat_history: skipping empty assistant message");
+                        i += 1;
+                        continue;
+                    }
+
+                    // CRITICAL FIX: If we have any non-text content but no valid text,
+                    // we MUST add a placeholder. Many APIs (Moonshot, DeepSeek) require non-empty content.
+                    if !has_non_empty_text {
+                        tracing::info!(
+                            "convert_chat_history: adding '.' placeholder (has_non_empty_text=false, contents_len={})",
+                            contents.len()
+                        );
+                        contents.push(AssistantContent::Text(rig::message::Text::from(".")));
                     }
                     
-                    if !contents.is_empty() {
+                    // Debug: Log the contents we're about to add
+                    tracing::info!(
+                        "convert_chat_history: creating assistant message with {} content items",
+                        contents.len()
+                    );
+                    for (idx, content_item) in contents.iter().enumerate() {
+                        match content_item {
+                            AssistantContent::Text(t) => {
+                                tracing::info!(
+                                    "  [{}] Text: '{}' (len={})",
+                                    idx,
+                                    t.text.chars().take(50).collect::<String>(),
+                                    t.text.len()
+                                );
+                            }
+                            AssistantContent::ToolCall(tc) => {
+                                tracing::info!("  [{}] ToolCall: {}", idx, tc.function.name);
+                            }
+                            _ => {
+                                tracing::info!("  [{}] Other content type", idx);
+                            }
+                        }
+                    }
+                    
+                    // Check if the last message in result is also an Assistant message
+                    // If so, merge this content into it to avoid consecutive assistant messages
+                    let should_merge = result.last().map(|m| matches!(m, Message::Assistant { .. })).unwrap_or(false);
+
+                    if should_merge {
+                        tracing::warn!("convert_chat_history: merging with previous assistant message");
+                        if let Some(Message::Assistant { content: prev_content, .. }) = result.last_mut() {
+                            // Extend the previous content with new contents
+                            let mut prev_items = Vec::new();
+                            prev_items.push(prev_content.first_ref().clone());
+                            prev_items.extend(prev_content.rest());
+                            
+                            tracing::info!(
+                                "convert_chat_history: prev message had {} items, adding {} new items",
+                                prev_items.len(),
+                                contents.len()
+                            );
+                            
+                            prev_items.extend(contents);
+                            
+                            *prev_content = OneOrMany::many(prev_items).unwrap();
+                            tracing::warn!("convert_chat_history: merged consecutive assistant messages");
+                        }
+                    } else {
                         let assistant_msg = Message::Assistant {
                             id: None,
                             content: if contents.len() == 1 {
@@ -153,6 +235,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                                 match OneOrMany::many(contents) {
                                     Ok(m) => m,
                                     Err(_) => {
+                                        tracing::warn!("convert_chat_history: failed to create assistant message contents");
                                         i += 1;
                                         continue;
                                     }
@@ -160,8 +243,10 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                             },
                         };
                         result.push(assistant_msg);
+                        tracing::info!("convert_chat_history: pushed new assistant message");
                     }
                 }
+
                 i += 1;
             }
             "tool" => {
@@ -344,4 +429,3 @@ pub fn parse_image_from_json(attachments: Option<&Value>) -> Option<ImageAttachm
 
     Some(ImageAttachment::new(base64_data, media_type))
 }
-

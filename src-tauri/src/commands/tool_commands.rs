@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
     HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool, SubagentTool,
-    TodosTool, TenthManTool,
+    TodosTool, TenthManTool, SkillsTool,
     browser::constants as browser_constants,
 };
 use sentinel_tools::get_tool_server;
@@ -1520,7 +1520,11 @@ pub async fn get_all_tool_metadata(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router.list_all_tools())
+    Ok(router
+        .list_all_tools()
+        .into_iter()
+        .filter(|t| t.id != SkillsTool::NAME)
+        .collect())
 }
 
 /// Get tool metadata by category
@@ -1544,7 +1548,11 @@ pub async fn get_tools_by_category(
         _ => return Err(format!("Unknown category: {}", category)),
     };
 
-    Ok(router.list_tools_by_category(category_enum))
+    Ok(router
+        .list_tools_by_category(category_enum)
+        .into_iter()
+        .filter(|t| t.id != SkillsTool::NAME)
+        .collect())
 }
 
 /// Search tools by query
@@ -1554,7 +1562,11 @@ pub async fn search_tools(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router.search_tools(&query))
+    Ok(router
+        .search_tools(&query)
+        .into_iter()
+        .filter(|t| t.id != SkillsTool::NAME)
+        .collect())
 }
 
 /// Get tool statistics
@@ -1572,6 +1584,9 @@ pub async fn get_tool_metadata(
     tool_id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Option<ToolMetadata>, String> {
+    if tool_id == SkillsTool::NAME {
+        return Ok(None);
+    }
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
     Ok(router.get_tool_metadata(&tool_id))
 }
@@ -1611,7 +1626,7 @@ pub use shell_permissions::PendingPermissionRequest;
 pub mod agent_config;
 pub use agent_config::{AgentConfig, SubagentConfig, init_agent_config, load_subagent_config_from_db};
 
-mod ability_groups;
+mod skills;
 
 #[tauri::command]
 pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), String> {
@@ -1654,56 +1669,157 @@ pub async fn save_agent_config(
 }
 
 #[tauri::command]
-pub async fn list_ability_groups(
+pub async fn list_skills(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Vec<sentinel_db::AbilityGroupSummary>, String> {
-    ability_groups::list_ability_groups(db_service).await
+) -> Result<Vec<sentinel_db::SkillSummary>, String> {
+    skills::list_skills(db_service).await
 }
 
 #[tauri::command]
-pub async fn list_ability_groups_full(
+pub async fn list_skills_full(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Vec<sentinel_db::AbilityGroup>, String> {
-    ability_groups::list_ability_groups_full(db_service).await
+) -> Result<Vec<sentinel_db::Skill>, String> {
+    skills::list_skills_full(db_service).await
 }
 
 #[tauri::command]
-pub async fn get_ability_group_detail(
+pub async fn get_skill_detail(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Option<sentinel_db::AbilityGroupDetail>, String> {
-    ability_groups::get_ability_group_detail(id, db_service).await
+) -> Result<Option<sentinel_db::SkillDetail>, String> {
+    skills::get_skill_detail(id, db_service).await
 }
 
 #[tauri::command]
-pub async fn get_ability_group(
+pub async fn get_skill(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<Option<sentinel_db::AbilityGroup>, String> {
-    ability_groups::get_ability_group(id, db_service).await
+) -> Result<Option<sentinel_db::Skill>, String> {
+    skills::get_skill(id, db_service).await
 }
 
 #[tauri::command]
-pub async fn create_ability_group(
-    payload: sentinel_db::CreateAbilityGroup,
-    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
-) -> Result<sentinel_db::AbilityGroup, String> {
-    ability_groups::create_ability_group(payload, db_service).await
-}
-
-#[tauri::command]
-pub async fn update_ability_group(
+pub async fn get_skill_markdown(
     id: String,
-    payload: sentinel_db::UpdateAbilityGroup,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<String, String> {
+    skills::get_skill_markdown(id, db_service).await
+}
+
+#[tauri::command]
+pub async fn create_skill(
+    payload: skills::CreateSkillRequest,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<sentinel_db::Skill, String> {
+    skills::create_skill(payload, db_service).await
+}
+
+#[tauri::command]
+pub async fn update_skill(
+    id: String,
+    payload: skills::UpdateSkillRequest,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
-    ability_groups::update_ability_group(id, payload, db_service).await
+    skills::update_skill(id, payload, db_service).await
 }
 
 #[tauri::command]
-pub async fn delete_ability_group(
+pub async fn delete_skill(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
-    ability_groups::delete_ability_group(id, db_service).await
+    skills::delete_skill(id, db_service).await
+}
+
+#[tauri::command]
+pub async fn refresh_skills_index(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<usize, String> {
+    skills::refresh_skills_index(db_service).await
+}
+
+#[tauri::command]
+pub async fn list_skill_files(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<skills::SkillFileEntry>, String> {
+    skills::list_skill_files(id, db_service).await
+}
+
+#[tauri::command]
+pub async fn read_skill_file(
+    id: String,
+    path: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<String, String> {
+    skills::read_skill_file(id, path, db_service).await
+}
+
+#[tauri::command]
+pub async fn save_skill_file(
+    id: String,
+    path: String,
+    content: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<bool, String> {
+    skills::save_skill_file(id, path, content, db_service).await
+}
+
+#[tauri::command]
+pub async fn delete_skill_file(
+    id: String,
+    path: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<bool, String> {
+    skills::delete_skill_file(id, path, db_service).await
+}
+
+#[tauri::command]
+pub async fn import_skill_file(
+    id: String,
+    source_path: String,
+    target_path: Option<String>,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<String, String> {
+    skills::import_skill_file(id, source_path, target_path, db_service).await
+}
+
+#[tauri::command]
+pub async fn discover_skills_from_path(
+    source_path: String,
+) -> Result<Vec<skills::SkillCandidate>, String> {
+    skills::discover_skills_from_path(source_path).await
+}
+
+#[tauri::command]
+pub async fn discover_skills_from_git(
+    url: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<(String, Vec<skills::SkillCandidate>), String> {
+    skills::discover_skills_from_git(url, db_service).await
+}
+
+#[tauri::command]
+pub async fn install_skills_from_path(
+    source_path: String,
+    skill_ids: Vec<String>,
+    source_type: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<String>, String> {
+    skills::install_skills_from_path(source_path, skill_ids, source_type, db_service).await
+}
+
+#[tauri::command]
+pub async fn list_skill_install_history(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<Vec<skills::SkillInstallHistory>, String> {
+    skills::list_skill_install_history(db_service).await
+}
+
+#[tauri::command]
+pub async fn delete_skill_install_history(
+    id: String,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<bool, String> {
+    skills::delete_skill_install_history(id, db_service).await
 }

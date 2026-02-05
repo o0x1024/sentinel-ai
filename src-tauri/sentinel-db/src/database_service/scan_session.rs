@@ -163,7 +163,6 @@ impl DatabaseService {
 
         if offset.is_some() {
             query.push_str(&format!(" OFFSET ${}", param_idx));
-            param_idx += 1;
         }
 
         let mut q = sqlx::query(&query);

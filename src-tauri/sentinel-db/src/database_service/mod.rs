@@ -16,7 +16,7 @@ pub mod traits_impl;
 pub mod workflow;
 pub mod asset;
 pub mod proxifier;
-pub mod ability;
+pub mod skills;
 pub mod scan_session;
 pub mod sliding_window;
 pub mod traffic;
@@ -57,7 +57,7 @@ pub use asset::*;
 #[allow(unused_imports)]
 pub use proxifier::*;
 #[allow(unused_imports)]
-pub use ability::*;
+pub use skills::*;
 #[allow(unused_imports)]
 pub use scan_session::*;
 #[allow(unused_imports)]

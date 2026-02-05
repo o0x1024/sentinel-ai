@@ -7,6 +7,9 @@
     {
       "type": "lldb",
       "request": "launch",
+      "env": {
+        "SENTINEL_RIG_DEBUG": "1"
+      },
       "name": "Tauri Development Debug",
       "cargo": {
         "args": [
@@ -21,6 +24,9 @@
     {
       "type": "lldb",
       "request": "launch",
+      "env": {
+        "SENTINEL_RIG_DEBUG": "1"
+      },
       "name": "Tauri Production Debug",
       "cargo": {
         "args": [

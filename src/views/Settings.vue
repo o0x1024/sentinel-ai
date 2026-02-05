@@ -190,6 +190,7 @@ const settings = ref({
     temperature: 0.7,
     maxTokens: 2000,
     toolOutputLimit: 50000,
+    outputStorageThreshold: 10000,
     maxTurns: 100
   },
   database: {
@@ -506,6 +507,12 @@ const loadSettings = async () => {
          const limit = parseInt(configMap.get('tool_output_limit') || '50000')
          settings.value.ai.toolOutputLimit = limit
       }
+
+      // output_storage_threshold
+      if (configMap.has('output_storage_threshold')) {
+         const threshold = parseInt(configMap.get('output_storage_threshold') || '10000')
+         settings.value.ai.outputStorageThreshold = threshold
+      }
       
       // max_turns
       if (configMap.has('max_turns')) {
@@ -749,11 +756,13 @@ const saveAiConfig = async () => {
        const temperature = settings.value.ai?.temperature ?? 0.7
        const maxTokens = settings.value.ai?.maxTokens ?? 2000
        const toolLimit = settings.value.ai?.toolOutputLimit || 50000
+       const outputStorageThreshold = settings.value.ai?.outputStorageThreshold || 10000
        const maxTurns = settings.value.ai?.maxTurns || 100
        const configs = [
           { category: 'ai', key: 'temperature', value: String(temperature), description: 'Temperature for AI responses', is_encrypted: false },
           { category: 'ai', key: 'max_tokens', value: String(maxTokens), description: 'Max tokens for AI generation', is_encrypted: false },
           { category: 'ai', key: 'tool_output_limit', value: String(toolLimit), description: 'Max chars for tool output', is_encrypted: false },
+          { category: 'ai', key: 'output_storage_threshold', value: String(outputStorageThreshold), description: 'Tool output storage threshold (bytes)', is_encrypted: false },
           { category: 'ai', key: 'max_turns', value: String(maxTurns), description: 'Max conversation turns for tool calls', is_encrypted: false }
        ]
        await invoke('save_config_batch', { configs })

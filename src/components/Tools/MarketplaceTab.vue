@@ -139,7 +139,11 @@ async function addServer(server: MarketplaceServer) {
   }
 }
 
+const refresh = async () => {
+  // TODO: Add backend call to fetch marketplace servers
+}
+
 // 暴露方法供父组件调用
-defineExpose({ servers })
+defineExpose({ servers, refresh })
 </script>
 

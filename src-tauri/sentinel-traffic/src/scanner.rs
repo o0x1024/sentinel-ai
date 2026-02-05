@@ -923,7 +923,7 @@ impl ScanPipeline {
         // );
         
         if exclude_self && is_self {
-            info!("✓ Skipping plugin scan for self traffic: url={}", req_ctx.url);
+            debug!("✓ Skipping plugin scan for self traffic: url={}", req_ctx.url);
             return false;
         }
 
@@ -1014,7 +1014,7 @@ impl ScanPipeline {
         );
         
         if exclude_self && is_self {
-            info!("✓ Skipping plugin scan for self traffic response: url={}", req_ctx.url);
+            debug!("✓ Skipping plugin scan for self traffic response: url={}", req_ctx.url);
             return false;
         }
         

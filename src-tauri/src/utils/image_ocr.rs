@@ -103,7 +103,7 @@ fn normalize_local_path(p: &str) -> String {
 
 async fn ensure_tmp_file(hash_hex: &str, ext: &str, bytes: &[u8]) -> Result<String, String> {
     let dir = tmp_dir()?;
-    let _ = fs::create_dir_all(&dir)
+    fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Failed to create OCR tmp dir: {}", e))?;
     let path = dir.join(format!("{}.{}", hash_hex, ext));
@@ -202,7 +202,7 @@ pub async fn ocr_image_file(source_path: &str, filename: Option<String>) -> Resu
         });
     }
 
-    let tool = OcrTool::default();
+    let tool = OcrTool;
     let output = tool
         .call(OcrArgs {
             image_path: source_path.clone(),
@@ -243,7 +243,7 @@ async fn ocr_image_bytes(
         .unwrap_or_else(|| "png".to_string());
 
     let tmp_path = ensure_tmp_file(&hash, &ext, bytes).await?;
-    let tool = OcrTool::default();
+    let tool = OcrTool;
     let output = tool
         .call(OcrArgs {
             image_path: tmp_path.clone(),
@@ -268,7 +268,7 @@ fn get_string_field(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
 }
 
-fn as_image_object<'a>(v: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+fn as_image_object(v: &serde_json::Value) -> Option<&serde_json::Value> {
     // Expected: { type: "image", ... }
     if v.get("type").and_then(|t| t.as_str()) == Some("image") {
         return Some(v);

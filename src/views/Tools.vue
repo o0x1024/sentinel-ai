@@ -64,6 +64,13 @@
         <i class="fas fa-store mr-2"></i>
         {{ $t('Tools.marketplace') }}
       </button>
+      <button
+        @click="activeTab = 'skills'"
+        :class="['tab', { 'tab-active': activeTab === 'skills' }]"
+      >
+        <i class="fas fa-lightbulb mr-2"></i>
+        {{ $t('Tools.skills') }}
+      </button>
 
     </div>
 
@@ -86,6 +93,7 @@
       ref="pluginToolsRef"
       @show-upload="showUploadPluginModal = true"
     />
+    <SkillsTab v-if="activeTab === 'skills'" ref="skillsRef" />
 
     <!-- 服务器详情模态框 -->
     <dialog :class="['modal', { 'modal-open': showDetailsModal }]">
@@ -330,6 +338,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, emit } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
@@ -340,9 +349,12 @@ import WorkflowToolsTab from '@/components/Tools/WorkflowToolsTab.vue'
 import MarketplaceTab from '@/components/Tools/MarketplaceTab.vue'
 import PluginToolsTab from '@/components/Tools/PluginToolsTab.vue'
 import McpServersTab from '@/components/Tools/McpServersTab.vue'
+import SkillsTab from '@/components/Tools/SkillsTab.vue'
 
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 
 // 类型定义
 interface McpConnection {
@@ -369,9 +381,18 @@ const workflowToolsRef = ref<InstanceType<typeof WorkflowToolsTab> | null>(null)
 const mcpServersRef = ref<InstanceType<typeof McpServersTab> | null>(null)
 const marketplaceRef = ref<InstanceType<typeof MarketplaceTab> | null>(null)
 const pluginToolsRef = ref<InstanceType<typeof PluginToolsTab> | null>(null)
+const skillsRef = ref<InstanceType<typeof SkillsTab> | null>(null)
 
 // 状态
 const activeTab = ref('builtin_tools')
+const validTabs = new Set(['builtin_tools', 'workflow_tools', 'plugin_tools', 'my_servers', 'marketplace', 'skills'])
+
+const syncTabFromRoute = () => {
+  const tabQuery = route.query.tab
+  if (typeof tabQuery === 'string' && validTabs.has(tabQuery)) {
+    activeTab.value = tabQuery
+  }
+}
 const showAddServerModal = ref(false)
 const showUploadPluginModal = ref(false)
 
@@ -477,6 +498,8 @@ async function refreshAll() {
   workflowToolsRef.value?.refresh?.()
   mcpServersRef.value?.refresh?.()
   pluginToolsRef.value?.refresh?.()
+  marketplaceRef.value?.refresh?.()
+  skillsRef.value?.refresh?.()
 }
 
 // 服务器详情模态框
@@ -632,6 +655,8 @@ async function cleanupDuplicateServers() {
 
 // 生命周期
 onMounted(async () => {
+  syncTabFromRoute()
+  refreshAll()
   listen('plugin:changed', async () => { pluginToolsRef.value?.refresh?.() })
   listen('mcp:tools-changed', async (event) => {
     console.log('MCP tools changed event received:', event.payload)
@@ -639,6 +664,19 @@ onMounted(async () => {
     mcpServersRef.value?.fetchConnections?.()
   })
   listen('workflow:changed', async () => { workflowToolsRef.value?.refresh?.() })
+})
+
+watch(
+  () => route.query.tab,
+  () => {
+    syncTabFromRoute()
+  }
+)
+
+watch(activeTab, tab => {
+  if (!validTabs.has(tab)) return
+  if (route.query.tab === tab) return
+  router.replace({ query: { ...route.query, tab } })
 })
 </script>
 

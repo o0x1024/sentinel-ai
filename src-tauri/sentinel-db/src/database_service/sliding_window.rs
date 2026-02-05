@@ -118,4 +118,23 @@ impl DatabaseService {
         
         Ok(())
     }
+
+    pub async fn delete_sliding_window_summaries_internal(
+        &self,
+        conversation_id: &str,
+    ) -> Result<()> {
+        let pool = self.get_pool()?;
+
+        sqlx::query("DELETE FROM conversation_segments WHERE conversation_id = $1")
+            .bind(conversation_id)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM conversation_global_summaries WHERE conversation_id = $1")
+            .bind(conversation_id)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
 }

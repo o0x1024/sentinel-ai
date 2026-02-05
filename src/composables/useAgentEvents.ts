@@ -835,6 +835,34 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
     })
     unlisteners.push(unlistenToolsSelected)
 
+    // 监听 agent:skill_loaded 事件（显示技能加载提示）
+    const unlistenSkillLoaded = await listen<{
+      execution_id: string
+      skill_id: string
+      skill_name: string
+      tools: string[]
+    }>('agent:skill_loaded', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      const toolsPreview = payload.tools.slice(0, 6).join(', ')
+      const suffix = payload.tools.length > 6 ? ` +${payload.tools.length - 6}` : ''
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: `Skill loaded: ${payload.skill_name} (${payload.skill_id})`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'skill_loaded',
+          skill_id: payload.skill_id,
+          skill_name: payload.skill_name,
+          tools: payload.tools,
+          tools_preview: `${toolsPreview}${suffix}`,
+        }
+      })
+    })
+    unlisteners.push(unlistenSkillLoaded)
+
     // 监听 agent:tool_executed 事件
     const unlistenToolExecuted = await listen<AgentToolExecutedEvent>('agent:tool_executed', (event) => {
       const payload = event.payload

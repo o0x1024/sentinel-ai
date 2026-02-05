@@ -14,7 +14,7 @@ use crate::core::models::rag_config::RagConfig;
 use crate::core::models::asset::*;
 use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
-use crate::database_service::ability::{AbilityGroup, AbilityGroupDetail, AbilityGroupSummary, CreateAbilityGroup, UpdateAbilityGroup};
+use crate::database_service::skills::{Skill, SkillDetail, SkillSummary, CreateSkill, UpdateSkill};
 use crate::core::models::scan_session::{
     ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
     ScanSessionStatus,
@@ -233,6 +233,7 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn save_conversation_segment(&self, segment: &crate::core::models::database::ConversationSegment) -> Result<()>;
     async fn upsert_global_summary(&self, summary: &crate::core::models::database::GlobalSummary) -> Result<()>;
     async fn delete_conversation_segments(&self, segment_ids: &[String]) -> Result<()>;
+    async fn delete_sliding_window_summaries(&self, conversation_id: &str) -> Result<()>;
 
     // RAG相关方法
     async fn create_rag_collection(&self, name: &str, description: Option<&str>) -> Result<String>;
@@ -267,15 +268,15 @@ pub trait Database: Send + Sync + std::fmt::Debug {
     async fn import_assets(&self, request: ImportAssetsRequest, created_by: String) -> Result<ImportResult>;
 
     // 能力组相关方法
-    async fn list_ability_groups_summary(&self) -> Result<Vec<AbilityGroupSummary>>;
-    async fn list_ability_groups_summary_by_ids(&self, ids: &[String]) -> Result<Vec<AbilityGroupSummary>>;
-    async fn get_ability_group_detail(&self, id: &str) -> Result<Option<AbilityGroupDetail>>;
-    async fn get_ability_group(&self, id: &str) -> Result<Option<AbilityGroup>>;
-    async fn get_ability_group_by_name(&self, name: &str) -> Result<Option<AbilityGroup>>;
-    async fn list_all_ability_groups(&self) -> Result<Vec<AbilityGroup>>;
-    async fn create_ability_group(&self, payload: &CreateAbilityGroup) -> Result<AbilityGroup>;
-    async fn update_ability_group(&self, id: &str, payload: &UpdateAbilityGroup) -> Result<bool>;
-    async fn delete_ability_group(&self, id: &str) -> Result<bool>;
+    async fn list_skills_summary(&self) -> Result<Vec<SkillSummary>>;
+    async fn list_skills_summary_by_ids(&self, ids: &[String]) -> Result<Vec<SkillSummary>>;
+    async fn get_skill_detail(&self, id: &str) -> Result<Option<SkillDetail>>;
+    async fn get_skill(&self, id: &str) -> Result<Option<Skill>>;
+    async fn get_skill_by_name(&self, name: &str) -> Result<Option<Skill>>;
+    async fn list_all_skills(&self) -> Result<Vec<Skill>>;
+    async fn create_skill(&self, payload: &CreateSkill) -> Result<Skill>;
+    async fn update_skill(&self, id: &str, payload: &UpdateSkill) -> Result<bool>;
+    async fn delete_skill(&self, id: &str) -> Result<bool>;
 
     // Proxifier相关方法
     async fn get_all_proxies(&self) -> Result<Vec<ProxifierProxyRecord>>;
