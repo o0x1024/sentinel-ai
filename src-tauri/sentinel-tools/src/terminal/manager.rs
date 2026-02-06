@@ -76,6 +76,17 @@ impl TerminalSessionManager {
         Ok(())
     }
 
+    /// Resize a PTY-backed session
+    pub async fn resize_session(&self, session_id: &str, rows: u16, cols: u16) -> Result<(), String> {
+        let session = self
+            .get_session(session_id)
+            .await
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        let session = session.read().await;
+        session.resize(rows, cols).await
+    }
+
     /// Stop a session
     pub async fn stop_session(&self, session_id: &str) -> Result<(), String> {
         let session = {

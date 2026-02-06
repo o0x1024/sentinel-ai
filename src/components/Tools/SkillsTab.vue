@@ -1,5 +1,14 @@
 <template>
   <div class="space-y-4">
+    <div
+      v-if="isDragOver && skillsEnabled"
+      class="fixed inset-0 z-[1000] pointer-events-none flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary"
+    >
+      <div class="px-5 py-3 rounded-lg bg-base-100 shadow-lg text-sm font-medium text-base-content">
+        {{ $t('Tools.skillsDropInstallHint') }}
+      </div>
+    </div>
+
     <div class="flex items-center justify-between">
       <div>
         <h2 class="text-2xl font-semibold">{{ $t('Tools.skills') }}</h2>
@@ -43,7 +52,7 @@
 
     <div class="card bg-base-200 p-4">
       <div v-if="skillsEnabled">
-        <SkillsManager ref="skillsManagerRef" :embedded="true" />
+        <SkillsManager ref="skillsManagerRef" :embedded="true" @changed="handleSkillsChanged" />
       </div>
       <div v-else class="alert alert-warning">
         <i class="fas fa-exclamation-triangle"></i>
@@ -153,8 +162,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import SkillsManager from '@/components/Agent/SkillsManager.vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { dialog } from '@/composables/useDialog'
@@ -173,6 +184,8 @@ const installSourceType = ref('')
 const installHistory = ref<any[]>([])
 const historyLoading = ref(false)
 const skillsEnabled = ref(true)
+const isDragOver = ref(false)
+let unlistenDragDrop: UnlistenFn | null = null
 
 const refresh = () => {
   skillsManagerRef.value?.refresh?.()
@@ -181,6 +194,10 @@ const refresh = () => {
 
 const createSkill = () => {
   skillsManagerRef.value?.startCreate?.()
+}
+
+const handleSkillsChanged = () => {
+  loadHistory()
 }
 
 const loadHistory = async () => {
@@ -236,6 +253,7 @@ const closeGitModal = () => {
 }
 
 const closeInstallModal = () => {
+  isDragOver.value = false
   showInstallModal.value = false
   installCandidates.value = []
   selectedInstallSkills.value = []
@@ -294,6 +312,11 @@ const importFromFolder = async () => {
 }
 
 const discoverFromPath = async (path: string, sourceType: string) => {
+  if (!skillsEnabled.value) {
+    dialog.toast.warning(t('Tools.skillsDisabledWarning'))
+    return
+  }
+
   installLoading.value = true
   showInstallModal.value = true
   try {
@@ -343,6 +366,57 @@ const deleteHistory = async (id: string) => {
     dialog.error(`${t('Tools.skillsInstallHistoryDeleteFailed')}\n${error}`)
   }
 }
+
+const setupTauriDragDrop = async () => {
+  try {
+    const webview = getCurrentWebviewWindow()
+    unlistenDragDrop = await webview.onDragDropEvent(async (event) => {
+      if (!skillsEnabled.value) {
+        isDragOver.value = false
+        return
+      }
+
+      if (event.payload.type === 'enter' || event.payload.type === 'over') {
+        isDragOver.value = true
+        return
+      }
+
+      if (event.payload.type === 'leave') {
+        isDragOver.value = false
+        return
+      }
+
+      if (event.payload.type === 'drop') {
+        isDragOver.value = false
+        const droppedPaths = event.payload.paths ?? []
+        if (droppedPaths.length === 0) return
+        if (installLoading.value) return
+        if (showInstallModal.value || showGitModal.value) return
+
+        if (droppedPaths.length > 1) {
+          dialog.toast.info(t('Tools.skillsDropMultipleHint'))
+        }
+
+        const sourcePath = droppedPaths[0]
+        await discoverFromPath(sourcePath, 'drop')
+      }
+    })
+  } catch (error) {
+    console.error('Failed to setup skills drag-drop listener:', error)
+  }
+}
+
+onMounted(async () => {
+  await setupTauriDragDrop()
+})
+
+onUnmounted(() => {
+  if (unlistenDragDrop) {
+    unlistenDragDrop()
+    unlistenDragDrop = null
+  }
+  isDragOver.value = false
+})
 
 loadHistory()
 loadSkillsEnabled()

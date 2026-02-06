@@ -1,5 +1,18 @@
 <template>
-  <div :class="['tool-call-block rounded-lg bg-base-200 border overflow-hidden my-2 ', borderClass]">
+  <div v-if="isSkillsToolCard" :class="['rounded-lg overflow-hidden border-l-4 my-2', skillsCardContainerClass]">
+    <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
+      <div :class="['w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm', skillsCardIconClass]">
+        <i class="fas fa-book-open text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div :class="['font-semibold text-sm', skillsCardTitleClass]">{{ skillsCardTitle }}</div>
+        <div v-if="skillsCardTarget" class="text-xs text-base-content/70 mt-0.5">{{ skillsCardTarget }}</div>
+      </div>
+      <span :class="['status-badge text-xs px-2 py-0.5 rounded-full', badgeClass]">{{ statusText }}</span>
+    </div>
+  </div>
+
+  <div v-else-if="!isSkillsTool" :class="['tool-call-block rounded-lg bg-base-200 border overflow-hidden my-2 ', borderClass]">
     <!-- Header -->
     <div class="tool-header flex items-center gap-2 px-4 py-3 bg-base-300 border-b border-base-300">
       <span class="tool-icon text-base">🔧</span>
@@ -59,6 +72,55 @@ const props = withDefaults(defineProps<{
   durationMs?: number
 }>(), {
   status: 'pending',
+})
+
+const isSkillsTool = computed(() => props.toolName?.toLowerCase() === 'skills')
+
+const skillsAction = computed(() => {
+  const action = props.args?.action
+  return typeof action === 'string' ? action.toLowerCase() : ''
+})
+
+const isSkillsCardAction = computed(() => {
+  return ['read_file', 'readfile', 'read-file'].includes(skillsAction.value)
+})
+
+const isSkillsToolCard = computed(() => isSkillsTool.value && isSkillsCardAction.value)
+
+const skillsCardTitle = computed(() => {
+  if (props.status === 'failed') return 'Skill file load failed'
+  return skillsAction.value === 'load' ? 'Skill loaded' : 'Skill file loaded'
+})
+
+const skillsCardContainerClass = computed(() => {
+  if (props.status === 'failed') return 'bg-error/10 border-error'
+  return 'bg-success/10 border-success'
+})
+
+const skillsCardHeaderClass = computed(() => {
+  if (props.status === 'failed') return 'bg-error/20 border-error/20'
+  return 'bg-success/20 border-success/20'
+})
+
+const skillsCardIconClass = computed(() => {
+  if (props.status === 'failed') return 'bg-error'
+  return 'bg-success'
+})
+
+const skillsCardTitleClass = computed(() => {
+  if (props.status === 'failed') return 'text-error'
+  return 'text-success'
+})
+
+const skillsCardTarget = computed(() => {
+  if (skillsAction.value === 'load') {
+    return props.args?.skill_id ? String(props.args.skill_id) : ''
+  }
+  const parts: string[] = []
+  if (props.args?.skill_id) parts.push(String(props.args.skill_id))
+  if (props.args?.relative_path) parts.push(String(props.args.relative_path))
+  if (props.args?.path) parts.push(String(props.args.path))
+  return parts.join(' / ')
 })
 
 const isArgsExpanded = ref(false)

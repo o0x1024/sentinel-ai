@@ -154,6 +154,7 @@
           <InputAreaComponent
             ref="inputAreaRef"
             v-model:input-message="inputValue"
+            :conversation-id="conversationId"
             :is-loading="isExecuting"
             :allow-takeover="true"
             :show-debug-info="false"
@@ -686,10 +687,13 @@ const handleDocumentProcessed = (result: import('@/types/agent').ProcessedDocume
   // Update pending document's mode
   const pendingIdx = pendingDocuments.value.findIndex(d => d.id === result.id)
   if (pendingIdx >= 0) {
-    pendingDocuments.value[pendingIdx].processing_mode = result.processing_mode as any
+    pendingDocuments.value[pendingIdx].status = result.status
+    pendingDocuments.value[pendingIdx].file_id = result.file_id
+    pendingDocuments.value[pendingIdx].file_path = result.file_path
+    pendingDocuments.value[pendingIdx].error_message = result.error_message
   }
-  
-  console.log('[AgentView] Document processed:', result.original_filename, result.processing_mode)
+
+  console.log('[AgentView] Document processed:', result.original_filename, result.file_id)
 }
 
 // Handle traffic references
@@ -1012,10 +1016,9 @@ const loadConversationHistory = async (convId: string) => {
 
     if (messages && messages.length > 0) {
       // DB already returns messages ordered by timestamp ASC.
-      // For tool-enabled runs, backend persists assistant segments and tool events as standalone ai_messages rows,
-      // so we can just render them in order (with a stable tie-breaker).
-      const timeline: Array<{ msg: AgentMessage; ts: number; tie: number }> = []
-      let tie = 0
+      // Keep DB order directly to avoid frontend re-sorting instability
+      // when multiple rows share the same millisecond timestamp.
+      const timeline: AgentMessage[] = []
 
       const toMillis = (v: any) => {
         const ms = new Date(v).getTime()
@@ -1052,15 +1055,11 @@ const loadConversationHistory = async (convId: string) => {
           const kind = parsedMetadata?.kind
           const type = kind === 'tool_result' ? 'tool_result' : 'tool_call'
           timeline.push({
-            msg: {
-              id: row.id,
-              type: type as any,
-              content: row.content || '',
-              timestamp: ts,
-              metadata: parsedMetadata,
-            },
-            ts,
-            tie: tie++,
+            id: row.id,
+            type: type as any,
+            content: row.content || '',
+            timestamp: ts,
+            metadata: parsedMetadata,
           })
           return
         }
@@ -1075,33 +1074,25 @@ const loadConversationHistory = async (convId: string) => {
             })()
             const content = row.content || `Skill loaded: ${parsedMetadata?.skill_name || 'unknown'} (${parsedMetadata?.skill_id || 'unknown'})`
             timeline.push({
-              msg: {
-                id: row.id,
-                type: 'system' as any,
-                content,
-                timestamp: ts,
-                metadata: {
-                  ...parsedMetadata,
-                  tools,
-                  tools_preview: toolsPreview,
-                },
+              id: row.id,
+              type: 'system' as any,
+              content,
+              timestamp: ts,
+              metadata: {
+                ...parsedMetadata,
+                tools,
+                tools_preview: toolsPreview,
               },
-              ts,
-              tie: tie++,
             })
             return
           }
           // System message (e.g., history summarized)
           timeline.push({
-            msg: {
-              id: row.id,
-              type: 'system' as any,
-              content: row.content || '',
-              timestamp: ts,
-              metadata: parsedMetadata,
-            },
-            ts,
-            tie: tie++,
+            id: row.id,
+            type: 'system' as any,
+            content: row.content || '',
+            timestamp: ts,
+            metadata: parsedMetadata,
           })
           return
         }
@@ -1123,15 +1114,11 @@ const loadConversationHistory = async (convId: string) => {
         }
         
         timeline.push({
-          msg: {
-            id: row.id,
-            type: messageType as any,
-            content: displayContent,
-            timestamp: ts,
-            metadata: finalMetadata,
-          },
-          ts,
-          tie: tie++,
+          id: row.id,
+          type: messageType as any,
+          content: displayContent,
+          timestamp: ts,
+          metadata: finalMetadata,
         })
 
         // Legacy fallback: assistant rows may contain tool_calls (older data).
@@ -1152,22 +1139,18 @@ const loadConversationHistory = async (convId: string) => {
                   parsedArgs = { raw: tc.arguments }
                 }
                 timeline.push({
-                  msg: {
-                    id: `toolcall:${row.id}:${tc.id || i}`,
-                    type: 'tool_call' as any,
-                    content: `${t('agent.toolCallCompleted')}: ${tc.name || 'unknown'}`,
-                    timestamp: ts + i + 1,
-                    metadata: {
-                      tool_name: tc.name,
-                      tool_args: parsedArgs,
-                      tool_result: tc.result,
-                      tool_call_id: tc.id,
-                      status: 'completed',
-                      success: tc.success !== false,
-                    },
+                  id: `toolcall:${row.id}:${tc.id || i}`,
+                  type: 'tool_call' as any,
+                  content: `${t('agent.toolCallCompleted')}: ${tc.name || 'unknown'}`,
+                  timestamp: ts,
+                  metadata: {
+                    tool_name: tc.name,
+                    tool_args: parsedArgs,
+                    tool_result: tc.result,
+                    tool_call_id: tc.id,
+                    status: 'completed',
+                    success: tc.success !== false,
                   },
-                  ts: ts + i + 1,
-                  tie: tie++,
                 })
               })
             }
@@ -1177,8 +1160,7 @@ const loadConversationHistory = async (convId: string) => {
         }
       })
 
-      timeline.sort((a, b) => a.ts - b.ts || a.tie - b.tie)
-      agentEvents.messages.value = timeline.map(x => x.msg)
+      agentEvents.messages.value = timeline
 
       console.log('[AgentView] Loaded', messages.length, 'messages from conversation:', convId)
       

@@ -7,8 +7,5 @@ pub struct DocumentAttachmentInfo {
     pub original_filename: String,
     pub file_size: u64,
     pub mime_type: String,
-    pub processing_mode: String,
-    pub extracted_text: Option<String>,
-    pub container_path: Option<String>,
+    pub file_path: Option<String>,
 }
-

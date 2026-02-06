@@ -719,6 +719,26 @@ impl TrafficProxyHandler {
         authority.map(|auth| auth.split(':').next().unwrap_or(&auth).to_string())
     }
 
+    /// 合并重复 header，避免同名 header（如 Cookie）被覆盖丢失
+    fn merge_header(headers: &mut HashMap<String, String>, name: &str, value: &str) {
+        match headers.get_mut(name) {
+            Some(existing) => {
+                let delimiter = if name.eq_ignore_ascii_case("cookie") {
+                    "; "
+                } else if name.eq_ignore_ascii_case("set-cookie") {
+                    "\n"
+                } else {
+                    ", "
+                };
+                existing.push_str(delimiter);
+                existing.push_str(value);
+            }
+            None => {
+                headers.insert(name.to_string(), value.to_string());
+            }
+        }
+    }
+
     /// Check if a request should be intercepted based on filter rules
     /// Returns true if the request should be intercepted, false if it should be skipped
     async fn should_intercept_request(
@@ -1076,7 +1096,7 @@ impl TrafficProxyHandler {
         let mut headers = std::collections::HashMap::new();
         for (name, value) in req.headers().iter() {
             if let Ok(v) = value.to_str() {
-                headers.insert(name.to_string(), v.to_string());
+                Self::merge_header(&mut headers, name.as_str(), v);
             }
         }
 
@@ -1159,7 +1179,7 @@ impl TrafficProxyHandler {
         let mut headers = std::collections::HashMap::new();
         for (name, value) in res.headers().iter() {
             if let Ok(v) = value.to_str() {
-                headers.insert(name.to_string(), v.to_string());
+                Self::merge_header(&mut headers, name.as_str(), v);
             }
         }
 
@@ -1308,7 +1328,7 @@ impl TrafficProxyHandler {
         let mut headers = std::collections::HashMap::new();
         for (name, value) in res.headers().iter() {
             if let Ok(v) = value.to_str() {
-                headers.insert(name.to_string(), v.to_string());
+                Self::merge_header(&mut headers, name.as_str(), v);
             }
         }
 

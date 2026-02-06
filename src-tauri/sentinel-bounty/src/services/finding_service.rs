@@ -1,6 +1,7 @@
 //! Finding management service
 
 use chrono::Utc;
+use crate::error::{BountyError, Result};
 use sentinel_db::{BountyFindingRow, DatabaseService};
 use uuid::Uuid;
 use std::collections::HashSet;
@@ -73,7 +74,7 @@ impl FindingService {
     pub async fn create_finding(
         db: &DatabaseService,
         input: CreateFindingInput,
-    ) -> Result<BountyFindingRow, String> {
+    ) -> Result<BountyFindingRow> {
         validate_required(&input.title, "title")?;
         validate_required(&input.description, "description")?;
         validate_required(&input.finding_type, "finding_type")?;
@@ -92,10 +93,9 @@ impl FindingService {
 
         if let Some(existing) = db
             .get_bounty_finding_by_fingerprint(&fingerprint)
-            .await
-            .map_err(|e| e.to_string())?
+            .await?
         {
-            return Err(format!("Duplicate finding exists: {}", existing.id));
+            return Err(BountyError::DuplicateFinding(format!("Duplicate finding exists: {}", existing.id)));
         }
 
         let mut duplicate_of: Option<String> = None;
@@ -143,8 +143,7 @@ impl FindingService {
         };
 
         db.create_bounty_finding(&finding)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         Ok(finding)
     }
 
@@ -152,11 +151,10 @@ impl FindingService {
         db: &DatabaseService,
         id: &str,
         input: UpdateFindingInput,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         let existing = db
             .get_bounty_finding(id)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         let Some(mut finding) = existing else {
             return Ok(false);
@@ -194,10 +192,9 @@ impl FindingService {
         if new_fingerprint != finding.fingerprint {
             if let Some(existing) = db
                 .get_bounty_finding_by_fingerprint_excluding(&new_fingerprint, &finding.id)
-                .await
-                .map_err(|e| e.to_string())?
+                .await?
             {
-                return Err(format!("Duplicate finding exists: {}", existing.id));
+                return Err(BountyError::DuplicateFinding(format!("Duplicate finding exists: {}", existing.id)));
             }
             finding.fingerprint = new_fingerprint;
         }
@@ -205,7 +202,7 @@ impl FindingService {
         let similarity = SimilarityConfig::default();
         if let Some((similar_id, score)) = find_similar_finding_from_row(db, &finding, &similarity, Some(&finding.id)).await? {
             if score >= similarity.threshold {
-                return Err(format!("Similar finding exists: {} (score {:.2})", similar_id, score));
+                return Err(BountyError::DuplicateFinding(format!("Similar finding exists: {} (score {:.2})", similar_id, score)));
             }
         }
 
@@ -214,13 +211,13 @@ impl FindingService {
 
         db.update_bounty_finding(&finding)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.into())
     }
 }
 
-fn validate_required(value: &str, field: &str) -> Result<(), String> {
+fn validate_required(value: &str, field: &str) -> Result<()> {
     if value.trim().is_empty() {
-        return Err(format!("{} is required", field));
+        return Err(BountyError::Validation(format!("{} is required", field)));
     }
     Ok(())
 }
@@ -278,11 +275,10 @@ async fn find_similar_finding(
     db: &DatabaseService,
     input: &CreateFindingInput,
     config: &SimilarityConfig,
-) -> Result<Option<(String, f64)>, String> {
+) -> Result<Option<(String, f64)>> {
     let candidates = db
         .list_bounty_findings_for_similarity(&input.program_id, &input.finding_type, config.candidate_limit)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     let mut best: Option<(String, f64)> = None;
     for candidate in candidates {
@@ -309,11 +305,10 @@ async fn find_similar_finding_from_row(
     row: &BountyFindingRow,
     config: &SimilarityConfig,
     exclude_id: Option<&str>,
-) -> Result<Option<(String, f64)>, String> {
+) -> Result<Option<(String, f64)>> {
     let candidates = db
         .list_bounty_findings_for_similarity(&row.program_id, &row.finding_type, config.candidate_limit)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     let mut best: Option<(String, f64)> = None;
     for candidate in candidates {

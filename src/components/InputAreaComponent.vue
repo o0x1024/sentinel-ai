@@ -86,23 +86,45 @@
       </div>
 
       <!-- 文档附件预览区 -->
-      <div v-if="pendingDocuments && pendingDocuments.length > 0" class="mb-2 space-y-2">
-        <DocumentModeSelector
+      <div v-if="pendingDocuments && pendingDocuments.length > 0" class="mb-2 flex flex-wrap gap-2">
+        <div
           v-for="(doc, idx) in pendingDocuments"
           :key="doc.id"
-          :attachment="doc"
-          :docker-available="dockerAvailable"
-          :processed-result="getProcessedResult(doc.id)"
-          @remove="removeDocument(idx)"
-          @processed="onDocumentProcessed"
-          @error="onDocumentError"
-        />
-      </div>
-
-      <!-- Docker 不可用警告 -->
-      <div v-if="!dockerAvailable && pendingDocuments && pendingDocuments.length > 0" class="mb-2 alert alert-warning text-xs py-2">
-        <i class="fas fa-exclamation-triangle"></i>
-        <span>{{ t('agent.document.dockerNotAvailable') }}</span>
+          class="inline-flex items-center gap-2 px-2 py-1 rounded-lg border border-base-300 bg-base-200 text-xs"
+        >
+          <i class="fas fa-file-lines text-primary"></i>
+          <span class="font-medium truncate max-w-44" :title="doc.original_filename">{{ doc.original_filename }}</span>
+          <span class="text-base-content/60">({{ formatFileSize(doc.file_size) }})</span>
+          <span v-if="doc.status === 'processing'" class="badge badge-xs badge-info">
+            {{ t('common.loading') }}
+          </span>
+          <span v-else-if="doc.status === 'failed'" class="badge badge-xs badge-error">
+            failed
+          </span>
+          <button
+            @click="removeDocument(idx)"
+            class="w-4 h-4 rounded-full bg-error text-error-content flex items-center justify-center text-[10px]"
+            title="移除"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+          <button
+            v-if="doc.status === 'ready'"
+            @click="runSecurityAnalysis(doc)"
+            class="btn btn-ghost btn-xs"
+            title="安全分析"
+          >
+            <i class="fas fa-shield-halved text-warning"></i>
+          </button>
+          <button
+            v-if="doc.status === 'failed'"
+            @click="retryUploadDocument(doc, idx)"
+            class="btn btn-ghost btn-xs"
+            title="重试"
+          >
+            <i class="fas fa-rotate-right"></i>
+          </button>
+        </div>
       </div>
 
       <div ref="containerRef" class="chat-input rounded-2xl bg-base-200/60 border border-base-300/60 backdrop-blur-sm flex flex-col gap-2 px-3 py-2 shadow-sm focus-within:border-primary transition-colors">
@@ -157,11 +179,6 @@
               <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
             </div>
-            <!-- 未处理文档提示 -->
-            <span v-if="hasUnprocessedDocuments" class="text-xs text-warning flex items-center gap-1">
-              <i class="fas fa-exclamation-triangle"></i>
-              {{ t('agent.document.selectModeFirst') }}
-            </span>
             <button class="icon-btn" title="语言 / 翻译"><i class="fas fa-language"></i></button>
             <button
               v-if="!isLoading || allowTakeover"
@@ -169,7 +186,7 @@
               :disabled="!canSend"
               :class="{ 'opacity-40 cursor-not-allowed': !canSend }"
               @click="emitSend"
-              :title="hasUnprocessedDocuments ? t('agent.document.selectModeFirst') : (isLoading ? '接管并发送 (Enter)' : '发送 (Enter)')"
+              :title="isLoading ? '接管并发送 (Enter)' : '发送 (Enter)'"
             >
               <i class="fas fa-arrow-up"></i>
             </button>
@@ -190,7 +207,7 @@
         type="file"
         class="hidden"
         multiple
-        accept="image/*"
+        accept="*/*"
         @change="onFilesSelected"
       />
       
@@ -204,8 +221,8 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import DocumentModeSelector from './Agent/DocumentModeSelector.vue'
-import type { PendingDocumentAttachment, ProcessedDocumentResult, DockerAnalysisStatus } from '@/types/agent'
+import type { PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
+import { dialog } from '@/composables/useDialog'
 
 const { t } = useI18n()
 
@@ -240,6 +257,7 @@ interface ContextUsageInfo {
 
 const props = defineProps<{
   inputMessage: string
+  conversationId?: string | null
   isLoading: boolean
   showDebugInfo: boolean
   allowTakeover?: boolean
@@ -341,13 +359,6 @@ const onInput = (e: Event) => {
   autoResize()
 }
 
-// 检查是否有未选择处理模式的文档
-const hasUnprocessedDocuments = computed(() => {
-  if (!props.pendingDocuments || props.pendingDocuments.length === 0) return false
-  // 检查是否有文档没有选择处理模式
-  return props.pendingDocuments.some(doc => !doc.processing_mode)
-})
-
 // Context usage computed properties
 const estimateTokens = (text: string): number => {
   if (!text) return 0
@@ -448,7 +459,8 @@ const formatTokenCount = (count: number): string => {
 // 检查是否可以发送
 const canSend = computed(() => {
   if (!props.inputMessage.trim()) return false
-  if (hasUnprocessedDocuments.value) return false
+  const hasProcessingUploads = (props.pendingDocuments || []).some((d) => d.status === 'processing')
+  if (hasProcessingUploads) return false
   return true
 })
 
@@ -531,22 +543,15 @@ const toggleTools = () => {
 const handleClickOutside = (_e: MouseEvent) => {}
 
 const triggerFileSelect = async () => {
-  // 直接按 Tauri 环境处理：使用原生文件选择对话框
   try {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const selected = await open({
       multiple: true,
-      filters: [
-        {
-          name: 'Images',
-          extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
-        },
-      ],
     })
 
     if (selected) {
       const filePaths = Array.isArray(selected) ? selected : [selected]
-      emit('add-attachments', filePaths)
+      await processDroppedFiles(filePaths)
     }
   } catch (error) {
     console.error('[InputArea] Tauri 文件选择失败:', error)
@@ -589,6 +594,12 @@ const toMimeType = (mediaType?: string): string => {
   if (t === 'gif') return 'image/gif'
   if (t === 'webp') return 'image/webp'
   return t.startsWith('image/') ? t : `image/${t}`
+}
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 // 移除附件
@@ -652,19 +663,7 @@ const focusInput = () => {
 
 // ====== 文档拖放功能 ======
 const isDragOver = ref(false)
-const dockerAvailable = ref(false)
 let unlistenDragDrop: UnlistenFn | null = null
-
-// 检查 Docker 状态
-const checkDockerStatus = async () => {
-  try {
-    const status = await invoke<DockerAnalysisStatus>('check_docker_for_file_analysis')
-    dockerAvailable.value = status.ready_for_file_analysis
-  } catch (error) {
-    console.error('Failed to check Docker status:', error)
-    dockerAvailable.value = false
-  }
-}
 
 // 设置 Tauri 原生拖放监听
 const setupTauriDragDrop = async () => {
@@ -699,7 +698,6 @@ const setupTauriDragDrop = async () => {
 // 处理拖放的文件
 const processDroppedFiles = async (paths: string[]) => {
   const imageFiles: string[] = []
-  const documentFiles: PendingDocumentAttachment[] = []
 
   for (const filePath of paths) {
     const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'unknown'
@@ -711,30 +709,48 @@ const processDroppedFiles = async (paths: string[]) => {
     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
       imageFiles.push(filePath)
     } else {
-      // 所有非图片文件都作为文档处理（包括未识别的文件类型）
       let fileSize = 0
       try {
-        const stat = await invoke<{ size: number }>('get_file_stat', { path: filePath })
+        const stat = await invoke<{ size: number, is_file: boolean }>('get_file_stat', { path: filePath })
+        if (stat.is_file === false) {
+          continue
+        }
         fileSize = stat.size
       } catch {
         console.warn('[InputArea] Could not get file size for:', filePath)
       }
-      
-      documentFiles.push({
-        id: crypto.randomUUID(),
+
+      const queuedId = crypto.randomUUID()
+      const queuedDoc: PendingDocumentAttachment = {
+        id: queuedId,
         original_path: filePath,
         original_filename: fileName,
         file_size: fileSize,
         mime_type: getMimeTypeFromExt(ext),
-        processing_mode: undefined,
-      })
-    }
-  }
+        status: 'processing',
+      }
+      emit('add-documents', [queuedDoc])
 
-  if (documentFiles.length > 0) {
-    console.log('[InputArea] Adding', documentFiles.length, 'document(s)')
-    emit('add-documents', documentFiles)
-    await checkDockerStatus()
+      try {
+        const uploaded = await invoke<ProcessedDocumentResult>('upload_document_attachment', {
+          filePath,
+          clientId: queuedId,
+          conversationId: props.conversationId ?? null
+        })
+        emit('document-processed', uploaded)
+      } catch (error) {
+        console.error('[InputArea] Failed to upload document:', error)
+        emit('document-processed', {
+          id: queuedId,
+          file_id: queuedId,
+          original_filename: fileName,
+          file_size: fileSize,
+          mime_type: getMimeTypeFromExt(ext),
+          status: 'failed',
+          error_message: String(error),
+        } as ProcessedDocumentResult)
+      }
+    }
   }
   
   if (imageFiles.length > 0) {
@@ -822,24 +838,33 @@ const onDrop = async (_e: DragEvent) => {
   isDragOver.value = false
 }
 
-// 获取已处理的文档结果
-const getProcessedResult = (docId: string): ProcessedDocumentResult | undefined => {
-  return props.processedDocuments?.find(d => d.id === docId)
-}
-
 // 移除文档
 const removeDocument = (index: number) => {
   emit('remove-document', index)
 }
 
-// 文档处理完成
-const onDocumentProcessed = (result: ProcessedDocumentResult) => {
-  emit('document-processed', result)
+const retryUploadDocument = async (doc: PendingDocumentAttachment, _index: number) => {
+  try {
+    const uploaded = await invoke<ProcessedDocumentResult>('upload_document_attachment', {
+      filePath: doc.original_path,
+      clientId: doc.id,
+      conversationId: props.conversationId ?? null
+    })
+    emit('document-processed', uploaded)
+  } catch (error) {
+    console.error('[InputArea] Retry upload document failed:', error)
+  }
 }
 
-// 文档处理错误
-const onDocumentError = (error: string) => {
-  console.error('Document processing error:', error)
+const runSecurityAnalysis = async (doc: PendingDocumentAttachment) => {
+  const fileId = doc.file_id || doc.id
+  if (!fileId) return
+  try {
+    const message = await invoke<string>('run_file_security_analysis', { fileId })
+    dialog.toast.success(message)
+  } catch (error) {
+    dialog.toast.error(String(error))
+  }
 }
 
 onMounted(async () => {
@@ -872,9 +897,6 @@ onMounted(async () => {
   
   // 设置 Tauri 拖放监听
   await setupTauriDragDrop()
-  
-  // 检查 Docker 状态
-  await checkDockerStatus()
   
   // 自动聚焦输入框
   focusInput()

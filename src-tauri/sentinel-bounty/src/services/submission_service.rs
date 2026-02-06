@@ -1,6 +1,7 @@
 //! Submission management service
 
 use chrono::Utc;
+use crate::error::{BountyError, Result};
 use sentinel_db::{BountySubmissionRow, DatabaseService};
 use uuid::Uuid;
 
@@ -49,7 +50,7 @@ impl SubmissionDbService {
     pub async fn create_submission(
         db: &DatabaseService,
         input: CreateSubmissionInput,
-    ) -> Result<BountySubmissionRow, String> {
+    ) -> Result<BountySubmissionRow> {
         validate_required(&input.title, "title")?;
         validate_required(&input.vulnerability_type, "vulnerability_type")?;
         validate_required(&input.description, "description")?;
@@ -99,8 +100,7 @@ impl SubmissionDbService {
         };
 
         db.create_bounty_submission(&submission)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         Ok(submission)
     }
 
@@ -108,11 +108,10 @@ impl SubmissionDbService {
         db: &DatabaseService,
         id: &str,
         input: UpdateSubmissionInput,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         let existing = db
             .get_bounty_submission(id)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         let Some(mut submission) = existing else {
             return Ok(false);
@@ -159,13 +158,13 @@ impl SubmissionDbService {
 
         db.update_bounty_submission(&submission)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.into())
     }
 }
 
-fn validate_required(value: &str, field: &str) -> Result<(), String> {
+fn validate_required(value: &str, field: &str) -> Result<()> {
     if value.trim().is_empty() {
-        return Err(format!("{} is required", field));
+        return Err(BountyError::Validation(format!("{} is required", field)));
     }
     Ok(())
 }

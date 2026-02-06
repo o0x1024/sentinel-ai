@@ -42,3 +42,15 @@ impl From<serde_json::Error> for BountyError {
         BountyError::Serialization(err.to_string())
     }
 }
+
+impl From<anyhow::Error> for BountyError {
+    fn from(err: anyhow::Error) -> Self {
+        BountyError::Database(err.to_string())
+    }
+}
+
+impl From<String> for BountyError {
+    fn from(err: String) -> Self {
+        BountyError::Internal(err)
+    }
+}

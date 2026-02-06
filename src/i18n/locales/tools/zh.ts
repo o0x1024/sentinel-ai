@@ -30,6 +30,10 @@ export default {
   skillsInstallHistoryDeleteFailed: '删除安装记录失败',
   skillsEnabledLabel: 'Skills 工具',
   skillsDisabledWarning: 'Skills 已禁用。请开启开关后再管理或使用 Skills。',
+  skillsDropInstallHint: '拖放 skill 文件或文件夹到此处进行安装',
+  skillsDropMultipleHint: '检测到多个项目，将使用第一个拖放路径进行安装。',
+  skillsInstalledTitle: '已安装技能',
+  skillsInstalledEmpty: '暂无已安装技能。',
 
   // 管理下拉菜单
   management: '管理',

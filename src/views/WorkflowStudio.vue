@@ -383,12 +383,16 @@
                     <div class="collapse-content">
                       <!-- MCP/Plugin 单列显示，其他双列 -->
                       <div :class="['mcp', 'plugin'].includes(group.name) ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-2'">
-                        <button
+                        <div
                           v-for="item in group.items"
                           :key="item.node_type"
                           class="btn btn-xs relative text-left justify-start"
                           @click="add_node(item)"
+                          @keydown.enter.prevent="add_node(item)"
+                          @keydown.space.prevent="add_node(item)"
                           :title="item.node_type"
+                          role="button"
+                          tabindex="0"
                         >
                           <span class="truncate flex-1">{{ item.label }}</span>
                           <button 
@@ -399,7 +403,7 @@
                             <span v-if="is_favorite(item.node_type)">⭐</span>
                             <span v-else class="opacity-40">☆</span>
                           </button>
-                        </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -426,7 +430,7 @@
             <button class="btn btn-xs btn-ghost" @click="show_logs = false">✕</button>
           </div>
         </div>
-        <div class="overflow-y-auto bg-base-200 rounded p-2 font-mono text-xs" style="max-height: 120px">
+        <div ref="logs_container_ref" class="overflow-y-auto bg-base-200 rounded p-2 font-mono text-xs" style="max-height: 120px">
           <div v-if="execution_logs.length === 0" class="text-center text-base-content/60 py-4">
             {{ t('trafficAnalysis.workflowStudio.logs.empty') }}
           </div>
@@ -1014,6 +1018,7 @@ const result_panel_ref = ref<HTMLElement | null>(null)
 const ignore_result_panel_close_once = ref(false)
 const execution_history_ref = ref<HTMLElement | null>(null)
 const detail_dialog_ref = ref<HTMLElement | null>(null)
+const logs_container_ref = ref<HTMLElement | null>(null)
 const ignore_execution_history_close_once = ref(false)
 const sidebar_collapsed = ref(false)
 const show_logs = ref(true) // 默认显示日志
@@ -1048,7 +1053,10 @@ const selected_step_result = ref<{ step_id: string, result: any } | null>(null)
 const auto_save_timer = ref<ReturnType<typeof setTimeout> | null>(null)
 const is_auto_saving = ref(false)
 const has_unsaved_changes = ref(false)
+const is_loading_graph = ref(false)
 const AUTO_SAVE_DELAY = 1000 // 1秒防抖延迟
+const MAX_EXECUTION_LOGS = 500
+const MAX_LOG_DETAILS_LENGTH = 2000
 
 defineOptions({
   name: 'WorkflowStudio'
@@ -1133,8 +1141,12 @@ const json_errors = ref<Record<string, string>>({})
 const expanded_logs = ref<Set<number>>(new Set())
 const selected_schema = computed(() => {
   if (!selected_node.value) return null as any
-  const item = catalog.value.find(i => i.node_type === selected_node.value.type)
+  const item = catalog_index.value.get(selected_node.value.type)
   return item?.params_schema || null
+})
+
+const catalog_index = computed(() => {
+  return new Map(catalog.value.map(item => [item.node_type, item]))
 })
 
 const filtered_groups = computed(() => {
@@ -1241,6 +1253,11 @@ const reset_canvas = () => {
   flow_ref.value?.resetFlowchart()
 }
 
+const reset_schedule_state = () => {
+  schedule_running.value = false
+  schedule_info.value = null
+}
+
 // 新建工作流
 const on_new_workflow = () => {
   // 检查是否有未保存的更改
@@ -1260,7 +1277,8 @@ const confirm_new_workflow_save = async () => {
     toast.error(t('trafficAnalysis.workflowStudio.toasts.enterWorkflowName'))
     return
   }
-  await save_workflow()
+  const saved = await save_workflow()
+  if (!saved) return
   do_new_workflow()
 }
 
@@ -1286,8 +1304,8 @@ const do_new_workflow = () => {
   selected_execution.value = null
   execution_logs.value = []
   step_results.value = {}
-  schedule_running.value = false
-  schedule_info.value = null
+  reset_schedule_state()
+  has_unsaved_changes.value = false
   localStorage.removeItem('last_run_workflow_id')
   
   add_log('INFO', t('trafficAnalysis.workflowStudio.logs.newWorkflowCreated'))
@@ -1305,13 +1323,13 @@ const build_graph = (): WorkflowGraph => {
     y: Math.round(n.y),
     params: n.params || {},
     input_ports: (() => {
-      const item = catalog.value.find(i => i.node_type === n.type)
+      const item = catalog_index.value.get(n.type)
       return item?.input_ports?.length
         ? item.input_ports
         : [{ id: 'in', name: t('trafficAnalysis.workflowStudio.flowchart.ports.input'), port_type: 'Json', required: false }]
     })(),
     output_ports: (() => {
-      const item = catalog.value.find(i => i.node_type === n.type)
+      const item = catalog_index.value.get(n.type)
       return item?.output_ports?.length
         ? item.output_ports
         : [{ id: 'out', name: t('trafficAnalysis.workflowStudio.flowchart.ports.output'), port_type: 'Json', required: false }]
@@ -1531,21 +1549,47 @@ const validate_tool_schemas = (graph: WorkflowGraph, silent: boolean): boolean =
   return false
 }
 
+const stringify_for_log = (value: any): string => {
+  try {
+    if (typeof value === 'string') return value
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+const truncate_log_details = (value: any): string => {
+  const text = stringify_for_log(value)
+  if (text.length <= MAX_LOG_DETAILS_LENGTH) return text
+  return `${text.slice(0, MAX_LOG_DETAILS_LENGTH)}\n... (truncated)`
+}
+
 const add_log = (level: ExecutionLog['level'], message: string, node_id?: string, details?: string) => {
   execution_logs.value.push({
     timestamp: new Date(),
     level,
     message,
     node_id,
-    details
+    details: details ? truncate_log_details(details) : undefined
   })
-  // 自动滚动到底部
-  setTimeout(() => {
-    const logContainer = document.querySelector('.overflow-y-auto.bg-base-200')
+
+  if (execution_logs.value.length > MAX_EXECUTION_LOGS) {
+    const overflow = execution_logs.value.length - MAX_EXECUTION_LOGS
+    execution_logs.value.splice(0, overflow)
+    const nextExpanded = new Set<number>()
+    expanded_logs.value.forEach(idx => {
+      const mapped = idx - overflow
+      if (mapped >= 0) nextExpanded.add(mapped)
+    })
+    expanded_logs.value = nextExpanded
+  }
+
+  requestAnimationFrame(() => {
+    const logContainer = logs_container_ref.value
     if (logContainer) {
       logContainer.scrollTop = logContainer.scrollHeight
     }
-  }, 100)
+  })
 }
 
 const clear_logs = () => {
@@ -1943,7 +1987,8 @@ const start_schedule = async () => {
   const toast = useToast()
   
   // 先保存工作流
-  await save_workflow()
+  const saved = await save_workflow()
+  if (!saved) return
   
   const config = get_schedule_config()
   if (!config) {
@@ -2016,12 +2061,12 @@ const check_schedule_status = async () => {
   }
 }
 
-const save_workflow = async (silent = false) => {
+const save_workflow = async (silent = false): Promise<boolean> => {
   const toast = useToast()
   const graph = build_graph()
   graph.id = workflow_id.value
   graph.name = workflow_name.value
-  if (!validate_tool_schemas(graph, silent)) return
+  if (!validate_tool_schemas(graph, silent)) return false
   
   try {
     await invoke('save_workflow_definition', {
@@ -2041,11 +2086,13 @@ const save_workflow = async (silent = false) => {
       )
       toast.success(t('trafficAnalysis.workflowStudio.toasts.workflowSaved'))
     }
+    return true
   } catch (e: any) {
     add_log('ERROR', t('trafficAnalysis.workflowStudio.logs.saveFailed', { error: String(e) }))
     if (!silent) {
       toast.error(t('trafficAnalysis.workflowStudio.toasts.saveFailed', { error: String(e) }))
     }
+    return false
   }
 }
 
@@ -2060,6 +2107,7 @@ const trigger_auto_save = () => {
   
   // 如果工作流正在运行，不自动保存
   if (workflow_running.value) return
+  if (is_loading_graph.value) return
   
   has_unsaved_changes.value = true
   
@@ -2070,16 +2118,49 @@ const trigger_auto_save = () => {
   
   // 设置新的定时器
   auto_save_timer.value = setTimeout(async () => {
-    is_auto_saving.value = true
-    await save_workflow(true) // 静默保存
-    is_auto_saving.value = false
-    has_unsaved_changes.value = false
+    try {
+      is_auto_saving.value = true
+      const saved = await save_workflow(true) // 静默保存
+      if (saved) {
+        has_unsaved_changes.value = false
+      }
+    } finally {
+      is_auto_saving.value = false
+    }
   }, AUTO_SAVE_DELAY)
 }
 
 // 流程图变化处理
 const on_flowchart_change = () => {
+  if (is_loading_graph.value) return
   trigger_auto_save()
+}
+
+const apply_graph_to_canvas = (graph: WorkflowGraph) => {
+  is_loading_graph.value = true
+  try {
+    flow_ref.value?.resetFlowchart()
+    graph.nodes.forEach((n: NodeDef) => {
+      const node: any = {
+        id: n.id,
+        name: n.node_name,
+        description: n.node_type,
+        status: 'pending',
+        x: n.x,
+        y: n.y,
+        type: n.node_type,
+        dependencies: [],
+        params: n.params || {},
+        metadata: { input_ports: n.input_ports || [], output_ports: n.output_ports || [] }
+      }
+      flow_ref.value?.addNode(node)
+    })
+    graph.edges.forEach((e: EdgeDef) => {
+      flow_ref.value?.addConnectionWithPorts(e.from_node, e.to_node, e.from_port, e.to_port)
+    })
+  } finally {
+    is_loading_graph.value = false
+  }
 }
 
 const load_workflow = async (id: string) => {
@@ -2088,43 +2169,22 @@ const load_workflow = async (id: string) => {
     const data = await invoke<any>('get_workflow_definition', { id })
     if (data && data.graph) {
       const graph = data.graph
+      reset_schedule_state()
       workflow_id.value = graph.id
       workflow_name.value = graph.name
       workflow_description.value = data.description || ''
       workflow_tags.value = data.tags || ''
+      workflow_version.value = graph.version || 'v1.0.0'
       workflow_is_tool.value = data.is_tool || false
-      
-      // 清空画布
-      flow_ref.value?.resetFlowchart()
-      
-      // 加载节点
-      graph.nodes.forEach((n: NodeDef) => {
-        const node: any = {
-          id: n.id,
-          name: n.node_name,
-          description: n.node_type,
-          status: 'pending',
-          x: n.x,
-          y: n.y,
-          type: n.node_type,
-          dependencies: [],
-          params: n.params || {},
-          metadata: { input_ports: n.input_ports || [], output_ports: n.output_ports || [] }
-        }
-        flow_ref.value?.addNode(node)
-      })
-      
-      // 加载连接
-      graph.edges.forEach((e: EdgeDef) => {
-        flow_ref.value?.addConnectionWithPorts(e.from_node, e.to_node, e.from_port, e.to_port)
-      })
+      apply_graph_to_canvas(graph)
+      has_unsaved_changes.value = false
       
       add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.workflowLoaded', { name: workflow_name.value }))
       
       // 加载该工作流的执行历史
       load_execution_history()
       // 检查调度状态
-      check_schedule_status()
+      await check_schedule_status()
     }
   } catch (e: any) {
     add_log('ERROR', t('trafficAnalysis.workflowStudio.logs.loadFailed', { error: String(e) }))
@@ -2209,6 +2269,7 @@ const duplicate_workflow = async (id: string) => {
   try {
     await load_workflow(id)
     workflow_id.value = `wf_${Date.now()}`
+    reset_schedule_state()
     workflow_name.value = t('trafficAnalysis.workflowStudio.defaults.duplicateWorkflowName', { name: workflow_name.value })
     has_unsaved_changes.value = true
     toast.success(t('trafficAnalysis.workflowStudio.toasts.workflowDuplicated'))
@@ -2338,37 +2399,15 @@ const import_workflow_json = async (event: Event) => {
     const graph = data.workflow
     
     // 重新生成ID避免冲突
+    reset_schedule_state()
     workflow_id.value = `wf_${Date.now()}`
     workflow_name.value = graph.name || t('trafficAnalysis.workflowStudio.defaults.importedWorkflow')
     workflow_description.value = data.metadata?.description || ''
     workflow_tags.value = data.metadata?.tags || ''
     workflow_version.value = graph.version || 'v1.0.0'
     workflow_is_tool.value = data.metadata?.is_tool || false
-    
-    // 清空画布
-    flow_ref.value?.resetFlowchart()
-    
-    // 加载节点
-    graph.nodes.forEach((n: NodeDef) => {
-      const node: any = {
-        id: n.id,
-        name: n.node_name,
-        description: n.node_type,
-        status: 'pending',
-        x: n.x,
-        y: n.y,
-        type: n.node_type,
-        dependencies: [],
-        params: n.params || {},
-        metadata: { input_ports: n.input_ports || [], output_ports: n.output_ports || [] }
-      }
-      flow_ref.value?.addNode(node)
-    })
-    
-    // 加载连接
-    graph.edges.forEach((e: EdgeDef) => {
-      flow_ref.value?.addConnectionWithPorts(e.from_node, e.to_node, e.from_port, e.to_port)
-    })
+    apply_graph_to_canvas(graph)
+    has_unsaved_changes.value = true
     
     add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.workflowImported', { name: workflow_name.value }))
     toast.success(t('trafficAnalysis.workflowStudio.toasts.workflowImported'))
@@ -2449,9 +2488,7 @@ const setup_event_listeners = async () => {
         step_results.value[step_id] = result
         update_execution_step_result(step_id, result)
         
-        const result_preview = typeof result === 'object' 
-          ? JSON.stringify(result, null, 2)
-          : String(result)
+        const result_preview = truncate_log_details(result)
         add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.nodeCompleted'), step_id, result_preview)
       } else {
         add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.nodeCompleted'), step_id)
@@ -2497,7 +2534,7 @@ const on_node_click = (node: any) => {
   const current = node.params || {}
   
   // 获取节点的参数 schema
-  const item = catalog.value.find(i => i.node_type === node.type)
+  const item = catalog_index.value.get(node.type)
   const schema = item?.params_schema
   
   // 转换参数供编辑
@@ -2611,7 +2648,9 @@ const use_template = async (id: string) => {
     await load_workflow(id)
     // 重新生成ID，避免覆盖模板
     workflow_id.value = `wf_${Date.now()}`
+    reset_schedule_state()
     workflow_name.value = t('trafficAnalysis.workflowStudio.defaults.duplicateWorkflowName', { name: workflow_name.value })
+    has_unsaved_changes.value = true
     show_workflow_list_panel.value = false
     toast.success(t('trafficAnalysis.workflowStudio.toasts.templateApplied'))
   } catch (e: any) {
@@ -2697,7 +2736,7 @@ const toggle_tool_selection = (key: string, toolName: string) => {
 // 监听工作流元数据变化，触发自动保存
 watch([workflow_name, workflow_description, workflow_tags, workflow_version, workflow_is_tool], () => {
   trigger_auto_save()
-}, { deep: true })
+})
 
 // 搜索变化时清除高亮
 const on_search_change = () => {

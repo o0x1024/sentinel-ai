@@ -2052,7 +2052,7 @@ pub struct AgentExecuteConfig {
     pub enable_rag: Option<bool>,
     /// Image attachments (base64 for LLM vision)
     pub attachments: Option<serde_json::Value>,
-    /// Document attachments (content or security mode)
+    /// Uploaded file attachments (file-id based)
     #[serde(default)]
     pub document_attachments: Option<Vec<crate::commands::document_commands::ProcessedDocumentResult>>,
     #[serde(default)]
@@ -2540,18 +2540,39 @@ pub async fn agent_execute(
                 );
 
                 // 构建代理执行参数
-                // Convert document attachments to executor format
-                let doc_attachments = config.document_attachments.as_ref().map(|docs| {
-                    docs.iter().map(|d| crate::agents::DocumentAttachmentInfo {
-                        id: d.id.clone(),
-                        original_filename: d.original_filename.clone(),
-                        file_size: d.file_size,
-                        mime_type: d.mime_type.clone(),
-                        processing_mode: d.processing_mode.clone(),
-                        extracted_text: d.extracted_text.clone(),
-                        container_path: d.container_path.clone(),
-                    }).collect()
-                });
+                // Resolve uploaded files to runtime-accessible paths before execution.
+                let doc_attachments = if let Some(docs) = config.document_attachments.as_ref() {
+                    let mut resolved = Vec::with_capacity(docs.len());
+                    for d in docs {
+                        let runtime_path = match crate::commands::document_commands::resolve_uploaded_file_for_execution_by_id(
+                            &app_handle,
+                            &d.file_id,
+                        )
+                        .await {
+                            Ok(path) => path,
+                            Err(e) => {
+                                let _ = app_handle.emit(
+                                    "agent:error",
+                                    &serde_json::json!({
+                                        "execution_id": conv_id,
+                                        "error": format!("Failed to resolve uploaded file {}: {}", d.file_id, e)
+                                    }),
+                                );
+                                return;
+                            }
+                        };
+                        resolved.push(crate::agents::DocumentAttachmentInfo {
+                            id: d.file_id.clone(),
+                            original_filename: d.original_filename.clone(),
+                            file_size: d.file_size,
+                            mime_type: d.mime_type.clone(),
+                            file_path: Some(runtime_path),
+                        });
+                    }
+                    Some(resolved)
+                } else {
+                    None
+                };
                 
                 let executor_params = crate::agents::executor::AgentExecuteParams {
                     execution_id: conv_id.clone(),

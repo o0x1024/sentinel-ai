@@ -507,23 +507,16 @@ fn build_document_attachments_context(attachments: &[DocumentAttachmentInfo]) ->
 
     for (idx, doc) in attachments.iter().enumerate() {
         context.push_str(&format!(
-            "\nDocument #{}:\n- Filename: {}\n- Size: {} bytes\n- MIME Type: {}\n- Processing Mode: {}\n",
+            "\nDocument #{}:\n- File ID: {}\n- Filename: {}\n- Size: {} bytes\n- MIME Type: {}\n",
             idx + 1,
+            doc.id,
             doc.original_filename,
             doc.file_size,
-            doc.mime_type,
-            doc.processing_mode
+            doc.mime_type
         ));
 
-        if let Some(path) = &doc.container_path {
-            context.push_str(&format!("- Container Path: {}\n", path));
-        }
-
-        if let Some(text) = &doc.extracted_text {
-            let truncated = condense_text(text, 1200);
-            context.push_str("- Extracted Text (truncated):\n");
-            context.push_str(&truncated);
-            context.push('\n');
+        if let Some(path) = &doc.file_path {
+            context.push_str(&format!("- File Path: {}\n", path));
         }
     }
 

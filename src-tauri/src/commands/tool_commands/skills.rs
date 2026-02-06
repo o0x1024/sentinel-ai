@@ -342,10 +342,41 @@ pub async fn delete_skill(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
-    db_service
-        .delete_skill(&id)
+    let root = skills_root(&db_service);
+    let canonical_root = std::fs::canonicalize(&root).map_err(|e| e.to_string())?;
+
+    let skill = db_service
+        .get_skill(&id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Try to remove on-disk skill directory first so index refresh won't re-import it.
+    if let Some(skill) = skill {
+        let skill_dir_from_id = root.join(&id);
+        if skill_dir_from_id.exists() {
+            let canonical_skill_dir =
+                std::fs::canonicalize(&skill_dir_from_id).map_err(|e| e.to_string())?;
+            if !canonical_skill_dir.starts_with(&canonical_root) || canonical_skill_dir == canonical_root {
+                return Err("Refusing to delete path outside skills root".to_string());
+            }
+            std::fs::remove_dir_all(&canonical_skill_dir).map_err(|e| e.to_string())?;
+        } else if !skill.source_path.trim().is_empty() {
+            let source = root.join(&skill.source_path);
+            if source.exists() {
+                let candidate_dir = if source.is_file() {
+                    source.parent().unwrap_or(&source).to_path_buf()
+                } else {
+                    source
+                };
+                let canonical_candidate = std::fs::canonicalize(&candidate_dir).map_err(|e| e.to_string())?;
+                if canonical_candidate.starts_with(&canonical_root) && canonical_candidate != canonical_root {
+                    std::fs::remove_dir_all(&canonical_candidate).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+
+    db_service.delete_skill(&id).await.map_err(|e| e.to_string())
 }
 
 /// Scan skills directory and refresh DB index

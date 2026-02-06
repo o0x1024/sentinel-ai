@@ -480,6 +480,26 @@ export default {
       allowUploadDesc: 'If enabled, image files may be sent to the selected AI service for vision understanding.',
       uploadDisabledWarning: 'Uploading images to model is disabled. Switch back to local OCR or enable upload permission.'
     },
+    fileUploads: {
+      title: 'Uploaded Files',
+      desc: 'Manage historical files uploaded for Agent tasks. Files are stored in date-based directories and require manual cleanup.',
+      maxFileMb: 'Max file size (MB)',
+      maxTotalMb: 'Max total storage (MB)',
+      maxPerConversation: 'Max files per conversation',
+      autoCleanup: 'Enable auto cleanup',
+      retentionDays: 'Retention days',
+      clearAll: 'Clear All Files',
+      clearAllConfirm: 'Clear all uploaded historical files?',
+      clearDate: 'Clear {date}',
+      clearDateConfirm: 'Clear uploaded files for {date}?',
+      dateFilter: 'Date Filter',
+      conversationFilter: 'Conversation Filter',
+      conversationPlaceholder: 'Enter conversation id',
+      allDates: 'All Dates',
+      empty: 'No uploaded files.',
+      totalFiles: '{count} files total',
+      clearedCount: 'Cleared {count} files'
+    },
     subagent: {
       title: 'Subagent Settings',
       timeout: 'Task Timeout',

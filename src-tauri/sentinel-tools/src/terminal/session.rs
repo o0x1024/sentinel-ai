@@ -1,13 +1,11 @@
 //! Terminal session management
 
 use serde::{Deserialize, Serialize};
-use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 /// Execution mode for terminal session
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,7 +71,7 @@ pub struct TerminalSession {
     pub config: TerminalSessionConfig,
     state: Arc<RwLock<SessionState>>,
     container_id: Option<String>,
-    process: Option<Child>,
+    pty_master: Option<Arc<std::sync::Mutex<Box<dyn MasterPty + Send>>>>,
     stdin_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     output_txs: Arc<RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>>,
     output_history: Arc<RwLock<Vec<Vec<u8>>>>,
@@ -88,7 +86,7 @@ impl TerminalSession {
             config,
             state: Arc::new(RwLock::new(SessionState::Starting)),
             container_id: None,
-            process: None,
+            pty_master: None,
             stdin_tx: None,
             output_txs: Arc::new(RwLock::new(Vec::new())),
             output_history: Arc::new(RwLock::new(Vec::new())),
@@ -211,6 +209,7 @@ impl TerminalSession {
             .map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
         let mut pty_writer = pty_pair.master.take_writer()
             .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
+        self.pty_master = Some(Arc::new(std::sync::Mutex::new(pty_pair.master)));
 
         // Setup stdin channel for writing to PTY
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -291,67 +290,55 @@ impl TerminalSession {
         Ok(())
     }
 
-    /// Start host-based session
+    /// Start host-based session with PTY support
     async fn start_host_session(
         &mut self,
     ) -> Result<(), String> {
         warn!("Starting terminal on host (less secure)");
 
-        let mut cmd = Command::new(&self.config.shell);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let pty_system = native_pty_system();
+        let pty_pair = pty_system
+            .openpty(PtySize {
+                rows: 30,
+                cols: 120,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("Failed to create host PTY: {}", e))?;
 
-        if let Some(ref wd) = self.config.working_dir {
-            cmd.current_dir(wd);
-        }
-
+        let mut cmd_builder = CommandBuilder::new(&self.config.shell);
         for (key, value) in &self.config.env_vars {
-            cmd.env(key, value);
+            cmd_builder.env(key, value);
         }
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to start shell: {}", e))?;
+        let _child = pty_pair
+            .slave
+            .spawn_command(cmd_builder)
+            .map_err(|e| format!("Failed to start host shell with PTY: {}", e))?;
 
-        // Similar setup as Docker session
-        let stdin = child.stdin.take().ok_or("Failed to get stdin")?;
+        let mut pty_reader = pty_pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| format!("Failed to clone host PTY reader: {}", e))?;
+        let mut pty_writer = pty_pair
+            .master
+            .take_writer()
+            .map_err(|e| format!("Failed to get host PTY writer: {}", e))?;
+        self.pty_master = Some(Arc::new(std::sync::Mutex::new(pty_pair.master)));
+
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        self.stdin_tx = Some(stdin_tx);
+        self.stdin_tx = Some(stdin_tx.clone());
 
-        tokio::spawn(async move {
-            let mut stdin = stdin;
-            while let Some(data) = stdin_rx.recv().await {
-                if stdin.write_all(&data).await.is_err() {
+        tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            while let Some(data) = stdin_rx.blocking_recv() {
+                if let Err(e) = pty_writer.write_all(&data) {
+                    error!("Failed to write to host PTY: {}", e);
                     break;
                 }
-                let _ = stdin.flush().await;
-            }
-        });
-
-        let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to get stderr")?;
-
-        let output_txs_clone = self.output_txs.clone();
-        let output_history_clone = self.output_history.clone();
-        let last_activity = self.last_activity.clone();
-
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout);
-            let mut buffer = Vec::new();
-            loop {
-                buffer.clear();
-                match reader.read_until(b'\n', &mut buffer).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        *last_activity.write().await = std::time::Instant::now();
-                        Self::broadcast_output(
-                            output_txs_clone.clone(), 
-                            output_history_clone.clone(), 
-                            buffer.clone()
-                        ).await;
-                    }
-                    Err(_) => break,
+                if let Err(e) = pty_writer.flush() {
+                    error!("Failed to flush host PTY: {}", e);
+                    break;
                 }
             }
         });
@@ -359,28 +346,48 @@ impl TerminalSession {
         let output_txs_clone = self.output_txs.clone();
         let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr);
-            let mut buffer = Vec::new();
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut buffer = [0u8; 8192];
             loop {
-                buffer.clear();
-                match reader.read_until(b'\n', &mut buffer).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        *last_activity.write().await = std::time::Instant::now();
-                        Self::broadcast_output(
-                            output_txs_clone.clone(), 
-                            output_history_clone.clone(), 
-                            buffer.clone()
-                        ).await;
+                match pty_reader.read(&mut buffer) {
+                    Ok(0) => {
+                        info!("Host PTY reader reached EOF");
+                        break;
                     }
-                    Err(_) => break,
+                    Ok(n) => {
+                        let data = buffer[..n].to_vec();
+                        tokio::runtime::Handle::current().block_on(async {
+                            *last_activity.write().await = std::time::Instant::now();
+                            Self::broadcast_output(
+                                output_txs_clone.clone(),
+                                output_history_clone.clone(),
+                                data,
+                            )
+                            .await;
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to read from host PTY: {}", e);
+                        break;
+                    }
                 }
             }
         });
 
-        self.process = Some(child);
         *self.state.write().await = SessionState::Running;
+
+        if let Some(ref wd) = self.config.working_dir {
+            let cd_command = format!("cd {}\n", wd);
+            let _ = stdin_tx.send(cd_command.into_bytes());
+        }
+
+        if let Some(ref initial_cmd) = self.config.initial_command {
+            if !initial_cmd.is_empty() {
+                let cmd_with_newline = format!("{}\n", initial_cmd);
+                let _ = stdin_tx.send(cmd_with_newline.into_bytes());
+            }
+        }
 
         Ok(())
     }
@@ -605,6 +612,25 @@ impl TerminalSession {
         }
     }
 
+    /// Resize PTY window (no-op for non-PTY sessions)
+    pub async fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
+        let Some(pty_master) = &self.pty_master else {
+            return Ok(());
+        };
+
+        let guard = pty_master
+            .lock()
+            .map_err(|_| "Failed to acquire PTY lock".to_string())?;
+        guard
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| format!("Failed to resize PTY: {}", e))
+    }
+
     /// Check if the session is healthy (stdin is open)
     pub fn is_healthy(&self) -> bool {
         if let Some(ref tx) = self.stdin_tx {
@@ -658,10 +684,8 @@ impl TerminalSession {
 
         *self.state.write().await = SessionState::Stopped;
 
-        // Kill process
-        if let Some(mut process) = self.process.take() {
-            let _ = process.kill().await;
-        }
+        self.stdin_tx = None;
+        self.pty_master = None;
 
         // Only remove container if not configured for reuse
         if !self.config.reuse_container {

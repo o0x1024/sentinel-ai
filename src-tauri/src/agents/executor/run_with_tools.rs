@@ -10,7 +10,7 @@ use sentinel_llm::{ChatMessage, StreamContent, StreamingLlmClient, parse_image_f
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::ToolServer;
 use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
-use sentinel_tools::buildin_tools::SkillsTool;
+use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
 use sentinel_db::DatabaseService;
 
 use crate::agents::{append_tool_digest, build_context, build_tool_digest, ContextBuildInput};
@@ -114,6 +114,60 @@ async fn register_skills_tool_guard(
 
     tool_server.register_tool(def).await;
     Ok(())
+}
+
+fn infer_tool_result_success(raw: &str) -> bool {
+    fn visit(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Null => true,
+            serde_json::Value::Bool(v) => *v,
+            serde_json::Value::Number(n) => n.as_i64().map(|v| v == 0).unwrap_or(true),
+            serde_json::Value::String(s) => {
+                let lower = s.trim().to_lowercase();
+                if lower.starts_with("error:") || lower.starts_with("failed:") {
+                    return false;
+                }
+                !lower.contains(" no such file or directory")
+            }
+            serde_json::Value::Array(arr) => arr.iter().all(visit),
+            serde_json::Value::Object(map) => {
+                if let Some(v) = map.get("success").and_then(|v| v.as_bool()) {
+                    return v;
+                }
+                if let Some(v) = map.get("ok").and_then(|v| v.as_bool()) {
+                    return v;
+                }
+                if let Some(v) = map.get("completed").and_then(|v| v.as_bool()) {
+                    if !v {
+                        return false;
+                    }
+                }
+                if let Some(v) = map.get("exit_code").and_then(|v| v.as_i64()) {
+                    return v == 0;
+                }
+                if let Some(v) = map.get("code").and_then(|v| v.as_i64()) {
+                    return v == 0;
+                }
+                if let Some(v) = map.get("error").and_then(|v| v.as_str()) {
+                    if !v.trim().is_empty() {
+                        return false;
+                    }
+                }
+                map.values().all(visit)
+            }
+        }
+    }
+
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) => visit(&v),
+        Err(_) => {
+            let lower = raw.trim().to_lowercase();
+            if lower.starts_with("error:") || lower.starts_with("failed:") {
+                return false;
+            }
+            !lower.contains(" no such file or directory")
+        }
+    }
 }
 
 pub async fn execute_agent_with_tools(
@@ -700,18 +754,19 @@ pub async fn execute_agent_with_tools(
                                         let tool_args_val: serde_json::Value =
                                             serde_json::from_str(&args_for_meta)
                                                 .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
+                                        let tool_success = infer_tool_result_success(&result);
                                         let meta = json!({
                                             "kind": "tool_call",
                                             "tool_name": name_for_meta,
                                             "tool_args": tool_args_val,
                                             "tool_call_id": id,
-                                            "status": "completed",
+                                            "status": if tool_success { "completed" } else { "failed" },
                                             "sequence": seq,
                                             "started_at_ms": started_at_ms,
                                             "completed_at_ms": completed_at_ms,
                                             "duration_ms": duration_ms,
                                             "tool_result": result,
-                                            "success": !result.to_lowercase().contains("error"),
+                                            "success": tool_success,
                                         });
                                         let tool_msg = core_db::AiMessage {
                                             id: id.clone(),
@@ -789,6 +844,7 @@ pub async fn execute_agent_with_tools(
                                     "execution_id": execution_id,
                                     "tool_call_id": id,
                                     "result": result,
+                                    "success": infer_tool_result_success(&result),
                                 }),
                             );
                         }
@@ -908,6 +964,13 @@ pub async fn execute_agent_with_tools(
                                 "skills".to_string(),
                                 "todos".to_string(),
                             ];
+                            // Keep shell available across skill reload retries unless explicitly disabled.
+                            if !tool_config
+                                .disabled_tools
+                                .contains(&ShellTool::NAME.to_string())
+                            {
+                                next_tools.push(ShellTool::NAME.to_string());
+                            }
                             next_tools.extend(skill.allowed_tools.clone());
                             next_tools.extend(tool_config.fixed_tools.clone());
                             let available_tools = tool_server

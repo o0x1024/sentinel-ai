@@ -11,6 +11,14 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use bytes::Bytes;
 
+#[derive(serde::Deserialize)]
+struct ResizeMessage {
+    #[serde(rename = "type")]
+    message_type: String,
+    rows: u16,
+    cols: u16,
+}
+
 /// WebSocket terminal server
 pub struct TerminalServer {
     manager: Arc<TerminalSessionManager>,
@@ -170,6 +178,19 @@ impl TerminalServer {
                         let _ = manager.touch_session(&session_id_clone).await;
                         continue;
                     }
+
+                    if let Ok(resize) = serde_json::from_str::<ResizeMessage>(&text) {
+                        if resize.message_type == "resize" {
+                            if let Err(e) = manager
+                                .resize_session(&session_id_clone, resize.rows, resize.cols)
+                                .await
+                            {
+                                warn!("Failed to resize session: {}", e);
+                            }
+                            continue;
+                        }
+                    }
+
                     // Convert Utf8Bytes to Vec<u8>
                     let data = text.as_bytes().to_vec();
                     if let Err(e) = manager.write_to_session(&session_id_clone, data).await {

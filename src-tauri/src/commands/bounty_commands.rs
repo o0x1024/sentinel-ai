@@ -143,7 +143,7 @@ pub async fn bounty_create_program(
         rules: request.rules,
         tags: request.tags,
     };
-    ProgramDbService::create_program(db_service.inner().as_ref(), input).await
+    ProgramDbService::create_program(db_service.inner().as_ref(), input).await.map_err(|e| e.to_string())
 }
 
 /// Get a program by ID
@@ -178,7 +178,7 @@ pub async fn bounty_update_program(
         tags: request.tags,
         priority_score: request.priority_score,
     };
-    ProgramDbService::update_program(db_service.inner().as_ref(), &id, input).await
+    ProgramDbService::update_program(db_service.inner().as_ref(), &id, input).await.map_err(|e| e.to_string())
 }
 
 /// Delete a program
@@ -187,7 +187,7 @@ pub async fn bounty_delete_program(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<bool, String> {
-    ProgramDbService::delete_program(db_service.inner().as_ref(), &id).await
+    ProgramDbService::delete_program(db_service.inner().as_ref(), &id).await.map_err(|e| e.to_string())
 }
 
 /// List programs with optional filter
@@ -476,7 +476,7 @@ pub async fn bounty_create_finding(
         remediation: request.remediation,
         tags: request.tags,
     };
-    FindingService::create_finding(db_service.inner().as_ref(), input).await
+    FindingService::create_finding(db_service.inner().as_ref(), input).await.map_err(|e| e.to_string())
 }
 
 /// Get a finding by ID
@@ -512,7 +512,7 @@ pub async fn bounty_update_finding(
         tags: request.tags,
         duplicate_of: request.duplicate_of,
     };
-    FindingService::update_finding(db_service.inner().as_ref(), &id, input).await
+    FindingService::update_finding(db_service.inner().as_ref(), &id, input).await.map_err(|e| e.to_string())
 }
 
 /// Delete a finding
@@ -772,7 +772,7 @@ pub async fn bounty_create_submission(
         evidence_ids: request.evidence_ids,
         tags: request.tags,
     };
-    SubmissionDbService::create_submission(db_service.inner().as_ref(), input).await
+    SubmissionDbService::create_submission(db_service.inner().as_ref(), input).await.map_err(|e| e.to_string())
 }
 
 /// Get a submission by ID
@@ -811,7 +811,7 @@ pub async fn bounty_update_submission(
         bonus_amount: request.bonus_amount,
         tags: request.tags,
     };
-    SubmissionDbService::update_submission(db_service.inner().as_ref(), &id, input).await
+    SubmissionDbService::update_submission(db_service.inner().as_ref(), &id, input).await.map_err(|e| e.to_string())
 }
 
 /// Delete a submission
@@ -3455,7 +3455,7 @@ pub async fn bounty_get_assets_by_label(
     // Get all assets for program
     let assets = db_service.list_bounty_assets(
         Some(&program_id),
-        None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None,
     ).await.map_err(|e| e.to_string())?;
     
     // Filter by label
@@ -3482,7 +3482,7 @@ pub async fn bounty_get_assets_by_tech(
 ) -> Result<Vec<BountyAssetRow>, String> {
     let assets = db_service.list_bounty_assets(
         Some(&program_id),
-        None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None,
     ).await.map_err(|e| e.to_string())?;
     
     let tech_lower = tech_name.to_lowercase();
@@ -3605,7 +3605,7 @@ pub async fn bounty_recalculate_all_asset_priorities(
 ) -> Result<i32, String> {
     let assets = db_service.list_bounty_assets(
         Some(&program_id),
-        None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None,
     ).await.map_err(|e| e.to_string())?;
     
     let mut count = 0;
@@ -3854,6 +3854,9 @@ pub async fn bounty_get_submissions_needing_followup(
         program_id.as_deref(),
         None, // finding_id
         None, // statuses
+        None, // search
+        None, // sort_by
+        None, // sort_dir
         None, // limit
         None, // offset
     ).await.map_err(|e| e.to_string())?;

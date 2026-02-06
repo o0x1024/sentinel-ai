@@ -406,17 +406,45 @@
         <p class="text-sm mt-1">{{ t('agent.createFirstSkill') }}</p>
       </div>
 
-      <div v-else class="space-y-2">
+      <div v-else class="skills-cards-grid">
         <div
           v-for="skill in skills"
           :key="skill.id"
-          class="card bg-base-200 p-3 hover:bg-base-300 transition-colors"
+          class="card bg-base-200 border border-base-300 p-4 hover:shadow-sm hover:border-base-content/20 transition"
         >
-          <div class="flex items-start justify-between">
-            <div class="flex-1 min-w-0">
-              <div class="font-medium">{{ skill.name }}</div>
-              <div class="text-sm text-base-content/60 truncate">{{ skill.description }}</div>
-              <div class="flex items-center gap-2 mt-1 flex-wrap">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-start gap-3 min-w-0 flex-1">
+              <div :class="['skill-icon', getSkillIconClass(skill.id)]">
+                <i :class="getSkillIcon(skill.id)"></i>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="font-medium truncate">{{ skill.name }}</div>
+                <div class="text-sm text-base-content/60 line-clamp-2">{{ skill.description }}</div>
+                <div class="text-[10px] text-base-content/50 font-mono mt-1 truncate">{{ skill.id }}</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-2 text-xs text-base-content/60">
+                <input
+                  type="checkbox"
+                  class="toggle toggle-xs"
+                  :checked="isSkillEnabled(skill.id)"
+                  @change="toggleSkillEnabled(skill.id, ($event.target as HTMLInputElement).checked)"
+                />
+              </label>
+              <button @click="startEdit(skill)" class="btn btn-xs btn-ghost btn-circle">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button
+                @click="confirmDelete(skill)"
+                class="btn btn-xs btn-ghost btn-circle text-error"
+                :disabled="deletingSkillIds.includes(skill.id)"
+              >
+                <i :class="deletingSkillIds.includes(skill.id) ? 'fas fa-spinner fa-spin' : 'fas fa-trash'"></i>
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 mt-3 flex-wrap">
                 <span class="badge badge-sm badge-ghost">
                   {{ skill.allowed_tools?.length || 0 }} {{ t('agent.tools') }}
                 </span>
@@ -432,24 +460,6 @@
                 <span v-if="!isSkillEnabled(skill.id)" class="badge badge-sm badge-error badge-outline">
                   {{ t('common.disabled') }}
                 </span>
-              </div>
-            </div>
-            <div class="flex items-center gap-2 ml-2">
-              <label class="flex items-center gap-2 text-xs text-base-content/60">
-                <input
-                  type="checkbox"
-                  class="toggle toggle-xs"
-                  :checked="isSkillEnabled(skill.id)"
-                  @change="toggleSkillEnabled(skill.id, ($event.target as HTMLInputElement).checked)"
-                />
-              </label>
-              <button @click="startEdit(skill)" class="btn btn-xs btn-ghost btn-circle">
-                <i class="fas fa-edit"></i>
-              </button>
-              <button @click="confirmDelete(skill)" class="btn btn-xs btn-ghost btn-circle text-error">
-                <i class="fas fa-trash"></i>
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -537,6 +547,17 @@ const selectedFilePath = ref('')
 const fileContent = ref('')
 const fileOriginal = ref('')
 const newFilePath = ref('')
+const deletingSkillIds = ref<string[]>([])
+const skillIconPalette = [
+  { icon: 'fas fa-wand-magic-sparkles', cls: 'bg-primary/15 text-primary' },
+  { icon: 'fas fa-bug', cls: 'bg-error/15 text-error' },
+  { icon: 'fas fa-shield-halved', cls: 'bg-success/15 text-success' },
+  { icon: 'fas fa-code', cls: 'bg-info/15 text-info' },
+  { icon: 'fas fa-terminal', cls: 'bg-warning/15 text-warning' },
+  { icon: 'fas fa-lock', cls: 'bg-accent/15 text-accent' },
+  { icon: 'fas fa-sitemap', cls: 'bg-secondary/15 text-secondary' },
+  { icon: 'fas fa-cogs', cls: 'bg-neutral/15 text-neutral' }
+]
 
 const isFullscreen = computed(() => props.isFullscreen)
 
@@ -955,12 +976,25 @@ const saveSkill = async () => {
 }
 
 const confirmDelete = async (skill: Skill) => {
+  if (!confirm(t('agent.skillDeleteConfirm'))) return
+  if (deletingSkillIds.value.includes(skill.id)) return
+  deletingSkillIds.value = [...deletingSkillIds.value, skill.id]
   try {
-    await invoke('delete_skill', { id: skill.id })
+    const deleted = await invoke<boolean>('delete_skill', { id: skill.id })
+    if (!deleted) {
+      alert(t('agent.skillDeleteNotFound'))
+      return
+    }
+    if (editingSkill.value?.id === skill.id) {
+      cancelEdit()
+    }
     await loadSkills()
     emit('changed')
   } catch (error) {
     console.error('Failed to delete skill:', error)
+    alert(`${t('agent.skillDeleteFailed')}: ${error}`)
+  } finally {
+    deletingSkillIds.value = deletingSkillIds.value.filter(id => id !== skill.id)
   }
 }
 
@@ -1248,6 +1282,24 @@ const formatFileSize = (size: number) => {
   return `${(size / (1024 * 1024)).toFixed(1)}MB`
 }
 
+const hashSkillId = (value: string) => {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0
+  }
+  return hash
+}
+
+const getSkillIcon = (id: string) => {
+  const idx = hashSkillId(id) % skillIconPalette.length
+  return skillIconPalette[idx].icon
+}
+
+const getSkillIconClass = (id: string) => {
+  const idx = hashSkillId(id) % skillIconPalette.length
+  return skillIconPalette[idx].cls
+}
+
 watch([toolSearchQuery, selectedCategory], () => {
   filterTools()
 })
@@ -1280,6 +1332,23 @@ defineExpose({
 .skills-manager.fullscreen {
   max-height: calc(100vh - 2rem);
   height: calc(100vh - 2rem);
+}
+
+.skills-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+}
+
+.skill-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
 /* 响应式布局优化 */

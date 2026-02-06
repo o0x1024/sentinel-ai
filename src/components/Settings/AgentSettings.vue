@@ -326,6 +326,106 @@
       <div class="card bg-base-100 shadow-sm mb-6">
         <div class="card-body">
           <h3 class="card-title mb-4">
+            <i class="fas fa-folder-tree"></i>
+            {{ t('settings.agent.fileUploads.title') }}
+          </h3>
+          <p class="text-sm text-base-content/70 mb-4">
+            {{ t('settings.agent.fileUploads.desc') }}
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.fileUploads.maxFileMb') }}</span>
+              <input type="number" min="1" class="input input-bordered input-sm" v-model.number="uploadSettings.max_file_mb" @change="saveUploadSettings" />
+            </label>
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.fileUploads.maxTotalMb') }}</span>
+              <input type="number" min="1" class="input input-bordered input-sm" v-model.number="uploadSettings.max_total_mb" @change="saveUploadSettings" />
+            </label>
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.fileUploads.maxPerConversation') }}</span>
+              <input type="number" min="1" class="input input-bordered input-sm" v-model.number="uploadSettings.max_files_per_conversation" @change="saveUploadSettings" />
+            </label>
+          </div>
+
+          <div class="flex items-center gap-3 mb-4">
+            <label class="label cursor-pointer gap-2 py-0">
+              <input type="checkbox" class="toggle toggle-sm" v-model="uploadSettings.auto_cleanup_enabled" @change="saveUploadSettings" />
+              <span class="label-text text-sm">{{ t('settings.agent.fileUploads.autoCleanup') }}</span>
+            </label>
+            <label class="form-control max-w-[180px]">
+              <span class="label-text text-xs">{{ t('settings.agent.fileUploads.retentionDays') }}</span>
+              <input type="number" min="1" class="input input-bordered input-sm" v-model.number="uploadSettings.retention_days" :disabled="!uploadSettings.auto_cleanup_enabled" @change="saveUploadSettings" />
+            </label>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 mb-4">
+            <button class="btn btn-sm btn-outline" @click="loadUploadedFiles" :disabled="uploadsLoading">
+              <i class="fas fa-sync-alt"></i>
+              {{ t('common.refresh') }}
+            </button>
+            <button class="btn btn-sm btn-error btn-outline" @click="clearAllUploadedFiles" :disabled="uploadsLoading || uploadedFiles.length === 0">
+              <i class="fas fa-trash"></i>
+              {{ t('settings.agent.fileUploads.clearAll') }}
+            </button>
+            <div class="ml-auto text-xs text-base-content/60">
+              {{ t('settings.agent.fileUploads.totalFiles', { count: uploadedFiles.length }) }}
+            </div>
+          </div>
+
+          <div class="form-control mb-3 max-w-xs">
+            <label class="label py-1">
+              <span class="label-text">{{ t('settings.agent.fileUploads.dateFilter') }}</span>
+            </label>
+            <select class="select select-bordered select-sm" v-model="selectedUploadDate">
+              <option value="">{{ t('settings.agent.fileUploads.allDates') }}</option>
+              <option v-for="date in uploadDates" :key="date" :value="date">{{ date }}</option>
+            </select>
+          </div>
+
+          <div class="form-control mb-3 max-w-lg">
+            <label class="label py-1">
+              <span class="label-text">{{ t('settings.agent.fileUploads.conversationFilter') }}</span>
+            </label>
+            <input
+              v-model="conversationFilter"
+              type="text"
+              class="input input-bordered input-sm"
+              :placeholder="t('settings.agent.fileUploads.conversationPlaceholder')"
+            />
+          </div>
+
+          <div v-if="uploadsLoading" class="flex justify-center py-6">
+            <span class="loading loading-spinner loading-sm"></span>
+          </div>
+          <div v-else-if="filteredUploadedFiles.length === 0" class="text-sm text-base-content/60 py-4">
+            {{ t('settings.agent.fileUploads.empty') }}
+          </div>
+          <div v-else class="space-y-2">
+            <div
+              v-for="item in filteredUploadedFiles"
+              :key="item.path"
+              class="flex items-center gap-2 p-2 rounded border border-base-300 bg-base-200 text-sm"
+            >
+              <span class="badge badge-sm badge-ghost">{{ item.date }}</span>
+              <span class="font-mono text-xs truncate flex-1" :title="item.path">{{ item.filename }}</span>
+              <span class="text-xs text-base-content/60">{{ formatBytes(item.size) }}</span>
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-center gap-2" v-if="selectedUploadDate">
+            <button class="btn btn-xs btn-error btn-outline" @click="clearSelectedDateFiles" :disabled="uploadsLoading">
+              <i class="fas fa-trash"></i>
+              {{ t('settings.agent.fileUploads.clearDate', { date: selectedUploadDate }) }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subagent Settings Section -->
+      <div class="card bg-base-100 shadow-sm mb-6">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
             <i class="fas fa-users-cog"></i>
             {{ t('settings.agent.subagent.title') }}
           </h3>
@@ -420,6 +520,22 @@ interface AgentConfig {
   subagent?: SubagentConfig
 }
 
+interface UploadedFileEntry {
+  date: string
+  filename: string
+  path: string
+  size: number
+  conversation_id?: string
+}
+
+interface UploadedFileSettings {
+  auto_cleanup_enabled: boolean
+  retention_days: number
+  max_file_mb: number
+  max_total_mb: number
+  max_files_per_conversation: number
+}
+
 const { t } = useI18n()
 
 const loading = ref(true)
@@ -444,12 +560,38 @@ const imageAttachments = ref<ImageAttachmentsConfig>({
 const subagentConfig = ref<SubagentConfig>({
   timeout_secs: 600 // 10 minutes default
 })
+const uploadedFiles = ref<UploadedFileEntry[]>([])
+const uploadsLoading = ref(false)
+const selectedUploadDate = ref('')
+const conversationFilter = ref('')
+const uploadSettings = ref<UploadedFileSettings>({
+  auto_cleanup_enabled: false,
+  retention_days: 30,
+  max_file_mb: 20,
+  max_total_mb: 1024,
+  max_files_per_conversation: 100,
+})
 
 const newAllowCommand = ref('')
 const newDenyCommand = ref('')
 
 // Auto-save debounce
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
+
+const uploadDates = computed(() => {
+  const set = new Set(uploadedFiles.value.map((f) => f.date))
+  return Array.from(set).sort((a, b) => b.localeCompare(a))
+})
+
+const filteredUploadedFiles = computed(() => {
+  return uploadedFiles.value.filter((f) => {
+    const dateOk = selectedUploadDate.value ? f.date === selectedUploadDate.value : true
+    const convOk = conversationFilter.value
+      ? (f.conversation_id || '').includes(conversationFilter.value.trim())
+      : true
+    return dateOk && convOk
+  })
+})
 
 // Load config
 async function loadConfig() {
@@ -487,6 +629,85 @@ async function loadConfig() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadUploadedFiles() {
+  uploadsLoading.value = true
+  try {
+    uploadedFiles.value = await invoke<UploadedFileEntry[]>('list_uploaded_files', {
+      conversationId: conversationFilter.value.trim() || null,
+      date: selectedUploadDate.value || null
+    })
+  } catch (e) {
+    console.error('Failed to load uploaded files:', e)
+    dialog.toast.error(String(e))
+  } finally {
+    uploadsLoading.value = false
+  }
+}
+
+async function loadUploadSettings() {
+  try {
+    uploadSettings.value = await invoke<UploadedFileSettings>('get_uploaded_file_settings')
+  } catch (e) {
+    console.error('Failed to load upload settings:', e)
+  }
+}
+
+async function saveUploadSettings() {
+  try {
+    await invoke('save_uploaded_file_settings', { settings: uploadSettings.value })
+    dialog.toast.success(t('settings.saveSuccess'))
+  } catch (e) {
+    console.error('Failed to save upload settings:', e)
+    dialog.toast.error(String(e))
+  }
+}
+
+async function clearAllUploadedFiles() {
+  const confirmed = await dialog.confirm(t('settings.agent.fileUploads.clearAllConfirm'))
+  if (!confirmed) return
+  uploadsLoading.value = true
+  try {
+    const count = await invoke<number>('clear_uploaded_files', {
+      conversationId: conversationFilter.value.trim() || null
+    })
+    dialog.toast.success(t('settings.agent.fileUploads.clearedCount', { count }))
+    await loadUploadedFiles()
+  } catch (e) {
+    console.error('Failed to clear uploaded files:', e)
+    dialog.toast.error(String(e))
+  } finally {
+    uploadsLoading.value = false
+  }
+}
+
+async function clearSelectedDateFiles() {
+  if (!selectedUploadDate.value) return
+  const confirmed = await dialog.confirm(
+    t('settings.agent.fileUploads.clearDateConfirm', { date: selectedUploadDate.value })
+  )
+  if (!confirmed) return
+  uploadsLoading.value = true
+  try {
+    const count = await invoke<number>('clear_uploaded_files', {
+      date: selectedUploadDate.value,
+      conversationId: conversationFilter.value.trim() || null
+    })
+    dialog.toast.success(t('settings.agent.fileUploads.clearedCount', { count }))
+    await loadUploadedFiles()
+  } catch (e) {
+    console.error('Failed to clear date uploaded files:', e)
+    dialog.toast.error(String(e))
+  } finally {
+    uploadsLoading.value = false
+  }
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
 // Auto-save config with debounce
@@ -604,6 +825,8 @@ function removeDenyCommand(index: number) {
 
 onMounted(() => {
   loadConfig()
+  loadUploadSettings()
+  loadUploadedFiles()
 })
 </script>
 

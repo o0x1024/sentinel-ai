@@ -55,19 +55,18 @@
       
       
       <div class="flex-1 relative overflow-hidden">
-        <template v-for="session in sessions" :key="session.id">
-          <AgentView 
-            v-show="session.id === activeSessionId"
-            :ref="el => setAgentRef(el, session.id)"
-            :execution-id="session.id"
-            :show-todos="true"
-            :selected-role="selectedRole"
-            class="absolute inset-0"
-            @submit="handleAgentSubmit"
-            @complete="handleAgentComplete"
-            @error="handleAgentError"
-          />
-        </template>
+        <AgentView
+          v-if="activeSessionId"
+          :key="activeSessionId"
+          ref="activeAgentViewRef"
+          :execution-id="activeSessionId"
+          :show-todos="true"
+          :selected-role="selectedRole"
+          class="absolute inset-0"
+          @submit="handleAgentSubmit"
+          @complete="handleAgentComplete"
+          @error="handleAgentError"
+        />
         
         <!-- Empty State -->
         <div v-if="sessions.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/40 gap-4">
@@ -87,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, onActivated, nextTick, shallowRef } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
@@ -129,20 +128,7 @@ const showRoleManagement = ref(false)
 
 // --- 会话管理 ---
 const { sessions, activeSessionId, addSession } = useAgentSessionManager()
-const agentViewRefs = ref<Record<string, any>>({})
-
-const setAgentRef = (el: any, id: string) => {
-  if (el) {
-    agentViewRefs.value[id] = el
-  } else {
-    delete agentViewRefs.value[id]
-  }
-}
-
-const activeAgentView = computed(() => {
-  if (!activeSessionId.value) return null
-  return agentViewRefs.value[activeSessionId.value]
-})
+const activeAgentViewRef = ref<any>(null)
 
 const handleNewTab = async () => {
   try {
@@ -204,9 +190,9 @@ onMounted(async () => {
     // 监听流量发送到助手事件
     unlistenTraffic = await listen<{ requests: ReferencedTraffic[], type?: 'request' | 'response' | 'both' }>('traffic:send-to-assistant', (event) => {
       console.log('AIAssistant: Received traffic data:', event.payload)
-      if (event.payload?.requests && activeAgentView.value?.addReferencedTraffic) {
+      if (event.payload?.requests && activeAgentViewRef.value?.addReferencedTraffic) {
         const type = event.payload.type || 'both'
-        activeAgentView.value.addReferencedTraffic(event.payload.requests, type)
+        activeAgentViewRef.value.addReferencedTraffic(event.payload.requests, type)
       }
     })
   } catch (error) {
@@ -225,7 +211,7 @@ onUnmounted(() => {
 // 激活时聚焦
 onActivated(() => {
   nextTick(() => {
-    activeAgentView.value?.focusInput()
+    activeAgentViewRef.value?.focusInput()
   })
 })
 </script>

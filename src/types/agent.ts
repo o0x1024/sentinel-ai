@@ -307,23 +307,21 @@ export function getMessageTypeIcon(type: MessageType): string {
 
 // ============ 文档附件 ============
 
-// 文档处理模式
-export type DocumentProcessingMode = 'content' | 'security'
-
 // 文档附件状态
 export type DocumentAttachmentStatus = 'pending' | 'processing' | 'ready' | 'failed'
 
 // 处理后的文档附件
 export interface ProcessedDocumentResult {
   id: string
+  file_id: string
   original_filename: string
   file_size: number
   mime_type: string
-  processing_mode: DocumentProcessingMode
   status: DocumentAttachmentStatus
-  extracted_text?: string
-  container_path?: string
-  extraction_method?: string
+  file_path?: string
+  sha256?: string
+  created_at?: number
+  conversation_id?: string
   error_message?: string
 }
 
@@ -340,11 +338,14 @@ export interface DockerAnalysisStatus {
 // 待处理的文档附件（用户拖放后，选择模式前）
 export interface PendingDocumentAttachment {
   id: string
+  file_id?: string
   original_path: string
   original_filename: string
   file_size: number
   mime_type: string
-  processing_mode?: DocumentProcessingMode  // undefined = pending selection
+  status?: DocumentAttachmentStatus
+  file_path?: string
+  error_message?: string
 }
 
 // 支持的文档扩展名

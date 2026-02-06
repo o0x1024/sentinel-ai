@@ -635,7 +635,7 @@ impl DatabaseService {
         let pool = self.get_pool()?;
 
         let rows = sqlx::query(
-            "SELECT * FROM ai_messages WHERE conversation_id = $1 ORDER BY timestamp ASC",
+            "SELECT * FROM ai_messages WHERE conversation_id = $1 ORDER BY timestamp ASC, id ASC",
         )
         .bind(conversation_id)
         .fetch_all(pool)

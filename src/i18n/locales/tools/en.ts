@@ -30,6 +30,10 @@ export default {
   skillsInstallHistoryDeleteFailed: 'Failed to delete install record',
   skillsEnabledLabel: 'Skills Tool',
   skillsDisabledWarning: 'Skills are disabled. Enable the toggle to manage or use skills.',
+  skillsDropInstallHint: 'Drop a skill file or folder here to install',
+  skillsDropMultipleHint: 'Multiple items detected. Installing from the first dropped path.',
+  skillsInstalledTitle: 'Installed Skills',
+  skillsInstalledEmpty: 'No skills installed.',
 
   // Management dropdown
   management: 'Management',

@@ -472,6 +472,26 @@ export default {
       allowUploadDesc: '开启后，图片可能会被发送到所选 AI 服务用于视觉理解。',
       uploadDisabledWarning: '当前未允许上传图片到模型，请切回本地 OCR 或开启上传权限。'
     },
+    fileUploads: {
+      title: '上传文件管理',
+      desc: '统一管理 Agent 上传的历史文件。文件按日期分目录存储，需要手动清理。',
+      maxFileMb: '单文件大小上限 (MB)',
+      maxTotalMb: '总存储上限 (MB)',
+      maxPerConversation: '单会话文件上限',
+      autoCleanup: '启用自动清理',
+      retentionDays: '保留天数',
+      clearAll: '清空全部文件',
+      clearAllConfirm: '确认清空全部历史上传文件？',
+      clearDate: '清空 {date}',
+      clearDateConfirm: '确认清空 {date} 目录下的上传文件？',
+      dateFilter: '日期筛选',
+      conversationFilter: '会话筛选',
+      conversationPlaceholder: '输入 conversation id',
+      allDates: '全部日期',
+      empty: '暂无历史上传文件。',
+      totalFiles: '共 {count} 个文件',
+      clearedCount: '已清理 {count} 个文件'
+    },
     subagent: {
       title: '子 Agent 设置',
       timeout: '任务超时时间',

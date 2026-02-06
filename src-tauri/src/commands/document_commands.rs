@@ -1,13 +1,24 @@
-//! Document attachment processing commands
+//! Unified file upload and attachment commands.
 
-use crate::models::attachment::{DocumentAttachment, DocumentProcessingMode};
-use sentinel_tools::shell::get_shell_config;
-use sentinel_tools::DockerSandbox;
+use crate::models::attachment::DocumentAttachment;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tauri::AppHandle;
+use tauri::Manager;
 use uuid::Uuid;
 
-/// Docker status for file analysis
+use sentinel_db::Database;
+use sentinel_tools::shell::{get_shell_config, ShellExecutionMode};
+use sentinel_tools::DockerSandbox;
+
+const INDEX_FILE: &str = "index.json";
+const DEFAULT_MAX_FILE_MB: u64 = 20;
+const DEFAULT_MAX_TOTAL_MB: u64 = 1024;
+const DEFAULT_MAX_FILES_PER_CONVERSATION: usize = 100;
+const DEFAULT_RETENTION_DAYS: i64 = 30;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockerAnalysisStatus {
     pub docker_available: bool,
@@ -18,22 +29,21 @@ pub struct DockerAnalysisStatus {
     pub error_message: Option<String>,
 }
 
-/// Processed document result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessedDocumentResult {
     pub id: String,
+    pub file_id: String,
     pub original_filename: String,
     pub file_size: u64,
     pub mime_type: String,
-    pub processing_mode: String,
     pub status: String,
-    pub extracted_text: Option<String>,
-    pub container_path: Option<String>,
-    pub extraction_method: Option<String>,
+    pub file_path: Option<String>,
+    pub sha256: String,
+    pub created_at: i64,
+    pub conversation_id: Option<String>,
     pub error_message: Option<String>,
 }
 
-/// File stat result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileStatResult {
     pub size: u64,
@@ -41,12 +51,316 @@ pub struct FileStatResult {
     pub is_dir: bool,
 }
 
-/// Get file stat (size, type)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadedFileEntry {
+    pub file_id: String,
+    pub date: String,
+    pub filename: String,
+    pub path: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub sha256: String,
+    pub created_at: i64,
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadedFileSettings {
+    pub auto_cleanup_enabled: bool,
+    pub retention_days: i64,
+    pub max_file_mb: u64,
+    pub max_total_mb: u64,
+    pub max_files_per_conversation: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UploadIndex {
+    files: Vec<UploadedFileEntry>,
+}
+
+impl Default for UploadIndex {
+    fn default() -> Self {
+        Self { files: vec![] }
+    }
+}
+
+fn get_upload_root_dir() -> Result<PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "Failed to resolve data directory".to_string())?;
+    Ok(base.join("sentinel-ai").join("uploads"))
+}
+
+fn get_index_path(root: &Path) -> PathBuf {
+    root.join(INDEX_FILE)
+}
+
+fn sanitize_file_stem(stem: &str) -> String {
+    let sanitized = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "file".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn is_valid_date_segment(date: &str) -> bool {
+    date.len() == 10
+        && date.chars().enumerate().all(|(idx, ch)| {
+            if idx == 4 || idx == 7 {
+                ch == '-'
+            } else {
+                ch.is_ascii_digit()
+            }
+        })
+}
+
+async fn ensure_upload_root() -> Result<PathBuf, String> {
+    let root = get_upload_root_dir()?;
+    tokio::fs::create_dir_all(&root)
+        .await
+        .map_err(|e| format!("Failed to create upload root: {}", e))?;
+    Ok(root)
+}
+
+async fn read_upload_index(root: &Path) -> Result<UploadIndex, String> {
+    let index_path = get_index_path(root);
+    if !index_path.exists() {
+        return Ok(UploadIndex::default());
+    }
+    let raw = tokio::fs::read_to_string(&index_path)
+        .await
+        .map_err(|e| format!("Failed to read upload index: {}", e))?;
+    serde_json::from_str::<UploadIndex>(&raw)
+        .map_err(|e| format!("Failed to parse upload index: {}", e))
+}
+
+async fn write_upload_index(root: &Path, index: &UploadIndex) -> Result<(), String> {
+    let index_path = get_index_path(root);
+    let raw = serde_json::to_string_pretty(index)
+        .map_err(|e| format!("Failed to serialize upload index: {}", e))?;
+    tokio::fs::write(index_path, raw)
+        .await
+        .map_err(|e| format!("Failed to write upload index: {}", e))
+}
+
+fn detect_mime_type(path: &Path, bytes: &[u8]) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if bytes.starts_with(b"%PDF-") {
+        return "application/pdf".to_string();
+    }
+    if bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+        return "application/zip".to_string();
+    }
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        return "image/png".to_string();
+    }
+
+    DocumentAttachment::mime_type_from_extension(&ext).to_string()
+}
+
+fn compute_sha256(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+async fn load_uploaded_file_settings(app_handle: &AppHandle) -> UploadedFileSettings {
+    let mut settings = UploadedFileSettings {
+        auto_cleanup_enabled: false,
+        retention_days: DEFAULT_RETENTION_DAYS,
+        max_file_mb: DEFAULT_MAX_FILE_MB,
+        max_total_mb: DEFAULT_MAX_TOTAL_MB,
+        max_files_per_conversation: DEFAULT_MAX_FILES_PER_CONVERSATION,
+    };
+
+    let db_state = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>();
+    let Some(db) = db_state else {
+        return settings;
+    };
+
+    if let Ok(Some(v)) = db.get_config("agent", "upload_auto_cleanup_enabled").await {
+        settings.auto_cleanup_enabled = v == "1" || v.eq_ignore_ascii_case("true");
+    }
+    if let Ok(Some(v)) = db.get_config("agent", "upload_retention_days").await {
+        if let Ok(n) = v.parse::<i64>() {
+            settings.retention_days = n.max(1);
+        }
+    }
+    if let Ok(Some(v)) = db.get_config("agent", "upload_max_file_mb").await {
+        if let Ok(n) = v.parse::<u64>() {
+            settings.max_file_mb = n.max(1);
+        }
+    }
+    if let Ok(Some(v)) = db.get_config("agent", "upload_max_total_mb").await {
+        if let Ok(n) = v.parse::<u64>() {
+            settings.max_total_mb = n.max(1);
+        }
+    }
+    if let Ok(Some(v)) = db.get_config("agent", "upload_max_files_per_conversation").await {
+        if let Ok(n) = v.parse::<usize>() {
+            settings.max_files_per_conversation = n.max(1);
+        }
+    }
+
+    settings
+}
+
+#[tauri::command]
+pub async fn get_uploaded_file_settings(app_handle: AppHandle) -> Result<UploadedFileSettings, String> {
+    Ok(load_uploaded_file_settings(&app_handle).await)
+}
+
+#[tauri::command]
+pub async fn save_uploaded_file_settings(
+    app_handle: AppHandle,
+    settings: UploadedFileSettings,
+) -> Result<(), String> {
+    let db = app_handle
+        .try_state::<Arc<crate::services::database::DatabaseService>>()
+        .ok_or_else(|| "Database service not available".to_string())?;
+
+    db.set_config("agent", "upload_auto_cleanup_enabled", if settings.auto_cleanup_enabled { "true" } else { "false" }, None)
+        .await
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config("agent", "upload_retention_days", &settings.retention_days.to_string(), None)
+        .await
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config("agent", "upload_max_file_mb", &settings.max_file_mb.to_string(), None)
+        .await
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config("agent", "upload_max_total_mb", &settings.max_total_mb.to_string(), None)
+        .await
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config(
+        "agent",
+        "upload_max_files_per_conversation",
+        &settings.max_files_per_conversation.to_string(),
+        None,
+    )
+    .await
+    .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    Ok(())
+}
+
+async fn maybe_auto_cleanup(app_handle: &AppHandle, index: &mut UploadIndex) -> Result<(), String> {
+    let settings = load_uploaded_file_settings(app_handle).await;
+    if !settings.auto_cleanup_enabled {
+        return Ok(());
+    }
+
+    let cutoff = chrono::Utc::now().timestamp() - settings.retention_days * 24 * 3600;
+    let mut removed = 0usize;
+    index.files.retain(|entry| {
+        if entry.created_at < cutoff {
+            let p = PathBuf::from(&entry.path);
+            let _ = std::fs::remove_file(p);
+            removed += 1;
+            false
+        } else {
+            true
+        }
+    });
+
+    if removed > 0 {
+        tracing::info!("[upload-audit] auto-cleanup removed {} files", removed);
+    }
+    Ok(())
+}
+
+async fn resolve_runtime_path_for_host_file(host_path: &str) -> Result<(String, Option<String>), String> {
+    let shell_config = get_shell_config().await;
+    let docker_requested = shell_config.default_execution_mode == ShellExecutionMode::Docker
+        && shell_config.docker_config.is_some();
+    let docker_ready = DockerSandbox::is_docker_available().await
+        && DockerSandbox::image_exists("sentinel-sandbox:latest").await;
+
+    if !(docker_requested && docker_ready) {
+        return Ok((host_path.to_string(), None));
+    }
+
+    let docker_config = shell_config
+        .docker_config
+        .ok_or_else(|| "Docker config not available".to_string())?;
+    let sandbox = DockerSandbox::new(docker_config);
+    let host_path_obj = Path::new(host_path);
+
+    let date_dir = host_path_obj
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("misc");
+    let filename = host_path_obj
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file.bin");
+
+    let container_dir = format!("/workspace/uploads/{}", date_dir);
+    let container_path = format!("{}/{}", container_dir, filename);
+
+    let _ = sandbox.execute(&format!("mkdir -p '{}'", container_dir), 10).await;
+    sandbox
+        .copy_file_to_container(host_path, &container_path)
+        .await
+        .map_err(|e| format!("Failed to copy file to docker: {}", e))?;
+
+    Ok((container_path.clone(), Some(container_path)))
+}
+
+pub async fn resolve_uploaded_file_for_execution_by_id(
+    app_handle: &AppHandle,
+    file_id: &str,
+) -> Result<String, String> {
+    let root = ensure_upload_root().await?;
+    let mut index = read_upload_index(&root).await?;
+    maybe_auto_cleanup(app_handle, &mut index).await?;
+
+    let file = index
+        .files
+        .iter()
+        .find(|f| f.file_id == file_id)
+        .ok_or_else(|| format!("Uploaded file not found: {}", file_id))?;
+
+    if !Path::new(&file.path).exists() {
+        return Err(format!("Uploaded file missing from disk: {}", file.path));
+    }
+
+    let (runtime_path, _) = resolve_runtime_path_for_host_file(&file.path).await?;
+    Ok(runtime_path)
+}
+
+#[tauri::command]
+pub async fn run_file_security_analysis(file_id: String) -> Result<String, String> {
+    let docker_available = DockerSandbox::is_docker_available().await;
+    let image_exists = DockerSandbox::image_exists("sentinel-sandbox:latest").await;
+    let container_ready = DockerSandbox::get_persistent_shell_container_info()
+        .await
+        .map(|info| info.is_some())
+        .unwrap_or(false);
+    if !(docker_available && image_exists && container_ready) {
+        return Err("Security analysis requires a ready Docker sandbox".to_string());
+    }
+    Ok(format!("Security analysis accepted for file_id={}.", file_id))
+}
+
 #[tauri::command]
 pub async fn get_file_stat(path: String) -> Result<FileStatResult, String> {
     let metadata = std::fs::metadata(&path)
         .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-    
+
     Ok(FileStatResult {
         size: metadata.len(),
         is_file: metadata.is_file(),
@@ -54,11 +368,10 @@ pub async fn get_file_stat(path: String) -> Result<FileStatResult, String> {
     })
 }
 
-/// Check Docker availability for file analysis
 #[tauri::command]
 pub async fn check_docker_for_file_analysis() -> Result<DockerAnalysisStatus, String> {
     let docker_available = DockerSandbox::is_docker_available().await;
-    
+
     if !docker_available {
         return Ok(DockerAnalysisStatus {
             docker_available: false,
@@ -74,7 +387,7 @@ pub async fn check_docker_for_file_analysis() -> Result<DockerAnalysisStatus, St
     }
 
     let image_exists = DockerSandbox::image_exists("sentinel-sandbox:latest").await;
-    
+
     if !image_exists {
         return Ok(DockerAnalysisStatus {
             docker_available: true,
@@ -89,7 +402,6 @@ pub async fn check_docker_for_file_analysis() -> Result<DockerAnalysisStatus, St
         });
     }
 
-    // Check if container is ready
     let container_ready = DockerSandbox::get_persistent_shell_container_info()
         .await
         .map(|info| info.is_some())
@@ -99,7 +411,7 @@ pub async fn check_docker_for_file_analysis() -> Result<DockerAnalysisStatus, St
         docker_available: true,
         image_exists: true,
         container_ready,
-        ready_for_file_analysis: true,
+        ready_for_file_analysis: container_ready,
         supported_file_types: DocumentAttachment::SUPPORTED_EXTENSIONS
             .iter()
             .map(|s| s.to_string())
@@ -108,430 +420,261 @@ pub async fn check_docker_for_file_analysis() -> Result<DockerAnalysisStatus, St
     })
 }
 
-/// Process document attachment based on mode
 #[tauri::command]
-pub async fn process_document_attachment(
+pub async fn upload_document_attachment(
+    app_handle: AppHandle,
     file_path: String,
-    mode: String, // "content" or "security"
+    client_id: Option<String>,
+    conversation_id: Option<String>,
 ) -> Result<ProcessedDocumentResult, String> {
-    let path = Path::new(&file_path);
-    
-    // Validate file exists
-    if !path.exists() {
+    let source = Path::new(&file_path);
+    if !source.exists() {
         return Err(format!("File not found: {}", file_path));
     }
+    if !source.is_file() {
+        return Err(format!("Not a regular file: {}", file_path));
+    }
 
-    // Get file info
-    let metadata = std::fs::metadata(&file_path)
-        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-    let file_size = metadata.len();
-    
-    let original_filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    
-    let extension = path
+    let settings = load_uploaded_file_settings(&app_handle).await;
+
+    let bytes = tokio::fs::read(source)
+        .await
+        .map_err(|e| format!("Failed to read source file: {}", e))?;
+    let file_size = bytes.len() as u64;
+    let max_file_bytes = settings.max_file_mb * 1024 * 1024;
+    if file_size > max_file_bytes {
+        return Err(format!(
+            "File too large: {} bytes (limit {} MB)",
+            file_size, settings.max_file_mb
+        ));
+    }
+
+    let root = ensure_upload_root().await?;
+    let mut index = read_upload_index(&root).await?;
+    maybe_auto_cleanup(&app_handle, &mut index).await?;
+
+    if let Some(conv_id) = &conversation_id {
+        let conv_count = index
+            .files
+            .iter()
+            .filter(|f| f.conversation_id.as_ref() == Some(conv_id))
+            .count();
+        if conv_count >= settings.max_files_per_conversation {
+            return Err(format!(
+                "Too many files in conversation (limit {})",
+                settings.max_files_per_conversation
+            ));
+        }
+    }
+
+    let total_size: u64 = index
+        .files
+        .iter()
+        .filter_map(|f| std::fs::metadata(&f.path).ok().map(|m| m.len()))
+        .sum();
+    let max_total_bytes = settings.max_total_mb * 1024 * 1024;
+    if total_size + file_size > max_total_bytes {
+        return Err(format!(
+            "Total upload quota exceeded (limit {} MB)",
+            settings.max_total_mb
+        ));
+    }
+
+    let sha256 = compute_sha256(&bytes);
+
+    if let Some(existing) = index
+        .files
+        .iter()
+        .find(|f| f.sha256 == sha256 && Path::new(&f.path).exists())
+        .cloned()
+    {
+        let virtual_path = format!("file://{}", existing.file_id);
+        tracing::info!(
+            "[upload-audit] dedup hit file_id={} source={} conv={}",
+            existing.file_id,
+            file_path,
+            conversation_id.clone().unwrap_or_else(|| "-".to_string())
+        );
+        return Ok(ProcessedDocumentResult {
+            id: client_id.clone().unwrap_or_else(|| existing.file_id.clone()),
+            file_id: existing.file_id.clone(),
+            original_filename: existing.filename,
+            file_size: existing.size,
+            mime_type: existing.mime_type,
+            status: "ready".to_string(),
+            file_path: Some(virtual_path),
+            sha256: existing.sha256,
+            created_at: existing.created_at,
+            conversation_id: existing.conversation_id,
+            error_message: None,
+        });
+    }
+
+    let date_dir = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let target_dir = root.join(&date_dir);
+    tokio::fs::create_dir_all(&target_dir)
+        .await
+        .map_err(|e| format!("Failed to create upload directory: {}", e))?;
+
+    let file_id = Uuid::new_v4().to_string();
+    let extension = source
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-
-    // 所有文件类型都支持，未知类型作为文本处理
-    let mime_type = DocumentAttachment::mime_type_from_extension(&extension).to_string();
-    let id = Uuid::new_v4().to_string();
-
-    let processing_mode = match mode.as_str() {
-        "content" => DocumentProcessingMode::Content,
-        "security" => DocumentProcessingMode::Security,
-        _ => return Err(format!("Invalid processing mode: {}", mode)),
-    };
-
-    match processing_mode {
-        DocumentProcessingMode::Content => {
-            process_content_mode(&id, &file_path, &original_filename, file_size, &mime_type, &extension).await
-        }
-        DocumentProcessingMode::Security => {
-            process_security_mode(&id, &file_path, &original_filename, file_size, &mime_type).await
-        }
-    }
-}
-
-/// Content mode: extract text from document
-async fn process_content_mode(
-    id: &str,
-    file_path: &str,
-    original_filename: &str,
-    file_size: u64,
-    mime_type: &str,
-    extension: &str,
-) -> Result<ProcessedDocumentResult, String> {
-    // Try Docker extraction first (more secure)
-    if DockerSandbox::is_docker_available().await 
-        && DockerSandbox::image_exists("sentinel-sandbox:latest").await 
-    {
-        match extract_text_in_docker(file_path, extension).await {
-            Ok(text) => {
-                return Ok(ProcessedDocumentResult {
-                    id: id.to_string(),
-                    original_filename: original_filename.to_string(),
-                    file_size,
-                    mime_type: mime_type.to_string(),
-                    processing_mode: "content".to_string(),
-                    status: "ready".to_string(),
-                    extracted_text: Some(text),
-                    container_path: None,
-                    extraction_method: Some("docker".to_string()),
-                    error_message: None,
-                });
-            }
-            Err(e) => {
-                tracing::warn!("Docker extraction failed, falling back to local: {}", e);
-            }
-        }
-    }
-
-    // Fall back to local extraction
-    match extract_text_locally(file_path, extension).await {
-        Ok(text) => {
-            Ok(ProcessedDocumentResult {
-                id: id.to_string(),
-                original_filename: original_filename.to_string(),
-                file_size,
-                mime_type: mime_type.to_string(),
-                processing_mode: "content".to_string(),
-                status: "ready".to_string(),
-                extracted_text: Some(text),
-                container_path: None,
-                extraction_method: Some("local".to_string()),
-                error_message: None,
-            })
-        }
-        Err(e) => {
-            Ok(ProcessedDocumentResult {
-                id: id.to_string(),
-                original_filename: original_filename.to_string(),
-                file_size,
-                mime_type: mime_type.to_string(),
-                processing_mode: "content".to_string(),
-                status: "failed".to_string(),
-                extracted_text: None,
-                container_path: None,
-                extraction_method: None,
-                error_message: Some(e),
-            })
-        }
-    }
-}
-
-/// Security mode: transfer file to Docker for analysis
-async fn process_security_mode(
-    id: &str,
-    file_path: &str,
-    original_filename: &str,
-    file_size: u64,
-    mime_type: &str,
-) -> Result<ProcessedDocumentResult, String> {
-    // Security mode requires Docker
-    if !DockerSandbox::is_docker_available().await {
-        return Err("Security analysis requires Docker".to_string());
-    }
-
-    if !DockerSandbox::image_exists("sentinel-sandbox:latest").await {
-        return Err("Security analysis requires sandbox image".to_string());
-    }
-
-    // Transfer file to container
-    match transfer_file_to_container(file_path, id).await {
-        Ok(container_path) => {
-            Ok(ProcessedDocumentResult {
-                id: id.to_string(),
-                original_filename: original_filename.to_string(),
-                file_size,
-                mime_type: mime_type.to_string(),
-                processing_mode: "security".to_string(),
-                status: "ready".to_string(),
-                extracted_text: None,
-                container_path: Some(container_path),
-                extraction_method: None,
-                error_message: None,
-            })
-        }
-        Err(e) => {
-            Ok(ProcessedDocumentResult {
-                id: id.to_string(),
-                original_filename: original_filename.to_string(),
-                file_size,
-                mime_type: mime_type.to_string(),
-                processing_mode: "security".to_string(),
-                status: "failed".to_string(),
-                extracted_text: None,
-                container_path: None,
-                extraction_method: None,
-                error_message: Some(e),
-            })
-        }
-    }
-}
-
-/// Extract text from document in Docker container
-async fn extract_text_in_docker(file_path: &str, extension: &str) -> Result<String, String> {
-    let shell_config = get_shell_config().await;
-    let docker_config = shell_config.docker_config
-        .ok_or_else(|| "Docker config not available".to_string())?;
-    
-    let sandbox = DockerSandbox::new(docker_config);
-    
-    // Generate unique filename
-    let id = Uuid::new_v4().to_string();
-    let original_ext = Path::new(file_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or(extension);
-    let container_path = format!("/workspace/uploads/temp_{}_{}.{}", id, "doc", original_ext);
-    
-    // Copy file to container
-    sandbox.copy_file_to_container(file_path, &container_path)
-        .await
-        .map_err(|e| format!("Failed to copy file to container: {}", e))?;
-    
-    // Build extraction command based on file type
-    let extract_cmd = build_extraction_command(&container_path, extension);
-    
-    // Execute extraction
-    let (stdout, stderr, exit_code) = sandbox.execute(&extract_cmd, 60)
-        .await
-        .map_err(|e| format!("Failed to execute extraction: {}", e))?;
-    
-    // Cleanup temp file
-    let _ = sandbox.delete_file_in_container(&container_path).await;
-    
-    if exit_code != 0 {
-        return Err(format!("Extraction failed: {}", stderr));
-    }
-    
-    Ok(stdout.trim().to_string())
-}
-
-/// Build extraction command based on file type
-fn build_extraction_command(file_path: &str, extension: &str) -> String {
-    match extension.to_lowercase().as_str() {
-        // 纯文本文件：直接读取
-        "txt" | "md" | "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "conf" | "cfg" | "log" => {
-            format!("cat '{}'", file_path)
-        }
-        // 代码文件：直接读取
-        "js" | "jsx" | "ts" | "tsx" | "py" | "java" | "c" | "cpp" | "h" | "hpp" | "cc" | "cxx" 
-        | "rs" | "go" | "rb" | "php" | "sh" | "bash" | "zsh" | "sql" | "html" | "htm" | "css" => {
-            format!("cat '{}'", file_path)
-        }
-        // PDF
-        "pdf" => {
-            format!("pdftotext '{}' - 2>/dev/null || echo '[PDF extraction failed]'", file_path)
-        }
-        // Word DOCX
-        "docx" => {
-            format!(
-                r#"python3 -c "
-from docx import Document
-doc = Document('{}')
-for para in doc.paragraphs:
-    print(para.text)
-" 2>/dev/null || echo '[DOCX extraction failed - python-docx may not be installed]'"#,
-                file_path
-            )
-        }
-        // Word DOC (旧格式)
-        "doc" => {
-            format!("antiword '{}' 2>/dev/null || echo '[DOC extraction failed]'", file_path)
-        }
-        // Excel
-        "xlsx" | "xls" => {
-            format!(
-                r#"python3 -c "
-from openpyxl import load_workbook
-wb = load_workbook('{}', read_only=True, data_only=True)
-for sheet in wb.sheetnames:
-    print(f'=== Sheet: {{sheet}} ===')
-    ws = wb[sheet]
-    for row in ws.iter_rows(values_only=True):
-        print('\t'.join(str(c) if c is not None else '' for c in row))
-" 2>/dev/null || echo '[Excel extraction failed]'"#,
-                file_path
-            )
-        }
-        // PowerPoint
-        "pptx" | "ppt" => {
-            format!(
-                r#"python3 -c "
-from pptx import Presentation
-prs = Presentation('{}')
-for i, slide in enumerate(prs.slides, 1):
-    print(f'=== Slide {{i}} ===')
-    for shape in slide.shapes:
-        if hasattr(shape, 'text'):
-            print(shape.text)
-" 2>/dev/null || echo '[PowerPoint extraction failed]'"#,
-                file_path
-            )
-        }
-        // Email
-        "eml" => {
-            format!(
-                r#"python3 -c "
-import email
-from email import policy
-with open('{}', 'rb') as f:
-    msg = email.message_from_binary_file(f, policy=policy.default)
-print('From:', msg.get('From', ''))
-print('To:', msg.get('To', ''))
-print('Subject:', msg.get('Subject', ''))
-print('Date:', msg.get('Date', ''))
-print('---')
-if msg.is_multipart():
-    for part in msg.walk():
-        if part.get_content_type() == 'text/plain':
-            print(part.get_content())
-else:
-    print(msg.get_content())
-" 2>/dev/null || echo '[Email extraction failed]'"#,
-                file_path
-            )
-        }
-        // RTF
-        "rtf" => {
-            format!("unrtf --text '{}' 2>/dev/null | tail -n +4 || echo '[RTF extraction failed]'", file_path)
-        }
-        // 未知类型：尝试作为文本读取，失败则用 strings 提取
-        _ => {
-            format!(
-                "cat '{}' 2>/dev/null || (file '{}' && echo '---' && strings '{}' | head -500)",
-                file_path, file_path, file_path
-            )
-        }
-    }
-}
-
-/// Extract text locally (fallback when Docker unavailable)
-async fn extract_text_locally(file_path: &str, extension: &str) -> Result<String, String> {
-    match extension.to_lowercase().as_str() {
-        // 纯文本文件：直接读取
-        "txt" | "md" | "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "conf" | "cfg" | "log" => {
-            tokio::fs::read_to_string(file_path)
-                .await
-                .map_err(|e| format!("Failed to read file: {}", e))
-        }
-        // 代码文件：直接读取
-        "js" | "jsx" | "ts" | "tsx" | "py" | "java" | "c" | "cpp" | "h" | "hpp" | "cc" | "cxx" 
-        | "rs" | "go" | "rb" | "php" | "sh" | "bash" | "zsh" | "sql" | "html" | "htm" | "css" => {
-            tokio::fs::read_to_string(file_path)
-                .await
-                .map_err(|e| format!("Failed to read file: {}", e))
-        }
-        // Office 文档和 PDF 需要 Docker
-        "pdf" => {
-            Err("PDF extraction requires Docker environment for security".to_string())
-        }
-        "docx" | "doc" => {
-            Err("Word document extraction requires Docker environment for security".to_string())
-        }
-        "xlsx" | "xls" => {
-            Err("Excel extraction requires Docker environment for security".to_string())
-        }
-        "pptx" | "ppt" => {
-            Err("PowerPoint extraction requires Docker environment for security".to_string())
-        }
-        "eml" | "msg" => {
-            Err("Email extraction requires Docker environment for security".to_string())
-        }
-        "rtf" => {
-            Err("RTF extraction requires Docker environment for security".to_string())
-        }
-        // 压缩文件需要 Docker
-        "zip" | "rar" | "7z" | "tar" | "gz" => {
-            Err("Archive extraction requires Docker environment for security".to_string())
-        }
-        // 未知类型：尝试作为文本读取
-        _ => {
-            tokio::fs::read_to_string(file_path)
-                .await
-                .map_err(|e| format!("Failed to read file as text: {}. This file type may require Docker.", e))
-        }
-    }
-}
-
-/// Transfer file to Docker container for security analysis
-async fn transfer_file_to_container(file_path: &str, id: &str) -> Result<String, String> {
-    let shell_config = get_shell_config().await;
-    let docker_config = shell_config.docker_config
-        .ok_or_else(|| "Docker config not available".to_string())?;
-    
-    let sandbox = DockerSandbox::new(docker_config);
-    
-    // Get original extension
-    let extension = Path::new(file_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin");
-    
-    // Get sanitized original filename
-    let original_name = Path::new(file_path)
+    let stem = source
         .file_stem()
         .and_then(|n| n.to_str())
-        .unwrap_or("file")
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
-        .take(32)
-        .collect::<String>();
-    
-    let container_path = format!("/workspace/uploads/{}_{}.{}", id, original_name, extension);
-    
-    sandbox.copy_file_to_container(file_path, &container_path)
+        .unwrap_or("file");
+    let safe_stem = sanitize_file_stem(stem);
+    let target_name = if extension.is_empty() {
+        format!("{}_{}", file_id, safe_stem)
+    } else {
+        format!("{}_{}.{}", file_id, safe_stem, extension)
+    };
+    let stored_host_path = target_dir.join(target_name);
+    tokio::fs::write(&stored_host_path, &bytes)
         .await
-        .map_err(|e| format!("Failed to transfer file: {}", e))?;
-    
-    Ok(container_path)
+        .map_err(|e| format!("Failed to store uploaded file: {}", e))?;
+
+    let stored_host_path_str = stored_host_path.to_string_lossy().to_string();
+    let mime_type = detect_mime_type(source, &bytes);
+    let original_filename = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let created_at = chrono::Utc::now().timestamp();
+
+    let entry = UploadedFileEntry {
+        file_id: file_id.clone(),
+        date: date_dir,
+        filename: original_filename.clone(),
+        path: stored_host_path_str.clone(),
+        size: file_size,
+        mime_type: mime_type.clone(),
+        sha256: sha256.clone(),
+        created_at,
+        conversation_id: conversation_id.clone(),
+    };
+    index.files.push(entry);
+    write_upload_index(&root, &index).await?;
+
+    tracing::info!(
+        "[upload-audit] stored file_id={} path={} size={} conv={}",
+        file_id,
+        stored_host_path_str,
+        file_size,
+        conversation_id.clone().unwrap_or_else(|| "-".to_string())
+    );
+
+    Ok(ProcessedDocumentResult {
+        id: client_id.unwrap_or_else(|| file_id.clone()),
+        file_id: file_id.clone(),
+        original_filename,
+        file_size,
+        mime_type,
+        status: "ready".to_string(),
+        file_path: Some(format!("file://{}", file_id)),
+        sha256,
+        created_at,
+        conversation_id,
+        error_message: None,
+    })
 }
 
-/// Delete uploaded file from container
 #[tauri::command]
-pub async fn delete_document_from_container(container_path: String) -> Result<(), String> {
-    let shell_config = get_shell_config().await;
-    let docker_config = shell_config.docker_config
-        .ok_or_else(|| "Docker config not available".to_string())?;
-    
-    let sandbox = DockerSandbox::new(docker_config);
-    
-    sandbox.delete_file_in_container(&container_path)
-        .await
-        .map_err(|e| format!("Failed to delete file: {}", e))?;
-    
-    Ok(())
-}
+pub async fn list_uploaded_files(
+    app_handle: AppHandle,
+    conversation_id: Option<String>,
+    date: Option<String>,
+) -> Result<Vec<UploadedFileEntry>, String> {
+    let root = ensure_upload_root().await?;
+    let mut index = read_upload_index(&root).await?;
+    maybe_auto_cleanup(&app_handle, &mut index).await?;
 
-/// List files in container uploads directory
-#[tauri::command]
-pub async fn list_container_uploads() -> Result<Vec<String>, String> {
-    let shell_config = get_shell_config().await;
-    let docker_config = shell_config.docker_config
-        .ok_or_else(|| "Docker config not available".to_string())?;
-    
-    let sandbox = DockerSandbox::new(docker_config);
-    
-    let (stdout, _, exit_code) = sandbox.execute("ls -1 /workspace/uploads 2>/dev/null || echo ''", 10)
-        .await
-        .map_err(|e| format!("Failed to list files: {}", e))?;
-    
-    if exit_code != 0 {
-        return Ok(vec![]);
-    }
-    
-    let files: Vec<String> = stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| format!("/workspace/uploads/{}", l))
+    index.files.retain(|f| Path::new(&f.path).exists());
+    write_upload_index(&root, &index).await?;
+
+    let mut items: Vec<UploadedFileEntry> = index
+        .files
+        .into_iter()
+        .filter(|f| {
+            let conv_ok = conversation_id
+                .as_ref()
+                .map(|cid| f.conversation_id.as_ref() == Some(cid))
+                .unwrap_or(true);
+            let date_ok = date
+                .as_ref()
+                .map(|d| &f.date == d)
+                .unwrap_or(true);
+            conv_ok && date_ok
+        })
         .collect();
-    
-    Ok(files)
+
+    items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(items)
+}
+
+fn cleanup_empty_date_dirs(root: &Path) {
+    if let Ok(read_dir) = std::fs::read_dir(root) {
+        for entry in read_dir.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let is_empty = std::fs::read_dir(&p)
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(false);
+                if is_empty {
+                    let _ = std::fs::remove_dir(&p);
+                }
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn clear_uploaded_files(
+    _app_handle: AppHandle,
+    date: Option<String>,
+    conversation_id: Option<String>,
+) -> Result<u64, String> {
+    if let Some(d) = &date {
+        if !is_valid_date_segment(d) {
+            return Err("Invalid date format, expected YYYY-MM-DD".to_string());
+        }
+    }
+
+    let root = ensure_upload_root().await?;
+    let mut index = read_upload_index(&root).await?;
+
+    let mut removed_count = 0u64;
+    let mut keep: Vec<UploadedFileEntry> = Vec::with_capacity(index.files.len());
+
+    for item in index.files {
+        let date_match = date.as_ref().map(|d| &item.date == d).unwrap_or(true);
+        let conv_match = conversation_id
+            .as_ref()
+            .map(|cid| item.conversation_id.as_ref() == Some(cid))
+            .unwrap_or(true);
+
+        if date_match && conv_match {
+            let _ = std::fs::remove_file(&item.path);
+            removed_count += 1;
+        } else {
+            keep.push(item);
+        }
+    }
+
+    index.files = keep;
+    write_upload_index(&root, &index).await?;
+    cleanup_empty_date_dirs(&root);
+
+    tracing::info!(
+        "[upload-audit] cleared files count={} date={:?} conv={:?}",
+        removed_count,
+        date,
+        conversation_id
+    );
+
+    Ok(removed_count)
 }

@@ -12489,6 +12489,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "md5 0.7.0",
  "rand 0.8.5",
  "regex",
  "sentinel-core",

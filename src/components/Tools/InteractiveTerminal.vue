@@ -228,12 +228,23 @@ const handleResize = () => {
     requestAnimationFrame(() => {
       try {
         fitAddon.value?.fit()
+        sendResize()
       } catch (e) {
         // Ignore fit errors during rapid resizing
         console.debug('Terminal fit error:', e)
       }
     })
   }
+}
+
+const sendResize = () => {
+  if (!terminal.value || !ws.value || ws.value.readyState !== WebSocket.OPEN) return
+
+  ws.value.send(JSON.stringify({
+    type: 'resize',
+    rows: terminal.value.rows,
+    cols: terminal.value.cols,
+  }))
 }
 
 const connect = async () => {
@@ -314,6 +325,7 @@ const connect = async () => {
           
           terminal.value?.writeln('\x1b[1;32m✓ Connected!\x1b[0m')
           terminal.value?.writeln('')
+          handleResize()
         } else {
           // Regular output - write to terminal
           console.log('[Terminal] Received output, length:', event.data.length)
@@ -478,6 +490,7 @@ onMounted(() => {
           // 重新计算终端尺寸
           if (fitAddon.value) {
             fitAddon.value.fit()
+            sendResize()
           }
         }
       }
@@ -535,7 +548,7 @@ onBeforeUnmount(async () => {
 
 .terminal-container {
   /* Terminal takes remaining space */
-  padding: 8px;
+  padding: 0;
 }
 
 .error-bar {

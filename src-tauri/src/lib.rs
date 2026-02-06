@@ -1158,9 +1158,12 @@ pub fn run() {
             // Document attachment commands
             commands::get_file_stat,
             commands::check_docker_for_file_analysis,
-            commands::process_document_attachment,
-            commands::delete_document_from_container,
-            commands::list_container_uploads,
+            commands::upload_document_attachment,
+            commands::run_file_security_analysis,
+            commands::get_uploaded_file_settings,
+            commands::save_uploaded_file_settings,
+            commands::list_uploaded_files,
+            commands::clear_uploaded_files,
             // Terminal WebSocket commands
             commands::start_terminal_server,
             commands::stop_terminal_server,

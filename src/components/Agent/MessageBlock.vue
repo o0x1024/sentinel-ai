@@ -109,6 +109,26 @@
   </div>
 
   <!-- Shell Tool - Render as independent message block -->
+  <div v-else-if="isSkillsToolCard" :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]">
+    <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
+      <div :class="['w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm', skillsCardIconClass]">
+        <i class="fas fa-book-open text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div :class="['font-semibold text-sm', skillsCardTitleClass]">
+          {{ skillsCardTitle }}
+        </div>
+        <div v-if="skillsCardTarget" class="text-xs text-base-content/70 mt-0.5">
+          {{ skillsCardTarget }}
+        </div>
+      </div>
+      <span v-if="toolStatus" :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]">
+        {{ toolStatusText }}
+      </span>
+    </div>
+  </div>
+
+  <!-- Shell Tool - Render as independent message block -->
   <ShellToolResult
     v-else-if="isShellTool && message.type === 'tool_call'"
     :args="message.metadata?.tool_args"
@@ -359,9 +379,9 @@
                 v-for="doc in documentAttachments"
                 :key="doc.id"
                 class="doc-attachment inline-flex items-center gap-2 px-2 py-1 rounded-lg text-xs"
-                :class="doc.processing_mode === 'security' ? 'bg-warning/20 text-warning' : 'bg-success/20 text-success'"
+                :class="doc.file_path ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'"
               >
-                <i :class="['fas', doc.processing_mode === 'security' ? 'fa-shield-alt' : 'fa-book-open']"></i>
+                <i :class="['fas', doc.file_path ? 'fa-file-lines' : 'fa-file-circle-exclamation']"></i>
                 <span class="font-medium truncate max-w-32" :title="doc.original_filename">{{ doc.original_filename }}</span>
                 <span class="opacity-70">({{ formatDocSize(doc.file_size) }})</span>
               </div>
@@ -581,6 +601,68 @@ const ragInfo = computed(() => props.message.metadata?.rag_info)
 // Tool name from metadata
 const toolName = computed(() => props.message.metadata?.tool_name)
 
+// Check if this is a skills tool
+const isSkillsTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'skills'
+})
+
+const skillsAction = computed(() => {
+  const action = props.message.metadata?.tool_args?.action
+  return typeof action === 'string' ? action.toLowerCase() : ''
+})
+
+const isSkillsCardAction = computed(() => {
+  return ['read_file', 'readfile', 'read-file'].includes(skillsAction.value)
+})
+
+const isSkillsToolCard = computed(() => {
+  return props.message.type === 'tool_call' && isSkillsTool.value && isSkillsCardAction.value
+})
+
+const skillsCardTitle = computed(() => {
+  if (toolStatus.value === 'failed') {
+    return 'Skill file load failed'
+  }
+  if (skillsAction.value === 'load') {
+    return t('agent.skillLoadedTitle')
+  }
+  return 'Skill file loaded'
+})
+
+const skillsCardContainerClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'bg-error/10 border-error'
+  return 'bg-success/10 border-success'
+})
+
+const skillsCardHeaderClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'bg-error/20 border-error/20'
+  return 'bg-success/20 border-success/20'
+})
+
+const skillsCardIconClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'bg-error'
+  return 'bg-success'
+})
+
+const skillsCardTitleClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'text-error'
+  return 'text-success'
+})
+
+const skillsCardTarget = computed(() => {
+  const args = props.message.metadata?.tool_args || {}
+  if (skillsAction.value === 'load') {
+    if (args.skill_id) return String(args.skill_id)
+    return ''
+  }
+  const parts: string[] = []
+  if (args.skill_id) parts.push(String(args.skill_id))
+  if (args.relative_path) parts.push(String(args.relative_path))
+  if (args.path) parts.push(String(args.path))
+  return parts.join(' / ')
+})
+
 // Check if this is a shell tool
 const isShellTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
@@ -619,6 +701,64 @@ const formatNumber = (num: number | undefined) => {
   return num.toLocaleString()
 }
 
+const PREVIEW_MAX_DEPTH = 6
+const PREVIEW_MAX_ITEMS = 1000
+const PREVIEW_MAX_STRING = 4000
+const PREVIEW_MAX_CHARS_COLLAPSED = 8000
+const PREVIEW_MAX_CHARS_EXPANDED = 120000
+
+const normalizeForPreview = (value: any, depth = 0, budget = { nodes: 0 }): any => {
+  if (value === null || value === undefined) return value
+  if (budget.nodes >= PREVIEW_MAX_ITEMS) return '[Truncated: too many nodes]'
+  budget.nodes += 1
+
+  if (typeof value === 'string') {
+    if (value.length > PREVIEW_MAX_STRING) {
+      return `${value.slice(0, PREVIEW_MAX_STRING)}... [truncated ${value.length - PREVIEW_MAX_STRING} chars]`
+    }
+    return value
+  }
+
+  if (typeof value !== 'object') return value
+  if (depth >= PREVIEW_MAX_DEPTH) return '[Truncated: max depth reached]'
+
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeForPreview(item, depth + 1, budget))
+  }
+
+  const out: Record<string, any> = {}
+  for (const key of Object.keys(value)) {
+    out[key] = normalizeForPreview(value[key], depth + 1, budget)
+  }
+  return out
+}
+
+const stringifyPreview = (value: any, maxChars: number) => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') {
+    if (value.length <= maxChars) return value
+    return `${value.slice(0, maxChars)}... [truncated ${value.length - maxChars} chars]`
+  }
+
+  try {
+    const normalized = normalizeForPreview(value)
+    const text = JSON.stringify(normalized, null, 2)
+    if (!text) return ''
+    if (text.length <= maxChars) return text
+    return `${text.slice(0, maxChars)}... [truncated ${text.length - maxChars} chars]`
+  } catch {
+    return String(value)
+  }
+}
+
+const contentMayContainTable = (content: string) => {
+  return (
+    content.includes('<table') ||
+    content.includes('```html') ||
+    (content.includes('|') && content.includes('\n'))
+  )
+}
+
 const isMarkdownTableSeparator = (line: string) => {
   const trimmed = line.trim()
   return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(trimmed)
@@ -628,25 +768,6 @@ const parseMarkdownTableRow = (line: string): string[] => {
   const trimmed = line.trim()
   const withoutEdges = trimmed.replace(/^\|/, '').replace(/\|$/, '')
   return withoutEdges.split('|').map(cell => cell.trim())
-}
-
-const extractMarkdownTableData = (content: string): string[][] => {
-  const lines = content.split('\n')
-  for (let i = 0; i < lines.length - 1; i += 1) {
-    const headerLine = lines[i]
-    const separatorLine = lines[i + 1]
-    if (!headerLine.includes('|') || !isMarkdownTableSeparator(separatorLine)) continue
-
-    const header = parseMarkdownTableRow(headerLine)
-    const rows: string[][] = []
-    let j = i + 2
-    while (j < lines.length && lines[j].includes('|')) {
-      rows.push(parseMarkdownTableRow(lines[j]))
-      j += 1
-    }
-    return [header, ...rows].filter(row => row.length > 0)
-  }
-  return []
 }
 
 const extractHtmlTableData = (html: string): string[][] => {
@@ -669,15 +790,6 @@ const extractHtmlBlock = (content: string): string | null => {
   const match = content.match(/```html\s*([\s\S]*?)```/i)
   if (match && match[1]) return match[1].trim()
   return null
-}
-
-const extractTableDataFromContent = (content: string): string[][] => {
-  if (!content) return []
-  const htmlBlock = extractHtmlBlock(content)
-  const htmlCandidate = htmlBlock || content
-  const htmlTable = extractHtmlTableData(htmlCandidate)
-  if (htmlTable.length > 0) return htmlTable
-  return extractMarkdownTableData(content)
 }
 
 // Status icon
@@ -764,6 +876,7 @@ const hasToolResult = computed(() => {
 // Check if tool_call message has any content to display
 const hasToolCallContent = computed(() => {
   if (props.message.type !== 'tool_call') return false
+  if (isSkillsTool.value) return false
   
   // Has content, args, result, or call_id
   return !!(
@@ -790,16 +903,14 @@ const hasRegularMessageContent = computed(() => {
 
 // Formatted args
 const formattedArgs = computed(() => {
-  return JSON.stringify(props.message.metadata?.tool_args, null, 2)
+  const maxChars = isArgsExpanded.value ? PREVIEW_MAX_CHARS_EXPANDED : PREVIEW_MAX_CHARS_COLLAPSED
+  return stringifyPreview(props.message.metadata?.tool_args, maxChars)
 })
 
 // Formatted tool result
 const formattedToolResult = computed(() => {
-  const result = props.message.metadata?.tool_result
-  if (typeof result === 'string') {
-    return result
-  }
-  return JSON.stringify(result, null, 2)
+  const maxChars = isResultExpanded.value ? PREVIEW_MAX_CHARS_EXPANDED : PREVIEW_MAX_CHARS_COLLAPSED
+  return stringifyPreview(props.message.metadata?.tool_result, maxChars)
 })
 
 // Type-specific class
@@ -987,11 +1098,10 @@ const shouldHideContent = computed(() => {
   return false
 })
 
-const tableData = computed(() => extractTableDataFromContent(props.message.content || ''))
-
 const showTableDownload = computed(() => {
   if (props.message.type === 'user') return false
-  return tableData.value.length > 0
+  if (props.isExecuting) return false
+  return parsedTables.value.length > 0
 })
 
 const escapeCsvCell = (value: string) => {
@@ -1049,6 +1159,7 @@ const downloadTableAsCsv = async (data: string[][]) => {
 // Extract all tables from content
 const extractAllTablesFromContent = (content: string): string[][][] => {
   if (!content) return []
+  if (!contentMayContainTable(content)) return []
   const tables: string[][][] = []
   
   // Extract HTML tables
@@ -1083,10 +1194,14 @@ const extractAllTablesFromContent = (content: string): string[][][] => {
   return tables
 }
 
-const allTables = computed(() => extractAllTablesFromContent(props.message.content || ''))
+const parsedTables = computed(() => {
+  if (props.message.type === 'user') return []
+  if (props.isExecuting) return []
+  return extractAllTablesFromContent(props.message.content || '')
+})
 
 const handleDownloadTable = (tableIndex: number) => {
-  const tables = allTables.value
+  const tables = parsedTables.value
   if (tableIndex >= 0 && tableIndex < tables.length) {
     downloadTableAsCsv(tables[tableIndex])
   } else if (tables.length > 0) {

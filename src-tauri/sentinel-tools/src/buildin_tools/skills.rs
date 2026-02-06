@@ -3,6 +3,8 @@
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
+use crate::output_storage::{get_host_context_dir, CONTAINER_CONTEXT_DIR};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -44,6 +46,12 @@ pub struct SkillsToolOutput {
     pub skill: Option<SkillSummary>,
     pub content: Option<String>,
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_hint: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -141,6 +149,59 @@ impl SkillsTool {
             .count()
             <= 3
     }
+
+    fn normalize_rel_path(path: &str) -> String {
+        path.replace('\\', "/")
+    }
+
+    fn runtime_host_path(skill_id: &str, rel_path: &str) -> PathBuf {
+        get_host_context_dir()
+            .join("skills")
+            .join(skill_id)
+            .join(rel_path)
+    }
+
+    fn runtime_container_path(skill_id: &str, rel_path: &str) -> String {
+        format!("{}/skills/{}/{}", CONTAINER_CONTEXT_DIR, skill_id, rel_path)
+    }
+
+    async fn stage_runtime_file(
+        skill_id: &str,
+        rel_path: &str,
+        bytes: &[u8],
+    ) -> Result<(String, Option<String>), SkillsToolError> {
+        let rel_path = Self::normalize_rel_path(rel_path);
+        let host_target = Self::runtime_host_path(skill_id, &rel_path);
+        if let Some(parent) = host_target.parent() {
+            fs::create_dir_all(parent).map_err(|e| SkillsToolError::Io(e.to_string()))?;
+        }
+        fs::write(&host_target, bytes).map_err(|e| SkillsToolError::Io(e.to_string()))?;
+
+        let container_target = Self::runtime_container_path(skill_id, &rel_path);
+        let host_target_str = host_target.to_string_lossy().to_string();
+
+        let container_path = if DockerSandbox::is_docker_available().await {
+            let sandbox = DockerSandbox::new(DockerSandboxConfig::default());
+            match sandbox
+                .copy_file_to_container(&host_target_str, &container_target)
+                .await
+            {
+                Ok(_) => Some(container_target),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to stage skill file into container ({}): {}",
+                        host_target_str,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok((host_target_str, container_path))
+    }
 }
 
 impl Tool for SkillsTool {
@@ -197,6 +258,9 @@ impl Tool for SkillsTool {
                     skill: None,
                     content: None,
                     path: None,
+                    host_path: None,
+                    container_path: None,
+                    runtime_hint: None,
                 })
             }
             SkillsAction::Load => {
@@ -205,9 +269,15 @@ impl Tool for SkillsTool {
                     .ok_or_else(|| SkillsToolError::InvalidArgs("skill_id is required".to_string()))?;
                 let skill_dir = Self::resolve_skill_dir(&skill_id)?;
                 let skill_md = skill_dir.join("SKILL.md");
-                let content =
-                    fs::read_to_string(&skill_md).map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
+                let bytes = fs::read(&skill_md).map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
+                let content = String::from_utf8(bytes.clone()).map_err(|_| SkillsToolError::InvalidUtf8)?;
                 let doc = Self::parse_skill_markdown(&content)?;
+                let (host_path, container_path) =
+                    Self::stage_runtime_file(&skill_id, "SKILL.md", &bytes).await?;
+                let runtime_hint = container_path
+                    .as_ref()
+                    .map(|p| format!("Docker mode: use this path directly -> {}", p))
+                    .or_else(|| Some(format!("Host mode fallback path -> {}", host_path)));
                 Ok(SkillsToolOutput {
                     action: "load".to_string(),
                     skills: None,
@@ -219,6 +289,9 @@ impl Tool for SkillsTool {
                     }),
                     content: Some(doc.body),
                     path: Some("SKILL.md".to_string()),
+                    host_path: Some(host_path),
+                    container_path,
+                    runtime_hint,
                 })
             }
             SkillsAction::ReadFile => {
@@ -246,7 +319,14 @@ impl Tool for SkillsTool {
                     return Err(SkillsToolError::FileTooLarge);
                 }
                 let bytes = fs::read(&canonical_file).map_err(|e| SkillsToolError::Io(e.to_string()))?;
-                let content = String::from_utf8(bytes).map_err(|_| SkillsToolError::InvalidUtf8)?;
+                let content = String::from_utf8(bytes.clone()).map_err(|_| SkillsToolError::InvalidUtf8)?;
+                let rel_path = Self::normalize_rel_path(&path);
+                let (host_path, container_path) =
+                    Self::stage_runtime_file(&skill_id, &rel_path, &bytes).await?;
+                let runtime_hint = container_path
+                    .as_ref()
+                    .map(|p| format!("Docker mode: execute/read this file via {}", p))
+                    .or_else(|| Some(format!("Host mode fallback path -> {}", host_path)));
 
                 Ok(SkillsToolOutput {
                     action: "read_file".to_string(),
@@ -258,7 +338,10 @@ impl Tool for SkillsTool {
                         when_to_use: None,
                     }),
                     content: Some(content),
-                    path: Some(path),
+                    path: Some(rel_path),
+                    host_path: Some(host_path),
+                    container_path,
+                    runtime_hint,
                 })
             }
         }

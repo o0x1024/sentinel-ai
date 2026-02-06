@@ -53,10 +53,8 @@ fn generate_file_access_commands(file_path: &str) -> String {
    • Get-Content "{}" -Tail 50                   (view last 50 lines)
    • Get-Content "{}" -Head 50                   (view first 50 lines)
    • Get-Content "{}"                            (view full content)
-   • (Get-Content "{}").Count                    (count lines)
-   • type "{}"                                   (view full content - cmd)
-   • find /c /v "" "{}"                          (count lines - cmd)"#,
-            file_path, file_path, file_path, file_path, file_path, file_path, file_path
+   • (Get-Content "{}").Count                    (count lines)"#,
+            file_path, file_path, file_path, file_path, file_path, file_path
         )
     }
     
@@ -66,9 +64,8 @@ fn generate_file_access_commands(file_path: &str) -> String {
             r#"   • grep -i "pattern" "{}"     (search for pattern)
    • tail -n 50 "{}"             (view last 50 lines)  
    • head -n 50 "{}"             (view first 50 lines)
-   • cat "{}"                    (view full content)
    • wc -l "{}"                  (count lines)"#,
-            file_path, file_path, file_path, file_path, file_path
+            file_path, file_path, file_path, file_path
         )
     }
 }
@@ -303,12 +300,9 @@ pub async fn cleanup_container_context_with_id(
 ) -> anyhow::Result<()> {
     tracing::info!("Cleaning up container workspace and context directories");
     
-    // 1. Remove tool output files in /workspace/context
-    // Keep all history_*.txt files (each execution has its own)
-    let cleanup_context_cmd = format!(
-        "find {} -type f ! -name 'history*.txt' -delete 2>/dev/null || true",
-        CONTAINER_CONTEXT_DIR
-    );
+    // 1. Preserve context files generated during execution.
+    // Do not bulk-delete /workspace/context, because users may need those artifacts
+    // (e.g. extracted files like /workspace/context/pdf_content.txt) after completion.
     
     // 2. If execution_id provided, also remove that specific history file
     if let Some(id) = execution_id {
@@ -321,17 +315,15 @@ pub async fn cleanup_container_context_with_id(
         }
     }
     
-    // 3. Clean up temporary files in /workspace root (preserve essential directories)
+    // 2. Clean up temporary files in /workspace root (preserve essential directories)
+    // Keep both context/ and uploads/ so uploaded files and generated context artifacts survive.
     let cleanup_workspace_cmd = r#"
         cd /workspace 2>/dev/null && \
         find . -maxdepth 1 -type f -delete 2>/dev/null || true && \
-        find . -maxdepth 1 -type d ! -name '.' ! -name 'context' -exec rm -rf {} + 2>/dev/null || true
+        find . -maxdepth 1 -type d ! -name '.' ! -name 'context' ! -name 'uploads' -exec rm -rf {} + 2>/dev/null || true
     "#;
     
-    // Execute cleanup commands
-    sandbox.execute(&cleanup_context_cmd, 10).await
-        .map_err(|e| anyhow::anyhow!("Failed to cleanup context directory: {}", e))?;
-    
+    // Execute cleanup command
     sandbox.execute(cleanup_workspace_cmd, 15).await
         .map_err(|e| anyhow::anyhow!("Failed to cleanup workspace directory: {}", e))?;
     

@@ -404,7 +404,7 @@ impl ProgramDbService {
     pub async fn create_program(
         db: &DatabaseService,
         input: CreateProgramInput,
-    ) -> Result<BountyProgramRow, String> {
+    ) -> Result<BountyProgramRow> {
         validate_required(&input.name, "name")?;
         validate_required(&input.organization, "organization")?;
 
@@ -435,8 +435,7 @@ impl ProgramDbService {
         };
 
         db.create_bounty_program(&program)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         Ok(program)
     }
 
@@ -444,11 +443,10 @@ impl ProgramDbService {
         db: &DatabaseService,
         id: &str,
         input: UpdateProgramInput,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         let existing = db
             .get_bounty_program(id)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         let Some(mut program) = existing else {
             return Ok(false);
@@ -503,19 +501,19 @@ impl ProgramDbService {
 
         db.update_bounty_program(&program)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.into())
     }
 
-    pub async fn delete_program(db: &DatabaseService, id: &str) -> Result<bool, String> {
+    pub async fn delete_program(db: &DatabaseService, id: &str) -> Result<bool> {
         db.delete_bounty_program(id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.into())
     }
 }
 
-fn validate_required(value: &str, field: &str) -> Result<(), String> {
+fn validate_required(value: &str, field: &str) -> Result<()> {
     if value.trim().is_empty() {
-        return Err(format!("{} is required", field));
+        return Err(BountyError::Validation(format!("{} is required", field)));
     }
     Ok(())
 }

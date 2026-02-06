@@ -51,6 +51,7 @@ interface AgentToolResultNewEvent {
   execution_id: string
   tool_call_id: string
   result: string  // JSON 字符串格式的结果
+  success?: boolean
 }
 
 // 后端发送的 agent:tools_selected 事件
@@ -250,6 +251,41 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const matchesTarget = (eventExecId: string): boolean => {
     const targetId = getTargetId()
     return !targetId || eventExecId === targetId
+  }
+
+  const inferToolSuccess = (raw: any): boolean => {
+    const visit = (value: any): boolean => {
+      if (value == null) return true
+      if (typeof value === 'boolean') return value
+      if (typeof value === 'number') return value === 0
+      if (typeof value === 'string') {
+        const trimmed = value.trim()
+        if (!trimmed) return true
+        const lower = trimmed.toLowerCase()
+        if (lower.startsWith('error:') || lower.startsWith('failed:')) return false
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try {
+            return visit(JSON.parse(trimmed))
+          } catch {
+            return !lower.includes(' no such file or directory')
+          }
+        }
+        return !lower.includes(' no such file or directory')
+      }
+      if (Array.isArray(value)) return value.every(item => visit(item))
+      if (typeof value === 'object') {
+        if (typeof value.success === 'boolean') return value.success
+        if (typeof value.ok === 'boolean') return value.ok
+        if (typeof value.completed === 'boolean' && value.completed === false) return false
+        if (typeof value.exit_code === 'number') return value.exit_code === 0
+        if (typeof value.code === 'number') return value.code === 0
+        if (typeof value.error === 'string' && value.error.trim()) return false
+        return Object.values(value).every(item => visit(item))
+      }
+      return true
+    }
+
+    return visit(raw)
   }
 
   const hasMessages = computed(() => messages.value.length > 0)
@@ -680,9 +716,12 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         if (callInfo) {
           const existingMsg = messages.value.find(m => m.id === callInfo.message_id)
           if (existingMsg && existingMsg.metadata) {
-            existingMsg.metadata.status = 'completed'
+            const success = typeof newPayload.success === 'boolean'
+              ? newPayload.success
+              : inferToolSuccess(newPayload.result)
+            existingMsg.metadata.status = success ? 'completed' : 'failed'
             existingMsg.metadata.tool_result = resultContent
-            existingMsg.metadata.success = !resultContent.toLowerCase().includes('error')
+            existingMsg.metadata.success = success
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
             
             // 如果是 interactive_shell 工具，自动打开终端面板，关闭 todos 面板
@@ -758,9 +797,10 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         )
 
         if (matchingToolCall && matchingToolCall.metadata) {
-          matchingToolCall.metadata.status = 'completed'
+          const success = inferToolSuccess(payload.tool_result)
+          matchingToolCall.metadata.status = success ? 'completed' : 'failed'
           matchingToolCall.metadata.tool_result = payload.tool_result
-          matchingToolCall.metadata.success = !payload.tool_result.startsWith('Error:')
+          matchingToolCall.metadata.success = success
           matchingToolCall.content = `工具调用完成: ${payload.tool_name}`
           
           // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭 todos 面板
