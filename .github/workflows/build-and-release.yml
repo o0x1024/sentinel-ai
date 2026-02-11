@@ -82,6 +82,16 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\x64-windows-static\include'
           Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_STATIC=1'
 
+      - name: Install protoc for Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install --no-progress protoc
+          $protocPath = 'C:\ProgramData\chocolatey\lib\protoc\tools\bin'
+          Add-Content -Path $env:GITHUB_PATH -Value $protocPath
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocPath\protoc.exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC_INCLUDE=$protocPath\..\include"
+
       - name: Install Frontend Dependencies
         run: yarn install
 
