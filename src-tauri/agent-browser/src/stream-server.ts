@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import type { RawData } from 'ws';
 import type { BrowserManager, ScreencastFrame } from './browser.js';
 import { setScreencastFrameCallback } from './actions.js';
 
@@ -89,11 +90,11 @@ export class StreamServer {
       try {
         this.wss = new WebSocketServer({ port: this.port });
 
-        this.wss.on('connection', (ws) => {
+        this.wss.on('connection', (ws: WebSocket) => {
           this.handleConnection(ws);
         });
 
-        this.wss.on('error', (error) => {
+        this.wss.on('error', (error: Error) => {
           console.error('[StreamServer] WebSocket error:', error);
           reject(error);
         });
@@ -102,7 +103,7 @@ export class StreamServer {
           console.log(`[StreamServer] Listening on port ${this.port}`);
 
           // Set up the screencast frame callback
-          setScreencastFrameCallback((frame) => {
+          setScreencastFrameCallback((frame: ScreencastFrame) => {
             this.broadcastFrame(frame);
           });
 
@@ -155,14 +156,15 @@ export class StreamServer {
 
     // Start screencasting if this is the first client
     if (this.clients.size === 1 && !this.isScreencasting) {
-      this.startScreencast().catch((error) => {
+      this.startScreencast().catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error('[StreamServer] Failed to start screencast:', error);
-        this.sendError(ws, error.message);
+        this.sendError(ws, errorMessage);
       });
     }
 
     // Handle messages from client
-    ws.on('message', (data) => {
+    ws.on('message', (data: RawData) => {
       try {
         const message = JSON.parse(data.toString()) as StreamMessage;
         this.handleMessage(message, ws);
@@ -178,13 +180,13 @@ export class StreamServer {
 
       // Stop screencasting if no more clients
       if (this.clients.size === 0 && this.isScreencasting) {
-        this.stopScreencast().catch((error) => {
+        this.stopScreencast().catch((error: unknown) => {
           console.error('[StreamServer] Failed to stop screencast:', error);
         });
       }
     });
 
-    ws.on('error', (error) => {
+    ws.on('error', (error: Error) => {
       console.error('[StreamServer] Client error:', error);
       this.clients.delete(ws);
     });
@@ -314,7 +316,7 @@ export class StreamServer {
         throw new Error('Browser not launched');
       }
 
-      await this.browser.startScreencast((frame) => this.broadcastFrame(frame), {
+      await this.browser.startScreencast((frame: ScreencastFrame) => this.broadcastFrame(frame), {
         format: 'jpeg',
         quality: 80,
         maxWidth: 1280,

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z, type ZodIssue } from 'zod';
 import type { Command, Response } from './types.js';
 
 // Base schema for all commands
@@ -878,7 +878,9 @@ export function parseCommand(input: string): ParseResult {
   const result = commandSchema.safeParse(json);
 
   if (!result.success) {
-    const errors = result.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
+    const errors = result.error.errors
+      .map((issue: ZodIssue) => `${issue.path.join('.')}: ${issue.message}`)
+      .join(', ');
     return { success: false, error: `Validation error: ${errors}`, id };
   }
 

@@ -76,13 +76,15 @@
     "vue3-json-viewer": "^2.4.1",
     "vuedraggable": "^4.1.0",
     "ws": "^8.18.3",
-    "yarn": "^1.22.22"
+    "yarn": "^1.22.22",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.2",
     "@tailwindcss/typography": "^0.5.16",
     "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^20.10.6",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
     "@vitejs/plugin-vue": "^5.0.0",

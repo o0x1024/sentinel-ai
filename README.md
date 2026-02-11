@@ -88,6 +88,40 @@ AI 助手不止用于问答，而是通过工具调用执行真实动作：
 - 支持 MCP Server 接入、工具枚举和调用
 - 内置终端能力，支持在同一工作台完成执行与验证
 
+#### 内置工具一览（`sentinel-tools`）
+
+- **端口扫描（`port_scan`）**：对目标主机进行基础端口探测，适合快速确认服务暴露面，可被 AI 助手或工作流节点直接调用。
+- **HTTP 请求（`http_request`）**：从 Agent 侧发起 HTTP(S) 请求，支持自定义方法、头和 Body，常用于复现/验证流量侧问题或对外部 API 做补充查询。
+- **本地时间（`local_time`）**：获取当前本地时间信息，便于 Agent 在对话中给出带时间上下文的决策或做调度相关推理。
+- **内存与上下文管理（`memory`）**：为会话提供显式的“长期记忆”读写能力，用于在多轮任务中缓存中间结论和关键参数。
+- **OCR 识别（`ocr`）**：对截图、图片等进行文字识别，结果可直接进入对话或后续工具链，用于验证码、界面文本、报告截图等场景。
+- **子代理与并行执行（`subagent_*`）**：包含 `subagent_spawn` / `subagent_wait` / `subagent_wait_any` / `subagent_run` / `subagent_workflow_run` 等工具，支持在一个任务内派生子任务、并行执行并聚合结果，是复杂场景下的“多代理编排”基础设施。
+- **子代理状态与事件（`subagent_state_*` / `subagent_event_*`）**：支持子代理之间的状态共享与事件总线（发布/轮询），用于构建更复杂的协作关系和自愈逻辑。
+- **第十人规则（`tenth_man`）**：为关键决策提供“反对者视角”的严格审查工具，可在高风险动作前强制走一轮“反向论证”。
+- **待办与任务拆解（`todos`）**：允许 Agent 在对话中显式维护 TODO 列表，用于把复杂任务拆分为可跟踪的小步，前端右侧面板会实时呈现。
+- **Web 搜索（`web_search`）**：在受控环境下访问互联网搜索引擎，将外部信息作为上下文引入对话或分析流程。
+- **技能管理（`skills`）**：用于动态加载/列出现有技能，使 Agent 能够按需扩展能力集（如专用领域工具包），是内置工具与技能系统之间的桥梁。
+
+### Shell / Interactive Shell / Docker 沙箱
+
+- **一次性 Shell 工具（`shell`）**
+  - 通过 AI 助手工具层暴露，适合执行一次性命令（如 `ls`、`cat`、`curl`、`grep` 等），获取即时标准输出/错误。
+  - 默认执行模式为 **Docker 模式**（`ShellExecutionMode::Docker`），会优先在沙箱容器中运行命令；只有在 Docker 不可用或显式配置为 `Host` 时才会落到宿主机。
+  - 内置安全策略：默认拒绝高危前缀命令（如 `rm -rf`、`mkfs`、`dd` 等），其他命令根据策略决定是否需要人工确认。
+
+- **交互式终端（`interactive_shell`）**
+  - 由 `terminal` 模块提供，前端通过右侧 `Terminal` 面板接入，适合运行需要持续交互的工具（如 `ssh`、`msfconsole`、`sqlmap`、数据库客户端、REPL 等）。
+  - 会为每个会话创建持久化的 **PTY 终端会话**，支持窗口大小调整、历史输出回放以及多订阅者（UI / LLM）共享同一会话。
+  - 默认在 Docker 沙箱中以 PTY 方式执行，优先复用同一容器会话，长期 idle 会由后台清理任务自动回收。
+
+- **Docker 沙箱镜像（`sentinel-sandbox:latest`）**
+  - Shell 工具和交互式终端在 Docker 模式下，均基于统一的安全沙箱镜像运行，镜像位于 `src-tauri/sentinel-tools/Dockerfile.sandbox.*`。
+  - 使用脚本 `scripts/build-docker-sandbox.sh` 构建镜像：
+    - `./scripts/build-docker-sandbox.sh minimal`：体积最小，只包含常用网络/脚本工具。
+    - `./scripts/build-docker-sandbox.sh kali`：标准 Kali 场景（默认变体）。
+    - `./scripts/build-docker-sandbox.sh kali-full`：完整安全工具集，构建时间和镜像体积都最大。
+  - 构建成功后会生成 `sentinel-sandbox:latest` 镜像，并在终端中给出测试命令 `docker run --rm -it sentinel-sandbox:latest /bin/bash`，建议在正式使用前先本地验证网络和工具是否可用。
+
 ### 插件系统（Plugin Management）
 - 支持从开发到审核再到启停的完整流程
 - 面向两类执行面：流量检测面与 Agent 工具面
