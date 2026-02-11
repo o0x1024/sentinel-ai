@@ -73,6 +73,7 @@ const RAGManagement = () => import('./views/RAGManagement.vue');
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue');
 const PluginManagement = () => import('./views/PluginManagement.vue');
 const BugBounty = () => import('./views/BugBounty.vue');
+const CyberChef = () => import('./views/CyberChef.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
@@ -156,6 +157,12 @@ const routes = [
     name: 'BugBounty',
     component: BugBounty,
     meta: { title: 'Bug Bounty' }
+  },
+  {
+    path: '/cyberchef',
+    name: 'CyberChef',
+    component: CyberChef,
+    meta: { title: '编码解码' }
   },
   {
     path: '/settings',

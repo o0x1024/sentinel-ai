@@ -176,6 +176,38 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
+    let task_lower = input.task.to_lowercase();
+    let is_binary_security_task = [
+        "pwn",
+        "reverse",
+        "binary",
+        "elf",
+        "rop",
+        "heap",
+        "ret2libc",
+        "shellcode",
+        "gdb",
+        "pwndbg",
+        "gef",
+        "ctf",
+        "exploit",
+        "逆向",
+        "二进制",
+        "漏洞利用",
+        "缓冲区溢出",
+        "栈溢出",
+        "堆溢出",
+    ]
+    .iter()
+    .any(|kw| task_lower.contains(kw));
+
+    if is_binary_security_task {
+        system_prompt.push_str(
+            "\n\n[Tool Usage Priority]\n\
+            For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and long-running interactions. Use one-off `shell` only for short, non-interactive commands.",
+        );
+    }
+
     if input.policy.include_context_storage {
         // Use execution_id for history file isolation
         let history_path = get_history_path(&execution_context.context_dir, Some(&input.execution_id));

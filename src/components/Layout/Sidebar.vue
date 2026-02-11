@@ -227,6 +227,13 @@ const toolMenuItems = computed(() => [
     badgeClass: ''
   },
   {
+    path: '/cyberchef',
+    name: t('sidebar.cyberChef', 'CyberChef'),
+    icon: 'fas fa-terminal',
+    badge: null,
+    badgeClass: ''
+  },
+  {
     path: '/dictionary',
     name: t('sidebar.dictionary', '字典管理'),
     icon: 'fas fa-book',

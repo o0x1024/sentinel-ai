@@ -329,7 +329,10 @@ impl ShellTool {
         let (stdout, stderr, exit_code) = sandbox
             .execute(cmd, timeout_secs)
             .await
-            .map_err(|e| ShellError::DockerError(e.to_string()))?;
+            .map_err(|e| match e {
+                crate::docker_sandbox::DockerError::Timeout(secs) => ShellError::Timeout(secs),
+                _ => ShellError::DockerError(e.to_string()),
+            })?;
         
         Ok((stdout, stderr, exit_code, sandbox))
     }
@@ -559,6 +562,10 @@ impl Tool for ShellTool {
                         (final_stdout, final_stderr, exit_code, stored)
                     }
                     Err(e) => {
+                        if let ShellError::Timeout(_) = e {
+                            return Err(e);
+                        }
+
                         // Docker execution failed, fallback to host
                         tracing::warn!("Docker execution failed ({}), falling back to host execution", e);
                         tracing::warn!("Executing command on host machine: {}", args.command);

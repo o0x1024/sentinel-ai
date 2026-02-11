@@ -775,7 +775,7 @@ const resetToDefault = () => {
     enabled: false,
     selection_strategy: 'Keyword',
     max_tools: 5,
-    fixed_tools: ['local_time'],
+    fixed_tools: ['interactive_shell'],
     disabled_tools: [],
     manual_tools: [],
     skills: [],

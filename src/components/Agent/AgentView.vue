@@ -257,7 +257,7 @@ import { ref, computed, onMounted, onActivated, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
-import type { AgentMessage } from '@/types/agent'
+import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useWebExplorerEvents } from '@/composables/useWebExplorerEvents'
 import { useTodos } from '@/composables/useTodos'
@@ -324,8 +324,8 @@ const ragEnabled = ref(false)
 const toolsEnabled = ref(false)
 const tenthManEnabled = ref(false)
 const pendingAttachments = ref<any[]>([])
-const pendingDocuments = ref<import('@/types/agent').PendingDocumentAttachment[]>([])
-const processedDocuments = ref<import('@/types/agent').ProcessedDocumentResult[]>([])
+const pendingDocuments = ref<PendingDocumentAttachment[]>([])
+const processedDocuments = ref<ProcessedDocumentResult[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
 const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
@@ -351,7 +351,7 @@ const toolConfig = ref({
   enabled: false,
   selection_strategy: 'Keyword',
   max_tools: 5,
-  fixed_tools: ['local_time'],
+  fixed_tools: ['interactive_shell'],
   disabled_tools: [],
 })
 
@@ -696,6 +696,61 @@ const handleDocumentProcessed = (result: import('@/types/agent').ProcessedDocume
   console.log('[AgentView] Document processed:', result.original_filename, result.file_id)
 }
 
+const parseMetadataArray = (value: unknown): any[] => {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+const restoreAttachmentsFromMessage = (message: AgentMessage) => {
+  // Always reset first so edited/resend message uses only source message attachments.
+  pendingAttachments.value = []
+  pendingDocuments.value = []
+  processedDocuments.value = []
+
+  const metadata = (message.metadata as any) || {}
+
+  // Restore image attachments for resend/edit send path.
+  const imageAttachments = parseMetadataArray(metadata.image_attachments)
+  if (imageAttachments.length > 0) {
+    pendingAttachments.value = [...imageAttachments]
+  }
+
+  // Restore ready document attachments for resend/edit send path.
+  const documentAttachments = parseMetadataArray(metadata.document_attachments)
+  if (documentAttachments.length > 0) {
+    const normalized = documentAttachments.map((doc: any) => {
+      const status = doc?.status === 'failed' || doc?.status === 'processing' || doc?.status === 'pending'
+        ? doc.status
+        : 'ready'
+      return {
+        ...doc,
+        status,
+      } as ProcessedDocumentResult
+    })
+
+    processedDocuments.value = normalized
+    pendingDocuments.value = normalized.map((doc) => ({
+      id: doc.id,
+      file_id: doc.file_id,
+      original_path: doc.file_path || doc.original_filename || '',
+      original_filename: doc.original_filename,
+      file_size: doc.file_size,
+      mime_type: doc.mime_type,
+      status: doc.status,
+      file_path: doc.file_path,
+      error_message: doc.error_message,
+    }))
+  }
+}
+
 // Handle traffic references
 const handleRemoveTraffic = (index: number) => {
   if (index >= 0 && index < referencedTraffic.value.length) {
@@ -907,21 +962,8 @@ const handleResendMessage = async (message: AgentMessage) => {
     return !s.startedAt || s.startedAt <= messageTimestamp
   })
 
-  // Restore image attachments (if any) into pendingAttachments so resend keeps images
-  try {
-    const raw = (message.metadata as any)?.image_attachments
-    let imgAtts: any[] | undefined
-    if (Array.isArray(raw)) {
-      imgAtts = raw
-    } else if (typeof raw === 'string') {
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) imgAtts = parsed
-    }
-    pendingAttachments.value = imgAtts ? [...imgAtts] : []
-  } catch (e) {
-    console.warn('[AgentView] Failed to restore image attachments for resend:', e)
-    pendingAttachments.value = []
-  }
+  // Restore attachments from original message so resend keeps images/documents.
+  restoreAttachmentsFromMessage(message)
 
   // Clear todos before resending
   todosComposable.clearTodos()
@@ -988,6 +1030,9 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
   agentEvents.subagents.value = agentEvents.subagents.value.filter(s => {
     return !s.startedAt || s.startedAt <= messageTimestamp
   })
+
+  // Restore attachments from original message so edit+resend keeps images/documents.
+  restoreAttachmentsFromMessage(message)
 
   // Clear todos before resending edited message
   todosComposable.clearTodos()

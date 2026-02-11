@@ -2,6 +2,7 @@
   "name": "sentinel-ai",
   "private": true,
   "version": "0.1.0",
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -73,6 +74,7 @@
     "vue-i18n": "^9.14.5",
     "vue-router": "^4.2.5",
     "vue3-json-viewer": "^2.4.1",
+    "vuedraggable": "^4.1.0",
     "ws": "^8.18.3",
     "yarn": "^1.22.22"
   },

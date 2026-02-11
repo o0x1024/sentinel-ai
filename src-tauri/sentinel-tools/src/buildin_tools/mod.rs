@@ -21,7 +21,12 @@ pub use port_scan::PortScanTool;
 pub use shell::ShellTool;
 pub use skills::SkillsTool;
 pub use subdomain_brute::SubdomainBruteTool;
-pub use subagent_tool::{SubagentTool, SubagentRunTool, SubagentSpawnTool, SubagentWaitTool};
+pub use subagent_tool::{
+    SubagentTool, SubagentRunTool, SubagentSpawnTool, SubagentWaitTool, SubagentWaitAnyTool,
+    SubagentWorkflowRunTool,
+    SubagentStatePutTool, SubagentStateGetTool,
+    SubagentEventPublishTool, SubagentEventPollTool,
+};
 pub use tenth_man_tool::TenthManTool;
 pub use todos::TodosTool;
 pub use web_search::WebSearchTool;
@@ -44,7 +49,13 @@ pub fn create_buildin_toolset() -> ToolSet {
     // Subagent tools: spawn (async), wait, run (sync/legacy)
     toolset.add_tool(SubagentSpawnTool::new());
     toolset.add_tool(SubagentWaitTool::new());
+    toolset.add_tool(SubagentWaitAnyTool::new());
     toolset.add_tool(SubagentRunTool::new());
+    toolset.add_tool(SubagentWorkflowRunTool::new());
+    toolset.add_tool(SubagentStatePutTool::new());
+    toolset.add_tool(SubagentStateGetTool::new());
+    toolset.add_tool(SubagentEventPublishTool::new());
+    toolset.add_tool(SubagentEventPollTool::new());
     toolset
 }
 
@@ -64,7 +75,13 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         // Subagent tools
         Box::new(SubagentSpawnTool::new()),
         Box::new(SubagentWaitTool::new()),
+        Box::new(SubagentWaitAnyTool::new()),
         Box::new(SubagentRunTool::new()),
+        Box::new(SubagentWorkflowRunTool::new()),
+        Box::new(SubagentStatePutTool::new()),
+        Box::new(SubagentStateGetTool::new()),
+        Box::new(SubagentEventPublishTool::new()),
+        Box::new(SubagentEventPollTool::new()),
     ];
     
     let mut definitions = Vec::new();

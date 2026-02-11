@@ -1552,12 +1552,18 @@ impl Default for ToolServer {
 }
 
 impl ToolServer {
-    /// Register all subagent tools (spawn, wait, run)
+    /// Register all subagent tools (spawn, wait, run, state, event)
     async fn register_subagent_tools(&self) {
         use crate::buildin_tools::subagent_tool::{
             SubagentSpawnTool, SubagentSpawnArgs,
             SubagentWaitTool, SubagentWaitArgs,
+            SubagentWaitAnyTool, SubagentWaitAnyArgs,
             SubagentRunTool, SubagentRunArgs,
+            SubagentWorkflowRunTool, SubagentWorkflowRunArgs,
+            SubagentStatePutTool, SubagentStatePutArgs,
+            SubagentStateGetTool, SubagentStateGetArgs,
+            SubagentEventPublishTool, SubagentEventPublishArgs,
+            SubagentEventPollTool, SubagentEventPollArgs,
         };
 
         // 1. subagent_spawn - non-blocking async start
@@ -1588,8 +1594,8 @@ impl ToolServer {
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Max iterations (default: 6)",
-                        "default": 6
+                        "description": "Max iterations (default: 50)",
+                        "default": 50
                     },
                     "timeout_secs": {
                         "type": "integer",
@@ -1604,6 +1610,11 @@ impl ToolServer {
                         "type": "boolean",
                         "description": "Inherit tool config from parent (default: false)",
                         "default": false
+                    },
+                    "depends_on_task_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional dependency task IDs"
                     }
                 },
                 "required": ["parent_execution_id", "task"]
@@ -1640,8 +1651,8 @@ impl ToolServer {
                     },
                     "timeout_secs": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 300)",
-                        "default": 300
+                        "description": "Timeout in seconds (default: 600)",
+                        "default": 600
                     }
                 },
                 "required": ["parent_execution_id", "task_ids"]
@@ -1661,7 +1672,45 @@ impl ToolServer {
             .expect("Failed to build subagent_wait tool");
         self.registry.register(wait_def).await;
 
-        // 3. subagent_run - blocking synchronous execution (legacy)
+        // 3. subagent_wait_any - blocking until any task completes
+        let wait_any_def = DynamicToolBuilder::new(SubagentWaitAnyTool::NAME.to_string())
+            .description(SubagentWaitAnyTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": {
+                        "type": "string",
+                        "description": "Parent execution ID"
+                    },
+                    "task_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Task IDs to wait on"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 600)",
+                        "default": 600
+                    }
+                },
+                "required": ["parent_execution_id", "task_ids"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentWaitAnyArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentWaitAnyTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent wait_any failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_wait_any tool");
+        self.registry.register(wait_any_def).await;
+
+        // 4. subagent_run - blocking synchronous execution (legacy)
         let run_def = DynamicToolBuilder::new(SubagentRunTool::NAME.to_string())
             .description(SubagentRunTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
@@ -1689,8 +1738,8 @@ impl ToolServer {
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Max iterations (default: 6)",
-                        "default": 6
+                        "description": "Max iterations (default: 50)",
+                        "default": 50
                     },
                     "timeout_secs": {
                         "type": "integer",
@@ -1705,6 +1754,11 @@ impl ToolServer {
                         "type": "boolean",
                         "description": "Inherit tool config from parent (default: false)",
                         "default": false
+                    },
+                    "depends_on_task_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional dependency task IDs"
                     }
                 },
                 "required": ["parent_execution_id", "task"]
@@ -1724,7 +1778,161 @@ impl ToolServer {
             .expect("Failed to build subagent_run tool");
         self.registry.register(run_def).await;
 
-        tracing::info!("Registered subagent tools: spawn, wait, run");
+        // 5. subagent_workflow_run - DAG orchestration
+        let workflow_run_def = DynamicToolBuilder::new(SubagentWorkflowRunTool::NAME.to_string())
+            .description(SubagentWorkflowRunTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": {
+                        "type": "string",
+                        "description": "Parent execution ID (required)"
+                    },
+                    "nodes": {
+                        "type": "array",
+                        "description": "Workflow DAG nodes",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "node_id": { "type": "string", "description": "Unique node ID" },
+                                "task": { "type": "string", "description": "Task for this node" },
+                                "role": { "type": "string", "description": "Optional role label" },
+                                "depends_on_node_ids": { "type": "array", "items": { "type": "string" } },
+                                "max_iterations": { "type": "integer", "default": 50 },
+                                "timeout_secs": { "type": "integer" }
+                            },
+                            "required": ["node_id", "task"]
+                        }
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Workflow wait timeout in seconds (default: 600)",
+                        "default": 600
+                    }
+                },
+                "required": ["parent_execution_id", "nodes"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentWorkflowRunArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentWorkflowRunTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent workflow_run failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_workflow_run tool");
+        self.registry.register(workflow_run_def).await;
+
+        let state_put_def = DynamicToolBuilder::new(SubagentStatePutTool::NAME.to_string())
+            .description(SubagentStatePutTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                    "key": { "type": "string", "description": "Shared state key" },
+                    "value": { "description": "Shared state value" },
+                    "expected_version": { "type": "integer", "description": "Optional optimistic lock version" }
+                },
+                "required": ["parent_execution_id", "key", "value"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentStatePutArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentStatePutTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent state put failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_state_put tool");
+        self.registry.register(state_put_def).await;
+
+        let state_get_def = DynamicToolBuilder::new(SubagentStateGetTool::NAME.to_string())
+            .description(SubagentStateGetTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                    "key": { "type": "string", "description": "Shared state key" }
+                },
+                "required": ["parent_execution_id", "key"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentStateGetArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentStateGetTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent state get failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_state_get tool");
+        self.registry.register(state_get_def).await;
+
+        let event_publish_def = DynamicToolBuilder::new(SubagentEventPublishTool::NAME.to_string())
+            .description(SubagentEventPublishTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                    "channel": { "type": "string", "description": "Event channel (default: default)" },
+                    "payload": { "description": "Event payload" }
+                },
+                "required": ["parent_execution_id", "payload"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentEventPublishArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentEventPublishTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent event publish failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_event_publish tool");
+        self.registry.register(event_publish_def).await;
+
+        let event_poll_def = DynamicToolBuilder::new(SubagentEventPollTool::NAME.to_string())
+            .description(SubagentEventPollTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
+                    "channel": { "type": "string", "description": "Event channel (default: default)" },
+                    "after_seq": { "type": "integer", "description": "Return events with seq > after_seq" },
+                    "limit": { "type": "integer", "description": "Max events to return", "default": 50 }
+                },
+                "required": ["parent_execution_id"]
+            }))
+            .source(ToolSource::Builtin)
+            .executor(|args| async move {
+                use rig::tool::Tool;
+                let tool_args: SubagentEventPollArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                let tool = SubagentEventPollTool::new();
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Subagent event poll failed: {}", e))?;
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subagent_event_poll tool");
+        self.registry.register(event_poll_def).await;
+
+        tracing::info!("Registered subagent tools: spawn, wait, wait_any, run, workflow_run, state, event");
     }
 }
 

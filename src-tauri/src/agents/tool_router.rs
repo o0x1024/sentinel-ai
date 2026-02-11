@@ -17,7 +17,10 @@ use tokio::sync::RwLock;
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
     HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, SubagentTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
+    browser::constants as browser_constants, TenthManTool, SubagentTool, SubagentStatePutTool,
+    SubagentStateGetTool, SubagentEventPublishTool, SubagentEventPollTool, SubagentWaitAnyTool,
+    SubagentWorkflowRunTool, TodosTool,
+    MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
 };
 
 use crate::engines::web_explorer::WebExplorerTool;
@@ -317,7 +320,7 @@ impl ToolRouter {
                 category: ToolCategory::System,
                 tags: vec!["time".to_string(), "date".to_string(), "clock".to_string()],
                 cost_estimate: ToolCost::Low,
-                always_available: true,
+                always_available: false,
             },
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
@@ -348,7 +351,7 @@ impl ToolRouter {
                     "shell".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
-                always_available: false,
+                always_available: true,
             },
             ToolMetadata {
                 id: SkillsTool::NAME.to_string(),
@@ -477,6 +480,21 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
+                id: SubagentWaitAnyTool::NAME.to_string(),
+                name: SubagentWaitAnyTool::NAME.to_string(),
+                description: "Wait until any spawned subagent task completes.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "subagent".to_string(),
+                    "wait".to_string(),
+                    "any".to_string(),
+                    "sync".to_string(),
+                    "collect".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
                 id: SubagentTool::NAME.to_string(),
                 name: SubagentTool::NAME.to_string(),
                 description: "Execute a subagent task synchronously (BLOCKING). Use for sequential dependent tasks. For parallel, use subagent_spawn + subagent_wait.".to_string(),
@@ -494,6 +512,57 @@ impl ToolRouter {
                     "analysis".to_string(),
                 ],
                 cost_estimate: ToolCost::High,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SubagentWorkflowRunTool::NAME.to_string(),
+                name: SubagentWorkflowRunTool::NAME.to_string(),
+                description: "Run DAG-style subagent workflow with node dependencies.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec![
+                    "subagent".to_string(),
+                    "workflow".to_string(),
+                    "dag".to_string(),
+                    "dependency".to_string(),
+                    "orchestration".to_string(),
+                ],
+                cost_estimate: ToolCost::High,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SubagentStatePutTool::NAME.to_string(),
+                name: SubagentStatePutTool::NAME.to_string(),
+                description: "Write shared state for subagents under the same parent_execution_id.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec!["subagent".to_string(), "state".to_string(), "shared".to_string(), "coordination".to_string()],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SubagentStateGetTool::NAME.to_string(),
+                name: SubagentStateGetTool::NAME.to_string(),
+                description: "Read shared state for subagents under the same parent_execution_id.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec!["subagent".to_string(), "state".to_string(), "shared".to_string(), "coordination".to_string()],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SubagentEventPublishTool::NAME.to_string(),
+                name: SubagentEventPublishTool::NAME.to_string(),
+                description: "Publish events for subagent collaboration under the same parent_execution_id.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec!["subagent".to_string(), "event".to_string(), "publish".to_string(), "coordination".to_string()],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SubagentEventPollTool::NAME.to_string(),
+                name: SubagentEventPollTool::NAME.to_string(),
+                description: "Poll events for subagent collaboration under the same parent_execution_id.".to_string(),
+                category: ToolCategory::AI,
+                tags: vec!["subagent".to_string(), "event".to_string(), "poll".to_string(), "coordination".to_string()],
+                cost_estimate: ToolCost::Low,
                 always_available: false,
             },
             // Browser automation tools
@@ -972,6 +1041,30 @@ impl ToolRouter {
     /// 关键词匹配选择工具（快速，无额外成本）
     fn select_by_keywords(&self, task: &str, config: &ToolConfig) -> Result<Vec<String>> {
         let task_lower = task.to_lowercase();
+        let is_binary_security_task = [
+            "pwn",
+            "reverse",
+            "binary",
+            "elf",
+            "rop",
+            "heap",
+            "format string",
+            "ret2libc",
+            "shellcode",
+            "gdb",
+            "pwndbg",
+            "gef",
+            "ctf",
+            "exploit",
+            "逆向",
+            "二进制",
+            "漏洞利用",
+            "缓冲区溢出",
+            "栈溢出",
+            "堆溢出",
+        ]
+        .iter()
+        .any(|kw| task_lower.contains(kw));
         let mut scored_tools = Vec::new();
 
         // 先添加固定工具
@@ -1056,6 +1149,18 @@ impl ToolRouter {
                 && tool.id == "shell" {
                     score += 15;
                 }
+            if is_binary_security_task && tool.id == "interactive_shell" {
+                // For reverse/pwn flows, prefer persistent interactive sessions (gdb/pwndbg/python repl).
+                score += 35;
+            }
+            if is_binary_security_task && tool.id == "skills" {
+                // Encourage loading specialized pwn/rev skills early.
+                score += 20;
+            }
+            if is_binary_security_task && tool.id == "shell" {
+                // Keep shell available, but lower priority than interactive_shell in binary tasks.
+                score += 3;
+            }
             if (task_lower.contains("memory")
                 || task_lower.contains("remember")
                 || task_lower.contains("recall")

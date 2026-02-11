@@ -214,6 +214,9 @@ pub fn run() {
             {
                 use sentinel_license::ValidationResult;
                 let license_result = sentinel_license::initialize();
+                if !sentinel_license::is_enforcement_enabled() {
+                    tracing::info!("License enforcement is disabled by hardcoded config");
+                }
                 match license_result {
                     ValidationResult::Valid => {
                         tracing::info!("License validation successful");

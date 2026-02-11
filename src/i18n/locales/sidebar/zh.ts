@@ -17,6 +17,7 @@ export default {
   aiAssistant: 'AI助手',
   ragManagement: '知识库管理',
   Tools: '应用工具',
+  cyberChef: '编码解码',
   performance: '性能监控',
   bugBounty: 'Bug Bounty',
 

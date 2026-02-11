@@ -28,8 +28,24 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 static LICENSE_VALID: AtomicBool = AtomicBool::new(false);
 static VALIDATION_TOKEN: AtomicU64 = AtomicU64::new(0);
 
+/// Hardcoded switch: controls whether license enforcement is enabled.
+/// Default is `false`, so activation is not required even in release mode.
+pub const LICENSE_ENFORCEMENT_ENABLED: bool = false;
+
+/// Whether license enforcement is enabled.
+#[inline]
+pub fn is_enforcement_enabled() -> bool {
+    LICENSE_ENFORCEMENT_ENABLED
+}
+
 /// Initialize license system (call once at startup)
 pub fn initialize() -> ValidationResult {
+    if !is_enforcement_enabled() {
+        LICENSE_VALID.store(true, Ordering::SeqCst);
+        VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
+        return ValidationResult::Valid;
+    }
+
     // Skip in debug builds
     #[cfg(debug_assertions)]
     {
@@ -73,6 +89,10 @@ pub fn initialize() -> ValidationResult {
 /// Quick check if license is valid (for multi-point validation)
 #[inline]
 pub fn is_licensed() -> bool {
+    if !is_enforcement_enabled() {
+        return true;
+    }
+
     #[cfg(debug_assertions)]
     return true;
 
@@ -89,6 +109,10 @@ pub fn is_licensed() -> bool {
 /// Require license for critical operations (returns derived key for obfuscation)
 #[inline]
 pub fn require_license() -> Option<u64> {
+    if !is_enforcement_enabled() {
+        return Some(compute_valid_token());
+    }
+
     #[cfg(debug_assertions)]
     return Some(compute_valid_token());
 
@@ -104,6 +128,10 @@ pub fn require_license() -> Option<u64> {
 
 /// Activate license with key
 pub fn activate(license_key: &str) -> ValidationResult {
+    if !is_enforcement_enabled() {
+        return ValidationResult::Valid;
+    }
+
     let validator = LicenseValidator::new();
     let result = validator.validate_str(license_key);
     
@@ -133,6 +161,10 @@ pub fn get_machine_id_full() -> String {
 
 /// Check if application needs activation
 pub fn needs_activation() -> bool {
+    if !is_enforcement_enabled() {
+        return false;
+    }
+
     #[cfg(debug_assertions)]
     return false;
 

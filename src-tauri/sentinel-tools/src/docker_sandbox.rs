@@ -392,6 +392,8 @@ pub enum DockerError {
     NotAvailable(String),
     #[error("Image not found: {0}")]
     ImageNotFound(String),
+    #[error("Command timeout after {0} seconds")]
+    Timeout(u64),
     #[error("Container execution failed: {0}")]
     ExecutionFailed(String),
 }
@@ -494,10 +496,7 @@ impl DockerSandbox {
                 "Failed to execute command: {}",
                 e
             ))),
-            Err(_) => Err(DockerError::ExecutionFailed(format!(
-                "Command timeout after {} seconds",
-                timeout_secs
-            ))),
+            Err(_) => Err(DockerError::Timeout(timeout_secs)),
         }
     }
 

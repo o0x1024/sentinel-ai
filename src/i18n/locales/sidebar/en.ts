@@ -12,6 +12,7 @@ export default {
   mcpTools: 'MCP Tools',
   Tools: 'MCP Tools',
   plugins: 'Plugin Management',
+  cyberChef: 'Codec Lab',
   pluginReview: 'Plugin Review',
   ragManagement: 'RAG Management',
   smartAgent: 'Smart Agent Console',
@@ -22,23 +23,23 @@ export default {
   workflowStudio: 'Workflow Studio',
   notifications: 'Notifications',
   bugBounty: 'Bug Bounty',
-  
+
   // Sidebar section titles
   coreFeatures: 'Core Features',
   toolsManagement: 'Tools & Management',
   systemSettings: 'System Settings',
-  
+
   // Task status
   currentTask: 'Current Task',
   running: 'Running',
   remaining: 'Remaining',
   scanning: 'Scanning',
-  
+
   // Statistics
   todayStats: 'Today\'s Stats',
   vulnerabilitiesFound: 'Vulnerabilities Found',
   completedTasks: 'Completed Tasks',
-  
+
   // New translation keys
   new: 'NEW',
   vulnerabilityCount: '12',
