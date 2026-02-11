@@ -21,9 +21,15 @@ jobs:
           - os: macos-14
             platform: 'darwin-aarch64'
             rust_target: 'aarch64-apple-darwin'
+            arch_label: 'aarch64'
+          - os: macos-13
+            platform: 'darwin-x86_64'
+            rust_target: 'x86_64-apple-darwin'
+            arch_label: 'x86_64'
           - os: windows-latest
             platform: 'windows-x86_64'
             rust_target: 'x86_64-pc-windows-msvc'
+            arch_label: 'x64'
 
     steps:
       - name: Checkout Repository
@@ -54,15 +60,25 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
 
+      - name: Ensure vcpkg is available
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-Not (Test-Path 'C:\vcpkg')) {
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            & C:\vcpkg\bootstrap-vcpkg.bat
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value 'VCPKG_ROOT=C:\vcpkg'
+
       - name: Install OpenSSL for Windows
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           vcpkg install openssl:x64-windows-static
-          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
-          echo "OPENSSL_DIR=C:\vcpkg\installed\x64-windows-static" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\x64-windows-static\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\x64-windows-static\include" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_DIR=C:\vcpkg\installed\x64-windows-static'
+          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_LIB_DIR=C:\vcpkg\installed\x64-windows-static\lib'
+          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\x64-windows-static\include'
+          Add-Content -Path $env:GITHUB_ENV -Value 'OPENSSL_STATIC=1'
 
       - name: Install Frontend Dependencies
         run: yarn install
@@ -171,32 +187,123 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -x
+          set -euxo pipefail
 
           TARGET_DIR="src-tauri/target"
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           UPLOAD_DIR=$(mktemp -d)
           echo "UPLOAD_DIR=$UPLOAD_DIR" >> $GITHUB_ENV
 
-          # macOS aarch64 artifacts
-          if [ -d "$TARGET_DIR/tauri-build-darwin-aarch64" ]; then
-            find "$TARGET_DIR/tauri-build-darwin-aarch64/macos" -name "*.app.tar.gz" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.app.tar.gz" \;
-            find "$TARGET_DIR/tauri-build-darwin-aarch64/macos" -name "*.app.tar.gz.sig" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.app.tar.gz.sig" \;
-            find "$TARGET_DIR/tauri-build-darwin-aarch64/dmg" -name "*.dmg" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.dmg" \;
-            find "$TARGET_DIR/tauri-build-darwin-aarch64/dmg" -name "*.dmg.sig" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.dmg.sig" \;
-            if [ ! -f "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.dmg" ]; then
-              find "$TARGET_DIR/tauri-build-darwin-aarch64" -name "*.dmg" -exec cp {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.dmg" \;
-              find "$TARGET_DIR/tauri-build-darwin-aarch64" -name "*.dmg.sig" -exec cp {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-aarch64.dmg.sig" \;
-            fi
-          fi
+          collect_macos() {
+            local platform_dir="$1"
+            local arch="$2"
 
-          # Windows artifacts (NSIS)
-          if [ -d "$TARGET_DIR/tauri-build-windows-x86_64" ]; then
-            find "$TARGET_DIR/tauri-build-windows-x86_64/nsis" -name "*_x64-setup.exe" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.exe" \;
-            find "$TARGET_DIR/tauri-build-windows-x86_64/nsis" -name "*_x64-setup.exe.sig" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.exe.sig" \;
-            find "$TARGET_DIR/tauri-build-windows-x86_64/nsis" -name "*_x64-setup.nsis.zip" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.nsis.zip" \;
-            find "$TARGET_DIR/tauri-build-windows-x86_64/nsis" -name "*_x64-setup.nsis.zip.sig" -exec mv {} "$UPLOAD_DIR/sentinel-ai-${VERSION}-x64-setup.nsis.zip.sig" \;
-          fi
+            local macos_dir="$platform_dir/macos"
+            if [ -d "$macos_dir" ]; then
+              local app_pkg
+              app_pkg=$(find "$macos_dir" -type f -name "*.app.tar.gz" -print -quit || true)
+              if [ -n "$app_pkg" ]; then
+                cp "$app_pkg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz"
+              fi
+
+              local app_sig
+              app_sig=$(find "$macos_dir" -type f -name "*.app.tar.gz.sig" -print -quit || true)
+              if [ -n "$app_sig" ]; then
+                cp "$app_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz.sig"
+              fi
+            else
+              local fallback_app
+              fallback_app=$(find "$platform_dir" -maxdepth 2 -type f -name "*.app.tar.gz" -print -quit || true)
+              if [ -n "$fallback_app" ]; then
+                cp "$fallback_app" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz"
+              fi
+
+              local fallback_app_sig
+              fallback_app_sig=$(find "$platform_dir" -maxdepth 2 -type f -name "*.app.tar.gz.sig" -print -quit || true)
+              if [ -n "$fallback_app_sig" ]; then
+                cp "$fallback_app_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.app.tar.gz.sig"
+              fi
+            fi
+
+            local dmg_dir="$platform_dir/dmg"
+            if [ -d "$dmg_dir" ]; then
+              local dmg_pkg
+              dmg_pkg=$(find "$dmg_dir" -type f -name "*.dmg" -print -quit || true)
+              if [ -n "$dmg_pkg" ]; then
+                cp "$dmg_pkg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg"
+              fi
+
+              local dmg_sig
+              dmg_sig=$(find "$dmg_dir" -type f -name "*.dmg.sig" -print -quit || true)
+              if [ -n "$dmg_sig" ]; then
+                cp "$dmg_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg.sig"
+              fi
+            else
+              local fallback_dmg
+              fallback_dmg=$(find "$platform_dir" -maxdepth 2 -type f -name "*.dmg" -print -quit || true)
+              if [ -n "$fallback_dmg" ]; then
+                cp "$fallback_dmg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg"
+              fi
+
+              local fallback_dmg_sig
+              fallback_dmg_sig=$(find "$platform_dir" -maxdepth 2 -type f -name "*.dmg.sig" -print -quit || true)
+              if [ -n "$fallback_dmg_sig" ]; then
+                cp "$fallback_dmg_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}.dmg.sig"
+              fi
+            fi
+          }
+
+          collect_windows() {
+            local platform_dir="$1"
+            local arch="$2"
+            local nsis_dir="$platform_dir/nsis"
+
+            if [ -d "$nsis_dir" ]; then
+              local installer
+              installer=$(find "$nsis_dir" -type f -name "*_x64-setup.exe" -print -quit || true)
+              if [ -n "$installer" ]; then
+                cp "$installer" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.exe"
+              fi
+
+              local installer_sig
+              installer_sig=$(find "$nsis_dir" -type f -name "*_x64-setup.exe.sig" -print -quit || true)
+              if [ -n "$installer_sig" ]; then
+                cp "$installer_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.exe.sig"
+              fi
+
+              local nsis_pkg
+              nsis_pkg=$(find "$nsis_dir" -type f -name "*_x64-setup.nsis.zip" -print -quit || true)
+              if [ -n "$nsis_pkg" ]; then
+                cp "$nsis_pkg" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.nsis.zip"
+              fi
+
+              local nsis_sig
+              nsis_sig=$(find "$nsis_dir" -type f -name "*_x64-setup.nsis.zip.sig" -print -quit || true)
+              if [ -n "$nsis_sig" ]; then
+                cp "$nsis_sig" "$UPLOAD_DIR/sentinel-ai-${VERSION}-${arch}-setup.nsis.zip.sig"
+              fi
+            fi
+          }
+
+          for PLATFORM_PATH in "$TARGET_DIR"/tauri-build-*; do
+            [ -d "$PLATFORM_PATH" ] || continue
+            PLATFORM_NAME=$(basename "$PLATFORM_PATH")
+
+            case "$PLATFORM_NAME" in
+              tauri-build-darwin-aarch64)
+                collect_macos "$PLATFORM_PATH" "aarch64"
+                ;;
+              tauri-build-darwin-x86_64)
+                collect_macos "$PLATFORM_PATH" "x86_64"
+                ;;
+              tauri-build-windows-x86_64)
+                collect_windows "$PLATFORM_PATH" "x64"
+                ;;
+              *)
+                echo "Skipping unsupported platform directory: $PLATFORM_NAME"
+                ;;
+            esac
+          done
 
           echo "Files in upload directory:"
           ls -la "$UPLOAD_DIR"
