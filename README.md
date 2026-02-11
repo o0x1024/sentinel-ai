@@ -60,31 +60,8 @@ AI 助手不止用于问答，而是通过工具调用执行真实动作：
 
 这个组合把 “发现 → 研判 → 执行 → 复盘” 从人工链路升级为可持续自动化链路。
 
-## 系统架构（简化）
 
-```mermaid
-flowchart LR
-    UI[Vue Frontend] --> Tauri[Tauri Commands]
-    Tauri --> Services[sentinel-services]
-
-    Services --> Traffic[sentinel-traffic]
-    Services --> Plugins[sentinel-plugins]
-    Services --> Tools[sentinel-tools]
-    Services --> Workflow[sentinel-workflow]
-    Services --> RAG[sentinel-rag]
-    Services --> LLM[sentinel-llm]
-    Services --> DB[sentinel-db (SQLite)]
-
-    Tools --> MCP[MCP Servers]
-    Tools --> AgentBrowser[agent-browser (Playwright Daemon)]
-
-    Traffic --> Findings[Findings]
-    Findings --> LLM
-    Plugins --> Tools
-    Workflow --> Tools
-```
-
-## 主要模块说明（面向 GitHub 访问者）
+## 主要模块说明
 
 ### 流量分析（Traffic Analysis）
 - 支持代理监听、拦截与重放，覆盖 HTTP/HTTPS/WS 关键分析场景
@@ -214,13 +191,6 @@ cd src-tauri && cargo check
 - 红蓝对抗中的自动化资产与风险分析
 - 漏洞运营中的复测、通知、归档自动化
 - 将团队经验沉淀为插件与知识库，持续复用
-
-## 相关文档
-
-- 项目文档目录：`docs/`
-- 数据库迁移参考：`docs/database-migration-guide.md`
-- 浏览器自动化部署：`docs/agent-browser-deployment.md`
-- 插件相关文档：`docs/plugin-*.md`
 
 ## License
 
