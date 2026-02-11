@@ -1,8 +1,12 @@
+
+
+
 # Sentinel AI
 
 > AI + MCP 驱动的桌面安全分析平台（Tauri + Vue）
 
 Sentinel AI 面向安全研究与攻防工程团队，目标不是单点工具，而是把 **流量分析**、**AI 助手**、**工作流自动化**、**知识库（RAG）**、**插件系统** 和 **工具生态（MCP/内置工具）** 连接成一个可持续迭代的分析闭环。
+![Sentinel AI 应用运行截图](public/image.png)
 
 ## 为什么是 Sentinel AI
 
