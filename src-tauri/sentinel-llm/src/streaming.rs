@@ -799,10 +799,10 @@ impl StreamingLlmClient {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall { tool_call, .. },
                 )) => {
-                    info!(
-                        "Tool call received: id={}, name={}, args={}",
-                        tool_call.id, tool_call.function.name, tool_call.function.arguments
-                    );
+                    // info!(
+                    //     "Tool call received: id={}, name={}, args={}",
+                    //     tool_call.id, tool_call.function.name, tool_call.function.arguments
+                    // );
                     if !on_content(StreamContent::ToolCallComplete {
                         id: tool_call.id.clone(),
                         name: tool_call.function.name.clone(),

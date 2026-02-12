@@ -158,7 +158,7 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
         let existing = db_service.get_skill(&dir_name).await?;
         if let Some(existing) = existing {
             let update = sentinel_db::UpdateSkill {
-                name: Some(doc.frontmatter.name.clone()),
+                name: Some(dir_name.clone()),
                 description: Some(doc.frontmatter.description.clone()),
                 source_path: Some(source_path),
                 argument_hint: Some(existing.argument_hint),
@@ -174,7 +174,7 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
         } else {
             let create = sentinel_db::CreateSkill {
                 id: dir_name.clone(),
-                name: doc.frontmatter.name.clone(),
+                name: dir_name.clone(),
                 description: doc.frontmatter.description.clone(),
                 source_path,
                 argument_hint: String::new(),

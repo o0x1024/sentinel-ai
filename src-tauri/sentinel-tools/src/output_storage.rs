@@ -54,7 +54,7 @@ fn generate_file_access_commands(file_path: &str) -> String {
    • Get-Content "{}" -Head 50                   (view first 50 lines)
    • Get-Content "{}"                            (view full content)
    • (Get-Content "{}").Count                    (count lines)"#,
-            file_path, file_path, file_path, file_path, file_path, file_path
+            file_path, file_path, file_path, file_path, file_path
         )
     }
     

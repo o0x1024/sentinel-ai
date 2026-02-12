@@ -116,6 +116,20 @@ fn write_skill_file(skill_dir: &PathBuf, name: &str, description: &str, content:
     Ok(skill_path)
 }
 
+fn normalize_skill_name_to_id(skill_dir: &Path, skill_id: &str) -> Result<(), String> {
+    let skill_path = skill_dir.join("SKILL.md");
+    if !skill_path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&skill_path).map_err(|e| e.to_string())?;
+    let doc = parse_skill_markdown(&content).map_err(|e| e.to_string())?;
+    if doc.frontmatter.name == skill_id {
+        return Ok(());
+    }
+    let markdown = build_skill_markdown(skill_id, &doc.frontmatter.description, &doc.body);
+    fs::write(&skill_path, markdown).map_err(|e| e.to_string())
+}
+
 fn normalize_source_path(root: &PathBuf, skill_path: &PathBuf) -> String {
     skill_path
         .strip_prefix(root)
@@ -274,7 +288,10 @@ pub async fn update_skill(
     }
 
     if payload.content.is_some() || payload.name.is_some() || payload.description.is_some() {
-        let name = existing.name.clone();
+        let name = payload
+            .name
+            .clone()
+            .unwrap_or_else(|| existing.name.clone());
         let description = payload
             .description
             .clone()
@@ -739,6 +756,7 @@ pub async fn install_skills_from_path(
             fs::remove_dir_all(&dest_dir).map_err(|e| e.to_string())?;
         }
         copy_dir_all(src_dir, &dest_dir)?;
+        normalize_skill_name_to_id(&dest_dir, skill_id)?;
         installed.push(skill_id.clone());
     }
 
