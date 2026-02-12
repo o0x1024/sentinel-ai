@@ -67,9 +67,19 @@
       </div>
       
       <!-- Running indicator -->
-      <div v-if="isRunning && !needsConfirmation" class="running flex items-center gap-2 text-[#569cd6]">
-        <i class="fas fa-spinner fa-spin"></i>
-        <span>{{ $t('tools.shell.executing') }}</span>
+      <div v-if="isRunning && !needsConfirmation" class="running flex items-center justify-between gap-2 text-[#569cd6]">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-spinner fa-spin"></i>
+          <span>{{ $t('tools.shell.executing') }}</span>
+        </div>
+        <button
+          v-if="canCancel"
+          @click.stop="handleCancel"
+          class="btn btn-ghost btn-xs text-[#666] hover:text-[#888]"
+          :disabled="isCancelling"
+        >
+          <span>{{ $t('common.cancel') }}</span>
+        </button>
       </div>
       
       <!-- Expand hint overlay (shown when collapsed and content overflows) -->
@@ -123,6 +133,7 @@ const props = defineProps<{
   error?: string
   status?: string
   toolCallId?: string
+  executionId?: string
 }>()
 
 const emit = defineEmits<{
@@ -132,6 +143,7 @@ const emit = defineEmits<{
 
 const copied = ref(false)
 const copiedAll = ref(false)
+const isCancelling = ref(false)
 const pendingPermissionId = ref<string | null>(null)
 const pendingCommand = ref<string>('')
 const isExpanded = ref(false)
@@ -215,6 +227,20 @@ async function copyAllContent() {
   }
 }
 
+async function handleCancel() {
+  if (!props.executionId || isCancelling.value) return
+  isCancelling.value = true
+  try {
+    await invoke('cancel_shell_execution', {
+      executionId: props.executionId,
+    })
+  } catch (e) {
+    console.error('Failed to cancel shell execution:', e)
+  } finally {
+    isCancelling.value = false
+  }
+}
+
 // Check if needs confirmation - show when status is running and we have a pending permission request
 const needsConfirmation = computed(() => {
   // Show confirmation bar if:
@@ -227,6 +253,10 @@ const needsConfirmation = computed(() => {
 // Check if running
 const isRunning = computed(() => {
   return props.status === 'running'
+})
+
+const canCancel = computed(() => {
+  return isRunning.value && !needsConfirmation.value && !!props.executionId
 })
 
 // Check if completed

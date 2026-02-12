@@ -770,7 +770,12 @@ impl StreamingLlmClient {
         let mut content = String::new();
         let mut chunk_count = 0;
 
-        while let Some(item) = stream_iter.next().await {
+        loop {
+            let item = match stream_iter.next().await {
+                Some(item) => item,
+                None => break,
+            };
+
             chunk_count += 1;
             match item {
                 // 文本内容
@@ -837,12 +842,12 @@ impl StreamingLlmClient {
                         tool_result, ..
                     } = user_content;
                     let result_str = serde_json::to_string(&tool_result.content).unwrap_or_default();
-                    info!(
-                        "Tool result received: id={}, result_len={}, content_preview={}",
-                        tool_result.id,
-                        result_str.len(),
-                        &result_str.chars().take(300).collect::<String>()
-                    );
+                    // info!(
+                    //     "Tool result received: id={}, result_len={}, content_preview={}",
+                    //     tool_result.id,
+                    //     result_str.len(),
+                    //     &result_str.chars().take(300).collect::<String>()
+                    // );
                     if !on_content(StreamContent::ToolResult {
                         id: tool_result.id,
                         result: result_str,

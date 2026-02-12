@@ -7,7 +7,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use once_cell::sync::Lazy;
 
@@ -465,6 +466,16 @@ impl DockerSandbox {
         command: &str,
         timeout_secs: u64,
     ) -> Result<(String, String, i32), DockerError> {
+        self.execute_with_cancellation(command, timeout_secs, None).await
+    }
+
+    /// Execute command in Docker sandbox with cancellation support
+    pub async fn execute_with_cancellation(
+        &self,
+        command: &str,
+        timeout_secs: u64,
+        cancellation_token: Option<CancellationToken>,
+    ) -> Result<(String, String, i32), DockerError> {
         // Get or create container
         let container_id = {
             let mut pool = CONTAINER_POOL.write().await;
@@ -474,29 +485,53 @@ impl DockerSandbox {
         debug!("Executing command in container {}: {}", container_id, command);
 
         // Execute command in container as root (for tools like nmap -sS that require privileges)
-        let timeout_duration = Duration::from_secs(timeout_secs);
-        let result = timeout(
-            timeout_duration,
-            Command::new("docker")
-                .args(&["exec", "--user", "root", &container_id, "bash", "-c", command])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await;
+        let mut child = Command::new("docker")
+            .args(&["exec", "--user", "root", &container_id, "bash", "-c", command])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| DockerError::ExecutionFailed(format!("Failed to execute command: {}", e)))?;
 
-        match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let exit_code = output.status.code().unwrap_or(-1);
-                Ok((stdout, stderr, exit_code))
+        let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
+        tokio::pin!(timeout_sleep);
+
+        loop {
+            if let Some(token) = cancellation_token.as_ref() {
+                if token.is_cancelled() {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    return Err(DockerError::ExecutionFailed("cancelled".to_string()));
+                }
             }
-            Ok(Err(e)) => Err(DockerError::ExecutionFailed(format!(
-                "Failed to execute command: {}",
-                e
-            ))),
-            Err(_) => Err(DockerError::Timeout(timeout_secs)),
+
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    let output = child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| DockerError::ExecutionFailed(format!("Failed to read output: {}", e)))?;
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let exit_code = output.status.code().unwrap_or(-1);
+                    return Ok((stdout, stderr, exit_code));
+                }
+                Ok(None) => {
+                    tokio::select! {
+                        _ = &mut timeout_sleep => {
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            return Err(DockerError::Timeout(timeout_secs));
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(120)) => {}
+                    }
+                }
+                Err(e) => {
+                    return Err(DockerError::ExecutionFailed(format!(
+                        "Failed to poll command status: {}",
+                        e
+                    )));
+                }
+            }
         }
     }
 

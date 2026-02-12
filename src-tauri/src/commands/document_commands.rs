@@ -632,6 +632,49 @@ fn cleanup_empty_date_dirs(root: &Path) {
     }
 }
 
+fn clear_host_context_cache() -> Result<(), String> {
+    let context_dir = sentinel_tools::output_storage::get_host_context_dir();
+    if !context_dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(&context_dir).map_err(|e| format!("Failed to read context cache: {}", e))? {
+        let entry = entry.map_err(|e| format!("Failed to access context cache entry: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("Failed to remove context cache dir {}: {}", path.display(), e))?;
+        } else {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove context cache file {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
+async fn clear_container_workspace_cache() -> Result<(), String> {
+    let shell_config = get_shell_config().await;
+    let docker_requested = shell_config.default_execution_mode == ShellExecutionMode::Docker
+        && shell_config.docker_config.is_some();
+    if !docker_requested || !DockerSandbox::is_docker_available().await {
+        return Ok(());
+    }
+
+    let docker_config = shell_config
+        .docker_config
+        .ok_or_else(|| "Docker config not available".to_string())?;
+    let sandbox = DockerSandbox::new(docker_config);
+    let cleanup_cmd = r#"
+        mkdir -p /workspace/context /workspace/uploads && \
+        find /workspace/context -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true && \
+        find /workspace/uploads -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    "#;
+    sandbox
+        .execute(cleanup_cmd, 20)
+        .await
+        .map_err(|e| format!("Failed to clear container workspace cache: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn clear_uploaded_files(
     _app_handle: AppHandle,
@@ -645,7 +688,29 @@ pub async fn clear_uploaded_files(
     }
 
     let root = ensure_upload_root().await?;
+    let full_clear = date.is_none() && conversation_id.is_none();
     let mut index = read_upload_index(&root).await?;
+
+    if full_clear {
+        let removed_count = index.files.len() as u64;
+        if root.exists() {
+            tokio::fs::remove_dir_all(&root)
+                .await
+                .map_err(|e| format!("Failed to clear upload root: {}", e))?;
+        }
+        tokio::fs::create_dir_all(&root)
+            .await
+            .map_err(|e| format!("Failed to recreate upload root: {}", e))?;
+        write_upload_index(&root, &UploadIndex::default()).await?;
+
+        clear_host_context_cache()?;
+        if let Err(e) = clear_container_workspace_cache().await {
+            tracing::warn!("[upload-audit] failed to clear container workspace cache: {}", e);
+        }
+
+        tracing::info!("[upload-audit] full clear completed, removed files count={}", removed_count);
+        return Ok(removed_count);
+    }
 
     let mut removed_count = 0u64;
     let mut keep: Vec<UploadedFileEntry> = Vec::with_capacity(index.files.len());

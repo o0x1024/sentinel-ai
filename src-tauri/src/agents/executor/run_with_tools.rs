@@ -9,7 +9,7 @@ use sentinel_db::Database;
 use sentinel_llm::{ChatMessage, StreamContent, StreamingLlmClient, parse_image_from_json};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::ToolServer;
-use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
 use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
 use sentinel_db::DatabaseService;
 
@@ -385,7 +385,62 @@ pub async fn execute_agent_with_tools(
 
     let mut force_history_with_tools = false;
     while retries <= max_retries {
-        let dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
+        let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
+        if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
+            if let Some(shell_info) = tool_server.get_tool(ShellTool::NAME).await {
+                let execution_id_for_shell = params.execution_id.clone();
+                let shell_input_schema = shell_info.input_schema.clone();
+                let shell_description = shell_info.description.clone();
+                let shell_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+                    let execution_id_for_shell = execution_id_for_shell.clone();
+                    Box::pin(async move {
+                        use rig::tool::Tool;
+                        use sentinel_tools::buildin_tools::shell::{ShellArgs, ShellTool};
+
+                        let mut patched_args = args;
+                        if let Some(obj) = patched_args.as_object_mut() {
+                            obj.insert(
+                                "execution_id".to_string(),
+                                serde_json::Value::String(execution_id_for_shell.clone()),
+                            );
+                        }
+
+                        let tool_args: ShellArgs = serde_json::from_value(patched_args)
+                            .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                        let tool = ShellTool::new();
+                        let result = tool
+                            .call(tool_args)
+                            .await
+                            .map_err(|e| format!("Shell execution failed: {}", e))?;
+
+                        serde_json::to_value(result)
+                            .map_err(|e| format!("Failed to serialize shell result: {}", e))
+                    })
+                });
+
+                let shell_def = DynamicToolDef {
+                    name: ShellTool::NAME.to_string(),
+                    description: shell_description,
+                    input_schema: shell_input_schema,
+                    output_schema: None,
+                    source: ToolSource::Builtin,
+                    category: "system".to_string(),
+                    executor: shell_executor,
+                };
+
+                dynamic_tools = dynamic_tools
+                    .into_iter()
+                    .map(|tool| {
+                        if tool.name() == ShellTool::NAME {
+                            DynamicTool::new(shell_def.clone())
+                        } else {
+                            tool
+                        }
+                    })
+                    .collect();
+            }
+        }
 
         tracing::info!(
             "Got {} dynamic tool instances for rig-core native tool calling",

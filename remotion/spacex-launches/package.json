@@ -1,0 +1,16 @@
+{
+  "name": "spacex-launches-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preview": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts SpaceXLaunches ../../dist/spacex-launches.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.421",
+    "@remotion/transitions": "^4.0.421",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "^4.0.421"
+  }
+}

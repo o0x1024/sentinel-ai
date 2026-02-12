@@ -20,6 +20,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// Hard safety ceiling for output storage threshold.
+/// UI recommends 8K-32K, but we still allow up to 50K for compatibility.
+const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 50_000;
+
 // Re-export AI settings related types for backward compatibility
 pub use crate::commands::aisettings::{
     TestConnectionRequest, TestConnectionResponse, SaveAiConfigRequest,
@@ -733,6 +737,18 @@ pub async fn cancel_ai_stream(
         }),
     );
 
+    Ok(())
+}
+
+/// Cancel only current shell execution for an execution id (without cancelling the whole conversation).
+#[tauri::command]
+pub async fn cancel_shell_execution(execution_id: String) -> Result<(), String> {
+    let cancelled = sentinel_tools::buildin_tools::shell::cancel_shell_execution(&execution_id).await;
+    if cancelled {
+        tracing::info!("Cancelled shell execution for execution_id: {}", execution_id);
+    } else {
+        tracing::warn!("No active shell execution found for execution_id: {}", execution_id);
+    }
     Ok(())
 }
 
@@ -2238,8 +2254,20 @@ pub async fn agent_execute(
     if let Ok(threshold_str_opt) = db_service.get_config_internal("ai", "output_storage_threshold").await {
         if let Some(threshold_str) = threshold_str_opt {
              if let Ok(threshold) = threshold_str.parse::<usize>() {
-                 tracing::info!("Setting output storage threshold to {} bytes (Dynamic Context Discovery)", threshold);
-                 sentinel_tools::set_storage_threshold(threshold);
+                 let effective_threshold = threshold.min(MAX_SAFE_OUTPUT_STORAGE_THRESHOLD);
+                 if effective_threshold != threshold {
+                    tracing::warn!(
+                        "Configured output storage threshold {} is too high, clamped to {} bytes for stream stability",
+                        threshold,
+                        effective_threshold
+                    );
+                 } else {
+                    tracing::info!(
+                        "Setting output storage threshold to {} bytes (Dynamic Context Discovery)",
+                        effective_threshold
+                    );
+                 }
+                 sentinel_tools::set_storage_threshold(effective_threshold);
              }
         }
     }

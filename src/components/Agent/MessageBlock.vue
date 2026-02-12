@@ -135,6 +135,7 @@
     :result="message.metadata?.tool_result"
     :error="message.metadata?.error"
     :status="message.metadata?.status"
+    :execution-id="message.metadata?.execution_id"
   />
   
   <!-- Tool Call Message - Collapsible Panel (only render if has content) -->

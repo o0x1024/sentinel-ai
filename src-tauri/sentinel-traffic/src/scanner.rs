@@ -885,7 +885,7 @@ impl ScanPipeline {
             .map(|(_, v)| v.as_str());
         
         if let Some(value) = header_value {
-            info!("Found x-sentinel-internal header with value: {}", value);
+            // info!("Found x-sentinel-internal header with value: {}", value);
             value == "true" || value == "1"
         } else {
             // info!("x-sentinel-internal header not found. Available headers: {:?}", 

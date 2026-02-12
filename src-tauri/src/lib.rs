@@ -93,19 +93,19 @@ pub fn run() {
                 .unwrap(),
         );
 
-    let rig_debug = std::env::var("SENTINEL_RIG_DEBUG")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false);
-    if rig_debug {
-        env_filter = env_filter
-            .add_directive("sentinel_llm=debug".parse().unwrap())
-            .add_directive("rig=debug".parse().unwrap())
-            .add_directive(
-                "rig::agent::prompt_request::streaming=debug"
-                    .parse()
-                    .unwrap(),
-            );
-    }
+    // let rig_debug = std::env::var("SENTINEL_RIG_DEBUG")
+    //     .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+    //     .unwrap_or(false);
+    // if rig_debug {
+    //     env_filter = env_filter
+    //         .add_directive("sentinel_llm=debug".parse().unwrap())
+    //         .add_directive("rig=debug".parse().unwrap())
+    //         .add_directive(
+    //             "rig::agent::prompt_request::streaming=debug"
+    //                 .parse()
+    //                 .unwrap(),
+    //         );
+    // }
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
@@ -637,6 +637,7 @@ pub fn run() {
             ai::create_ai_conversation,
             ai::save_ai_message,
             ai::cancel_ai_stream,
+            ai::cancel_shell_execution,
             ai::get_ai_conversations,
             ai::get_ai_conversations_paginated,
             ai::get_ai_conversations_count,

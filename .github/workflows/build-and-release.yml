@@ -91,6 +91,16 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocPath\protoc.exe"
           Add-Content -Path $env:GITHUB_ENV -Value "PROTOC_INCLUDE=$protocPath\..\include"
 
+      - name: Install Npcap SDK for Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri 'https://npcap.com/dist/npcap-sdk-1.16.zip' -OutFile npcap-sdk.zip -UseBasicParsing
+          Expand-Archive -Path npcap-sdk.zip -DestinationPath C:\ -Force
+          $libPath = 'C:\npcap-sdk-1.16\Lib\x64'
+          $existingLib = [Environment]::GetEnvironmentVariable('LIB', 'Process')
+          Add-Content -Path $env:GITHUB_ENV -Value "LIB=$libPath;$existingLib"
+
       - name: Install Frontend Dependencies
         run: yarn install
 

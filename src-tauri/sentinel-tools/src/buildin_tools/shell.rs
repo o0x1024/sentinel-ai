@@ -3,12 +3,14 @@
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 use once_cell::sync::Lazy;
 use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
 
@@ -41,6 +43,9 @@ pub struct ShellArgs {
     /// Execution mode (host or docker)
     #[serde(default)]
     pub execution_mode: Option<ShellExecutionMode>,
+    /// Internal execution id for cancellation scope
+    #[serde(default)]
+    pub execution_id: Option<String>,
 }
 
 fn default_timeout() -> u64 { 180 }
@@ -72,6 +77,8 @@ pub enum ShellError {
     PermissionDenied(String),
     #[error("Docker error: {0}")]
     DockerError(String),
+    #[error("Shell execution cancelled")]
+    Cancelled,
 }
 
 /// Shell default policy
@@ -204,6 +211,34 @@ static SHELL_CONFIG: Lazy<RwLock<ShellConfig>> = Lazy::new(|| RwLock::new(ShellC
 
 /// Global permission handler
 static PERMISSION_HANDLER: Lazy<RwLock<Option<Arc<dyn ShellPermissionHandler>>>> = Lazy::new(|| RwLock::new(None));
+/// Per-execution shell cancellation tokens
+static SHELL_CANCELLATION_TOKENS: Lazy<RwLock<HashMap<String, CancellationToken>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Register/refresh shell cancellation token for an execution
+pub async fn register_shell_execution_cancellation(execution_id: &str) -> CancellationToken {
+    let token = CancellationToken::new();
+    let mut map = SHELL_CANCELLATION_TOKENS.write().await;
+    map.insert(execution_id.to_string(), token.clone());
+    token
+}
+
+/// Cancel active shell execution for a specific execution id
+pub async fn cancel_shell_execution(execution_id: &str) -> bool {
+    let map = SHELL_CANCELLATION_TOKENS.read().await;
+    if let Some(token) = map.get(execution_id) {
+        token.cancel();
+        true
+    } else {
+        false
+    }
+}
+
+/// Clear shell cancellation token after command completion
+pub async fn clear_shell_execution_cancellation(execution_id: &str) {
+    let mut map = SHELL_CANCELLATION_TOKENS.write().await;
+    map.remove(execution_id);
+}
 
 /// Set the global permission handler
 pub async fn set_permission_handler(handler: Arc<dyn ShellPermissionHandler>) {
@@ -310,6 +345,7 @@ impl ShellTool {
         &self,
         cmd: &str,
         timeout_secs: u64,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<(String, String, i32, Arc<DockerSandbox>), ShellError> {
         // Check Docker availability first
         if !DockerSandbox::is_docker_available().await {
@@ -327,10 +363,11 @@ impl ShellTool {
 
         let sandbox = Arc::new(DockerSandbox::new(docker_config));
         let (stdout, stderr, exit_code) = sandbox
-            .execute(cmd, timeout_secs)
+            .execute_with_cancellation(cmd, timeout_secs, cancellation_token)
             .await
             .map_err(|e| match e {
                 crate::docker_sandbox::DockerError::Timeout(secs) => ShellError::Timeout(secs),
+                crate::docker_sandbox::DockerError::ExecutionFailed(msg) if msg == "cancelled" => ShellError::Cancelled,
                 _ => ShellError::DockerError(e.to_string()),
             })?;
         
@@ -358,6 +395,7 @@ impl ShellTool {
         cmd: &str,
         cwd: Option<&str>,
         timeout_secs: u64,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<(String, String, i32), ShellError> {
         // Determine shell and command structure based on OS
         #[cfg(target_os = "windows")]
@@ -430,32 +468,56 @@ impl ShellTool {
             cwd
         );
 
-        // Execute with timeout
-        let timeout_duration = Duration::from_secs(timeout_secs);
-        let result = timeout(timeout_duration, command.output()).await;
+        let mut child = command
+            .spawn()
+            .map_err(|e| ShellError::ExecutionFailed(e.to_string()))?;
+        let timeout_duration = tokio::time::sleep(Duration::from_secs(timeout_secs));
+        tokio::pin!(timeout_duration);
 
-        match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let exit_code = output.status.code().unwrap_or(-1);
-                
-                tracing::debug!(
-                    "Command completed - exit_code: {}, stdout_len: {}, stderr_len: {}",
-                    exit_code,
-                    stdout.len(),
-                    stderr.len()
-                );
-                
-                Ok((stdout, stderr, exit_code))
+        loop {
+            if let Some(token) = cancellation_token.as_ref() {
+                if token.is_cancelled() {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    return Err(ShellError::Cancelled);
+                }
             }
-            Ok(Err(e)) => {
-                tracing::error!("Command execution failed: {}", e);
-                Err(ShellError::ExecutionFailed(e.to_string()))
-            }
-            Err(_) => {
-                tracing::error!("Command timeout after {} seconds", timeout_secs);
-                Err(ShellError::Timeout(timeout_secs))
+
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    let output = child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| ShellError::ExecutionFailed(e.to_string()))?;
+
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let exit_code = output.status.code().unwrap_or(-1);
+
+                    tracing::debug!(
+                        "Command completed - exit_code: {}, stdout_len: {}, stderr_len: {}",
+                        exit_code,
+                        stdout.len(),
+                        stderr.len()
+                    );
+
+                    return Ok((stdout, stderr, exit_code));
+                }
+                Ok(None) => {
+                    tokio::select! {
+                        _ = &mut timeout_duration => {
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            tracing::error!("Command timeout after {} seconds", timeout_secs);
+                            return Err(ShellError::Timeout(timeout_secs));
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(120)) => {}
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Command execution failed: {}", e);
+                    return Err(ShellError::ExecutionFailed(e.to_string()));
+                }
             }
         }
     }
@@ -483,6 +545,12 @@ impl Tool for ShellTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
+        let execution_id = args.execution_id.clone();
+        let cancellation_token = if let Some(exec_id) = execution_id.as_deref() {
+            Some(register_shell_execution_cancellation(exec_id).await)
+        } else {
+            None
+        };
 
         // Determine execution mode
         let config = SHELL_CONFIG.read().await;
@@ -493,12 +561,13 @@ impl Tool for ShellTool {
         drop(config);
 
         // Execute command based on mode with fallback
-        let (stdout, stderr, exit_code, output_stored) = match execution_mode {
+        let execution_result: Result<(String, String, i32, bool), ShellError> = (async {
+            match execution_mode {
             ShellExecutionMode::Docker => {
                 tracing::info!("Attempting to execute command in Docker sandbox: {}", args.command);
                 
                 // Try Docker execution, fallback to host if Docker is unavailable
-                match self.execute_in_docker(&args.command, args.timeout_secs).await {
+                match self.execute_in_docker(&args.command, args.timeout_secs, cancellation_token.clone()).await {
                     Ok((stdout, stderr, exit_code, sandbox)) => {
                         // Docker execution successful
                         tracing::info!("Command executed successfully in Docker sandbox");
@@ -559,76 +628,86 @@ impl Tool for ShellTool {
                             }
                         }
                         
-                        (final_stdout, final_stderr, exit_code, stored)
+                        Ok((final_stdout, final_stderr, exit_code, stored))
                     }
                     Err(e) => {
-                        if let ShellError::Timeout(_) = e {
-                            return Err(e);
-                        }
+                        if matches!(e, ShellError::Timeout(_) | ShellError::Cancelled) {
+                            Err(e)
+                        } else {
+                            // Docker execution failed, fallback to host
+                            tracing::warn!("Docker execution failed ({}), falling back to host execution", e);
+                            tracing::warn!("Executing command on host machine: {}", args.command);
 
-                        // Docker execution failed, fallback to host
-                        tracing::warn!("Docker execution failed ({}), falling back to host execution", e);
-                        tracing::warn!("Executing command on host machine: {}", args.command);
-
-                        // Host execution requires permission check
-                        self.check_permission(&args.command).await?;
-                        
-                        let (stdout, stderr, exit_code) = self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?;
-                        
-                        // For host execution, use unified storage for large outputs
-                        let storage_threshold = crate::output_storage::get_storage_threshold();
-                        let mut stored = false;
-                        let mut final_stdout = stdout.clone();
-                        let mut final_stderr = stderr.clone();
-                        
-                        // Store stdout if large
-                        if stdout.len() > storage_threshold {
-                            match crate::output_storage::store_output_unified(
-                                "shell_stdout_host_fallback",
-                                &stdout,
-                                None,
-                            ).await {
-                                Ok(storage_result) => {
-                                    final_stdout = storage_result.get_agent_content();
-                                    stored = true;
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to store stdout: {}", e);
-                                    final_stdout = stdout.chars().take(storage_threshold).collect();
-                                    final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
+                            // Host execution requires permission check
+                            self.check_permission(&args.command).await?;
+                            
+                            let (stdout, stderr, exit_code) = self.execute_on_host(
+                                &args.command,
+                                args.cwd.as_deref(),
+                                args.timeout_secs,
+                                cancellation_token.clone(),
+                            ).await?;
+                            
+                            // For host execution fallback, force host storage for clear path semantics
+                            let storage_threshold = crate::output_storage::get_storage_threshold();
+                            let mut stored = false;
+                            let mut final_stdout = stdout.clone();
+                            let mut final_stderr = stderr.clone();
+                            
+                            // Store stdout if large
+                            if stdout.len() > storage_threshold {
+                                match crate::output_storage::store_output_on_host(
+                                    "shell_stdout_host_fallback",
+                                    &stdout,
+                                    None,
+                                ).await {
+                                    Ok(storage_result) => {
+                                        final_stdout = storage_result.get_agent_content();
+                                        stored = true;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to store stdout: {}", e);
+                                        final_stdout = stdout.chars().take(storage_threshold).collect();
+                                        final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
+                                    }
                                 }
                             }
-                        }
-                        
-                        // Store stderr if large
-                        if stderr.len() > storage_threshold {
-                            match crate::output_storage::store_output_unified(
-                                "shell_stderr_host_fallback",
-                                &stderr,
-                                None,
-                            ).await {
-                                Ok(storage_result) => {
-                                    final_stderr = storage_result.get_agent_content();
-                                    stored = true;
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to store stderr: {}", e);
-                                    final_stderr = stderr.chars().take(storage_threshold).collect();
-                                    final_stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stderr.len()));
+                            
+                            // Store stderr if large
+                            if stderr.len() > storage_threshold {
+                                match crate::output_storage::store_output_on_host(
+                                    "shell_stderr_host_fallback",
+                                    &stderr,
+                                    None,
+                                ).await {
+                                    Ok(storage_result) => {
+                                        final_stderr = storage_result.get_agent_content();
+                                        stored = true;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to store stderr: {}", e);
+                                        final_stderr = stderr.chars().take(storage_threshold).collect();
+                                        final_stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stderr.len()));
+                                    }
                                 }
                             }
+                            
+                            Ok((final_stdout, final_stderr, exit_code, stored))
                         }
-                        
-                        (final_stdout, final_stderr, exit_code, stored)
                     }
                 }
             }
             ShellExecutionMode::Host => {
                 tracing::warn!("Executing command on host machine: {}", args.command);
                 self.check_permission(&args.command).await?;
-                let (stdout, stderr, exit_code) = self.execute_on_host(&args.command, args.cwd.as_deref(), args.timeout_secs).await?;
+                let (stdout, stderr, exit_code) = self.execute_on_host(
+                    &args.command,
+                    args.cwd.as_deref(),
+                    args.timeout_secs,
+                    cancellation_token.clone(),
+                ).await?;
                 
-                // For host execution, also use container storage for large outputs (unified management)
+                // In explicit host mode, always store outputs on host so displayed paths match mode.
                 let storage_threshold = crate::output_storage::get_storage_threshold();
                 let mut stored = false;
                 let mut final_stdout = stdout.clone();
@@ -636,7 +715,7 @@ impl Tool for ShellTool {
                 
                 // Store stdout if large
                 if stdout.len() > storage_threshold {
-                    match crate::output_storage::store_output_unified(
+                    match crate::output_storage::store_output_on_host(
                         "shell_stdout_host",
                         &stdout,
                         None,
@@ -646,7 +725,7 @@ impl Tool for ShellTool {
                             stored = true;
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to store stdout to container: {}", e);
+                            tracing::warn!("Failed to store stdout: {}", e);
                             // Fallback to truncation
                             final_stdout = stdout.chars().take(storage_threshold).collect();
                             final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
@@ -656,7 +735,7 @@ impl Tool for ShellTool {
                 
                 // Store stderr if large
                 if stderr.len() > storage_threshold {
-                    match crate::output_storage::store_output_unified(
+                    match crate::output_storage::store_output_on_host(
                         "shell_stderr_host",
                         &stderr,
                         None,
@@ -666,7 +745,7 @@ impl Tool for ShellTool {
                             stored = true;
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to store stderr to container: {}", e);
+                            tracing::warn!("Failed to store stderr: {}", e);
                             // Fallback to truncation
                             final_stderr = stderr.chars().take(storage_threshold).collect();
                             final_stderr.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stderr.len()));
@@ -674,9 +753,14 @@ impl Tool for ShellTool {
                     }
                 }
                 
-                (final_stdout, final_stderr, exit_code, stored)
+                Ok((final_stdout, final_stderr, exit_code, stored))
             }
-        };
+            }
+        }).await;
+        if let Some(exec_id) = execution_id.as_deref() {
+            clear_shell_execution_cancellation(exec_id).await;
+        }
+        let (stdout, stderr, exit_code, output_stored) = execution_result?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 

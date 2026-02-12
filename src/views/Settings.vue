@@ -150,6 +150,18 @@ import AgentSettings from '@/components/Settings/AgentSettings.vue'
 
 const { t, locale } = useI18n()
 
+const OUTPUT_STORAGE_THRESHOLD_MIN = 8000
+const OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX = 32000
+const OUTPUT_STORAGE_THRESHOLD_DEFAULT = 16000
+
+const clampOutputStorageThreshold = (value: number): number => {
+  if (!Number.isFinite(value)) return OUTPUT_STORAGE_THRESHOLD_DEFAULT
+  return Math.min(
+    OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX,
+    Math.max(OUTPUT_STORAGE_THRESHOLD_MIN, Math.round(value)),
+  )
+}
+
 // 响应式数据
 const activeCategory = ref('ai')
 const saving = ref(false)
@@ -190,7 +202,7 @@ const settings = ref({
     temperature: 0.7,
     maxTokens: 2000,
     toolOutputLimit: 50000,
-    outputStorageThreshold: 10000,
+    outputStorageThreshold: OUTPUT_STORAGE_THRESHOLD_DEFAULT,
     maxTurns: 100
   },
   database: {
@@ -510,8 +522,12 @@ const loadSettings = async () => {
 
       // output_storage_threshold
       if (configMap.has('output_storage_threshold')) {
-         const threshold = parseInt(configMap.get('output_storage_threshold') || '10000')
-         settings.value.ai.outputStorageThreshold = threshold
+         const threshold = parseInt(
+           configMap.get('output_storage_threshold') || String(OUTPUT_STORAGE_THRESHOLD_DEFAULT),
+         )
+         settings.value.ai.outputStorageThreshold = clampOutputStorageThreshold(threshold)
+      } else {
+         settings.value.ai.outputStorageThreshold = OUTPUT_STORAGE_THRESHOLD_DEFAULT
       }
       
       // max_turns
@@ -756,7 +772,10 @@ const saveAiConfig = async () => {
        const temperature = settings.value.ai?.temperature ?? 0.7
        const maxTokens = settings.value.ai?.maxTokens ?? 2000
        const toolLimit = settings.value.ai?.toolOutputLimit || 50000
-       const outputStorageThreshold = settings.value.ai?.outputStorageThreshold || 10000
+       const outputStorageThreshold = clampOutputStorageThreshold(
+         settings.value.ai?.outputStorageThreshold ?? OUTPUT_STORAGE_THRESHOLD_DEFAULT,
+       )
+       settings.value.ai.outputStorageThreshold = outputStorageThreshold
        const maxTurns = settings.value.ai?.maxTurns || 100
        const configs = [
           { category: 'ai', key: 'temperature', value: String(temperature), description: 'Temperature for AI responses', is_encrypted: false },

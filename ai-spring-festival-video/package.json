@@ -1,0 +1,30 @@
+{
+  "name": "ai-spring-festival-video",
+  "version": "1.0.0",
+  "description": "AI春晚：Claude Opus 4.6 vs GPT-5.3 Codex 视频",
+  "scripts": {
+    "start": "remotion studio",
+    "build": "remotion render",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.421",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "remotion",
+    "video",
+    "ai",
+    "claude",
+    "gpt"
+  ],
+  "author": "AI Video Creator",
+  "license": "MIT"
+}

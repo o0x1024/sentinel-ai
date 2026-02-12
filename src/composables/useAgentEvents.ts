@@ -617,6 +617,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
         metadata: {
           tool_name: payload.tool_name,
           tool_args: payload.tool_input,
+          status: 'running',
+          execution_id: payload.execution_id,
         }
       })
 

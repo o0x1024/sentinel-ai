@@ -6,8 +6,8 @@
 use serde::{Serialize, Deserialize};
 use crate::docker_sandbox::DockerSandbox;
 
-/// Default storage threshold (10KB)
-const DEFAULT_STORAGE_THRESHOLD: usize = 10_000;
+/// Default storage threshold (16KB)
+const DEFAULT_STORAGE_THRESHOLD: usize = 16_000;
 
 use std::sync::RwLock;
 use once_cell::sync::Lazy;
@@ -46,15 +46,22 @@ pub fn get_host_context_dir() -> std::path::PathBuf {
 
 /// Generate platform-specific file access commands
 fn generate_file_access_commands(file_path: &str) -> String {
-    #[cfg(target_os = "windows")]
+#[cfg(target_os = "windows")]
     {
         format!(
-            r#"   • Get-Content "{}" | Select-String "pattern"  (search for pattern)
+            r#"PowerShell:
+   • Get-Content "{}" | Select-String "pattern"  (search for pattern)
    • Get-Content "{}" -Tail 50                   (view last 50 lines)
    • Get-Content "{}" -Head 50                   (view first 50 lines)
    • Get-Content "{}"                            (view full content)
-   • (Get-Content "{}").Count                    (count lines)"#,
-            file_path, file_path, file_path, file_path, file_path
+   • (Get-Content "{}").Count                    (count lines)
+
+CMD:
+   • findstr /I "pattern" "{}"                   (search for pattern)
+   • powershell -Command "Get-Content '{}' -Tail 50"  (view last 50 lines)
+   • powershell -Command "Get-Content '{}' -Head 50"  (view first 50 lines)
+   • type "{}"                                   (view full content)"#,
+            file_path, file_path, file_path, file_path, file_path, file_path, file_path, file_path, file_path
         )
     }
     

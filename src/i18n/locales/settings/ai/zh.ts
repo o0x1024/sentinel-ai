@@ -90,7 +90,7 @@ export default {
   maxContextLength: '最大上下文长度',
   maxContextLengthHint: '该提供商支持的最大上下文窗口大小（tokens），超出时将自动摘要历史消息',
   outputStorageThreshold: '输出存储阈值',
-  outputStorageThresholdHint: '工具输出超过此大小将自动存储到文件而非直接返回，Agent可使用shell/grep等命令按需读取（动态上下文发现）',
+  outputStorageThresholdHint: '建议范围 8K-32K。超过阈值的工具输出将自动存储到文件而非直接返回，Agent可使用shell/grep等命令按需读取（动态上下文发现，硬上限 50K）',
   maxTurns: '最大对话轮数',
   maxTurnsHint: '限制AI工具调用的最大循环次数，防止无限循环',
   availableModels: '可用模型',

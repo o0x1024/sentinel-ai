@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AgentMessage } from '@/types/agent'
 import MessageBlock from './MessageBlock.vue'
@@ -88,7 +88,10 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null)
 const isUserAtBottom = ref(true)
+const isFollowing = ref(true)
 const historyOffset = ref(0)
+const isAutoScrolling = ref(false)
+let resizeObserver: ResizeObserver | null = null
 
 const PAGE_STEP = 50
 const MAX_RENDERED_MESSAGES = 200
@@ -136,16 +139,33 @@ const loadNewer = async () => {
 
 const handleScroll = () => {
   if (!containerRef.value) return
+  if (isAutoScrolling.value) return
+
   const { scrollTop, scrollHeight, clientHeight } = containerRef.value
-  isUserAtBottom.value = scrollHeight - scrollTop - clientHeight < 16
+  const atBottom = scrollHeight - scrollTop - clientHeight < 24
+  isUserAtBottom.value = atBottom
+  isFollowing.value = atBottom
 }
 
 let scrollTimer: any = null
+const performScrollToBottom = () => {
+  if (!containerRef.value) return
+  isAutoScrolling.value = true
+  containerRef.value.scrollTop = containerRef.value.scrollHeight
+  requestAnimationFrame(() => {
+    if (containerRef.value) {
+      // Apply once more after layout settles (streaming/tool block expansion).
+      containerRef.value.scrollTop = containerRef.value.scrollHeight
+    }
+    isAutoScrolling.value = false
+  })
+}
+
 const scheduleScrollToBottom = () => {
   if (scrollTimer) cancelAnimationFrame(scrollTimer)
   scrollTimer = requestAnimationFrame(() => {
-    if (containerRef.value && isUserAtBottom.value && historyOffset.value === 0) {
-      containerRef.value.scrollTop = containerRef.value.scrollHeight
+    if (containerRef.value && isFollowing.value && historyOffset.value === 0) {
+      performScrollToBottom()
     }
     scrollTimer = null
   })
@@ -157,9 +177,10 @@ watch(
     if (newLen === 0 || (newLen > 0 && oldLen === 0)) {
       historyOffset.value = 0
       isUserAtBottom.value = true
+      isFollowing.value = true
     }
 
-    if (isUserAtBottom.value || newLen <= 1) {
+    if (isFollowing.value || newLen <= 1) {
       historyOffset.value = 0
       nextTick(() => {
         scheduleScrollToBottom()
@@ -171,7 +192,7 @@ watch(
 watch(
   () => props.messages.length > 0 ? props.messages[props.messages.length - 1]?.id : '',
   () => {
-    if (isUserAtBottom.value && props.isExecuting && historyOffset.value === 0) {
+    if (isFollowing.value && props.isExecuting && historyOffset.value === 0) {
       scheduleScrollToBottom()
     }
   }
@@ -180,7 +201,7 @@ watch(
 watch(
   () => props.messages.length > 0 ? props.messages[props.messages.length - 1]?.content : '',
   () => {
-    if (isUserAtBottom.value && props.isExecuting && historyOffset.value === 0) {
+    if (isFollowing.value && props.isExecuting && historyOffset.value === 0) {
       scheduleScrollToBottom()
     }
   }
@@ -195,7 +216,7 @@ watch(
     return `${last.id}:${status}:${duration}`
   },
   () => {
-    if (isUserAtBottom.value && props.isExecuting && historyOffset.value === 0) {
+    if (isFollowing.value && props.isExecuting && historyOffset.value === 0) {
       scheduleScrollToBottom()
     }
   }
@@ -204,10 +225,9 @@ watch(
 const scrollToBottom = () => {
   historyOffset.value = 0
   isUserAtBottom.value = true
+  isFollowing.value = true
   nextTick(() => {
-    if (containerRef.value) {
-      containerRef.value.scrollTop = containerRef.value.scrollHeight
-    }
+    performScrollToBottom()
   })
 }
 
@@ -223,7 +243,7 @@ const handleEdit = (message: AgentMessage, newContent: string) => {
 
 // Handle height change from MessageBlock (when tool panels expand/collapse)
 const handleHeightChanged = () => {
-  if (isUserAtBottom.value && historyOffset.value === 0) {
+  if (isFollowing.value && historyOffset.value === 0) {
     scheduleScrollToBottom()
   }
 }
@@ -236,6 +256,27 @@ const shouldAnimate = (index: number) => {
 // Expose scroll method
 defineExpose({
   scrollToBottom,
+})
+
+onMounted(() => {
+  if (!containerRef.value) return
+  resizeObserver = new ResizeObserver(() => {
+    if (isFollowing.value && historyOffset.value === 0) {
+      scheduleScrollToBottom()
+    }
+  })
+  resizeObserver.observe(containerRef.value)
+})
+
+onBeforeUnmount(() => {
+  if (scrollTimer) {
+    cancelAnimationFrame(scrollTimer)
+    scrollTimer = null
+  }
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
 })
 </script>
 

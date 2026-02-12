@@ -461,9 +461,9 @@
                   <span class="badge badge-info badge-sm">Dynamic Context</span>
                 </label>
                 <div class="flex items-center gap-4">
-                  <input v-model.number="settings.ai.outputStorageThreshold" type="range" min="5000" max="200000" step="5000"
+                  <input v-model.number="settings.ai.outputStorageThreshold" type="range" min="8000" max="32000" step="1000"
                     class="range range-info flex-1" @change="saveAiConfig" />
-                  <span class="text-sm min-w-[60px]">{{ (settings.ai.outputStorageThreshold || 10000) / 1000 }}K</span>
+                  <span class="text-sm min-w-[60px]">{{ (settings.ai.outputStorageThreshold || 16000) / 1000 }}K</span>
                 </div>
                 <label class="label">
                   <span class="label-text-alt">{{ t('settings.ai.outputStorageThresholdHint') }}</span>
