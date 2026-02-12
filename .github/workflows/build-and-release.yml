@@ -85,11 +85,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install --no-progress protoc
-          $protocPath = 'C:\ProgramData\chocolatey\lib\protoc\tools\bin'
-          Add-Content -Path $env:GITHUB_PATH -Value $protocPath
-          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocPath\protoc.exe"
-          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC_INCLUDE=$protocPath\..\include"
+          $protocVersion = '28.2'
+          $protocZip = "protoc-$protocVersion-win64.zip"
+          Invoke-WebRequest -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip" -OutFile $protocZip -UseBasicParsing
+          Expand-Archive -Path $protocZip -DestinationPath C:\protoc -Force
+          $protocBin = 'C:\protoc\bin'
+          $protocInclude = 'C:\protoc\include'
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBin
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocBin\protoc.exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC_INCLUDE=$protocInclude"
 
       - name: Install Npcap SDK for Windows
         if: runner.os == 'Windows'
