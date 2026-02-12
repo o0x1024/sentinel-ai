@@ -86,7 +86,7 @@ fn is_process_alive(pid: u32) -> bool {
         use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if handle != 0 {
+            if handle != std::ptr::null_mut() {
                 CloseHandle(handle);
                 true
             } else {
@@ -396,7 +396,7 @@ fn kill_process(pid: u32) {
         use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
-            if handle != 0 {
+            if handle != std::ptr::null_mut() {
                 TerminateProcess(handle, 1);
                 CloseHandle(handle);
             }
