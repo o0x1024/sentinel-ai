@@ -14,7 +14,7 @@ use sentinel_llm::{
 use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
@@ -1625,6 +1625,131 @@ pub async fn get_tool_config(
     Ok(load_tool_config_from_db(&app_handle).await)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditPolicyGatePayload {
+    pub passed: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub summary: Option<serde_json::Value>,
+    #[serde(default)]
+    pub generated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditGateCiResult {
+    pub conversation_id: String,
+    pub passed: bool,
+    pub should_block: bool,
+    pub reason: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub generated_at: Option<String>,
+    pub source: String,
+}
+
+/// 保存会话级 policy_gate 结果（供安全中心/CI 读取）
+#[tauri::command]
+pub async fn save_audit_policy_gate(
+    conversation_id: String,
+    gate: AuditPolicyGatePayload,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let db = app_handle
+        .try_state::<Arc<crate::services::database::DatabaseService>>()
+        .ok_or_else(|| "Database service not available".to_string())?;
+
+    let payload = serde_json::json!({
+        "conversation_id": conversation_id,
+        "passed": gate.passed,
+        "reason": gate.reason,
+        "profile": gate.profile,
+        "summary": gate.summary,
+        "generated_at": gate.generated_at.unwrap_or_else(|| Utc::now().to_rfc3339()),
+    });
+
+    db.set_config(
+        "agent_audit_policy_gate",
+        &conversation_id,
+        &payload.to_string(),
+        Some("Conversation level policy gate state for audit mode"),
+    )
+    .await
+    .map_err(|e| format!("Failed to save audit policy gate: {}", e))?;
+
+    Ok(())
+}
+
+/// 读取会话级 policy_gate 结果
+#[tauri::command]
+pub async fn get_audit_policy_gate(
+    conversation_id: String,
+    app_handle: AppHandle,
+) -> Result<Option<AuditPolicyGatePayload>, String> {
+    let db = app_handle
+        .try_state::<Arc<crate::services::database::DatabaseService>>()
+        .ok_or_else(|| "Database service not available".to_string())?;
+
+    let raw = db
+        .get_config("agent_audit_policy_gate", &conversation_id)
+        .await
+        .map_err(|e| format!("Failed to load audit policy gate: {}", e))?;
+
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    let parsed = serde_json::from_str::<AuditPolicyGatePayload>(&raw)
+        .map_err(|e| format!("Invalid audit policy gate payload: {}", e))?;
+    Ok(Some(parsed))
+}
+
+/// CI/自动化读取会话级 policy_gate，返回可直接用于阻断判断的结构
+#[tauri::command]
+pub async fn get_audit_gate_for_ci(
+    conversation_id: String,
+    fail_on_missing: Option<bool>,
+    app_handle: AppHandle,
+) -> Result<AuditGateCiResult, String> {
+    let fail_on_missing = fail_on_missing.unwrap_or(true);
+    let loaded = get_audit_policy_gate(conversation_id.clone(), app_handle).await?;
+
+    let result = match loaded {
+        Some(gate) => AuditGateCiResult {
+            conversation_id,
+            passed: gate.passed,
+            should_block: !gate.passed,
+            reason: gate
+                .reason
+                .unwrap_or_else(|| "Policy gate evaluated without explicit reason".to_string()),
+            profile: gate.profile,
+            generated_at: gate.generated_at,
+            source: "stored_policy_gate".to_string(),
+        },
+        None => {
+            let should_block = fail_on_missing;
+            AuditGateCiResult {
+                conversation_id,
+                passed: !should_block,
+                should_block,
+                reason: if should_block {
+                    "Policy gate not found for conversation (fail_on_missing=true)".to_string()
+                } else {
+                    "Policy gate not found for conversation (fail_on_missing=false)".to_string()
+                },
+                profile: None,
+                generated_at: None,
+                source: "fallback_missing_policy_gate".to_string(),
+            }
+        }
+    };
+
+    Ok(result)
+}
+
 
 
 /// 通过自然语言描述生成工作流图
@@ -2062,6 +2187,74 @@ pub async fn upload_multiple_images(
 
 /// Agent执行配置
 #[derive(Debug, Clone, Deserialize)]
+pub struct AuditExecuteConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub verification_level: Option<String>,
+    #[serde(default)]
+    pub policy_profile: Option<String>,
+    #[serde(default)]
+    pub required_tools: Option<Vec<String>>,
+}
+
+fn build_audit_allowed_tools(audit_config: &AuditExecuteConfig) -> Vec<String> {
+    let mut allowed = vec![
+        "skills".to_string(),
+        "git_clone_repo".to_string(),
+        "code_search".to_string(),
+        "git_diff_scope".to_string(),
+        "call_graph_lite".to_string(),
+        "taint_slice_lite".to_string(),
+        "tenth_man_review".to_string(),
+        "todos".to_string(),
+    ];
+
+    if let Some(required) = &audit_config.required_tools {
+        allowed.extend(
+            required
+                .iter()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string()),
+        );
+    }
+
+    let mut seen = HashSet::new();
+    allowed.retain(|tool| seen.insert(tool.clone()));
+    allowed
+}
+
+fn enforce_audit_tool_whitelist(
+    config: Option<crate::agents::ToolConfig>,
+    audit_config: &AuditExecuteConfig,
+) -> crate::agents::ToolConfig {
+    let mut tool_config = config.unwrap_or_default();
+    let allowed_tools = build_audit_allowed_tools(audit_config);
+    let allowed_set = allowed_tools.iter().cloned().collect::<HashSet<_>>();
+
+    tool_config.enabled = true;
+    tool_config.allowed_tools = allowed_tools.clone();
+    tool_config.selection_strategy =
+        crate::agents::ToolSelectionStrategy::Manual(allowed_tools.clone());
+    tool_config
+        .fixed_tools
+        .retain(|tool| allowed_set.contains(tool));
+    for tool in &allowed_tools {
+        if !tool_config.fixed_tools.contains(tool) {
+            tool_config.fixed_tools.push(tool.clone());
+        }
+    }
+    tool_config
+        .disabled_tools
+        .retain(|tool| allowed_set.contains(tool));
+    tool_config
+}
+
+/// Agent执行配置
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentExecuteConfig {
     pub conversation_id: Option<String>,
     pub message_id: Option<String>,
@@ -2090,6 +2283,8 @@ pub struct AgentExecuteConfig {
     pub enable_tenth_man_rule: Option<bool>,
     #[serde(default)]
     pub tenth_man_config: Option<crate::agents::tenth_man::TenthManConfig>,
+    #[serde(default)]
+    pub audit_config: Option<AuditExecuteConfig>,
 }
 
 /// Agent执行请求
@@ -2184,6 +2379,7 @@ pub async fn agent_execute(
         force_todos: None,
         enable_tenth_man_rule: None,
         tenth_man_config: None,
+        audit_config: None,
     });
 
     let conversation_id = config
@@ -2202,12 +2398,24 @@ pub async fn agent_execute(
     let document_attachments_for_save = config.document_attachments.clone();
 
     // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
-    let effective_tool_config = if config.tool_config.is_some() {
+    let mut effective_tool_config = if config.tool_config.is_some() {
         tracing::info!("Using tool config from frontend request");
         config.tool_config.clone()
     } else {
         load_tool_config_from_db(&app_handle).await
     };
+
+    if let Some(audit_cfg) = &config.audit_config {
+        if audit_cfg.enabled {
+            let enforced = enforce_audit_tool_whitelist(effective_tool_config.clone(), audit_cfg);
+            tracing::info!(
+                "Audit mode tool whitelist enabled: strategy={:?}, allowed_tools={:?}",
+                enforced.selection_strategy,
+                enforced.allowed_tools
+            );
+            effective_tool_config = Some(enforced);
+        }
+    }
 
     tracing::info!(
         "Agent execute: conv={}, msg={}, rag={}, tools={}",
@@ -2219,6 +2427,16 @@ pub async fn agent_execute(
             .map(|c| c.enabled)
             .unwrap_or(false)
     );
+
+    if let Some(audit_cfg) = &config.audit_config {
+        tracing::info!(
+            "Audit config received: enabled={}, scope={:?}, verification={:?}, policy={:?}",
+            audit_cfg.enabled,
+            audit_cfg.scope,
+            audit_cfg.verification_level,
+            audit_cfg.policy_profile
+        );
+    }
 
     // 获取默认模型配置
     let (provider, model_name) = match ai_manager.get_default_llm_model().await {
@@ -2434,6 +2652,57 @@ pub async fn agent_execute(
             };
         }
 
+        if config
+            .audit_config
+            .as_ref()
+            .map(|v| v.enabled)
+            .unwrap_or(false)
+        {
+            let audit_instruction = r#"[Audit Mode Repository Handling]
+When the user provides a remote git repository URL and does not provide a local path:
+1. Call `git_clone_repo` first to clone the repository.
+2. Use the cloned `local_path` as the path/repo_path for subsequent audit tools (`code_search`, `git_diff_scope`, etc.).
+3. Do not assume repository files already exist locally before cloning.
+
+[Audit Mode Output Contract]
+Return ONLY JSON. No markdown or prose outside JSON.
+JSON shape:
+{
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "short title",
+      "severity": "critical|high|medium|low|info",
+      "confidence": 0.0,
+      "status": "open|confirmed|rejected|fixed",
+      "cwe": "CWE-89",
+      "description": "detailed description",
+      "files": ["path/file.ext:line", "path/another.ext"],
+      "source": {"file":"...","line":1,"symbol":"...","snippet":"..."},
+      "sink": {"file":"...","line":2,"symbol":"...","snippet":"..."},
+      "trace_path": [
+        {"file":"...","line":1,"kind":"source"},
+        {"file":"...","line":2,"kind":"propagation"},
+        {"file":"...","line":3,"kind":"sink"}
+      ],
+      "evidence": ["tool output or code snippet"],
+      "fix": "specific remediation"
+    }
+  ],
+  "policy_gate": {"passed": false, "reason": "why"}
+}
+Rules:
+- Every finding must include at least one concrete file path in `files`.
+- If dataflow exists, fill `source`, `sink`, and `trace_path` with file/line.
+- Use the severity enum exactly; do not invent other values."#;
+            base_system_prompt = match base_system_prompt {
+                Some(existing) if !existing.trim().is_empty() => {
+                    Some(format!("{}\n\n{}", existing, audit_instruction))
+                }
+                _ => Some(audit_instruction.to_string()),
+            };
+        }
+
         // Image attachments processing (default: local OCR, do not upload images)
         let mut augmented_task = task_clone.clone();
 
@@ -2621,6 +2890,11 @@ pub async fn agent_execute(
                     subagent_run_id: None,
                     context_policy: None,
                     recursion_depth: 0,
+                    audit_mode: config
+                        .audit_config
+                        .as_ref()
+                        .map(|v| v.enabled)
+                        .unwrap_or(false),
                 };
 
                 // 调用工具支持的代理执行器

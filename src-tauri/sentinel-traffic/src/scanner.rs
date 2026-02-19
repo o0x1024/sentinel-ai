@@ -645,46 +645,24 @@ impl ScanPipeline {
         info!("Loading enabled plugins from database...");
 
         // 查询所有启用的流量分析插件（过滤掉 agent 工具插件）
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<String>,
-                String,
-                Option<String>,
-                String,
-            ),
-        >(
-            r#"
-            SELECT id, name, version, author, category, description,
-                   default_severity, tags, plugin_code
-            FROM plugin_registry
-            WHERE enabled = true AND main_category = 'traffic'
-            "#,
-        )
-        .fetch_all(db_service.pool())
-        .await
-        .map_err(|e| TrafficError::Database(format!("Failed to query enabled plugins: {}", e)))?;
+        let rows = db_service
+            .list_enabled_traffic_plugins_for_scan()
+            .await
+            .map_err(|e| TrafficError::Database(format!("Failed to query enabled plugins: {}", e)))?;
 
         let mut loaded_count = 0;
         let mut executors = self.plugin_executors.write().await;
 
-        for (
-            id,
-            name,
-            version,
-            author,
-            category,
-            description,
-            default_severity,
-            tags,
-            plugin_code,
-        ) in rows
-        {
+        for row in rows {
+            let id = row.id;
+            let name = row.name;
+            let version = row.version;
+            let author = row.author;
+            let category = row.category;
+            let description = row.description;
+            let default_severity = row.default_severity;
+            let tags = row.tags;
+            let plugin_code = row.plugin_code;
             // 解析标签
             let tags_array: Vec<String> = tags
                 .and_then(|t| serde_json::from_str(&t).ok())
@@ -762,51 +740,27 @@ impl ScanPipeline {
         info!("Reloading plugin from database: {}", plugin_id);
 
         // 查询插件信息（仅加载 traffic 类型的插件）
-        let row = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<String>,
-                String,
-                Option<String>,
-                String,
-                bool,
-                String,
-            ),
-        >(
-            r#"
-            SELECT id, name, version, author, category, description,
-                   default_severity, tags, plugin_code, enabled, main_category
-            FROM plugin_registry
-            WHERE id = ?
-            "#,
-        )
-        .bind(plugin_id)
-        .fetch_optional(db_service.pool())
-        .await
-        .map_err(|e| {
-            TrafficError::Database(format!("Failed to query plugin {}: {}", plugin_id, e))
-        })?;
+        let row = db_service
+            .get_traffic_plugin_for_reload(plugin_id)
+            .await
+            .map_err(|e| {
+                TrafficError::Database(format!("Failed to query plugin {}: {}", plugin_id, e))
+            })?;
 
-        let (
-            id,
-            name,
-            version,
-            author,
-            category,
-            description,
-            default_severity,
-            tags,
-            plugin_code,
-            enabled,
-            main_category,
-        ) = row.ok_or_else(|| {
+        let row = row.ok_or_else(|| {
             TrafficError::Plugin(format!("Plugin not found in database: {}", plugin_id))
         })?;
+        let id = row.id;
+        let name = row.name;
+        let version = row.version;
+        let author = row.author;
+        let category = row.category;
+        let description = row.description;
+        let default_severity = row.default_severity;
+        let tags = row.tags;
+        let plugin_code = row.plugin_code;
+        let enabled = row.enabled;
+        let main_category = row.main_category;
 
         // 检查插件类型，只允许加载 traffic 类型的插件
         if main_category != "traffic" {

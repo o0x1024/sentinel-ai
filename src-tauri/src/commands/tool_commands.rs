@@ -10,10 +10,8 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool, SubagentTool,
-    SubagentWaitAnyTool, SubagentWorkflowRunTool,
-    SubagentStatePutTool, SubagentStateGetTool, SubagentEventPublishTool, SubagentEventPollTool,
-    TodosTool, TenthManTool, SkillsTool,
+    HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool, SubagentAwaitTool,
+    SubagentChannelTool, SubagentExecuteTool, TodosTool, TenthManTool, SkillsTool,
     browser::constants as browser_constants,
 };
 use sentinel_tools::get_tool_server;
@@ -61,16 +59,10 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(TerminalServer::NAME.to_string(), true);
     map.insert(TenthManTool::NAME.to_string(), true);
     map.insert(TodosTool::NAME.to_string(), true);
-    // Subagent tools
-    map.insert("subagent_spawn".to_string(), true);
-    map.insert("subagent_wait".to_string(), true);
-    map.insert(SubagentWaitAnyTool::NAME.to_string(), true);
-    map.insert(SubagentTool::NAME.to_string(), true);
-    map.insert(SubagentWorkflowRunTool::NAME.to_string(), true);
-    map.insert(SubagentStatePutTool::NAME.to_string(), true);
-    map.insert(SubagentStateGetTool::NAME.to_string(), true);
-    map.insert(SubagentEventPublishTool::NAME.to_string(), true);
-    map.insert(SubagentEventPollTool::NAME.to_string(), true);
+    // Condensed subagent tools
+    map.insert(SubagentExecuteTool::NAME.to_string(), true);
+    map.insert(SubagentAwaitTool::NAME.to_string(), true);
+    map.insert(SubagentChannelTool::NAME.to_string(), true);
     // Browser automation tools
     map.insert(browser_constants::BROWSER_OPEN_NAME.to_string(), true);
     map.insert(browser_constants::BROWSER_SNAPSHOT_NAME.to_string(), true);
@@ -415,104 +407,28 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
-    // Add subagent tools: spawn (async), wait, run (sync)
+    // Add condensed subagent tools
     tools.push(BuiltinToolInfo {
-        id: "subagent_spawn".to_string(),
-        name: "subagent_spawn".to_string(),
-        description: "Start a subagent task asynchronously (NON-BLOCKING). Returns task_id immediately for parallel execution.".to_string(),
+        id: SubagentExecuteTool::NAME.to_string(),
+        name: SubagentExecuteTool::NAME.to_string(),
+        description: "Unified subagent execution in sync/async/workflow modes.".to_string(),
         category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get("subagent_spawn").unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
-                "task": { "type": "string", "description": "Task for the subagent" },
-                "role": { "type": "string", "description": "Optional role label" },
-                "system_prompt": { "type": "string", "description": "Optional system prompt" },
-                "tool_config": { "type": "object", "description": "Optional tool config" },
-                "max_iterations": { "type": "integer", "default": 50 },
-                "timeout_secs": { "type": "integer" },
-                "inherit_parent_llm": { "type": "boolean", "default": true },
-                "inherit_parent_tools": { "type": "boolean", "default": false },
-                "depends_on_task_ids": { "type": "array", "items": { "type": "string" } }
-            },
-            "required": ["parent_execution_id", "task"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: "subagent_wait".to_string(),
-        name: "subagent_wait".to_string(),
-        description: "Wait for spawned subagent tasks to complete. Use after subagent_spawn.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get("subagent_wait").unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
-                "task_ids": { "type": "array", "items": { "type": "string" }, "description": "Task IDs to wait for" },
-                "timeout_secs": { "type": "integer", "default": 600 }
-            },
-            "required": ["parent_execution_id", "task_ids"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: SubagentWaitAnyTool::NAME.to_string(),
-        name: SubagentWaitAnyTool::NAME.to_string(),
-        description: "Wait until any subagent task completes and return completed + pending tasks.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentWaitAnyTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
-                "task_ids": { "type": "array", "items": { "type": "string" }, "description": "Task IDs to wait for" },
-                "timeout_secs": { "type": "integer", "default": 600 }
-            },
-            "required": ["parent_execution_id", "task_ids"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: SubagentTool::NAME.to_string(),
-        name: SubagentTool::NAME.to_string(),
-        description: "Execute a subagent task synchronously (BLOCKING). For parallel, use subagent_spawn + subagent_wait.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string", "description": "Parent execution ID" },
-                "task": { "type": "string", "description": "Task for the subagent" },
-                "role": { "type": "string", "description": "Optional role label" },
-                "system_prompt": { "type": "string", "description": "Optional system prompt" },
-                "tool_config": { "type": "object", "description": "Optional tool config" },
-                "max_iterations": { "type": "integer", "default": 50 },
-                "timeout_secs": { "type": "integer" },
-                "inherit_parent_llm": { "type": "boolean", "default": true },
-                "inherit_parent_tools": { "type": "boolean", "default": false },
-                "depends_on_task_ids": { "type": "array", "items": { "type": "string" } }
-            },
-            "required": ["parent_execution_id", "task"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: SubagentWorkflowRunTool::NAME.to_string(),
-        name: SubagentWorkflowRunTool::NAME.to_string(),
-        description: "Run DAG-style workflow for multiple subagent nodes with dependencies.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentWorkflowRunTool::NAME).unwrap_or(&true),
+        enabled: *states.get(SubagentExecuteTool::NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
                 "parent_execution_id": { "type": "string" },
+                "mode": { "type": "string", "enum": ["sync", "async", "workflow"] },
+                "task": { "type": "string" },
+                "role": { "type": "string" },
+                "system_prompt": { "type": "string" },
+                "tool_config": { "type": "object" },
+                "max_iterations": { "type": "integer", "default": 50 },
+                "timeout_secs": { "type": "integer" },
+                "inherit_parent_llm": { "type": "boolean", "default": true },
+                "inherit_parent_tools": { "type": "boolean", "default": false },
+                "depends_on_task_ids": { "type": "array", "items": { "type": "string" } },
                 "nodes": {
                     "type": "array",
                     "items": {
@@ -527,83 +443,52 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                         },
                         "required": ["node_id", "task"]
                     }
-                },
+                }
+            },
+            "required": ["parent_execution_id", "mode"]
+        })),
+    });
+
+    tools.push(BuiltinToolInfo {
+        id: SubagentAwaitTool::NAME.to_string(),
+        name: SubagentAwaitTool::NAME.to_string(),
+        description: "Wait for subagent tasks with policy all/any.".to_string(),
+        category: ToolCategory::AI.to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get(SubagentAwaitTool::NAME).unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "parent_execution_id": { "type": "string" },
+                "policy": { "type": "string", "enum": ["all", "any"] },
+                "task_ids": { "type": "array", "items": { "type": "string" } },
                 "timeout_secs": { "type": "integer", "default": 600 }
             },
-            "required": ["parent_execution_id", "nodes"]
+            "required": ["parent_execution_id", "policy", "task_ids"]
         })),
     });
 
     tools.push(BuiltinToolInfo {
-        id: SubagentStatePutTool::NAME.to_string(),
-        name: SubagentStatePutTool::NAME.to_string(),
-        description: "Write shared subagent state under the same parent_execution_id.".to_string(),
+        id: SubagentChannelTool::NAME.to_string(),
+        name: SubagentChannelTool::NAME.to_string(),
+        description: "Unified subagent state/event channel operations.".to_string(),
         category: ToolCategory::AI.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentStatePutTool::NAME).unwrap_or(&true),
+        enabled: *states.get(SubagentChannelTool::NAME).unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
                 "parent_execution_id": { "type": "string" },
+                "op": { "type": "string", "enum": ["state.put", "state.get", "event.publish", "event.poll"] },
                 "key": { "type": "string" },
                 "value": {},
-                "expected_version": { "type": "integer" }
-            },
-            "required": ["parent_execution_id", "key", "value"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: SubagentStateGetTool::NAME.to_string(),
-        name: SubagentStateGetTool::NAME.to_string(),
-        description: "Read shared subagent state under the same parent_execution_id.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentStateGetTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string" },
-                "key": { "type": "string" }
-            },
-            "required": ["parent_execution_id", "key"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: SubagentEventPublishTool::NAME.to_string(),
-        name: SubagentEventPublishTool::NAME.to_string(),
-        description: "Publish a subagent event to a shared channel.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentEventPublishTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string" },
+                "expected_version": { "type": "integer" },
                 "channel": { "type": "string", "default": "default" },
-                "payload": {}
-            },
-            "required": ["parent_execution_id", "payload"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: SubagentEventPollTool::NAME.to_string(),
-        name: SubagentEventPollTool::NAME.to_string(),
-        description: "Poll subagent events from a shared channel.".to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(SubagentEventPollTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "parent_execution_id": { "type": "string" },
-                "channel": { "type": "string", "default": "default" },
+                "payload": {},
                 "after_seq": { "type": "integer" },
                 "limit": { "type": "integer", "default": 50 }
             },
-            "required": ["parent_execution_id"]
+            "required": ["parent_execution_id", "op"]
         })),
     });
 

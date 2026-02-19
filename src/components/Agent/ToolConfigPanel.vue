@@ -77,6 +77,81 @@
           </div>
         </div>
 
+        <!-- Audit Mode -->
+        <div class="form-control border border-base-300 rounded-lg p-3 bg-base-100/60">
+          <label class="label cursor-pointer justify-start gap-3">
+            <input
+              type="checkbox"
+              v-model="localConfig.audit_mode"
+              class="checkbox checkbox-warning"
+              @change="emitUpdate"
+            />
+            <div>
+              <span class="label-text font-medium">{{ t('agent.auditMode') }}</span>
+              <p class="text-xs text-base-content/60 mt-1">{{ t('agent.auditModeHint') }}</p>
+            </div>
+          </label>
+
+          <div v-if="localConfig.audit_mode" class="space-y-3 mt-2">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm">{{ t('agent.auditScope') }}</span>
+              </label>
+              <select
+                v-model="localConfig.audit_config.scope"
+                class="select select-bordered select-sm w-full"
+                @change="emitUpdate"
+              >
+                <option value="repo">{{ t('agent.auditScopeRepo') }}</option>
+                <option value="git_diff">{{ t('agent.auditScopeGitDiff') }}</option>
+                <option value="paths">{{ t('agent.auditScopePaths') }}</option>
+              </select>
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm">{{ t('agent.verificationLevel') }}</span>
+              </label>
+              <select
+                v-model="localConfig.audit_config.verification_level"
+                class="select select-bordered select-sm w-full"
+                @change="emitUpdate"
+              >
+                <option value="low">{{ t('agent.verificationLow') }}</option>
+                <option value="medium">{{ t('agent.verificationMedium') }}</option>
+                <option value="high">{{ t('agent.verificationHigh') }}</option>
+              </select>
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm">{{ t('agent.policyProfile') }}</span>
+              </label>
+              <select
+                v-model="localConfig.audit_config.policy_profile"
+                class="select select-bordered select-sm w-full"
+                @change="emitUpdate"
+              >
+                <option value="balanced">{{ t('agent.policyBalanced') }}</option>
+                <option value="prod_strict">{{ t('agent.policyStrict') }}</option>
+              </select>
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text text-sm">{{ t('agent.requiredAuditTools') }}</span>
+              </label>
+              <input
+                v-model="requiredAuditToolsText"
+                type="text"
+                class="input input-bordered input-sm"
+                :placeholder="t('agent.requiredAuditToolsPlaceholder')"
+                @blur="syncRequiredAuditTools"
+              />
+            </div>
+          </div>
+        </div>
+
         <!-- Skills Mode: Auto Selection -->
         <div v-if="localConfig.selection_strategy === 'Skills'" class="form-control">
           <label class="label">
@@ -429,6 +504,16 @@ interface ToolConfig {
   disabled_tools: string[]
   manual_tools?: string[]
   skills?: string[]
+  audit_mode?: boolean
+  audit_config?: AuditConfig
+}
+
+interface AuditConfig {
+  enabled: boolean
+  scope: 'repo' | 'git_diff' | 'paths'
+  verification_level: 'low' | 'medium' | 'high'
+  policy_profile: 'balanced' | 'prod_strict'
+  required_tools: string[]
 }
 
 interface ToolStatistics {
@@ -479,6 +564,14 @@ const emit = defineEmits<{
   'close': []
 }>()
 
+const defaultAuditConfig = (): AuditConfig => ({
+  enabled: false,
+  scope: 'git_diff',
+  verification_level: 'high',
+  policy_profile: 'balanced',
+  required_tools: ['code_search', 'git_diff_scope'],
+})
+
 // 初始化 localConfig，处理 Manual/Skills 枚举格式
 const initLocalConfig = () => {
   let manualTools: string[] = []
@@ -504,11 +597,16 @@ const initLocalConfig = () => {
     }
   }
   
-  return { 
+  return {
     ...props.config, 
     selection_strategy: strategy,
     manual_tools: manualTools,
     skills: skillIds,
+    audit_mode: props.config.audit_mode ?? false,
+    audit_config: {
+      ...defaultAuditConfig(),
+      ...(props.config.audit_config || {}),
+    },
   }
 }
 
@@ -516,6 +614,7 @@ const { t } = useI18n()
 const router = useRouter()
 
 const localConfig = ref<ToolConfig>(initLocalConfig())
+const requiredAuditToolsText = ref('')
 const allTools = ref<ToolMetadata[]>([])
 const statistics = ref<ToolStatistics | null>(null)
 const usageStats = ref<ToolUsageStatistics | null>(null)
@@ -779,7 +878,21 @@ const resetToDefault = () => {
     disabled_tools: [],
     manual_tools: [],
     skills: [],
+    audit_mode: false,
+    audit_config: defaultAuditConfig(),
   }
+  requiredAuditToolsText.value = (localConfig.value.audit_config?.required_tools || []).join(', ')
+  emitUpdate()
+}
+
+const syncRequiredAuditTools = () => {
+  if (!localConfig.value.audit_config) {
+    localConfig.value.audit_config = defaultAuditConfig()
+  }
+  localConfig.value.audit_config.required_tools = requiredAuditToolsText.value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
   emitUpdate()
 }
 
@@ -834,7 +947,13 @@ watch(() => props.config, (newConfig) => {
     selection_strategy: strategy,
     manual_tools: manualTools,
     skills: skillIds,
+    audit_mode: newConfig.audit_mode ?? false,
+    audit_config: {
+      ...defaultAuditConfig(),
+      ...(newConfig.audit_config || {}),
+    },
   }
+  requiredAuditToolsText.value = (localConfig.value.audit_config?.required_tools || []).join(', ')
   
   if (strategy === 'Skills') {
     localConfig.value.skills = []
@@ -846,6 +965,7 @@ onMounted(() => {
   loadTools()
   loadUsageStats()
   loadSkills()
+  requiredAuditToolsText.value = (localConfig.value.audit_config?.required_tools || []).join(', ')
 })
 </script>
 

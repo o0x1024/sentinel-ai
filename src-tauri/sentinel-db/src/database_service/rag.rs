@@ -1,13 +1,67 @@
 use anyhow::Result;
+use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 use sqlx::Row;
 
-// Helper function to convert TIMESTAMP WITH TIME ZONE to String
-fn timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> String {
+fn timestamp_to_string<R>(row: &R, column: &str) -> String
+where
+    R: sqlx::Row,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    for<'r> chrono::DateTime<chrono::Utc>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+    for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+{
     row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
         .map(|dt| dt.to_rfc3339())
         .or_else(|_| row.try_get::<String, _>(column))
         .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339())
+}
+
+fn timestamp_to_datetime<R>(row: &R, column: &str) -> chrono::DateTime<chrono::Utc>
+where
+    R: sqlx::Row,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    for<'r> chrono::DateTime<chrono::Utc>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+    for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+{
+    row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
+        .or_else(|_| {
+            row.try_get::<String, _>(column).and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map_err(|e| sqlx::Error::Decode(Box::new(e)))
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn parse_ingestion_status(status: &str) -> sentinel_rag::models::IngestionStatusEnum {
+    match status.to_lowercase().as_str() {
+        "pending" => sentinel_rag::models::IngestionStatusEnum::Pending,
+        "processing" => sentinel_rag::models::IngestionStatusEnum::Processing,
+        "completed" => sentinel_rag::models::IngestionStatusEnum::Completed,
+        "failed" => sentinel_rag::models::IngestionStatusEnum::Failed,
+        _ => sentinel_rag::models::IngestionStatusEnum::Pending,
+    }
+}
+
+fn rag_doc_source_to_model(row: RagDocumentSourceRow) -> sentinel_rag::models::DocumentSource {
+    sentinel_rag::models::DocumentSource {
+        id: row.id,
+        file_path: row.file_path,
+        file_name: row.file_name,
+        file_type: row.file_type,
+        file_size: row.file_size as u64,
+        file_hash: row.file_hash,
+        chunk_count: row.chunk_count as usize,
+        ingestion_status: parse_ingestion_status(&row.status),
+        created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
+            .unwrap_or_default()
+            .with_timezone(&chrono::Utc),
+        updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
+            .unwrap_or_default()
+            .with_timezone(&chrono::Utc),
+        metadata: std::collections::HashMap::new(),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -56,196 +110,451 @@ pub struct RagChunkRow {
 
 impl DatabaseService {
     pub async fn create_rag_collection_internal(
-        &self, 
-        name: &str, 
+        &self,
+        name: &str,
         description: Option<&str>,
     ) -> Result<String> {
-        let pool = self.get_pool()?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
-        sqlx::query(
-            "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES ($1, $2, $3, false, $4, $5)",
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(description)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES ($1, $2, $3, false, $4, $5)",
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES (?, ?, ?, false, ?, ?)",
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    "INSERT INTO rag_collections (id, name, description, is_active, created_at, updated_at) VALUES (?, ?, ?, false, ?, ?)",
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+        }
+
         Ok(id)
     }
 
     pub async fn get_rag_collections_internal(&self) -> Result<Vec<RagCollectionRow>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query(
-            "SELECT * FROM rag_collections ORDER BY created_at DESC",
-        )
-        .fetch_all(pool)
-        .await?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            out.push(RagCollectionRow {
-                id: row.get("id"),
-                name: row.get("name"),
-                description: row.get("description"),
-                is_active: row.get("is_active"),
-                document_count: row.get("document_count"),
-                chunk_count: row.get("chunk_count"),
-                created_at: timestamp_to_string(&row, "created_at"),
-                updated_at: timestamp_to_string(&row, "updated_at"),
-            });
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_collections ORDER BY created_at DESC")
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| RagCollectionRow {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        description: row.get("description"),
+                        is_active: row.get("is_active"),
+                        document_count: row.get("document_count"),
+                        chunk_count: row.get("chunk_count"),
+                        created_at: timestamp_to_string(&row, "created_at"),
+                        updated_at: timestamp_to_string(&row, "updated_at"),
+                    })
+                    .collect())
+            }
+            DatabasePool::SQLite(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_collections ORDER BY created_at DESC")
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| RagCollectionRow {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        description: row.get("description"),
+                        is_active: row.get("is_active"),
+                        document_count: row.get("document_count"),
+                        chunk_count: row.get("chunk_count"),
+                        created_at: timestamp_to_string(&row, "created_at"),
+                        updated_at: timestamp_to_string(&row, "updated_at"),
+                    })
+                    .collect())
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_collections ORDER BY created_at DESC")
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| RagCollectionRow {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        description: row.get("description"),
+                        is_active: row.get("is_active"),
+                        document_count: row.get("document_count"),
+                        chunk_count: row.get("chunk_count"),
+                        created_at: timestamp_to_string(&row, "created_at"),
+                        updated_at: timestamp_to_string(&row, "updated_at"),
+                    })
+                    .collect())
+            }
         }
-        Ok(out)
     }
 
     pub async fn get_rag_collection_by_id_internal(&self, collection_id: &str) -> Result<Option<RagCollectionRow>> {
-        let pool = self.get_pool()?;
-        let row = sqlx::query(
-            "SELECT * FROM rag_collections WHERE id = $1",
-        )
-        .bind(collection_id)
-        .fetch_optional(pool)
-        .await?;
-        Ok(row.map(|row| RagCollectionRow {
-            id: row.get("id"),
-            name: row.get("name"),
-            description: row.get("description"),
-            is_active: row.get("is_active"),
-            document_count: row.get("document_count"),
-            chunk_count: row.get("chunk_count"),
-            created_at: timestamp_to_string(&row, "created_at"),
-            updated_at: timestamp_to_string(&row, "updated_at"),
-        }))
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let row = sqlx::query("SELECT * FROM rag_collections WHERE id = $1")
+                    .bind(collection_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|row| RagCollectionRow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    is_active: row.get("is_active"),
+                    document_count: row.get("document_count"),
+                    chunk_count: row.get("chunk_count"),
+                    created_at: timestamp_to_string(&row, "created_at"),
+                    updated_at: timestamp_to_string(&row, "updated_at"),
+                }))
+            }
+            DatabasePool::SQLite(pool) => {
+                let row = sqlx::query("SELECT * FROM rag_collections WHERE id = ?")
+                    .bind(collection_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|row| RagCollectionRow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    is_active: row.get("is_active"),
+                    document_count: row.get("document_count"),
+                    chunk_count: row.get("chunk_count"),
+                    created_at: timestamp_to_string(&row, "created_at"),
+                    updated_at: timestamp_to_string(&row, "updated_at"),
+                }))
+            }
+            DatabasePool::MySQL(pool) => {
+                let row = sqlx::query("SELECT * FROM rag_collections WHERE id = ?")
+                    .bind(collection_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|row| RagCollectionRow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    is_active: row.get("is_active"),
+                    document_count: row.get("document_count"),
+                    chunk_count: row.get("chunk_count"),
+                    created_at: timestamp_to_string(&row, "created_at"),
+                    updated_at: timestamp_to_string(&row, "updated_at"),
+                }))
+            }
+        }
     }
 
     pub async fn get_rag_collection_by_name_internal(&self, name: &str) -> Result<Option<RagCollectionRow>> {
-        let pool = self.get_pool()?;
-        let row = sqlx::query(
-            "SELECT * FROM rag_collections WHERE name = $1",
-        )
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
-        Ok(row.map(|row| RagCollectionRow {
-            id: row.get("id"),
-            name: row.get("name"),
-            description: row.get("description"),
-            is_active: row.get("is_active"),
-            document_count: row.get("document_count"),
-            chunk_count: row.get("chunk_count"),
-            created_at: timestamp_to_string(&row, "created_at"),
-            updated_at: timestamp_to_string(&row, "updated_at"),
-        }))
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let row = sqlx::query("SELECT * FROM rag_collections WHERE name = $1")
+                    .bind(name)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|row| RagCollectionRow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    is_active: row.get("is_active"),
+                    document_count: row.get("document_count"),
+                    chunk_count: row.get("chunk_count"),
+                    created_at: timestamp_to_string(&row, "created_at"),
+                    updated_at: timestamp_to_string(&row, "updated_at"),
+                }))
+            }
+            DatabasePool::SQLite(pool) => {
+                let row = sqlx::query("SELECT * FROM rag_collections WHERE name = ?")
+                    .bind(name)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|row| RagCollectionRow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    is_active: row.get("is_active"),
+                    document_count: row.get("document_count"),
+                    chunk_count: row.get("chunk_count"),
+                    created_at: timestamp_to_string(&row, "created_at"),
+                    updated_at: timestamp_to_string(&row, "updated_at"),
+                }))
+            }
+            DatabasePool::MySQL(pool) => {
+                let row = sqlx::query("SELECT * FROM rag_collections WHERE name = ?")
+                    .bind(name)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(row.map(|row| RagCollectionRow {
+                    id: row.get("id"),
+                    name: row.get("name"),
+                    description: row.get("description"),
+                    is_active: row.get("is_active"),
+                    document_count: row.get("document_count"),
+                    chunk_count: row.get("chunk_count"),
+                    created_at: timestamp_to_string(&row, "created_at"),
+                    updated_at: timestamp_to_string(&row, "updated_at"),
+                }))
+            }
+        }
     }
 
     pub async fn delete_rag_collection_internal(&self, id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        let mut tx = pool.begin().await?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        // 1. Delete chunks associated with the collection
-        sqlx::query("DELETE FROM rag_chunks WHERE collection_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = $1").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = $1").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_queries WHERE collection_id = $1").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_collections WHERE id = $1").bind(id).execute(pool).await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_collections WHERE id = ?").bind(id).execute(pool).await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_collections WHERE id = ?").bind(id).execute(pool).await?;
+            }
+        }
 
-        // 2. Delete document sources associated with the collection
-        sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        // 3. Delete queries associated with the collection
-        sqlx::query("DELETE FROM rag_queries WHERE collection_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        // 4. Finally delete the collection itself
-        sqlx::query("DELETE FROM rag_collections WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        tx.commit().await?;
         Ok(())
     }
 
     pub async fn update_rag_collection_internal(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("UPDATE rag_collections SET name = $1, description = $2, updated_at = $3 WHERE id = $4")
-            .bind(name)
-            .bind(description)
-            .bind(&now)
-            .bind(id)
-            .execute(pool)
-            .await?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("UPDATE rag_collections SET name = $1, description = $2, updated_at = $3 WHERE id = $4")
+                    .bind(name)
+                    .bind(description)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("UPDATE rag_collections SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+                    .bind(name)
+                    .bind(description)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("UPDATE rag_collections SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+                    .bind(name)
+                    .bind(description)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 
     pub async fn set_rag_collection_active_internal(&self, id: &str, active: bool) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("UPDATE rag_collections SET is_active = $1, updated_at = $2 WHERE id = $3")
-            .bind(active)
-            .bind(chrono::Utc::now().to_rfc3339())
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("UPDATE rag_collections SET is_active = $1, updated_at = $2 WHERE id = $3")
+                    .bind(active)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
+                    .bind(active)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
+                    .bind(active)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 
     pub async fn update_collection_stats_internal(&self, id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        let document_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = $1",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-
-        let chunk_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM rag_chunks WHERE collection_id = $1",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
-            "UPDATE rag_collections SET document_count = $1, chunk_count = $2, updated_at = $3 WHERE id = $4",
-        )
-        .bind(document_count)
-        .bind(chunk_count)
-        .bind(&now)
-        .bind(id)
-        .execute(pool)
-        .await?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = $1")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+                let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = $1")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+                sqlx::query("UPDATE rag_collections SET document_count = $1, chunk_count = $2, updated_at = $3 WHERE id = $4")
+                    .bind(document_count)
+                    .bind(chunk_count)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+                let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+                sqlx::query("UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?")
+                    .bind(document_count)
+                    .bind(chunk_count)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+                let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await?;
+                sqlx::query("UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?")
+                    .bind(document_count)
+                    .bind(chunk_count)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 
     pub async fn get_documents_by_collection_name_internal(&self, collection_name: &str) -> Result<Vec<RagDocumentSourceRow>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query(
-            r#"SELECT s.* FROM rag_document_sources s 
-               JOIN rag_collections c ON s.collection_id = c.id 
-               WHERE c.name = $1 ORDER BY s.created_at DESC"#
-        )
-        .bind(collection_name)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = sqlx::query(
+                    r#"SELECT s.* FROM rag_document_sources s
+                       JOIN rag_collections c ON s.collection_id = c.id
+                       WHERE c.name = $1 ORDER BY s.created_at DESC"#,
+                )
+                .bind(collection_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+            }
+            DatabasePool::SQLite(pool) => {
+                let rows = sqlx::query(
+                    r#"SELECT s.* FROM rag_document_sources s
+                       JOIN rag_collections c ON s.collection_id = c.id
+                       WHERE c.name = ? ORDER BY s.created_at DESC"#,
+                )
+                .bind(collection_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query(
+                    r#"SELECT s.* FROM rag_document_sources s
+                       JOIN rag_collections c ON s.collection_id = c.id
+                       WHERE c.name = ? ORDER BY s.created_at DESC"#,
+                )
+                .bind(collection_name)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+            }
+        }
     }
 
     pub async fn get_documents_by_collection_id_internal(&self, collection_id: &str) -> Result<Vec<RagDocumentSourceRow>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query(
-            "SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC"
-        )
-        .bind(collection_id)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC")
+                    .bind(collection_id)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+            }
+            DatabasePool::SQLite(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC")
+                    .bind(collection_id)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC")
+                    .bind(collection_id)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+            }
+        }
     }
 
     pub async fn insert_document_source_internal(
@@ -263,46 +572,127 @@ impl DatabaseService {
         created_at: &str,
         updated_at: &str,
     ) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query(
-            r#"INSERT INTO rag_document_sources (
-                id, collection_id, file_path, file_name, file_type, file_size, 
-                file_hash, content_hash, status, metadata, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#
-        )
-        .bind(id)
-        .bind(collection_id)
-        .bind(file_path)
-        .bind(file_name)
-        .bind(file_type)
-        .bind(file_size)
-        .bind(file_hash)
-        .bind(content_hash)
-        .bind(status)
-        .bind(metadata)
-        .bind(created_at)
-        .bind(updated_at)
-        .execute(pool)
-        .await?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_document_sources (
+                        id, collection_id, file_path, file_name, file_type, file_size,
+                        file_hash, content_hash, status, metadata, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
+                )
+                .bind(id)
+                .bind(collection_id)
+                .bind(file_path)
+                .bind(file_name)
+                .bind(file_type)
+                .bind(file_size)
+                .bind(file_hash)
+                .bind(content_hash)
+                .bind(status)
+                .bind(metadata)
+                .bind(created_at)
+                .bind(updated_at)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_document_sources (
+                        id, collection_id, file_path, file_name, file_type, file_size,
+                        file_hash, content_hash, status, metadata, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(id)
+                .bind(collection_id)
+                .bind(file_path)
+                .bind(file_name)
+                .bind(file_type)
+                .bind(file_size)
+                .bind(file_hash)
+                .bind(content_hash)
+                .bind(status)
+                .bind(metadata)
+                .bind(created_at)
+                .bind(updated_at)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_document_sources (
+                        id, collection_id, file_path, file_name, file_type, file_size,
+                        file_hash, content_hash, status, metadata, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(id)
+                .bind(collection_id)
+                .bind(file_path)
+                .bind(file_name)
+                .bind(file_type)
+                .bind(file_size)
+                .bind(file_hash)
+                .bind(content_hash)
+                .bind(status)
+                .bind(metadata)
+                .bind(created_at)
+                .bind(updated_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+
         Ok(())
     }
 
     pub async fn delete_document_cascade_internal(&self, document_id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        let mut tx = pool.begin().await?;
-        sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(&mut *tx).await?;
-        tx.commit().await?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(pool).await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+            }
+        }
+
         Ok(())
     }
 
     pub async fn get_collection_id_by_document_id_internal(&self, document_id: &str) -> Result<Option<String>> {
-        let pool = self.get_pool()?;
-        let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = $1")
-            .bind(document_id)
-            .fetch_optional(pool)
-            .await?;
-        Ok(id)
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = $1")
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(id)
+            }
+            DatabasePool::SQLite(pool) => {
+                let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(id)
+            }
+            DatabasePool::MySQL(pool) => {
+                let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
+                    .bind(document_id)
+                    .fetch_optional(pool)
+                    .await?;
+                Ok(id)
+            }
+        }
     }
 
     pub async fn insert_chunk_internal(
@@ -319,39 +709,113 @@ impl DatabaseService {
         created_at_ts: i64,
         updated_at_ts: i64,
     ) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query(
-            r#"INSERT INTO rag_chunks (
-                id, document_id, collection_id, content, content_hash, chunk_index, char_count,
-                embedding, metadata, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
-        )
-        .bind(id)
-        .bind(document_id)
-        .bind(collection_id)
-        .bind(content)
-        .bind(content_hash)
-        .bind(chunk_index)
-        .bind(char_count)
-        .bind(embedding_bytes)
-        .bind(metadata_json)
-        .bind(created_at_ts)
-        .bind(updated_at_ts)
-        .execute(pool)
-        .await?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_chunks (
+                        id, document_id, collection_id, content, content_hash, chunk_index, char_count,
+                        embedding, metadata, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
+                )
+                .bind(id)
+                .bind(document_id)
+                .bind(collection_id)
+                .bind(content)
+                .bind(content_hash)
+                .bind(chunk_index)
+                .bind(char_count)
+                .bind(embedding_bytes)
+                .bind(metadata_json)
+                .bind(created_at_ts)
+                .bind(updated_at_ts)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_chunks (
+                        id, document_id, collection_id, content, content_hash, chunk_index, char_count,
+                        embedding, metadata, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(id)
+                .bind(document_id)
+                .bind(collection_id)
+                .bind(content)
+                .bind(content_hash)
+                .bind(chunk_index)
+                .bind(char_count)
+                .bind(embedding_bytes)
+                .bind(metadata_json)
+                .bind(created_at_ts)
+                .bind(updated_at_ts)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_chunks (
+                        id, document_id, collection_id, content, content_hash, chunk_index, char_count,
+                        embedding, metadata, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(id)
+                .bind(document_id)
+                .bind(collection_id)
+                .bind(content)
+                .bind(content_hash)
+                .bind(chunk_index)
+                .bind(char_count)
+                .bind(embedding_bytes)
+                .bind(metadata_json)
+                .bind(created_at_ts)
+                .bind(updated_at_ts)
+                .execute(pool)
+                .await?;
+            }
+        }
+
         Ok(())
     }
 
     pub async fn get_chunks_by_document_id_internal(&self, document_id: &str) -> Result<Vec<RagChunkRow>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = $1 ORDER BY chunk_index ASC")
-            .bind(document_id)
-            .fetch_all(pool)
-            .await?;
-        Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = $1 ORDER BY chunk_index ASC")
+                    .bind(document_id)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
+            }
+            DatabasePool::SQLite(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC")
+                    .bind(document_id)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC")
+                    .bind(document_id)
+                    .fetch_all(pool)
+                    .await?;
+                Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
+            }
+        }
     }
 
-    fn row_to_doc_source(&self, row: sqlx::postgres::PgRow) -> RagDocumentSourceRow {
+    fn row_to_doc_source<R>(&self, row: R) -> RagDocumentSourceRow
+    where
+        R: sqlx::Row,
+        for<'a> &'a str: sqlx::ColumnIndex<R>,
+        for<'r> chrono::DateTime<chrono::Utc>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> i64: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+    {
         RagDocumentSourceRow {
             id: row.get("id"),
             collection_id: row.get("collection_id"),
@@ -369,7 +833,15 @@ impl DatabaseService {
         }
     }
 
-    fn row_to_rag_chunk(&self, row: sqlx::postgres::PgRow) -> RagChunkRow {
+    fn row_to_rag_chunk<R>(&self, row: R) -> RagChunkRow
+    where
+        R: sqlx::Row,
+        for<'a> &'a str: sqlx::ColumnIndex<R>,
+        for<'r> chrono::DateTime<chrono::Utc>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> Option<Vec<u8>>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> i32: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+    {
         RagChunkRow {
             id: row.get("id"),
             document_id: row.get("document_id"),
@@ -381,15 +853,9 @@ impl DatabaseService {
             embedding: row.get("embedding"),
             metadata: row.get("metadata"),
             created_at: timestamp_to_string(&row, "created_at"),
-            updated_at: timestamp_to_string(&row, "updated_at"), 
+            updated_at: timestamp_to_string(&row, "updated_at"),
         }
     }
-    // Note: I will need to handle the `row_to_rag_chunk` carefuly if types mismatch.
-    // The previous implementation used `row.get("created_at")`. If it was SQLite, it accepts flexibility.
-    // In Postgres, types are strict.
-    // I will refactor `row_to_rag_chunk` logic inside `impl`.
-    
-    // ... skipping row_to_rag_chunk modification request in this block, I will replace the WHOLE file content or logic for methods.
 
     pub async fn create_rag_document_internal(
         &self,
@@ -399,28 +865,71 @@ impl DatabaseService {
         content: &str,
         metadata: &str,
     ) -> Result<String> {
-        let pool = self.get_pool()?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let content_hash = format!("{:x}", md5::compute(content));
-        
-        sqlx::query(
-            r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, status, metadata, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
-        )
-        .bind(&id)
-        .bind(collection_id)
-        .bind(file_path)
-        .bind(file_name)
-        .bind("text")
-        .bind(content.len() as i64)
-        .bind(content_hash)
-        .bind("Completed")
-        .bind(metadata)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, status, metadata, created_at, updated_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
+                )
+                .bind(&id)
+                .bind(collection_id)
+                .bind(file_path)
+                .bind(file_name)
+                .bind("text")
+                .bind(content.len() as i64)
+                .bind(content_hash)
+                .bind("Completed")
+                .bind(metadata)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, status, metadata, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(&id)
+                .bind(collection_id)
+                .bind(file_path)
+                .bind(file_name)
+                .bind("text")
+                .bind(content.len() as i64)
+                .bind(content_hash)
+                .bind("Completed")
+                .bind(metadata)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_document_sources (id, collection_id, file_path, file_name, file_type, file_size, content_hash, status, metadata, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(&id)
+                .bind(collection_id)
+                .bind(file_path)
+                .bind(file_name)
+                .bind("text")
+                .bind(content.len() as i64)
+                .bind(content_hash)
+                .bind("Completed")
+                .bind(metadata)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+        }
+
         Ok(id)
     }
 
@@ -433,11 +942,11 @@ impl DatabaseService {
         embedding: Option<&[f32]>,
         metadata_json: &str,
     ) -> Result<String> {
-        let pool = self.get_pool()?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let content_hash = format!("{:x}", md5::compute(content));
-        
+
         let embedding_bytes = embedding.map(|e| {
             let mut bytes = Vec::with_capacity(e.len() * 4);
             for &f in e {
@@ -446,192 +955,232 @@ impl DatabaseService {
             bytes
         });
 
-        sqlx::query(
-            r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, metadata, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#
-        )
-        .bind(&id)
-        .bind(document_id)
-        .bind(collection_id)
-        .bind(content)
-        .bind(content_hash)
-        .bind(chunk_index)
-        .bind(content.len() as i32)
-        .bind(embedding_bytes)
-        .bind(metadata_json)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, metadata, created_at, updated_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
+                )
+                .bind(&id)
+                .bind(document_id)
+                .bind(collection_id)
+                .bind(content)
+                .bind(content_hash)
+                .bind(chunk_index)
+                .bind(content.len() as i32)
+                .bind(embedding_bytes)
+                .bind(metadata_json)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, metadata, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(&id)
+                .bind(document_id)
+                .bind(collection_id)
+                .bind(content)
+                .bind(content_hash)
+                .bind(chunk_index)
+                .bind(content.len() as i32)
+                .bind(embedding_bytes)
+                .bind(metadata_json)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_chunks (id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding, metadata, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(&id)
+                .bind(document_id)
+                .bind(collection_id)
+                .bind(content)
+                .bind(content_hash)
+                .bind(chunk_index)
+                .bind(content.len() as i32)
+                .bind(embedding_bytes)
+                .bind(metadata_json)
+                .bind(now)
+                .bind(now)
+                .execute(pool)
+                .await?;
+            }
+        }
+
         Ok(id)
     }
 
     pub async fn get_rag_documents_internal(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC")
-            .bind(collection_id)
-            .fetch_all(pool)
-            .await?;
-            
-        let mut docs = Vec::new();
-        for row in rows {
-            let status_str: String = row.get("status");
-            let ingestion_status = match status_str.to_lowercase().as_str() {
-                "pending" => sentinel_rag::models::IngestionStatusEnum::Pending,
-                "processing" => sentinel_rag::models::IngestionStatusEnum::Processing,
-                "completed" => sentinel_rag::models::IngestionStatusEnum::Completed,
-                "failed" => sentinel_rag::models::IngestionStatusEnum::Failed,
-                _ => sentinel_rag::models::IngestionStatusEnum::Pending,
-            };
-
-            docs.push(sentinel_rag::models::DocumentSource {
-                id: row.get("id"),
-                file_path: row.get("file_path"),
-                file_name: row.get("file_name"),
-                file_type: row.get("file_type"),
-                file_size: row.get::<i64, _>("file_size") as u64,
-                file_hash: row.get("file_hash"),
-                chunk_count: row.get::<i64, _>("chunk_count") as usize,
-                ingestion_status,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at")).unwrap_or_default().with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at")).unwrap_or_default().with_timezone(&chrono::Utc),
-                metadata: std::collections::HashMap::new(),
-            });
-        }
-        Ok(docs)
+        let rows = self.get_documents_by_collection_id_internal(collection_id).await?;
+        Ok(rows.into_iter().map(rag_doc_source_to_model).collect())
     }
 
     pub async fn get_rag_documents_paginated_internal(
-        &self, 
-        collection_id: &str, 
-        limit: i64, 
+        &self,
+        collection_id: &str,
+        limit: i64,
         offset: i64,
-        search_query: Option<&str>
+        search_query: Option<&str>,
     ) -> Result<(Vec<sentinel_rag::models::DocumentSource>, i64)> {
-        let pool = self.get_pool()?;
-        
-        // Build query with optional search
-        let (query_str, count_str) = if let Some(_search) = search_query {
-            (
-                "SELECT * FROM rag_document_sources WHERE collection_id = $1 AND (file_name LIKE $2 OR file_path LIKE $3) ORDER BY created_at DESC LIMIT $4 OFFSET $5".to_string(),
-                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = $1 AND (file_name LIKE $2 OR file_path LIKE $3)".to_string()
-            )
-        } else {
-            (
-                "SELECT * FROM rag_document_sources WHERE collection_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3".to_string(),
-                "SELECT COUNT(*) as count FROM rag_document_sources WHERE collection_id = $1".to_string()
-            )
-        };
-        
-        // Get total count
-        let total_count: i64 = if let Some(search) = search_query {
-            let search_pattern = format!("%{}%", search);
-            sqlx::query(&count_str)
-                .bind(collection_id)
-                .bind(&search_pattern)
-                .bind(&search_pattern)
-                .fetch_one(pool)
-                .await?
-                .get("count")
-        } else {
-            sqlx::query(&count_str)
-                .bind(collection_id)
-                .fetch_one(pool)
-                .await?
-                .get("count")
-        };
-        
-        // Get paginated documents
-        let rows = if let Some(search) = search_query {
-            let search_pattern = format!("%{}%", search);
-            sqlx::query(&query_str)
-                .bind(collection_id)
-                .bind(&search_pattern)
-                .bind(&search_pattern)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await?
-        } else {
-            sqlx::query(&query_str)
-                .bind(collection_id)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pool)
-                .await?
-        };
-            
-        let mut docs = Vec::new();
-        for row in rows {
-            let status_str: String = row.get("status");
-            let ingestion_status = match status_str.to_lowercase().as_str() {
-                "pending" => sentinel_rag::models::IngestionStatusEnum::Pending,
-                "processing" => sentinel_rag::models::IngestionStatusEnum::Processing,
-                "completed" => sentinel_rag::models::IngestionStatusEnum::Completed,
-                "failed" => sentinel_rag::models::IngestionStatusEnum::Failed,
-                _ => sentinel_rag::models::IngestionStatusEnum::Pending,
-            };
+        let rows = self.get_documents_by_collection_id_internal(collection_id).await?;
 
-            docs.push(sentinel_rag::models::DocumentSource {
-                id: row.get("id"),
-                file_path: row.get("file_path"),
-                file_name: row.get("file_name"),
-                file_type: row.get("file_type"),
-                file_size: row.get::<i64, _>("file_size") as u64,
-                file_hash: row.get("file_hash"),
-                chunk_count: row.get::<i64, _>("chunk_count") as usize,
-                ingestion_status,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at")).unwrap_or_default().with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at")).unwrap_or_default().with_timezone(&chrono::Utc),
-                metadata: std::collections::HashMap::new(),
-            });
-        }
-        
-        Ok((docs, total_count))
+        let filtered: Vec<RagDocumentSourceRow> = if let Some(search) = search_query {
+            let lowered = search.to_lowercase();
+            rows.into_iter()
+                .filter(|row| {
+                    row.file_name.to_lowercase().contains(&lowered)
+                        || row.file_path.to_lowercase().contains(&lowered)
+                })
+                .collect()
+        } else {
+            rows
+        };
+
+        let total_count = filtered.len() as i64;
+        let paged = filtered
+            .into_iter()
+            .skip(offset.max(0) as usize)
+            .take(limit.max(0) as usize)
+            .collect::<Vec<_>>();
+
+        Ok((paged.into_iter().map(rag_doc_source_to_model).collect(), total_count))
     }
 
     pub async fn get_rag_chunks_internal(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query(
-            r#"SELECT c.*, s.file_path, s.file_name, s.file_type, s.file_size 
-               FROM rag_chunks c 
-               JOIN rag_document_sources s ON c.document_id = s.id 
-               WHERE c.document_id = $1 ORDER BY c.chunk_index ASC"#
-        )
-        .bind(document_id)
-        .fetch_all(pool)
-        .await?;
-            
-        let mut chunks = Vec::new();
-        for row in rows {
-            chunks.push(sentinel_rag::models::DocumentChunk {
-                id: row.get("id"),
-                source_id: row.get("document_id"),
-                content: row.get("content"),
-                content_hash: row.get("content_hash"),
-                chunk_index: row.get::<i32, _>("chunk_index") as usize,
-                metadata: sentinel_rag::models::ChunkMetadata {
-                    file_path: row.get("file_path"),
-                    file_name: row.get("file_name"),
-                    file_type: row.get("file_type"),
-                    file_size: row.get::<i64, _>("file_size") as u64,
-                    chunk_start_char: 0,
-                    chunk_end_char: 0,
-                    page_number: None,
-                    section_title: None,
-                    custom_fields: std::collections::HashMap::new(),
-                },
-                embedding: None,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at")).unwrap_or_default().with_timezone(&chrono::Utc),
-            });
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let rows = sqlx::query(
+                    r#"SELECT c.*, s.file_path, s.file_name, s.file_type, s.file_size
+                       FROM rag_chunks c
+                       JOIN rag_document_sources s ON c.document_id = s.id
+                       WHERE c.document_id = $1 ORDER BY c.chunk_index ASC"#,
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| sentinel_rag::models::DocumentChunk {
+                        id: row.get("id"),
+                        source_id: row.get("document_id"),
+                        content: row.get("content"),
+                        content_hash: row.get("content_hash"),
+                        chunk_index: row.get::<i32, _>("chunk_index") as usize,
+                        metadata: sentinel_rag::models::ChunkMetadata {
+                            file_path: row.get("file_path"),
+                            file_name: row.get("file_name"),
+                            file_type: row.get("file_type"),
+                            file_size: row.get::<i64, _>("file_size") as u64,
+                            chunk_start_char: 0,
+                            chunk_end_char: 0,
+                            page_number: None,
+                            section_title: None,
+                            custom_fields: std::collections::HashMap::new(),
+                        },
+                        embedding: None,
+                        created_at: timestamp_to_datetime(&row, "created_at"),
+                    })
+                    .collect())
+            }
+            DatabasePool::SQLite(pool) => {
+                let rows = sqlx::query(
+                    r#"SELECT c.*, s.file_path, s.file_name, s.file_type, s.file_size
+                       FROM rag_chunks c
+                       JOIN rag_document_sources s ON c.document_id = s.id
+                       WHERE c.document_id = ? ORDER BY c.chunk_index ASC"#,
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| sentinel_rag::models::DocumentChunk {
+                        id: row.get("id"),
+                        source_id: row.get("document_id"),
+                        content: row.get("content"),
+                        content_hash: row.get("content_hash"),
+                        chunk_index: row.get::<i32, _>("chunk_index") as usize,
+                        metadata: sentinel_rag::models::ChunkMetadata {
+                            file_path: row.get("file_path"),
+                            file_name: row.get("file_name"),
+                            file_type: row.get("file_type"),
+                            file_size: row.get::<i64, _>("file_size") as u64,
+                            chunk_start_char: 0,
+                            chunk_end_char: 0,
+                            page_number: None,
+                            section_title: None,
+                            custom_fields: std::collections::HashMap::new(),
+                        },
+                        embedding: None,
+                        created_at: timestamp_to_datetime(&row, "created_at"),
+                    })
+                    .collect())
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query(
+                    r#"SELECT c.*, s.file_path, s.file_name, s.file_type, s.file_size
+                       FROM rag_chunks c
+                       JOIN rag_document_sources s ON c.document_id = s.id
+                       WHERE c.document_id = ? ORDER BY c.chunk_index ASC"#,
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| sentinel_rag::models::DocumentChunk {
+                        id: row.get("id"),
+                        source_id: row.get("document_id"),
+                        content: row.get("content"),
+                        content_hash: row.get("content_hash"),
+                        chunk_index: row.get::<i32, _>("chunk_index") as usize,
+                        metadata: sentinel_rag::models::ChunkMetadata {
+                            file_path: row.get("file_path"),
+                            file_name: row.get("file_name"),
+                            file_type: row.get("file_type"),
+                            file_size: row.get::<i64, _>("file_size") as u64,
+                            chunk_start_char: 0,
+                            chunk_end_char: 0,
+                            page_number: None,
+                            section_title: None,
+                            custom_fields: std::collections::HashMap::new(),
+                        },
+                        embedding: None,
+                        created_at: timestamp_to_datetime(&row, "created_at"),
+                    })
+                    .collect())
+            }
         }
-        Ok(chunks)
     }
 
     pub async fn delete_rag_document_internal(&self, document_id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(pool).await?;
-        sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(pool).await?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(pool).await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -643,20 +1192,54 @@ impl DatabaseService {
         response: &str,
         processing_time_ms: u64,
     ) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            r#"INSERT INTO rag_queries (id, collection_id, conversation_id, query, response, processing_time_ms, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)"#
-        )
-        .bind(&id)
-        .bind(collection_id)
-        .bind(conversation_id)
-        .bind(query)
-        .bind(response)
-        .bind(processing_time_ms as i64)
-        .execute(pool)
-        .await?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_queries (id, collection_id, conversation_id, query, response, processing_time_ms, created_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)"#,
+                )
+                .bind(&id)
+                .bind(collection_id)
+                .bind(conversation_id)
+                .bind(query)
+                .bind(response)
+                .bind(processing_time_ms as i64)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_queries (id, collection_id, conversation_id, query, response, processing_time_ms, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
+                )
+                .bind(&id)
+                .bind(collection_id)
+                .bind(conversation_id)
+                .bind(query)
+                .bind(response)
+                .bind(processing_time_ms as i64)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO rag_queries (id, collection_id, conversation_id, query, response, processing_time_ms, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#,
+                )
+                .bind(&id)
+                .bind(collection_id)
+                .bind(conversation_id)
+                .bind(query)
+                .bind(response)
+                .bind(processing_time_ms as i64)
+                .execute(pool)
+                .await?;
+            }
+        }
+
         Ok(())
     }
 

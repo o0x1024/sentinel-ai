@@ -16,10 +16,10 @@ use tokio::sync::RwLock;
 
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, SubagentTool, SubagentStatePutTool,
-    SubagentStateGetTool, SubagentEventPublishTool, SubagentEventPollTool, SubagentWaitAnyTool,
-    SubagentWorkflowRunTool, TodosTool,
+    CallGraphLiteTool, CodeSearchTool, GitDiffScopeTool, HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
+    TaintSliceLiteTool,
+    browser::constants as browser_constants, TenthManTool, SubagentAwaitTool, SubagentChannelTool,
+    SubagentExecuteTool, TodosTool,
     MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
 };
 
@@ -141,6 +141,9 @@ pub struct ToolConfig {
     pub fixed_tools: Vec<String>,
     /// 禁用的工具
     pub disabled_tools: Vec<String>,
+    /// 允许的工具白名单（空表示不限制）
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
     /// 是否启用工具调用
     pub enabled: bool,
 }
@@ -199,6 +202,7 @@ impl Default for ToolConfig {
             max_tools: 5,
             fixed_tools: vec![], // No default tools, fully user-controlled
             disabled_tools: vec![],
+            allowed_tools: vec![],
             enabled: false, // 默认关闭，避免意外消耗
         }
     }
@@ -310,6 +314,68 @@ impl ToolRouter {
                     "tavily".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: CodeSearchTool::NAME.to_string(),
+                name: CodeSearchTool::NAME.to_string(),
+                description: CodeSearchTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "code".to_string(),
+                    "search".to_string(),
+                    "evidence".to_string(),
+                    "source".to_string(),
+                    "sink".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: GitDiffScopeTool::NAME.to_string(),
+                name: GitDiffScopeTool::NAME.to_string(),
+                description: GitDiffScopeTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "git".to_string(),
+                    "diff".to_string(),
+                    "scope".to_string(),
+                    "pr".to_string(),
+                    "review".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: CallGraphLiteTool::NAME.to_string(),
+                name: CallGraphLiteTool::NAME.to_string(),
+                description: CallGraphLiteTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "callgraph".to_string(),
+                    "function".to_string(),
+                    "graph".to_string(),
+                    "trace".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: TaintSliceLiteTool::NAME.to_string(),
+                name: TaintSliceLiteTool::NAME.to_string(),
+                description: TaintSliceLiteTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "taint".to_string(),
+                    "source".to_string(),
+                    "sink".to_string(),
+                    "dataflow".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
                 always_available: false,
             },
             // 系统工具
@@ -449,119 +515,49 @@ impl ToolRouter {
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
             },
-            // Subagent tools: spawn (async), wait, run (sync)
+            // Condensed subagent tools
             ToolMetadata {
-                id: "subagent_spawn".to_string(),
-                name: "subagent_spawn".to_string(),
-                description: "Start a subagent task asynchronously (NON-BLOCKING). Returns task_id immediately. Use for parallel execution of independent tasks.".to_string(),
+                id: SubagentExecuteTool::NAME.to_string(),
+                name: SubagentExecuteTool::NAME.to_string(),
+                description: "Execute subagent tasks in sync, async, or workflow mode.".to_string(),
                 category: ToolCategory::AI,
                 tags: vec![
                     "subagent".to_string(),
-                    "spawn".to_string(),
+                    "execute".to_string(),
+                    "sync".to_string(),
                     "async".to_string(),
-                    "parallel".to_string(),
-                    "concurrent".to_string(),
-                ],
-                cost_estimate: ToolCost::High,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: "subagent_wait".to_string(),
-                name: "subagent_wait".to_string(),
-                description: "Wait for spawned subagent tasks to complete. Provide task_ids from subagent_spawn.".to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "wait".to_string(),
-                    "sync".to_string(),
-                    "collect".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SubagentWaitAnyTool::NAME.to_string(),
-                name: SubagentWaitAnyTool::NAME.to_string(),
-                description: "Wait until any spawned subagent task completes.".to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "wait".to_string(),
-                    "any".to_string(),
-                    "sync".to_string(),
-                    "collect".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SubagentTool::NAME.to_string(),
-                name: SubagentTool::NAME.to_string(),
-                description: "Execute a subagent task synchronously (BLOCKING). Use for sequential dependent tasks. For parallel, use subagent_spawn + subagent_wait.".to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "delegate".to_string(),
-                    "sync".to_string(),
-                    "sequential".to_string(),
-                    "task".to_string(),
-                    "agent".to_string(),
                     "workflow".to_string(),
-                    "multi-step".to_string(),
-                    "ctf".to_string(),
-                    "analysis".to_string(),
-                ],
-                cost_estimate: ToolCost::High,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SubagentWorkflowRunTool::NAME.to_string(),
-                name: SubagentWorkflowRunTool::NAME.to_string(),
-                description: "Run DAG-style subagent workflow with node dependencies.".to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "subagent".to_string(),
-                    "workflow".to_string(),
-                    "dag".to_string(),
-                    "dependency".to_string(),
                     "orchestration".to_string(),
                 ],
                 cost_estimate: ToolCost::High,
                 always_available: false,
             },
             ToolMetadata {
-                id: SubagentStatePutTool::NAME.to_string(),
-                name: SubagentStatePutTool::NAME.to_string(),
-                description: "Write shared state for subagents under the same parent_execution_id.".to_string(),
+                id: SubagentAwaitTool::NAME.to_string(),
+                name: SubagentAwaitTool::NAME.to_string(),
+                description: "Wait for subagent completion with all/any policy.".to_string(),
                 category: ToolCategory::AI,
-                tags: vec!["subagent".to_string(), "state".to_string(), "shared".to_string(), "coordination".to_string()],
+                tags: vec![
+                    "subagent".to_string(),
+                    "await".to_string(),
+                    "wait".to_string(),
+                    "collect".to_string(),
+                ],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
             ToolMetadata {
-                id: SubagentStateGetTool::NAME.to_string(),
-                name: SubagentStateGetTool::NAME.to_string(),
-                description: "Read shared state for subagents under the same parent_execution_id.".to_string(),
+                id: SubagentChannelTool::NAME.to_string(),
+                name: SubagentChannelTool::NAME.to_string(),
+                description: "Shared state and event channel operations for subagents.".to_string(),
                 category: ToolCategory::AI,
-                tags: vec!["subagent".to_string(), "state".to_string(), "shared".to_string(), "coordination".to_string()],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SubagentEventPublishTool::NAME.to_string(),
-                name: SubagentEventPublishTool::NAME.to_string(),
-                description: "Publish events for subagent collaboration under the same parent_execution_id.".to_string(),
-                category: ToolCategory::AI,
-                tags: vec!["subagent".to_string(), "event".to_string(), "publish".to_string(), "coordination".to_string()],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SubagentEventPollTool::NAME.to_string(),
-                name: SubagentEventPollTool::NAME.to_string(),
-                description: "Poll events for subagent collaboration under the same parent_execution_id.".to_string(),
-                category: ToolCategory::AI,
-                tags: vec!["subagent".to_string(), "event".to_string(), "poll".to_string(), "coordination".to_string()],
+                tags: vec![
+                    "subagent".to_string(),
+                    "state".to_string(),
+                    "event".to_string(),
+                    "coordination".to_string(),
+                    "channel".to_string(),
+                ],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
@@ -2249,6 +2245,7 @@ mod tests {
             max_tools: 3,
             fixed_tools: vec![],
             disabled_tools: vec![],
+            allowed_tools: vec![],
         };
 
         // 测试端口扫描任务
@@ -2279,6 +2276,7 @@ mod tests {
             max_tools: 5,
             fixed_tools: vec![],
             disabled_tools: vec![],
+            allowed_tools: vec![],
         };
 
         let selected = router
@@ -2299,6 +2297,7 @@ mod tests {
             max_tools: 10,
             fixed_tools: vec![],
             disabled_tools: vec!["shell".to_string()],
+            allowed_tools: vec![],
         };
 
         let selected = router

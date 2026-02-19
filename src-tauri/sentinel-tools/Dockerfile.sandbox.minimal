@@ -250,7 +250,7 @@ RUN apt-get update && \
 COPY --from=go-builder /tmp/go/bin/* /usr/local/bin/
 
 RUN apt-get update && \
-    apt-get install -y net-tools iproute2 && \
+    apt-get install -y net-tools iproute2  ripgrep&& \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

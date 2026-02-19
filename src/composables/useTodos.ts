@@ -6,6 +6,7 @@
 
 import { ref, computed, onMounted, onUnmounted, type Ref, type ComputedRef } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useTerminal } from '@/composables/useTerminal'
 import type { 
   Todo, 
   TodoStatus, 
@@ -152,10 +153,8 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
       if (event.payload.todos.length > 0) {
         globalTodosState.value.isTodosPanelActive = true
         // Close terminal panel to ensure only one panel is active
-        import('@/composables/useTerminal').then(({ useTerminal }) => {
-          const terminal = useTerminal()
-          terminal.closeTerminal()
-        })
+        const terminal = useTerminal()
+        terminal.closeTerminal()
       }
     })
 
@@ -233,4 +232,3 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
 export function useGlobalTodos(): UseTodosReturn {
   return useTodos()
 }
-

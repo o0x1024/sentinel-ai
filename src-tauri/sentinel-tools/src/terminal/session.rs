@@ -51,7 +51,8 @@ impl Default for TerminalSessionConfig {
             shell: "bash".to_string(),
             initial_command: None,
             reuse_container: true,
-            container_name: Some("sentinel-sandbox-main".to_string()),
+            // Keep terminal container isolated from one-shot shell sandbox container.
+            container_name: Some("sentinel-terminal-main".to_string()),
         }
     }
 }
@@ -163,6 +164,22 @@ impl TerminalSession {
         let container_id = self.get_or_create_container().await?;
         self.container_id = Some(container_id.clone());
 
+        // Probe workdir support before using `docker exec -w`.
+        // Some reused containers may have broken cwd state and trigger OCI breakout protection.
+        let mut exec_workdir = self.config.working_dir.clone();
+        if let Some(ref wd) = self.config.working_dir {
+            let supports_workdir = self
+                .probe_docker_exec_workdir(&container_id, wd)
+                .await;
+            if !supports_workdir {
+                warn!(
+                    "Container {} rejected exec workdir '{}', falling back to shell default cwd",
+                    container_id, wd
+                );
+                exec_workdir = None;
+            }
+        }
+
         // Create PTY pair
         let pty_system = native_pty_system();
         let pty_pair = pty_system
@@ -191,7 +208,7 @@ impl TerminalSession {
         }
         
         // Add working directory
-        if let Some(ref wd) = self.config.working_dir {
+        if let Some(ref wd) = exec_workdir {
             cmd_builder.arg("-w");
             cmd_builder.arg(wd);
         }
@@ -286,8 +303,48 @@ impl TerminalSession {
                 }
             }
         }
+
+        // If workdir probing failed, attempt best-effort recovery into /workspace.
+        if exec_workdir.is_none() && self.config.working_dir.is_some() {
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            let _ = stdin_tx.send(b"cd /workspace 2>/dev/null || true\n".to_vec());
+        }
         
         Ok(())
+    }
+
+    async fn probe_docker_exec_workdir(&self, container_id: &str, workdir: &str) -> bool {
+        let output = Command::new("docker")
+            .args(&[
+                "exec",
+                "-w",
+                workdir,
+                container_id,
+                "sh",
+                "-lc",
+                "pwd >/dev/null",
+            ])
+            .output()
+            .await;
+
+        match output {
+            Ok(output) if output.status.success() => true,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(
+                    "Workdir probe failed for container {} workdir {}: {}",
+                    container_id, workdir, stderr
+                );
+                false
+            }
+            Err(e) => {
+                warn!(
+                    "Workdir probe command failed for container {} workdir {}: {}",
+                    container_id, workdir, e
+                );
+                false
+            }
+        }
     }
 
     /// Start host-based session with PTY support

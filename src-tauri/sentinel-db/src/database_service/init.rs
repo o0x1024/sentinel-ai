@@ -785,6 +785,51 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        // Agent audit findings table
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_audit_findings (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                finding_id TEXT NOT NULL,
+                signature TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                confidence DOUBLE PRECISION,
+                cwe TEXT,
+                files_json TEXT,
+                source_json TEXT,
+                sink_json TEXT,
+                trace_path_json TEXT,
+                evidence_json TEXT,
+                fix TEXT,
+                description TEXT NOT NULL,
+                severity_raw TEXT,
+                source_message_id TEXT,
+                hit_count INTEGER NOT NULL DEFAULT 1,
+                first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        let _ = sqlx::query("ALTER TABLE agent_audit_findings ADD COLUMN source_json TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE agent_audit_findings ADD COLUMN sink_json TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE agent_audit_findings ADD COLUMN trace_path_json TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE agent_audit_findings ADD COLUMN evidence_json TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE agent_audit_findings ADD COLUMN severity_raw TEXT")
+            .execute(pool)
+            .await;
+
         // Evidence table
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS traffic_evidence (
@@ -917,6 +962,11 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_severity ON traffic_vulnerabilities(severity)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_status ON traffic_vulnerabilities(status)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulns_created ON traffic_vulnerabilities(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_signature ON agent_audit_findings(signature)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_conversation ON agent_audit_findings(conversation_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_severity ON agent_audit_findings(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_status ON agent_audit_findings(status)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_last_seen ON agent_audit_findings(last_seen_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln ON traffic_evidence(vuln_id)",
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_timestamp ON traffic_evidence(timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)",

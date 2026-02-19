@@ -48,6 +48,7 @@ pub struct AgentExecuteParams {
     pub subagent_run_id: Option<String>,
     pub context_policy: Option<ContextPolicy>,
     pub recursion_depth: usize,
+    pub audit_mode: bool,
 }
 
 /// Execute agent task.

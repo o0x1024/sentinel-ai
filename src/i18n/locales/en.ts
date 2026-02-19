@@ -79,6 +79,7 @@ export default {
     tabs: {
       vulnerabilities: 'Vulnerabilities',
       scanTasks: 'Scan Tasks',
+      codeAudit: 'Code Audit',
       assets: 'Assets',
     },
   },

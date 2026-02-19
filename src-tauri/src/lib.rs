@@ -237,38 +237,11 @@ pub fn run() {
             }
 
             tauri::async_runtime::block_on(async move {
-                // Try to load database configuration from file
-                use sentinel_db::database_service::DatabaseConfig;
+                // Ensure database config directory exists
+                use sentinel_db::database_service::db_config_toml_path;
                 use std::fs;
 
-                let config_path = dirs::data_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("sentinel-ai")
-                    .join("db_config.json");
-
-                let _db_config: Option<DatabaseConfig> = if config_path.exists() {
-                    match fs::read_to_string(&config_path) {
-                        Ok(config_json) => {
-                            match serde_json::from_str(&config_json) {
-                                Ok(config) => {
-                                    tracing::info!("Loaded database config from file: {:?}", config_path);
-                                    Some(config)
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to parse database config: {}, using default SQLite", e);
-                                    None
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to read database config file: {}, using default SQLite", e);
-                            None
-                        }
-                    }
-                } else {
-                    tracing::info!("No database config file found, using default PostgreSQL");
-                    None
-                };
+                let config_path = db_config_toml_path();
 
                 let data_dir = config_path.parent().unwrap();
                 let _ = fs::create_dir_all(data_dir);
@@ -279,7 +252,7 @@ pub fn run() {
                     eprintln!("Database initialization failed: {:#}", e);
                     eprintln!(
                         "By default the app uses PostgreSQL at localhost:5432. \
-                         Install PostgreSQL, or create db_config.json at:\n  {}",
+                         Install PostgreSQL, or create db_config.toml at:\n  {}",
                         config_path.display()
                     );
                     std::process::exit(1);
@@ -648,6 +621,9 @@ pub fn run() {
             ai::clear_conversation_messages,
             ai::save_tool_config,
             ai::get_tool_config,
+            ai::save_audit_policy_gate,
+            ai::get_audit_policy_gate,
+            ai::get_audit_gate_for_ci,
             ai::get_ai_conversation_history,
             ai::delete_ai_conversation,
             ai::update_ai_conversation_title,
@@ -963,6 +939,14 @@ pub fn run() {
             traffic_analysis_commands::reload_plugin_in_pipeline,
             traffic_analysis_commands::list_findings,
             traffic_analysis_commands::count_findings,
+            traffic_analysis_commands::upsert_agent_audit_findings,
+            traffic_analysis_commands::list_agent_audit_findings,
+            traffic_analysis_commands::count_agent_audit_findings,
+            traffic_analysis_commands::get_agent_audit_finding,
+            traffic_analysis_commands::update_agent_audit_finding_status,
+            traffic_analysis_commands::delete_agent_audit_finding,
+            traffic_analysis_commands::delete_agent_audit_findings_batch,
+            traffic_analysis_commands::delete_all_agent_audit_findings,
             traffic_analysis_commands::enable_plugin,
             traffic_analysis_commands::disable_plugin,
             traffic_analysis_commands::batch_enable_plugins,

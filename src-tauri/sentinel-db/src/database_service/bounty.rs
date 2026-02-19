@@ -513,7 +513,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&program.created_at))
         .bind(timestamp_string_to_datetime(&program.updated_at))
         .bind(optional_timestamp_string_to_datetime(&program.last_activity_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty program: {}", program.id);
@@ -524,7 +524,7 @@ impl DatabaseService {
     pub async fn get_bounty_program(&self, id: &str) -> Result<Option<BountyProgramRow>> {
         let row = sqlx::query("SELECT * FROM bounty_programs WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_program))
@@ -563,7 +563,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&program.updated_at))
         .bind(optional_timestamp_string_to_datetime(&program.last_activity_at))
         .bind(&program.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -573,7 +573,7 @@ impl DatabaseService {
     pub async fn delete_bounty_program(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_programs WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -639,26 +639,26 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param);
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
         Ok(rows.into_iter().map(row_to_bounty_program).collect())
     }
 
     /// Get bounty program statistics
     pub async fn get_bounty_program_stats(&self) -> Result<BountyProgramStats> {
         let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bounty_programs")
-            .fetch_one(self.pool())
+            .fetch_one(self.get_pool()?)
             .await?;
 
         let active: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'"
         )
-        .fetch_one(self.pool())
+        .fetch_one(self.get_pool()?)
         .await?;
 
         let totals: (i64, i64, f64) = sqlx::query_as(
             "SELECT COALESCE(SUM(total_submissions), 0), COALESCE(SUM(accepted_submissions), 0), COALESCE(SUM(total_earnings), 0.0) FROM bounty_programs"
         )
-        .fetch_one(self.pool())
+        .fetch_one(self.get_pool()?)
         .await?;
 
         Ok(BountyProgramStats {
@@ -699,7 +699,7 @@ impl DatabaseService {
         .bind(&scope.metadata_json)
         .bind(timestamp_string_to_datetime(&scope.created_at))
         .bind(timestamp_string_to_datetime(&scope.updated_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created program scope: {}", scope.id);
@@ -710,7 +710,7 @@ impl DatabaseService {
     pub async fn get_program_scope(&self, id: &str) -> Result<Option<ProgramScopeRow>> {
         let row = sqlx::query("SELECT * FROM bounty_scopes WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_program_scope))
@@ -740,7 +740,7 @@ impl DatabaseService {
         .bind(&scope.metadata_json)
         .bind(timestamp_string_to_datetime(&scope.updated_at))
         .bind(&scope.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -750,7 +750,7 @@ impl DatabaseService {
     pub async fn delete_program_scope(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_scopes WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -782,7 +782,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param);
         }
             
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
 
         Ok(rows.into_iter().map(row_to_program_scope).collect())
     }
@@ -865,7 +865,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&finding.created_at))
         .bind(timestamp_string_to_datetime(&finding.updated_at))
         .bind(&finding.created_by)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty finding: {}", finding.id);
@@ -876,7 +876,7 @@ impl DatabaseService {
     pub async fn get_bounty_finding(&self, id: &str) -> Result<Option<BountyFindingRow>> {
         let row = sqlx::query("SELECT * FROM bounty_findings WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_finding))
@@ -886,7 +886,7 @@ impl DatabaseService {
     pub async fn get_bounty_finding_by_fingerprint(&self, fingerprint: &str) -> Result<Option<BountyFindingRow>> {
         let row = sqlx::query("SELECT * FROM bounty_findings WHERE fingerprint = $1")
         .bind(fingerprint)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_finding))
@@ -901,7 +901,7 @@ impl DatabaseService {
         let row = sqlx::query("SELECT * FROM bounty_findings WHERE fingerprint = $1 AND id <> $2")
             .bind(fingerprint)
             .bind(exclude_id)
-            .fetch_optional(self.pool())
+            .fetch_optional(self.get_pool()?)
             .await?;
 
         Ok(row.map(row_to_bounty_finding))
@@ -942,7 +942,7 @@ impl DatabaseService {
         .bind(optional_timestamp_string_to_datetime(&finding.verified_at))
         .bind(timestamp_string_to_datetime(&finding.updated_at))
         .bind(&finding.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -952,7 +952,7 @@ impl DatabaseService {
     pub async fn delete_bounty_finding(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_findings WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1045,7 +1045,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param);
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
         Ok(rows.into_iter().map(row_to_bounty_finding).collect())
     }
 
@@ -1062,7 +1062,7 @@ impl DatabaseService {
         .bind(program_id)
         .bind(finding_type)
         .bind(limit)
-        .fetch_all(self.pool())
+        .fetch_all(self.get_pool()?)
         .await?;
 
         Ok(rows.into_iter().map(row_to_bounty_finding).collect())
@@ -1077,7 +1077,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let total: (i64,) = q.fetch_one(self.pool()).await?;
+        let total: (i64,) = q.fetch_one(self.get_pool()?).await?;
 
         let by_severity_query = format!(
             "SELECT severity, COUNT(*) FROM bounty_findings {} GROUP BY severity",
@@ -1087,7 +1087,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let severity_rows: Vec<(String, i64)> = q.fetch_all(self.pool()).await?;
+        let severity_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
         let by_severity: std::collections::HashMap<String, i32> = severity_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
@@ -1101,7 +1101,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let status_rows: Vec<(String, i64)> = q.fetch_all(self.pool()).await?;
+        let status_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
         let by_status: std::collections::HashMap<String, i32> = status_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
@@ -1145,7 +1145,7 @@ impl DatabaseService {
         .bind(evidence.display_order)
         .bind(timestamp_string_to_datetime(&evidence.created_at))
         .bind(timestamp_string_to_datetime(&evidence.updated_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty evidence: {}", evidence.id);
@@ -1156,7 +1156,7 @@ impl DatabaseService {
     pub async fn get_bounty_evidence(&self, id: &str) -> Result<Option<BountyEvidenceRow>> {
         let row = sqlx::query("SELECT * FROM bounty_evidence WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_evidence))
@@ -1188,7 +1188,7 @@ impl DatabaseService {
         .bind(evidence.display_order)
         .bind(timestamp_string_to_datetime(&evidence.updated_at))
         .bind(&evidence.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1198,7 +1198,7 @@ impl DatabaseService {
     pub async fn delete_bounty_evidence(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_evidence WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1208,7 +1208,7 @@ impl DatabaseService {
     pub async fn list_bounty_evidence(&self, finding_id: &str) -> Result<Vec<BountyEvidenceRow>> {
         let rows = sqlx::query("SELECT * FROM bounty_evidence WHERE finding_id = $1 ORDER BY display_order, created_at")
         .bind(finding_id)
-        .fetch_all(self.pool())
+        .fetch_all(self.get_pool()?)
         .await?;
 
         Ok(rows.into_iter().map(row_to_bounty_evidence).collect())
@@ -1265,7 +1265,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&submission.updated_at))
         .bind(optional_timestamp_string_to_datetime(&submission.closed_at))
         .bind(&submission.created_by)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty submission: {}", submission.id);
@@ -1276,7 +1276,7 @@ impl DatabaseService {
     pub async fn get_bounty_submission(&self, id: &str) -> Result<Option<BountySubmissionRow>> {
         let row = sqlx::query("SELECT * FROM bounty_submissions WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_submission))
@@ -1325,7 +1325,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&submission.updated_at))
         .bind(optional_timestamp_string_to_datetime(&submission.closed_at))
         .bind(&submission.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1335,7 +1335,7 @@ impl DatabaseService {
     pub async fn delete_bounty_submission(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_submissions WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1416,7 +1416,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param);
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
         Ok(rows.into_iter().map(row_to_bounty_submission).collect())
     }
 
@@ -1429,7 +1429,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let total: (i64,) = q.fetch_one(self.pool()).await?;
+        let total: (i64,) = q.fetch_one(self.get_pool()?).await?;
 
         let accepted_query = format!(
             "SELECT COUNT(*) FROM bounty_submissions {} {} status IN ('accepted', 'resolved', 'paid')",
@@ -1440,7 +1440,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let accepted: (i64,) = q.fetch_one(self.pool()).await?;
+        let accepted: (i64,) = q.fetch_one(self.get_pool()?).await?;
 
         let earnings_query = format!(
             "SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions {}",
@@ -1450,7 +1450,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let earnings: (f64, f64) = q.fetch_one(self.pool()).await?;
+        let earnings: (f64, f64) = q.fetch_one(self.get_pool()?).await?;
 
         Ok(BountySubmissionStats {
             total_submissions: total.0 as i32,
@@ -1557,7 +1557,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&event.created_at))
         .bind(timestamp_string_to_datetime(&event.updated_at))
         .bind(optional_timestamp_string_to_datetime(&event.resolved_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty change event: {}", event.id);
@@ -1568,7 +1568,7 @@ impl DatabaseService {
     pub async fn get_bounty_change_event(&self, id: &str) -> Result<Option<BountyChangeEventRow>> {
         let row = sqlx::query("SELECT * FROM bounty_change_events WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_change_event))
@@ -1606,7 +1606,7 @@ impl DatabaseService {
         .bind(timestamp_string_to_datetime(&event.updated_at))
         .bind(optional_timestamp_string_to_datetime(&event.resolved_at))
         .bind(&event.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1616,7 +1616,7 @@ impl DatabaseService {
     pub async fn delete_bounty_change_event(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_change_events WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1693,7 +1693,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param);
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
         Ok(rows.into_iter().map(row_to_bounty_change_event).collect())
     }
 
@@ -1707,7 +1707,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let total: (i64,) = q.fetch_one(self.pool()).await?;
+        let total: (i64,) = q.fetch_one(self.get_pool()?).await?;
 
         // By type
         let by_type_query = format!(
@@ -1718,7 +1718,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let type_rows: Vec<(String, i64)> = q.fetch_all(self.pool()).await?;
+        let type_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
         let by_type: std::collections::HashMap<String, i32> = type_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
@@ -1733,7 +1733,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let severity_rows: Vec<(String, i64)> = q.fetch_all(self.pool()).await?;
+        let severity_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
         let by_severity: std::collections::HashMap<String, i32> = severity_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
@@ -1748,7 +1748,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let status_rows: Vec<(String, i64)> = q.fetch_all(self.pool()).await?;
+        let status_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
         let by_status: std::collections::HashMap<String, i32> = status_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
@@ -1764,7 +1764,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let pending: (i64,) = q.fetch_one(self.pool()).await?;
+        let pending: (i64,) = q.fetch_one(self.get_pool()?).await?;
 
         // Average risk score
         let avg_query = format!(
@@ -1775,7 +1775,7 @@ impl DatabaseService {
         if let Some(pid) = program_id {
             q = q.bind(pid);
         }
-        let avg: (f64,) = q.fetch_one(self.pool()).await?;
+        let avg: (f64,) = q.fetch_one(self.get_pool()?).await?;
 
         Ok(BountyChangeEventStats {
             total_events: total.0 as i32,
@@ -1802,7 +1802,7 @@ impl DatabaseService {
         .bind(resolved_at)
         .bind(&now)
         .bind(id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -1929,7 +1929,7 @@ impl DatabaseService {
         .bind(template.estimated_duration_mins)
         .bind(timestamp_string_to_datetime(&template.created_at))
         .bind(timestamp_string_to_datetime(&template.updated_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty workflow template: {}", template.id);
@@ -1940,7 +1940,7 @@ impl DatabaseService {
     pub async fn get_bounty_workflow_template(&self, id: &str) -> Result<Option<BountyWorkflowTemplateRow>> {
         let row = sqlx::query("SELECT * FROM bounty_workflow_templates WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_workflow_template))
@@ -1973,7 +1973,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param.clone());
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
 
         Ok(rows.into_iter().map(row_to_bounty_workflow_template).collect())
     }
@@ -1998,7 +1998,7 @@ impl DatabaseService {
         .bind(template.estimated_duration_mins)
         .bind(timestamp_string_to_datetime(&template.updated_at))
         .bind(&template.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2008,7 +2008,7 @@ impl DatabaseService {
     pub async fn delete_bounty_workflow_template(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_workflow_templates WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2040,7 +2040,7 @@ impl DatabaseService {
         .bind(binding.run_count)
         .bind(timestamp_string_to_datetime(&binding.created_at))
         .bind(timestamp_string_to_datetime(&binding.updated_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty workflow binding: {}", binding.id);
@@ -2051,7 +2051,7 @@ impl DatabaseService {
     pub async fn get_bounty_workflow_binding(&self, id: &str) -> Result<Option<BountyWorkflowBindingRow>> {
         let row = sqlx::query("SELECT * FROM bounty_workflow_bindings WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_workflow_binding))
@@ -2086,7 +2086,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param.clone());
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
 
         Ok(rows.into_iter().map(row_to_bounty_workflow_binding).collect())
     }
@@ -2110,7 +2110,7 @@ impl DatabaseService {
         .bind(binding.run_count)
         .bind(timestamp_string_to_datetime(&binding.updated_at))
         .bind(&binding.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2120,7 +2120,7 @@ impl DatabaseService {
     pub async fn delete_bounty_workflow_binding(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_workflow_bindings WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2142,7 +2142,7 @@ impl DatabaseService {
         .bind(status)
         .bind(&now)
         .bind(id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2158,7 +2158,7 @@ impl DatabaseService {
                WHERE program_id = $1 AND is_enabled = TRUE AND auto_run_on_change = TRUE"#
         )
         .bind(program_id)
-        .fetch_all(self.pool())
+        .fetch_all(self.get_pool()?)
         .await?;
 
         Ok(rows.into_iter().map(row_to_bounty_workflow_binding).collect())
@@ -2334,7 +2334,7 @@ impl DatabaseService {
         .bind(&asset.metadata_json)
         .bind(timestamp_string_to_datetime(&asset.created_at))
         .bind(timestamp_string_to_datetime(&asset.updated_at))
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         info!("Created bounty asset: {}", asset.id);
@@ -2345,7 +2345,7 @@ impl DatabaseService {
     pub async fn get_bounty_asset(&self, id: &str) -> Result<Option<BountyAssetRow>> {
         let row = sqlx::query("SELECT * FROM bounty_assets WHERE id = $1")
         .bind(id)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_asset))
@@ -2360,7 +2360,7 @@ impl DatabaseService {
         let row = sqlx::query("SELECT * FROM bounty_assets WHERE program_id = $1 AND canonical_url = $2")
         .bind(program_id)
         .bind(canonical_url)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_asset))
@@ -2375,7 +2375,7 @@ impl DatabaseService {
         let row = sqlx::query("SELECT * FROM bounty_assets WHERE program_id = $1 AND fingerprint = $2")
         .bind(program_id)
         .bind(fingerprint)
-        .fetch_optional(self.pool())
+        .fetch_optional(self.get_pool()?)
         .await?;
 
         Ok(row.map(row_to_bounty_asset))
@@ -2466,7 +2466,7 @@ impl DatabaseService {
             sqlx_query = sqlx_query.bind(param.clone());
         }
 
-        let rows = sqlx_query.fetch_all(self.pool()).await?;
+        let rows = sqlx_query.fetch_all(self.get_pool()?).await?;
 
         Ok(rows.into_iter().map(row_to_bounty_asset).collect())
     }
@@ -2507,7 +2507,7 @@ impl DatabaseService {
         .bind(&asset.metadata_json)
         .bind(timestamp_string_to_datetime(&asset.updated_at))
         .bind(&asset.id)
-        .execute(self.pool())
+        .execute(self.get_pool()?)
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2517,7 +2517,7 @@ impl DatabaseService {
     pub async fn delete_bounty_asset(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM bounty_assets WHERE id = $1")
             .bind(id)
-            .execute(self.pool())
+            .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -2525,7 +2525,7 @@ impl DatabaseService {
 
     /// Get bounty asset statistics
     pub async fn get_bounty_asset_stats(&self, program_id: Option<&str>) -> Result<BountyAssetStats> {
-        let pool = self.pool();
+        let pool = self.get_pool()?;
         let filter = program_id.map(|_| " WHERE program_id = $1").unwrap_or_default();
 
         // Note: For stats query with simple counts, binding $1 works even if ignored by some drivers, but Postgres is strict.
@@ -2627,7 +2627,7 @@ impl DatabaseService {
         )
         .bind(program_id)
         .bind(limit)
-        .fetch_all(self.pool())
+        .fetch_all(self.get_pool()?)
         .await?;
 
         Ok(rows.into_iter().map(row_to_bounty_asset).collect())

@@ -471,7 +471,7 @@ const loadSettings = async () => {
         settings.value.database.type = dbConfig.db_type
         settings.value.database.path = dbConfig.path || ''
         settings.value.database.host = dbConfig.host || 'localhost'
-        settings.value.database.port = dbConfig.port || 5432
+        settings.value.database.port = dbConfig.port || (dbConfig.db_type === 'mysql' ? 3306 : 5432)
         settings.value.database.name = dbConfig.database || 'sentinel_ai'
         settings.value.database.username = dbConfig.username || ''
         settings.value.database.password = dbConfig.password || ''
@@ -479,6 +479,7 @@ const loadSettings = async () => {
         settings.value.database.enableSSL = dbConfig.enable_ssl
         settings.value.database.maxConnections = dbConfig.max_connections
         settings.value.database.queryTimeout = dbConfig.query_timeout
+        applyDatabaseTypeDefaults(dbConfig.db_type)
       }
     } catch (dbConfigError) {
       console.error('Failed to load database config:', dbConfigError)
@@ -597,6 +598,21 @@ const loadSettings = async () => {
   } catch (error) {
     console.error('Failed to load settings:', error)
     dialog.toast.error('加载设置失败')
+  }
+}
+
+const applyDatabaseTypeDefaults = (dbType: string) => {
+  if (dbType === 'postgresql') {
+    settings.value.database.port = 5432
+    settings.value.database.host = settings.value.database.host || 'localhost'
+  } else if (dbType === 'mysql') {
+    settings.value.database.port = 3306
+    settings.value.database.host = settings.value.database.host || 'localhost'
+  } else if (dbType === 'sqlite') {
+    settings.value.database.host = ''
+    settings.value.database.port = 0
+    settings.value.database.username = ''
+    settings.value.database.password = ''
   }
 }
 
@@ -1182,7 +1198,7 @@ const selectBackupFile = async () => {
     const selected = await open({
       directory: false,
       multiple: false,
-      filters: [{ name: 'Database Backup', extensions: ['db'] }],
+      filters: [{ name: 'Database Backup', extensions: ['db', 'sql'] }],
       title: '选择要恢复的备份文件'
     })
     if (selected) {
@@ -1270,7 +1286,7 @@ const importData = async () => {
     }
   } catch (error) {
     console.error('Failed to import data:', error)
-    dialog.toast.error(`导出数据失败: ${error}`)
+    dialog.toast.error(`导入数据失败: ${error}`)
   }
 }
 
@@ -1730,6 +1746,14 @@ watch(() => settings.value.general, (newGeneral, oldGeneral) => {
     console.warn('Auto-persist settings failed', e)
   }
 }, { deep: true })
+
+watch(
+  () => settings.value.database.type,
+  (newType, oldType) => {
+    if (!newType || newType === oldType) return
+    applyDatabaseTypeDefaults(newType)
+  }
+)
 </script>
 
 <style scoped>

@@ -2,8 +2,13 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use sentinel_db::{Database, DatabaseService};
+
+// 0 = unknown, 1 = available, 2 = unavailable
+static SKILLS_REF_STATUS: AtomicU8 = AtomicU8::new(0);
+static SKILLS_REF_UNAVAILABLE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillFrontmatter {
@@ -59,6 +64,10 @@ pub fn parse_skill_markdown(content: &str) -> Result<SkillDocument> {
 }
 
 pub fn validate_skill_with_skills_ref(skill_dir: &Path) -> Result<()> {
+    if SKILLS_REF_STATUS.load(Ordering::Relaxed) == 2 {
+        return Ok(());
+    }
+
     let result = std::process::Command::new("skills-ref")
         .arg("validate")
         .arg(skill_dir)
@@ -66,6 +75,7 @@ pub fn validate_skill_with_skills_ref(skill_dir: &Path) -> Result<()> {
 
     match result {
         Ok(output) => {
+            SKILLS_REF_STATUS.store(1, Ordering::Relaxed);
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -79,7 +89,14 @@ pub fn validate_skill_with_skills_ref(skill_dir: &Path) -> Result<()> {
         }
         Err(e) => {
             // If skills-ref is not installed, skip validation instead of blocking scans.
-            tracing::info!("skills-ref not available, skipping validation: {}", e);
+            if e.kind() == std::io::ErrorKind::NotFound {
+                SKILLS_REF_STATUS.store(2, Ordering::Relaxed);
+                if !SKILLS_REF_UNAVAILABLE_LOGGED.swap(true, Ordering::Relaxed) {
+                    tracing::debug!("skills-ref not available, skipping validation");
+                }
+                return Ok(());
+            }
+            tracing::warn!("skills-ref invocation failed, skipping validation: {}", e);
             Ok(())
         }
     }

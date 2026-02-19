@@ -116,6 +116,37 @@ async fn register_skills_tool_guard(
     Ok(())
 }
 
+fn apply_allowed_tools_policy(
+    mut tool_ids: Vec<String>,
+    allowed_tools: &[String],
+) -> Vec<String> {
+    if allowed_tools.is_empty() {
+        return tool_ids;
+    }
+    let allowed = allowed_tools
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .map(|id| id.to_string())
+        .collect::<std::collections::HashSet<_>>();
+    tool_ids.retain(|id| allowed.contains(id));
+    tool_ids
+}
+
+fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
+    const REQUIRED: &[&str] = &["skills", "git_clone_repo", "code_search", "git_diff_scope"];
+    let mut seen = tool_ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    for tool in REQUIRED {
+        if seen.insert((*tool).to_string()) {
+            tool_ids.push((*tool).to_string());
+        }
+    }
+    tool_ids
+}
+
 fn infer_tool_result_success(raw: &str) -> bool {
     fn visit(value: &serde_json::Value) -> bool {
         match value {
@@ -209,13 +240,22 @@ pub async fn execute_agent_with_tools(
         .plan_tools(&params.task, &tool_config, Some(&llm_config), db_pool)
         .await?;
 
-    let selected_tool_ids = selection_plan.tool_ids.clone();
+    let mut selected_tool_ids = apply_allowed_tools_policy(
+        selection_plan.tool_ids.clone(),
+        &tool_config.allowed_tools,
+    );
+
+    if params.audit_mode {
+        selected_tool_ids = enforce_audit_required_tools(selected_tool_ids);
+    }
     
     tracing::info!(
-        "Selected {} tools for execution_id {}: {:?}",
+        "Selected {} tools for execution_id {}: {:?} (strategy={:?}, audit_mode={})",
         selected_tool_ids.len(),
         params.execution_id,
-        selected_tool_ids
+        selected_tool_ids,
+        tool_config.selection_strategy,
+        params.audit_mode
     );
 
     // Emit skill_selected event if applicable
@@ -1038,7 +1078,13 @@ pub async fn execute_agent_with_tools(
                             next_tools.retain(|id| seen.insert(id.clone()));
                             next_tools.retain(|id| available_tools.contains(id));
                             next_tools.retain(|id| !tool_config.disabled_tools.contains(id));
-                            current_tool_ids = next_tools.clone();
+                            current_tool_ids = apply_allowed_tools_policy(
+                                next_tools.clone(),
+                                &tool_config.allowed_tools,
+                            );
+                            if params.audit_mode {
+                                current_tool_ids = enforce_audit_required_tools(current_tool_ids);
+                            }
 
                             let _ = app_handle.emit(
                                 "agent:tools_selected",

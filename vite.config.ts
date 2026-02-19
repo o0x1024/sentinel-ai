@@ -32,7 +32,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           'vue-vendor': ['vue', 'vue-router', 'pinia', 'vue-i18n'],
-          'ui-vendor': ['@headlessui/vue', '@heroicons/vue'],
           'chart-vendor': ['chart.js', 'vue-chartjs'],
           'utils-vendor': ['@vueuse/core', 'date-fns', 'axios', 'uuid']
         }

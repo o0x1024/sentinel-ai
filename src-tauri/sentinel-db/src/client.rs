@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::postgres::PgPool;
 
+use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::traits::Database;
 use crate::database_service::service::DatabaseService;
 use sentinel_core::models::database::MemoryExecution;
@@ -14,6 +15,7 @@ pub struct DatabaseClient {
 impl DatabaseClient {
     pub fn new(pool: PgPool) -> Self {
         let mut service = DatabaseService::new();
+        service.runtime_pool = Some(DatabasePool::PostgreSQL(pool.clone()));
         service.pool = Some(pool);
         Self { service }
     }

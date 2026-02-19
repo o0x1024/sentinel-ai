@@ -37,13 +37,17 @@ pub struct DockerSandboxConfig {
 
 impl Default for DockerSandboxConfig {
     fn default() -> Self {
+        let mut default_volumes = HashMap::new();
+        // Keep default sandbox view consistent with interactive terminal.
+        default_volumes.insert("/tmp/workspace".to_string(), "/workspace".to_string());
+
         Self {
             image: "sentinel-sandbox:latest".to_string(),
             memory_limit: "2g".to_string(),
             cpu_limit: "4.0".to_string(),
             network_mode: "host".to_string(),
             read_only_rootfs: false,
-            volumes: HashMap::new(),
+            volumes: default_volumes,
             env_vars: HashMap::new(),
             reuse_container: true,
             container_name: Some("sentinel-sandbox-main".to_string()),

@@ -115,6 +115,17 @@
             <i class="fas fa-terminal"></i>
             <span>{{ t('agent.terminal') }}</span>
           </button>
+          <button
+            v-if="toolConfig.audit_mode"
+            @click="handleToggleAuditFindings()"
+            class="btn btn-sm gap-1"
+            :class="isAuditFindingsPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="isAuditFindingsPanelActive ? t('agent.auditFindingsPanelOpen') : t('agent.viewAuditFindings')"
+          >
+            <i class="fas fa-shield-halved"></i>
+            <span>{{ t('agent.auditFindings') }}</span>
+            <span v-if="auditFindings.length > 0" class="badge badge-xs badge-primary">{{ auditFindings.length }}</span>
+          </button>
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
@@ -183,7 +194,7 @@
         
         <!-- Right: Side Panel (WebExplorer, Todo, HTML, or Terminal) -->
         <div 
-          v-if="isWebExplorerActive || isTodosPanelActive || isHtmlPanelActive || isTerminalActive"
+          v-if="isWebExplorerActive || isTodosPanelActive || isHtmlPanelActive || isTerminalActive || isAuditFindingsPanelActive"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
           :style="{ width: sidebarWidth + 'px' }"
         >
@@ -232,6 +243,13 @@
               class="h-full border-0 rounded-none bg-transparent"
               @close="handleCloseTerminal"
             />
+            <AuditFindingsPanel
+              v-else-if="isAuditFindingsPanelActive"
+              :findings="auditFindings"
+              :policy-gate="auditPolicyGate"
+              class="h-full border-0 rounded-none bg-transparent"
+              @close="handleCloseAuditFindings"
+            />
         </div>
       </div>
 
@@ -269,6 +287,7 @@ import HtmlPanel from './HtmlPanel.vue'
 import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
+import AuditFindingsPanel from './AuditFindingsPanel.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -287,6 +306,55 @@ interface ReferencedTraffic {
   response_headers?: string
   response_body?: string
   sendType?: TrafficSendType
+}
+
+type AuditScope = 'repo' | 'git_diff' | 'paths'
+type VerificationLevel = 'low' | 'medium' | 'high'
+type PolicyProfile = 'balanced' | 'prod_strict'
+
+interface AuditConfig {
+  enabled: boolean
+  scope: AuditScope
+  verification_level: VerificationLevel
+  policy_profile: PolicyProfile
+  required_tools: string[]
+}
+
+interface UiToolConfigPayload {
+  enabled: boolean
+  selection_strategy: any
+  max_tools: number
+  fixed_tools: string[]
+  disabled_tools: string[]
+  audit_mode?: boolean
+  audit_config?: Partial<AuditConfig>
+}
+
+interface AuditFinding {
+  id: string
+  title?: string
+  severity?: string
+  severity_raw?: string
+  confidence?: number
+  files?: string[]
+  fix?: string
+  status?: string
+  cwe?: string
+  description?: string
+  source?: Record<string, any>
+  sink?: Record<string, any>
+  trace_path?: Array<Record<string, any>>
+  evidence?: string[]
+}
+
+interface PolicyGateResult {
+  passed: boolean
+  reason?: string
+}
+
+interface ParsedAuditPayload {
+  findings: AuditFinding[]
+  policyGate?: PolicyGateResult
 }
 
 
@@ -353,7 +421,94 @@ const toolConfig = ref({
   max_tools: 5,
   fixed_tools: ['interactive_shell'],
   disabled_tools: [],
+  audit_mode: false,
+  audit_config: {
+    enabled: false,
+    scope: 'git_diff' as AuditScope,
+    verification_level: 'high' as VerificationLevel,
+    policy_profile: 'balanced' as PolicyProfile,
+    required_tools: ['code_search', 'git_diff_scope'],
+  },
 })
+
+const AUDIT_CONFIG_STORAGE_KEY = 'sentinel:agent:audit-config'
+
+const defaultAuditConfig = (): AuditConfig => ({
+  enabled: false,
+  scope: 'git_diff',
+  verification_level: 'high',
+  policy_profile: 'balanced',
+  required_tools: ['code_search', 'git_diff_scope'],
+})
+
+const normalizeAuditConfig = (raw?: Partial<AuditConfig> | null): AuditConfig => {
+  const base = defaultAuditConfig()
+  const scope = raw?.scope === 'repo' || raw?.scope === 'paths' || raw?.scope === 'git_diff'
+    ? raw.scope
+    : base.scope
+  const verificationLevel = raw?.verification_level === 'low' || raw?.verification_level === 'medium' || raw?.verification_level === 'high'
+    ? raw.verification_level
+    : base.verification_level
+  const policyProfile = raw?.policy_profile === 'balanced' || raw?.policy_profile === 'prod_strict'
+    ? raw.policy_profile
+    : base.policy_profile
+  const requiredTools = Array.isArray(raw?.required_tools)
+    ? raw.required_tools.filter((item) => typeof item === 'string' && item.trim().length > 0)
+    : base.required_tools
+  return {
+    enabled: raw?.enabled ?? base.enabled,
+    scope,
+    verification_level: verificationLevel,
+    policy_profile: policyProfile,
+    required_tools: requiredTools,
+  }
+}
+
+const saveAuditConfigToLocal = (config: AuditConfig) => {
+  try {
+    localStorage.setItem(AUDIT_CONFIG_STORAGE_KEY, JSON.stringify(config))
+  } catch (e) {
+    console.warn('[AgentView] Failed to persist audit config:', e)
+  }
+}
+
+const loadAuditConfigFromLocal = (): AuditConfig => {
+  try {
+    const raw = localStorage.getItem(AUDIT_CONFIG_STORAGE_KEY)
+    if (!raw) return defaultAuditConfig()
+    const parsed = JSON.parse(raw)
+    return normalizeAuditConfig(parsed)
+  } catch (e) {
+    console.warn('[AgentView] Failed to load audit config, using defaults:', e)
+    return defaultAuditConfig()
+  }
+}
+
+const buildEffectiveToolConfigForExecution = () => {
+  const baseConfig = {
+    enabled: toolConfig.value.enabled,
+    selection_strategy: toolConfig.value.selection_strategy,
+    max_tools: toolConfig.value.max_tools,
+    fixed_tools: [...toolConfig.value.fixed_tools],
+    disabled_tools: [...toolConfig.value.disabled_tools],
+  }
+
+  if (!toolConfig.value.audit_mode) {
+    return baseConfig
+  }
+
+  const requiredTools = (toolConfig.value.audit_config?.required_tools || [])
+    .filter((item) => typeof item === 'string' && item.trim().length > 0)
+
+  const fixedSet = new Set([...baseConfig.fixed_tools, ...requiredTools])
+  const disabledSet = new Set(baseConfig.disabled_tools.filter((item) => !fixedSet.has(item)))
+
+  return {
+    ...baseConfig,
+    fixed_tools: [...fixedSet],
+    disabled_tools: [...disabledSet],
+  }
+}
 
 // Agent events
 const agentEvents = useAgentEvents(computed(() => conversationId.value || ''))
@@ -448,6 +603,9 @@ const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.val
 // HTML panel - user manually triggers rendering
 const isHtmlPanelActive = ref(false)
 const htmlPanelContent = ref('')
+const isAuditFindingsPanelActive = ref(false)
+const lastPersistedAuditSignature = ref('')
+const lastPersistedPolicyGateSignature = ref('')
 
 // Handle render HTML from code block
 const handleRenderHtml = (htmlContent: string) => {
@@ -456,6 +614,7 @@ const handleRenderHtml = (htmlContent: string) => {
   webExplorerEvents.close()
   terminalComposable.closeTerminal()
   todosComposable.close()
+  isAuditFindingsPanelActive.value = false
   isHtmlPanelActive.value = true
 }
 
@@ -468,6 +627,10 @@ const handleCloseTodos = () => {
 
 const handleCloseHtmlPanel = () => {
   isHtmlPanelActive.value = false
+}
+
+const handleCloseAuditFindings = () => {
+  isAuditFindingsPanelActive.value = false
 }
 
 // Terminal management
@@ -489,6 +652,7 @@ const handleToggleWebExplorer = () => {
     todosComposable.close()
     terminalComposable.closeTerminal()
     isHtmlPanelActive.value = false
+    isAuditFindingsPanelActive.value = false
     webExplorerEvents.open()
   }
 }
@@ -501,6 +665,7 @@ const handleToggleTodos = () => {
     webExplorerEvents.close()
     terminalComposable.closeTerminal()
     isHtmlPanelActive.value = false
+    isAuditFindingsPanelActive.value = false
     todosComposable.open()
   }
 }
@@ -512,7 +677,20 @@ const handleToggleHtmlPanel = () => {
     webExplorerEvents.close()
     terminalComposable.closeTerminal()
     todosComposable.close()
+    isAuditFindingsPanelActive.value = false
     isHtmlPanelActive.value = true
+  }
+}
+
+const handleToggleAuditFindings = () => {
+  if (isAuditFindingsPanelActive.value) {
+    isAuditFindingsPanelActive.value = false
+  } else {
+    webExplorerEvents.close()
+    terminalComposable.closeTerminal()
+    todosComposable.close()
+    isHtmlPanelActive.value = false
+    isAuditFindingsPanelActive.value = true
   }
 }
 
@@ -524,7 +702,271 @@ const handleToggleTerminal = () => {
     webExplorerEvents.close()
     todosComposable.close()
     isHtmlPanelActive.value = false
+    isAuditFindingsPanelActive.value = false
     terminalComposable.openTerminal()
+  }
+}
+
+const parseAuditFindingsFromText = (content: string): AuditFinding[] => {
+  return parseAuditPayloadFromText(content).findings
+}
+
+const extractFilePaths = (text: string): string[] => {
+  if (!text) return []
+  const pathRegex = /(?:^|[\s"'`(])((?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9]+)(?=$|[\s"'`):,])/g
+  const found: string[] = []
+  let match: RegExpExecArray | null
+  while ((match = pathRegex.exec(text)) !== null) {
+    if (match[1]) found.push(match[1])
+  }
+  return Array.from(new Set(found))
+}
+
+const parseAuditPayloadFromText = (content: string): ParsedAuditPayload => {
+  if (!content) return { findings: [] }
+  const candidates: string[] = []
+  const direct = content.trim()
+  if (direct.startsWith('{') || direct.startsWith('[')) {
+    candidates.push(direct)
+  }
+  const blockRegex = /```json\s*([\s\S]*?)\s*```/gi
+  let match: RegExpExecArray | null
+  while ((match = blockRegex.exec(content)) !== null) {
+    if (match[1]) candidates.push(match[1].trim())
+  }
+
+  for (const raw of candidates) {
+    try {
+      const parsed = JSON.parse(raw)
+      const findings = Array.isArray(parsed?.findings) ? parsed.findings : Array.isArray(parsed) ? parsed : null
+      if (!findings) continue
+      const normalizedFindings = findings
+        .filter((item: any) => item && typeof item === 'object')
+        .map((item: any, index: number) => ({
+          id: String(item.id || `F-${index + 1}`),
+          title: item.title ? String(item.title) : undefined,
+          severity: item.severity ? String(item.severity) : undefined,
+          severity_raw: item.severity_raw ? String(item.severity_raw) : (item.severity ? String(item.severity) : undefined),
+          confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
+          files: Array.isArray(item.files) ? item.files.map((v: any) => String(v)) : undefined,
+          fix: item.fix ? String(item.fix) : undefined,
+          status: item.status ? String(item.status) : undefined,
+          cwe: item.cwe ? String(item.cwe) : undefined,
+          description: item.description ? String(item.description) : undefined,
+          source: item.source && typeof item.source === 'object' ? item.source : undefined,
+          sink: item.sink && typeof item.sink === 'object' ? item.sink : undefined,
+          trace_path: Array.isArray(item.trace_path) ? item.trace_path.filter((v: any) => v && typeof v === 'object') : undefined,
+          evidence: Array.isArray(item.evidence) ? item.evidence.map((v: any) => String(v)) : undefined,
+        }))
+      const rawGate = parsed?.policy_gate
+      const policyGate = rawGate && typeof rawGate === 'object'
+        ? {
+            passed: !!rawGate.passed,
+            reason: rawGate.reason ? String(rawGate.reason) : undefined,
+          }
+        : undefined
+      return {
+        findings: normalizedFindings,
+        policyGate,
+      }
+    } catch {
+      // Continue trying next candidate payload.
+    }
+  }
+
+  // Fallback: parse markdown-style audit report sections (e.g. "1. SQL注入漏洞")
+  const fallbackFindings: AuditFinding[] = []
+  const sectionRegex = /^\s*(\d+)\.\s+([^\n]+)\n([\s\S]*?)(?=^\s*\d+\.\s+|\s*$)/gm
+  let sectionMatch: RegExpExecArray | null
+  while ((sectionMatch = sectionRegex.exec(content)) !== null) {
+    const index = sectionMatch[1]
+    const rawTitle = (sectionMatch[2] || '').trim()
+    const body = sectionMatch[3] || ''
+    const lowered = `${rawTitle}\n${body}`.toLowerCase()
+
+    let severity: string | undefined
+    if (/(critical|严重)/.test(lowered)) severity = 'critical'
+    else if (/(high|高危)/.test(lowered)) severity = 'high'
+    else if (/(medium|中危)/.test(lowered)) severity = 'medium'
+    else if (/(low|低危)/.test(lowered)) severity = 'low'
+
+    const rawLocations = Array.from(body.matchAll(/位置[:：]\s*([^\n]+)/g))
+      .map((m) => (m[1] || '').trim())
+      .filter((v) => !!v)
+    const files = Array.from(
+      new Set(
+        rawLocations.flatMap((item) => {
+          const extracted = extractFilePaths(item)
+          return extracted.length > 0 ? extracted : [item]
+        }),
+      ),
+    )
+
+    const description =
+      body.match(/风险[:：]\s*([^\n]+)/)?.[1]?.trim() ||
+      body.match(/详情[:：]\s*([^\n]+)/)?.[1]?.trim() ||
+      undefined
+    const fix =
+      body.match(/修复建议[:：]\s*([^\n]+)/)?.[1]?.trim() ||
+      body.match(/建议修复[:：]\s*([^\n]+)/)?.[1]?.trim() ||
+      undefined
+
+    fallbackFindings.push({
+      id: `F-${index}`,
+      title: rawTitle || `Finding ${index}`,
+      severity,
+      severity_raw: severity,
+      files: files.length > 0 ? files : undefined,
+      description,
+      fix,
+      evidence: description ? [description] : undefined,
+    })
+  }
+
+  if (fallbackFindings.length > 0) {
+    return { findings: fallbackFindings }
+  }
+
+  return { findings: [] }
+}
+
+const auditFindings = computed<AuditFinding[]>(() => {
+  if (!toolConfig.value.audit_mode) return []
+  const findings: AuditFinding[] = []
+  for (const message of messages.value) {
+    if (message.type !== 'final') continue
+    const parsed = parseAuditFindingsFromText(message.content || '')
+    if (parsed.length > 0) {
+      findings.splice(0, findings.length, ...parsed)
+    }
+  }
+  return findings
+})
+
+const evaluatePolicyGate = (
+  findings: AuditFinding[],
+  profile: PolicyProfile,
+): PolicyGateResult => {
+  const active = findings.filter((item) => {
+    const status = (item.status || '').toLowerCase()
+    return !['rejected', 'false_positive', 'fixed'].includes(status)
+  })
+  const critical = active.filter((item) => (item.severity || '').toLowerCase() === 'critical').length
+  const high = active.filter((item) => (item.severity || '').toLowerCase() === 'high').length
+
+  if (profile === 'prod_strict') {
+    const blocked = critical + high > 0
+    return {
+      passed: !blocked,
+      reason: blocked
+        ? `Blocked by prod_strict policy: critical=${critical}, high=${high}`
+        : `Passed prod_strict policy: no active high/critical findings`,
+    }
+  }
+
+  const blocked = critical > 0
+  return {
+    passed: !blocked,
+    reason: blocked
+      ? `Blocked by balanced policy: critical=${critical}`
+      : `Passed balanced policy: no active critical findings`,
+  }
+}
+
+const auditPolicyGate = computed<PolicyGateResult | null>(() => {
+  if (!toolConfig.value.audit_mode) return null
+  let parsedPolicyGate: PolicyGateResult | undefined
+  for (const message of messages.value) {
+    if (message.type !== 'final') continue
+    const payload = parseAuditPayloadFromText(message.content || '')
+    if (payload.findings.length > 0 && payload.policyGate) {
+      parsedPolicyGate = payload.policyGate
+    }
+  }
+  if (parsedPolicyGate) return parsedPolicyGate
+  const profile = toolConfig.value.audit_config?.policy_profile || 'balanced'
+  return evaluatePolicyGate(auditFindings.value, profile)
+})
+
+const persistAuditFindingsToSecurityCenter = async (findings: AuditFinding[]) => {
+  if (!conversationId.value || findings.length === 0) return
+  const signature = JSON.stringify({
+    conversationId: conversationId.value,
+    findings: findings.map((item) => ({
+      id: item.id,
+      severity: item.severity,
+      severity_raw: item.severity_raw,
+      status: item.status,
+      files: item.files,
+      fix: item.fix,
+      cwe: item.cwe,
+      description: item.description,
+      source: item.source,
+      sink: item.sink,
+      trace_path: item.trace_path,
+      evidence: item.evidence,
+    })),
+  })
+  if (signature === lastPersistedAuditSignature.value) {
+    return
+  }
+
+  try {
+    const result = await invoke<any>('upsert_agent_audit_findings', {
+      request: {
+        conversation_id: conversationId.value,
+        findings,
+      },
+    })
+    if (result?.success) {
+      lastPersistedAuditSignature.value = signature
+    } else {
+      console.warn('[AgentView] Failed to persist audit findings:', result?.error)
+    }
+  } catch (e) {
+    console.warn('[AgentView] Persist audit findings failed:', e)
+  }
+}
+
+const persistAuditPolicyGate = async (gate: PolicyGateResult | null) => {
+  if (!conversationId.value || !gate || !toolConfig.value.audit_mode) return
+  const active = auditFindings.value.filter((item) => {
+    const status = (item.status || '').toLowerCase()
+    return !['rejected', 'false_positive', 'fixed'].includes(status)
+  })
+  const summary = {
+    total: auditFindings.value.length,
+    active: active.length,
+    critical: active.filter((item) => (item.severity || '').toLowerCase() === 'critical').length,
+    high: active.filter((item) => (item.severity || '').toLowerCase() === 'high').length,
+    medium: active.filter((item) => (item.severity || '').toLowerCase() === 'medium').length,
+    low: active.filter((item) => (item.severity || '').toLowerCase() === 'low').length,
+  }
+  const profile = toolConfig.value.audit_config?.policy_profile || 'balanced'
+  const signature = JSON.stringify({
+    conversationId: conversationId.value,
+    passed: gate.passed,
+    reason: gate.reason,
+    profile,
+    summary,
+  })
+  if (signature === lastPersistedPolicyGateSignature.value) {
+    return
+  }
+
+  try {
+    await invoke('save_audit_policy_gate', {
+      conversation_id: conversationId.value,
+      gate: {
+        passed: gate.passed,
+        reason: gate.reason,
+        profile,
+        summary,
+      },
+    })
+    lastPersistedPolicyGateSignature.value = signature
+  } catch (e) {
+    console.warn('[AgentView] Persist policy gate failed:', e)
   }
 }
 
@@ -618,15 +1060,35 @@ const handleToggleTools = (enabled: boolean) => {
 }
 
 // Handle Tool Config update
-const handleToolConfigUpdate = async (config: any) => {
-  toolConfig.value = config
+const handleToolConfigUpdate = async (config: UiToolConfigPayload) => {
+  const normalizedAuditConfig = normalizeAuditConfig(config.audit_config)
+  const auditModeEnabled = !!config.audit_mode
+  const runtimeConfig = {
+    ...config,
+    audit_mode: auditModeEnabled,
+    audit_config: normalizedAuditConfig,
+  }
+  toolConfig.value = runtimeConfig as any
   toolsEnabled.value = config.enabled
   console.log('[AgentView] Tool config updated:', config)
-  
+
+  saveAuditConfigToLocal({
+    ...normalizedAuditConfig,
+    enabled: auditModeEnabled,
+  })
+
   // Save tool config to database (global config, not bound to conversation)
+  // Audit fields are frontend-owned for now and are stored in localStorage.
   try {
+    const persistableToolConfig = {
+      enabled: config.enabled,
+      selection_strategy: config.selection_strategy,
+      max_tools: config.max_tools,
+      fixed_tools: config.fixed_tools,
+      disabled_tools: config.disabled_tools,
+    }
     await invoke('save_tool_config', {
-      toolConfig: config
+      toolConfig: persistableToolConfig
     })
     console.log('[AgentView] Tool config saved globally')
   } catch (e) {
@@ -1397,7 +1859,13 @@ const handleSubmit = async () => {
         message_id: null,
         attachments: usedAttachments.length > 0 ? usedAttachments : undefined,
         document_attachments: usedDocuments.length > 0 ? usedDocuments : undefined,
-        tool_config: toolConfig.value,
+        tool_config: buildEffectiveToolConfigForExecution(),
+        audit_config: toolConfig.value.audit_mode
+          ? {
+              ...(toolConfig.value.audit_config || defaultAuditConfig()),
+              enabled: true,
+            }
+          : undefined,
         display_content: displayContent,
       }
     })
@@ -1415,11 +1883,18 @@ const handleSubmit = async () => {
 const loadToolConfig = async () => {
   try {
     const savedConfig = await invoke<any>('get_tool_config')
+    const localAuditConfig = loadAuditConfigFromLocal()
     if (savedConfig) {
-      toolConfig.value = savedConfig
+      toolConfig.value = {
+        ...savedConfig,
+        audit_mode: localAuditConfig.enabled,
+        audit_config: localAuditConfig,
+      }
       toolsEnabled.value = savedConfig.enabled
       console.log('[AgentView] Loaded tool config from database:', savedConfig)
     } else {
+      toolConfig.value.audit_mode = localAuditConfig.enabled
+      toolConfig.value.audit_config = localAuditConfig
       console.log('[AgentView] No saved tool config found, using defaults')
     }
   } catch (e) {
@@ -1486,6 +1961,8 @@ onActivated(() => {
 
 // Watch for conversation changes to update title
 watch(conversationId, async (newId) => {
+  lastPersistedAuditSignature.value = ''
+  lastPersistedPolicyGateSignature.value = ''
   if (newId) {
     try {
       const conversations = await invoke<any[]>('get_ai_conversations')
@@ -1498,6 +1975,16 @@ watch(conversationId, async (newId) => {
     }
   }
 })
+
+watch(auditFindings, async (newFindings) => {
+  if (!toolConfig.value.audit_mode) return
+  await persistAuditFindingsToSecurityCenter(newFindings)
+}, { deep: true })
+
+watch(auditPolicyGate, async (newGate) => {
+  if (!toolConfig.value.audit_mode) return
+  await persistAuditPolicyGate(newGate)
+}, { deep: true })
 
 // Update session title in manager
 const { updateSessionTitle } = useAgentSessionManager()

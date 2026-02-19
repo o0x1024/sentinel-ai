@@ -1,5 +1,7 @@
 use anyhow::Result;
-use sqlx::Row;
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 use crate::core::models::scan_session::{
     ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
@@ -9,7 +11,10 @@ use uuid::Uuid;
 
 impl DatabaseService {
     pub async fn create_scan_session_internal(&self, request: CreateScanSessionRequest) -> Result<ScanSession> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let session = ScanSession::new(
             request.name,
             request.target,
@@ -26,64 +31,94 @@ impl DatabaseService {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#;
 
-        sqlx::query(query)
-            .bind(session.id.to_string())
-            .bind(&session.name)
-            .bind(&session.description)
-            .bind(&session.target)
-            .bind(&session.scan_type)
-            .bind(serde_json::to_string(&session.status)?)
-            .bind(serde_json::to_string(&session.config)?)
-            .bind(session.progress)
-            .bind(&session.current_stage)
-            .bind(session.total_stages)
-            .bind(session.completed_stages)
-            .bind(session.created_at)
-            .bind(&session.created_by)
-            .execute(pool)
-            .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(query)
+                    .bind(session.id.to_string())
+                    .bind(&session.name)
+                    .bind(&session.description)
+                    .bind(&session.target)
+                    .bind(&session.scan_type)
+                    .bind(serde_json::to_string(&session.status)?)
+                    .bind(serde_json::to_string(&session.config)?)
+                    .bind(session.progress)
+                    .bind(&session.current_stage)
+                    .bind(session.total_stages)
+                    .bind(session.completed_stages)
+                    .bind(session.created_at)
+                    .bind(&session.created_by)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                let query = r#"
+                    INSERT INTO scan_sessions (
+                        id, name, description, target, scan_type, status, config, 
+                        progress, current_stage, total_stages, completed_stages,
+                        created_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#;
+                sqlx::query(query)
+                    .bind(session.id.to_string())
+                    .bind(&session.name)
+                    .bind(&session.description)
+                    .bind(&session.target)
+                    .bind(&session.scan_type)
+                    .bind(serde_json::to_string(&session.status)?)
+                    .bind(serde_json::to_string(&session.config)?)
+                    .bind(session.progress)
+                    .bind(&session.current_stage)
+                    .bind(session.total_stages)
+                    .bind(session.completed_stages)
+                    .bind(session.created_at)
+                    .bind(&session.created_by)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let query = r#"
+                    INSERT INTO scan_sessions (
+                        id, name, description, target, scan_type, status, config, 
+                        progress, current_stage, total_stages, completed_stages,
+                        created_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#;
+                sqlx::query(query)
+                    .bind(session.id.to_string())
+                    .bind(&session.name)
+                    .bind(&session.description)
+                    .bind(&session.target)
+                    .bind(&session.scan_type)
+                    .bind(serde_json::to_string(&session.status)?)
+                    .bind(serde_json::to_string(&session.config)?)
+                    .bind(session.progress)
+                    .bind(&session.current_stage)
+                    .bind(session.total_stages)
+                    .bind(session.completed_stages)
+                    .bind(session.created_at)
+                    .bind(&session.created_by)
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         Ok(session)
     }
 
     pub async fn get_scan_session_internal(&self, session_id: Uuid) -> Result<Option<ScanSession>> {
-        let pool = self.get_pool()?;
-        let query = r#"
-            SELECT id, name, description, target, scan_type, status, config,
-                   progress, current_stage, total_stages, completed_stages,
-                   results_summary, error_message, created_at, started_at,
-                   completed_at, created_by
-            FROM scan_sessions WHERE id = $1
-        "#;
-
-        let row = sqlx::query(query)
-            .bind(session_id.to_string())
-            .fetch_optional(pool)
+        let rows = self
+            .execute_query(&format!(
+                r#"SELECT id, name, description, target, scan_type, status, config,
+                          progress, current_stage, total_stages, completed_stages,
+                          results_summary, error_message, created_at, started_at,
+                          completed_at, created_by
+                   FROM scan_sessions WHERE id = '{}'"#,
+                session_id
+            ))
             .await?;
 
-        if let Some(row) = row {
-            let session = ScanSession {
-                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-                name: row.get("name"),
-                description: row.get("description"),
-                target: row.get("target"),
-                scan_type: row.get("scan_type"),
-                status: serde_json::from_str(&row.get::<String, _>("status")).unwrap_or_default(),
-                config: serde_json::from_str(&row.get::<String, _>("config")).unwrap_or_default(),
-                progress: row.get("progress"),
-                current_stage: row.get("current_stage"),
-                total_stages: row.get("total_stages"),
-                completed_stages: row.get("completed_stages"),
-                results_summary: row
-                    .get::<Option<String>, _>("results_summary")
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                error_message: row.get("error_message"),
-                created_at: row.get("created_at"),
-                started_at: row.get("started_at"),
-                completed_at: row.get("completed_at"),
-                created_by: row.get("created_by"),
-            };
-            Ok(Some(session))
+        if let Some(row) = rows.first() {
+            Ok(Some(parse_scan_session_row(row)?))
         } else {
             Ok(None)
         }
@@ -94,37 +129,104 @@ impl DatabaseService {
         session_id: Uuid,
         request: UpdateScanSessionRequest,
     ) -> Result<()> {
-        let pool = self.get_pool()?;
-        let _query = "UPDATE scan_sessions SET updated_at = CURRENT_TIMESTAMP".to_string();
-        let _idx = 1;
-        let mut query = String::from("UPDATE scan_sessions SET updated_at = CURRENT_TIMESTAMP");
-        let mut params_count = 1; // session_id is $1
-        
-        if request.name.is_some() { params_count += 1; query.push_str(&format!(", name = ${}", params_count)); }
-        if request.description.is_some() { params_count += 1; query.push_str(&format!(", description = ${}", params_count)); }
-        if request.status.is_some() { params_count += 1; query.push_str(&format!(", status = ${}", params_count)); }
-        if request.progress.is_some() { params_count += 1; query.push_str(&format!(", progress = ${}", params_count)); }
-        if request.current_stage.is_some() { params_count += 1; query.push_str(&format!(", current_stage = ${}", params_count)); }
-        if request.total_stages.is_some() { params_count += 1; query.push_str(&format!(", total_stages = ${}", params_count)); }
-        if request.completed_stages.is_some() { params_count += 1; query.push_str(&format!(", completed_stages = ${}", params_count)); }
-        if request.results_summary.is_some() { params_count += 1; query.push_str(&format!(", results_summary = ${}", params_count)); }
-        if request.error_message.is_some() { params_count += 1; query.push_str(&format!(", error_message = ${}", params_count)); }
-        
-        query.push_str(" WHERE id = $1");
-        
-        let mut q = sqlx::query(&query).bind(session_id.to_string());
-        
-        if let Some(name) = request.name { q = q.bind(name); }
-        if let Some(description) = request.description { q = q.bind(description); }
-        if let Some(status) = request.status { q = q.bind(serde_json::to_string(&status)?); }
-        if let Some(progress) = request.progress { q = q.bind(progress); }
-        if let Some(current_stage) = request.current_stage { q = q.bind(current_stage); }
-        if let Some(total_stages) = request.total_stages { q = q.bind(total_stages); }
-        if let Some(completed_stages) = request.completed_stages { q = q.bind(completed_stages); }
-        if let Some(results_summary) = request.results_summary { q = q.bind(serde_json::to_string(&results_summary)?); }
-        if let Some(error_message) = request.error_message { q = q.bind(error_message); }
-        
-        q.execute(pool).await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let status_json = request
+            .status
+            .map(|s| serde_json::to_string(&s))
+            .transpose()?;
+        let results_summary_json = request
+            .results_summary
+            .map(|s| serde_json::to_string(&s))
+            .transpose()?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"UPDATE scan_sessions SET
+                           updated_at = CURRENT_TIMESTAMP,
+                           name = COALESCE($2, name),
+                           description = COALESCE($3, description),
+                           status = COALESCE($4, status),
+                           progress = COALESCE($5, progress),
+                           current_stage = COALESCE($6, current_stage),
+                           total_stages = COALESCE($7, total_stages),
+                           completed_stages = COALESCE($8, completed_stages),
+                           results_summary = COALESCE($9, results_summary),
+                           error_message = COALESCE($10, error_message)
+                       WHERE id = $1"#,
+                )
+                .bind(session_id.to_string())
+                .bind(request.name)
+                .bind(request.description)
+                .bind(status_json)
+                .bind(request.progress)
+                .bind(request.current_stage)
+                .bind(request.total_stages)
+                .bind(request.completed_stages)
+                .bind(results_summary_json)
+                .bind(request.error_message)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"UPDATE scan_sessions SET
+                           updated_at = CURRENT_TIMESTAMP,
+                           name = COALESCE(?, name),
+                           description = COALESCE(?, description),
+                           status = COALESCE(?, status),
+                           progress = COALESCE(?, progress),
+                           current_stage = COALESCE(?, current_stage),
+                           total_stages = COALESCE(?, total_stages),
+                           completed_stages = COALESCE(?, completed_stages),
+                           results_summary = COALESCE(?, results_summary),
+                           error_message = COALESCE(?, error_message)
+                       WHERE id = ?"#,
+                )
+                .bind(request.name)
+                .bind(request.description)
+                .bind(status_json)
+                .bind(request.progress)
+                .bind(request.current_stage)
+                .bind(request.total_stages)
+                .bind(request.completed_stages)
+                .bind(results_summary_json)
+                .bind(request.error_message)
+                .bind(session_id.to_string())
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"UPDATE scan_sessions SET
+                           updated_at = CURRENT_TIMESTAMP,
+                           name = COALESCE(?, name),
+                           description = COALESCE(?, description),
+                           status = COALESCE(?, status),
+                           progress = COALESCE(?, progress),
+                           current_stage = COALESCE(?, current_stage),
+                           total_stages = COALESCE(?, total_stages),
+                           completed_stages = COALESCE(?, completed_stages),
+                           results_summary = COALESCE(?, results_summary),
+                           error_message = COALESCE(?, error_message)
+                       WHERE id = ?"#,
+                )
+                .bind(request.name)
+                .bind(request.description)
+                .bind(status_json)
+                .bind(request.progress)
+                .bind(request.current_stage)
+                .bind(request.total_stages)
+                .bind(request.completed_stages)
+                .bind(results_summary_json)
+                .bind(request.error_message)
+                .bind(session_id.to_string())
+                .execute(pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
@@ -135,98 +237,79 @@ impl DatabaseService {
         offset: Option<i64>,
         status_filter: Option<ScanSessionStatus>,
     ) -> Result<Vec<ScanSession>> {
-        let pool = self.get_pool()?;
         let mut query = String::from(
-            r#"
-            SELECT id, name, description, target, scan_type, status, config,
-                   progress, current_stage, total_stages, completed_stages,
-                   results_summary, error_message, created_at, started_at,
-                   completed_at, created_by
-            FROM scan_sessions
-            WHERE 1=1
-            "#
+            r#"SELECT id, name, description, target, scan_type, status, config,
+                      progress, current_stage, total_stages, completed_stages,
+                      results_summary, error_message, created_at, started_at,
+                      completed_at, created_by
+               FROM scan_sessions"#,
         );
-
-        let mut param_idx = 1;
-        
-        if status_filter.is_some() {
-            query.push_str(&format!(" AND status = ${}", param_idx));
-            param_idx += 1;
-        }
-
-        query.push_str(" ORDER BY created_at DESC");
-
-        if limit.is_some() {
-            query.push_str(&format!(" LIMIT ${}", param_idx));
-            param_idx += 1;
-        }
-
-        if offset.is_some() {
-            query.push_str(&format!(" OFFSET ${}", param_idx));
-        }
-
-        let mut q = sqlx::query(&query);
-        
         if let Some(status) = status_filter {
-            q = q.bind(serde_json::to_string(&status)?);
+            let status_json = serde_json::to_string(&status)?;
+            query.push_str(&format!(
+                " WHERE status = '{}'",
+                status_json.replace('\'', "''")
+            ));
         }
+        query.push_str(" ORDER BY created_at DESC");
         if let Some(l) = limit {
-            q = q.bind(l);
+            query.push_str(&format!(" LIMIT {}", l.max(0)));
         }
         if let Some(o) = offset {
-            q = q.bind(o);
+            query.push_str(&format!(" OFFSET {}", o.max(0)));
         }
 
-        let rows = q.fetch_all(pool).await?;
-
-        let mut sessions = Vec::new();
-        for row in rows {
-            let session = ScanSession {
-                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-                name: row.get("name"),
-                description: row.get("description"),
-                target: row.get("target"),
-                scan_type: row.get("scan_type"),
-                status: serde_json::from_str(&row.get::<String, _>("status")).unwrap_or_default(),
-                config: serde_json::from_str(&row.get::<String, _>("config")).unwrap_or_default(),
-                progress: row.get("progress"),
-                current_stage: row.get("current_stage"),
-                total_stages: row.get("total_stages"),
-                completed_stages: row.get("completed_stages"),
-                results_summary: row
-                    .get::<Option<String>, _>("results_summary")
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                error_message: row.get("error_message"),
-                created_at: row.get("created_at"),
-                started_at: row.get("started_at"),
-                completed_at: row.get("completed_at"),
-                created_by: row.get("created_by"),
-            };
-            sessions.push(session);
-        }
-
-        Ok(sessions)
+        let rows = self.execute_query(&query).await?;
+        rows.into_iter().map(|r| parse_scan_session_row(&r)).collect()
     }
 
     pub async fn delete_scan_session_internal(&self, session_id: Uuid) -> Result<()> {
-        let pool = self.get_pool()?;
-        // 先删除相关的扫描阶段
-        sqlx::query("DELETE FROM scan_stages WHERE session_id = $1")
-            .bind(session_id.to_string())
-            .execute(pool)
-            .await?;
-
-        // 删除扫描会话
-        sqlx::query("DELETE FROM scan_sessions WHERE id = $1")
-            .bind(session_id.to_string())
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let id = session_id.to_string();
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM scan_stages WHERE session_id = $1")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM scan_sessions WHERE id = $1")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM scan_stages WHERE session_id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM scan_sessions WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM scan_stages WHERE session_id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM scan_sessions WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
 
     pub async fn create_scan_stage_internal(&self, stage: ScanStage) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let query = r#"
             INSERT INTO scan_stages (
                 id, session_id, stage_name, stage_order, status, tool_name,
@@ -234,25 +317,74 @@ impl DatabaseService {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         "#;
 
-        sqlx::query(query)
-            .bind(stage.id.to_string())
-            .bind(stage.session_id.to_string())
-            .bind(&stage.stage_name)
-            .bind(stage.stage_order)
-            .bind(serde_json::to_string(&stage.status)?)
-            .bind(&stage.tool_name)
-            .bind(serde_json::to_string(&stage.config)?)
-            .bind(stage.started_at)
-            .bind(stage.completed_at)
-            .bind(stage.duration_ms)
-            .execute(pool)
-            .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(query)
+                    .bind(stage.id.to_string())
+                    .bind(stage.session_id.to_string())
+                    .bind(&stage.stage_name)
+                    .bind(stage.stage_order)
+                    .bind(serde_json::to_string(&stage.status)?)
+                    .bind(&stage.tool_name)
+                    .bind(serde_json::to_string(&stage.config)?)
+                    .bind(stage.started_at)
+                    .bind(stage.completed_at)
+                    .bind(stage.duration_ms)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                let query = r#"
+                    INSERT INTO scan_stages (
+                        id, session_id, stage_name, stage_order, status, tool_name,
+                        config, started_at, completed_at, duration_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#;
+                sqlx::query(query)
+                    .bind(stage.id.to_string())
+                    .bind(stage.session_id.to_string())
+                    .bind(&stage.stage_name)
+                    .bind(stage.stage_order)
+                    .bind(serde_json::to_string(&stage.status)?)
+                    .bind(&stage.tool_name)
+                    .bind(serde_json::to_string(&stage.config)?)
+                    .bind(stage.started_at)
+                    .bind(stage.completed_at)
+                    .bind(stage.duration_ms)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let query = r#"
+                    INSERT INTO scan_stages (
+                        id, session_id, stage_name, stage_order, status, tool_name,
+                        config, started_at, completed_at, duration_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#;
+                sqlx::query(query)
+                    .bind(stage.id.to_string())
+                    .bind(stage.session_id.to_string())
+                    .bind(&stage.stage_name)
+                    .bind(stage.stage_order)
+                    .bind(serde_json::to_string(&stage.status)?)
+                    .bind(&stage.tool_name)
+                    .bind(serde_json::to_string(&stage.config)?)
+                    .bind(stage.started_at)
+                    .bind(stage.completed_at)
+                    .bind(stage.duration_ms)
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
 
     pub async fn update_scan_stage_internal(&self, stage: &ScanStage) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let query = r#"
             UPDATE scan_stages SET
                 status = $1, results = $2, error_message = $3,
@@ -260,61 +392,88 @@ impl DatabaseService {
             WHERE id = $7
         "#;
 
-        sqlx::query(query)
-            .bind(serde_json::to_string(&stage.status)?)
-            .bind(
-                stage
-                    .results
-                    .as_ref()
-                    .map(serde_json::to_string)
-                    .transpose()?,
-            )
-            .bind(&stage.error_message)
-            .bind(stage.started_at)
-            .bind(stage.completed_at)
-            .bind(stage.duration_ms)
-            .bind(stage.id.to_string())
-            .execute(pool)
-            .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(query)
+                    .bind(serde_json::to_string(&stage.status)?)
+                    .bind(
+                        stage
+                            .results
+                            .as_ref()
+                            .map(serde_json::to_string)
+                            .transpose()?,
+                    )
+                    .bind(&stage.error_message)
+                    .bind(stage.started_at)
+                    .bind(stage.completed_at)
+                    .bind(stage.duration_ms)
+                    .bind(stage.id.to_string())
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                let query = r#"
+                    UPDATE scan_stages SET
+                        status = ?, results = ?, error_message = ?,
+                        started_at = ?, completed_at = ?, duration_ms = ?
+                    WHERE id = ?
+                "#;
+                sqlx::query(query)
+                    .bind(serde_json::to_string(&stage.status)?)
+                    .bind(
+                        stage
+                            .results
+                            .as_ref()
+                            .map(serde_json::to_string)
+                            .transpose()?,
+                    )
+                    .bind(&stage.error_message)
+                    .bind(stage.started_at)
+                    .bind(stage.completed_at)
+                    .bind(stage.duration_ms)
+                    .bind(stage.id.to_string())
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                let query = r#"
+                    UPDATE scan_stages SET
+                        status = ?, results = ?, error_message = ?,
+                        started_at = ?, completed_at = ?, duration_ms = ?
+                    WHERE id = ?
+                "#;
+                sqlx::query(query)
+                    .bind(serde_json::to_string(&stage.status)?)
+                    .bind(
+                        stage
+                            .results
+                            .as_ref()
+                            .map(serde_json::to_string)
+                            .transpose()?,
+                    )
+                    .bind(&stage.error_message)
+                    .bind(stage.started_at)
+                    .bind(stage.completed_at)
+                    .bind(stage.duration_ms)
+                    .bind(stage.id.to_string())
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
 
     pub async fn get_scan_session_stages_internal(&self, session_id: Uuid) -> Result<Vec<ScanStage>> {
-        let pool = self.get_pool()?;
-        let query = r#"
-            SELECT id, session_id, stage_name, stage_order, status, tool_name,
-                   config, results, error_message, started_at, completed_at, duration_ms
-            FROM scan_stages WHERE session_id = $1 ORDER BY stage_order
-        "#;
-
-        let rows = sqlx::query(query)
-            .bind(session_id.to_string())
-            .fetch_all(pool)
+        let rows = self
+            .execute_query(&format!(
+                r#"SELECT id, session_id, stage_name, stage_order, status, tool_name,
+                          config, results, error_message, started_at, completed_at, duration_ms
+                   FROM scan_stages WHERE session_id = '{}' ORDER BY stage_order"#,
+                session_id
+            ))
             .await?;
-
-        let mut stages = Vec::new();
-        for row in rows {
-            let stage = ScanStage {
-                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-                session_id: Uuid::parse_str(&row.get::<String, _>("session_id"))?,
-                stage_name: row.get("stage_name"),
-                stage_order: row.get("stage_order"),
-                status: serde_json::from_str(&row.get::<String, _>("status")).unwrap_or_default(),
-                tool_name: row.get("tool_name"),
-                config: serde_json::from_str(&row.get::<String, _>("config")).unwrap_or_default(),
-                results: row
-                    .get::<Option<String>, _>("results")
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                error_message: row.get("error_message"),
-                started_at: row.get("started_at"),
-                completed_at: row.get("completed_at"),
-                duration_ms: row.get("duration_ms"),
-            };
-            stages.push(stage);
-        }
-
-        Ok(stages)
+        rows.into_iter().map(|r| parse_scan_stage_row(&r)).collect()
     }
 
     pub async fn get_scan_progress_internal(&self, session_id: Uuid) -> Result<Option<ScanProgress>> {
@@ -354,3 +513,146 @@ impl DatabaseService {
     }
 }
 
+fn parse_scan_session_row(row: &Value) -> Result<ScanSession> {
+    let obj = row
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("invalid scan session row"))?;
+    let created_at = parse_datetime_required(obj.get("created_at"))?;
+    let started_at = parse_datetime_optional(obj.get("started_at"));
+    let completed_at = parse_datetime_optional(obj.get("completed_at"));
+    let status = obj
+        .get("status")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<ScanSessionStatus>(s).ok())
+        .unwrap_or_default();
+    let config = obj
+        .get("config")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let results_summary = obj
+        .get("results_summary")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+
+    Ok(ScanSession {
+        id: Uuid::parse_str(obj.get("id").and_then(|v| v.as_str()).unwrap_or_default())?,
+        name: obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        description: obj
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        target: obj
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        scan_type: obj
+            .get("scan_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        status,
+        config,
+        progress: obj.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0),
+        current_stage: obj
+            .get("current_stage")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        total_stages: obj
+            .get("total_stages")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32,
+        completed_stages: obj
+            .get("completed_stages")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32,
+        results_summary,
+        error_message: obj
+            .get("error_message")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        created_at,
+        started_at,
+        completed_at,
+        created_by: obj
+            .get("created_by")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+    })
+}
+
+fn parse_scan_stage_row(row: &Value) -> Result<ScanStage> {
+    let obj = row
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("invalid scan stage row"))?;
+    let status = obj
+        .get("status")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<ScanStageStatus>(s).ok())
+        .unwrap_or_default();
+    let config = obj
+        .get("config")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let results = obj
+        .get("results")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+
+    Ok(ScanStage {
+        id: Uuid::parse_str(obj.get("id").and_then(|v| v.as_str()).unwrap_or_default())?,
+        session_id: Uuid::parse_str(
+            obj.get("session_id").and_then(|v| v.as_str()).unwrap_or_default(),
+        )?,
+        stage_name: obj
+            .get("stage_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        stage_order: obj.get("stage_order").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        status,
+        tool_name: obj
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        config,
+        results,
+        error_message: obj
+            .get("error_message")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        started_at: parse_datetime_optional(obj.get("started_at")),
+        completed_at: parse_datetime_optional(obj.get("completed_at")),
+        duration_ms: obj.get("duration_ms").and_then(|v| v.as_i64()),
+    })
+}
+
+fn parse_datetime_required(v: Option<&Value>) -> Result<DateTime<Utc>> {
+    let s = v
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing datetime"))?;
+    parse_datetime(s).ok_or_else(|| anyhow::anyhow!("invalid datetime: {}", s))
+}
+
+fn parse_datetime_optional(v: Option<&Value>) -> Option<DateTime<Utc>> {
+    v.and_then(|x| x.as_str()).and_then(parse_datetime)
+}
+
+fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+                .ok()
+                .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+        })
+}

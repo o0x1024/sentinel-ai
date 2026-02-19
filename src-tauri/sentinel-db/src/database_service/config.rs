@@ -1,6 +1,7 @@
 use anyhow::Result;
 use crate::core::models::database::{Configuration, NotificationRule, McpServerConfig};
 use crate::core::models::rag_config::RagConfig;
+use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
 
 impl DatabaseService {
@@ -20,14 +21,33 @@ impl DatabaseService {
     }
 
     pub async fn get_config_internal(&self, category: &str, key: &str) -> Result<Option<String>> {
-        let pool = self.get_pool()?;
-
-        let value: Option<String> =
-            sqlx::query_scalar("SELECT value FROM configurations WHERE category = $1 AND key = $2")
-                .bind(category)
-                .bind(key)
-                .fetch_optional(pool)
-                .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let value: Option<String> = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar("SELECT value FROM configurations WHERE category = $1 AND key = $2")
+                    .bind(category)
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
+                    .bind(category)
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
+                    .bind(category)
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await?
+            }
+        };
 
         Ok(value)
     }
@@ -39,103 +59,297 @@ impl DatabaseService {
         value: &str,
         description: Option<&str>,
     ) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         // Generate ID from category and key for consistency
         let id = format!("{}:{}", category, key);
-        sqlx::query(
-            "INSERT INTO configurations (id, category, key, value, description) VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = CURRENT_TIMESTAMP"
-        )
-        .bind(&id)
-        .bind(category)
-        .bind(key)
-        .bind(value)
-        .bind(description)
-        .execute(pool)
-        .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    "INSERT INTO configurations (id, category, key, value, description) VALUES ($1, $2, $3, $4, $5)
+                     ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = CURRENT_TIMESTAMP",
+                )
+                .bind(&id)
+                .bind(category)
+                .bind(key)
+                .bind(value)
+                .bind(description)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    "INSERT INTO configurations (id, category, key, value, description) VALUES (?, ?, ?, ?, ?)
+                     ON CONFLICT(category, key) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = CURRENT_TIMESTAMP",
+                )
+                .bind(&id)
+                .bind(category)
+                .bind(key)
+                .bind(value)
+                .bind(description)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    "INSERT INTO configurations (id, category, `key`, value, description) VALUES (?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE value = VALUES(value), description = VALUES(description), updated_at = CURRENT_TIMESTAMP",
+                )
+                .bind(&id)
+                .bind(category)
+                .bind(key)
+                .bind(value)
+                .bind(description)
+                .execute(pool)
+                .await?;
+            }
+        }
         Ok(())
     }
 
     pub async fn get_configs_by_category_internal(&self, category: &str) -> Result<Vec<Configuration>> {
-        let pool = self.get_pool()?;
-
-        let rows = sqlx::query_as::<_, Configuration>(
-            "SELECT * FROM configurations WHERE category = $1 ORDER BY key",
-        )
-        .bind(category)
-        .fetch_all(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let rows = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, Configuration>(
+                    "SELECT * FROM configurations WHERE category = $1 ORDER BY key",
+                )
+                .bind(category)
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, Configuration>(
+                    "SELECT * FROM configurations WHERE category = ? ORDER BY key",
+                )
+                .bind(category)
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, Configuration>(
+                    "SELECT * FROM configurations WHERE category = ? ORDER BY key",
+                )
+                .bind(category)
+                .fetch_all(pool)
+                .await?
+            }
+        };
 
         Ok(rows)
     }
 
     pub async fn create_notification_rule_internal(&self, rule: &NotificationRule) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query(
-            r#"INSERT INTO notification_rules (id, name, description, channel, config, is_encrypted, enabled, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#
-        )
-        .bind(&rule.id)
-        .bind(&rule.name)
-        .bind(&rule.description)
-        .bind(&rule.channel)
-        .bind(&rule.config)
-        .bind(rule.is_encrypted)
-        .bind(rule.enabled)
-        .bind(rule.created_at)
-        .bind(rule.updated_at)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO notification_rules (id, name, description, channel, config, is_encrypted, enabled, created_at, updated_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+                )
+                .bind(&rule.id)
+                .bind(&rule.name)
+                .bind(&rule.description)
+                .bind(&rule.channel)
+                .bind(&rule.config)
+                .bind(rule.is_encrypted)
+                .bind(rule.enabled)
+                .bind(rule.created_at)
+                .bind(rule.updated_at)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO notification_rules (id, name, description, channel, config, is_encrypted, enabled, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(&rule.id)
+                .bind(&rule.name)
+                .bind(&rule.description)
+                .bind(&rule.channel)
+                .bind(&rule.config)
+                .bind(rule.is_encrypted)
+                .bind(rule.enabled)
+                .bind(rule.created_at)
+                .bind(rule.updated_at)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"INSERT INTO notification_rules (id, name, description, channel, config, is_encrypted, enabled, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                )
+                .bind(&rule.id)
+                .bind(&rule.name)
+                .bind(&rule.description)
+                .bind(&rule.channel)
+                .bind(&rule.config)
+                .bind(rule.is_encrypted)
+                .bind(rule.enabled)
+                .bind(rule.created_at)
+                .bind(rule.updated_at)
+                .execute(pool)
+                .await?;
+            }
+        }
         Ok(())
     }
 
     pub async fn get_notification_rules_internal(&self) -> Result<Vec<NotificationRule>> {
-        let pool = self.get_pool()?;
-        let rows = sqlx::query_as::<_, NotificationRule>(
-            "SELECT * FROM notification_rules ORDER BY updated_at DESC"
-        )
-        .fetch_all(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let rows = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, NotificationRule>(
+                    "SELECT * FROM notification_rules ORDER BY updated_at DESC",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, NotificationRule>(
+                    "SELECT * FROM notification_rules ORDER BY updated_at DESC",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, NotificationRule>(
+                    "SELECT * FROM notification_rules ORDER BY updated_at DESC",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+        };
         Ok(rows)
     }
 
     pub async fn get_notification_rule_internal(&self, id: &str) -> Result<Option<NotificationRule>> {
-        let pool = self.get_pool()?;
-        let row = sqlx::query_as::<_, NotificationRule>(
-            "SELECT * FROM notification_rules WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let row = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, NotificationRule>("SELECT * FROM notification_rules WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, NotificationRule>("SELECT * FROM notification_rules WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, NotificationRule>("SELECT * FROM notification_rules WHERE id = ?")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+        };
         Ok(row)
     }
 
     pub async fn update_notification_rule_internal(&self, rule: &NotificationRule) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query(
-            r#"UPDATE notification_rules
-               SET name = $1, description = $2, channel = $3, config = $4, is_encrypted = $5, enabled = $6, updated_at = $7
-               WHERE id = $8"#
-        )
-        .bind(&rule.name)
-        .bind(&rule.description)
-        .bind(&rule.channel)
-        .bind(&rule.config)
-        .bind(rule.is_encrypted)
-        .bind(rule.enabled)
-        .bind(chrono::Utc::now())
-        .bind(&rule.id)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"UPDATE notification_rules
+                       SET name = $1, description = $2, channel = $3, config = $4, is_encrypted = $5, enabled = $6, updated_at = $7
+                       WHERE id = $8"#,
+                )
+                .bind(&rule.name)
+                .bind(&rule.description)
+                .bind(&rule.channel)
+                .bind(&rule.config)
+                .bind(rule.is_encrypted)
+                .bind(rule.enabled)
+                .bind(chrono::Utc::now())
+                .bind(&rule.id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"UPDATE notification_rules
+                       SET name = ?, description = ?, channel = ?, config = ?, is_encrypted = ?, enabled = ?, updated_at = ?
+                       WHERE id = ?"#,
+                )
+                .bind(&rule.name)
+                .bind(&rule.description)
+                .bind(&rule.channel)
+                .bind(&rule.config)
+                .bind(rule.is_encrypted)
+                .bind(rule.enabled)
+                .bind(chrono::Utc::now())
+                .bind(&rule.id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"UPDATE notification_rules
+                       SET name = ?, description = ?, channel = ?, config = ?, is_encrypted = ?, enabled = ?, updated_at = ?
+                       WHERE id = ?"#,
+                )
+                .bind(&rule.name)
+                .bind(&rule.description)
+                .bind(&rule.channel)
+                .bind(&rule.config)
+                .bind(rule.is_encrypted)
+                .bind(rule.enabled)
+                .bind(chrono::Utc::now())
+                .bind(&rule.id)
+                .execute(pool)
+                .await?;
+            }
+        }
         Ok(())
     }
 
     pub async fn delete_notification_rule_internal(&self, id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM notification_rules WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM notification_rules WHERE id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM notification_rules WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM notification_rules WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -147,76 +361,220 @@ impl DatabaseService {
         args: &[String],
     ) -> Result<String> {
         let args_json = serde_json::to_string(args)?;
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
 
         let url = "http://localhost:8080".to_string();
         let connection_type = "stdio";
 
-        sqlx::query(
-            r#"
-            INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(description)
-        .bind(&url)
-        .bind(connection_type)
-        .bind(command)
-        .bind(args_json)
-        .execute(pool)
-        .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    "#,
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description)
+                .bind(&url)
+                .bind(connection_type)
+                .bind(command)
+                .bind(args_json)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description)
+                .bind(&url)
+                .bind(connection_type)
+                .bind(command)
+                .bind(args_json.clone())
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO mcp_server_configs (id, name, description, url, connection_type, command, args)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description)
+                .bind(&url)
+                .bind(connection_type)
+                .bind(command)
+                .bind(args_json)
+                .execute(pool)
+                .await?;
+            }
+        }
         Ok(id)
     }
 
     pub async fn get_all_mcp_server_configs_internal(&self) -> Result<Vec<McpServerConfig>> {
-        let pool = self.get_pool()?;
-        let configs = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
-        )
-        .fetch_all(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let configs = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+        };
         Ok(configs)
     }
     
     pub async fn get_auto_connect_mcp_servers_internal(&self) -> Result<Vec<McpServerConfig>> {
-        let pool = self.get_pool()?;
-        let configs = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE"
-        )
-        .fetch_all(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let configs = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE auto_connect = TRUE",
+                )
+                .fetch_all(pool)
+                .await?
+            }
+        };
         Ok(configs)
     }
     
     pub async fn update_mcp_server_auto_connect_internal(&self, id: &str, auto_connect: bool) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("UPDATE mcp_server_configs SET auto_connect = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
-            .bind(auto_connect)
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("UPDATE mcp_server_configs SET auto_connect = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
+                    .bind(auto_connect)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("UPDATE mcp_server_configs SET auto_connect = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                    .bind(auto_connect)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("UPDATE mcp_server_configs SET auto_connect = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                    .bind(auto_connect)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
     pub async fn update_mcp_server_config_enabled_internal(&self, id: &str, enabled: bool) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("UPDATE mcp_server_configs SET is_enabled = $1 WHERE id = $2")
-            .bind(enabled)
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("UPDATE mcp_server_configs SET is_enabled = $1 WHERE id = $2")
+                    .bind(enabled)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("UPDATE mcp_server_configs SET is_enabled = ? WHERE id = ?")
+                    .bind(enabled)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("UPDATE mcp_server_configs SET is_enabled = ? WHERE id = ?")
+                    .bind(enabled)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
     pub async fn delete_mcp_server_config_internal(&self, id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        sqlx::query("DELETE FROM mcp_server_configs WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM mcp_server_configs WHERE id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM mcp_server_configs WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM mcp_server_configs WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -224,13 +582,36 @@ impl DatabaseService {
         &self,
         name: &str,
     ) -> Result<Option<McpServerConfig>> {
-        let pool = self.get_pool()?;
-        let config = sqlx::query_as::<_, McpServerConfig>(
-            "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = $1",
-        )
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let config = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = $1",
+                )
+                .bind(name)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
+                )
+                .bind(name)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, McpServerConfig>(
+                    "SELECT id, name, description, url, connection_type, command, args, is_enabled as enabled, COALESCE(auto_connect, FALSE) as auto_connect, created_at, updated_at FROM mcp_server_configs WHERE name = ?",
+                )
+                .bind(name)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
         Ok(config)
     }
 
@@ -243,7 +624,10 @@ impl DatabaseService {
         args: &[String],
         enabled: bool,
     ) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let args_json = serde_json::to_string(args)?;
 
         let existing = self.get_mcp_server_config_by_name_internal(name).await?;
@@ -257,63 +641,176 @@ impl DatabaseService {
             .map(|c| c.connection_type.clone())
             .unwrap_or_else(|| "stdio".to_string());
 
-        sqlx::query(
-            "UPDATE mcp_server_configs SET name = $1, description = $2, url = $3, connection_type = $4, command = $5, args = $6, is_enabled = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8",
-        )
-        .bind(name)
-        .bind(description)
-        .bind(&url)
-        .bind(&connection_type)
-        .bind(command)
-        .bind(&args_json)
-        .bind(enabled)
-        .bind(id)
-        .execute(pool)
-        .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    "UPDATE mcp_server_configs SET name = $1, description = $2, url = $3, connection_type = $4, command = $5, args = $6, is_enabled = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8",
+                )
+                .bind(name)
+                .bind(description)
+                .bind(&url)
+                .bind(&connection_type)
+                .bind(command)
+                .bind(&args_json)
+                .bind(enabled)
+                .bind(id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                )
+                .bind(name)
+                .bind(description)
+                .bind(&url)
+                .bind(&connection_type)
+                .bind(command)
+                .bind(&args_json)
+                .bind(enabled)
+                .bind(id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    "UPDATE mcp_server_configs SET name = ?, description = ?, url = ?, connection_type = ?, command = ?, args = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                )
+                .bind(name)
+                .bind(description)
+                .bind(&url)
+                .bind(&connection_type)
+                .bind(command)
+                .bind(&args_json)
+                .bind(enabled)
+                .bind(id)
+                .execute(pool)
+                .await?;
+            }
+        }
         Ok(())
     }
 
     pub async fn get_subdomain_dictionary_internal(&self) -> Result<Vec<String>> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         if let Some(default_dict_id) = self
             .get_config_internal("dictionary_default", "subdomain")
             .await?
             .filter(|s| !s.is_empty())
         {
-            let words: Vec<String> = sqlx::query_scalar(
-                r#"SELECT word FROM dictionary_words 
-                   WHERE dictionary_id = $1 
-                   ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-            )
-            .bind(&default_dict_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+            let words: Vec<String> = match runtime {
+                DatabasePool::PostgreSQL(pool) => {
+                    sqlx::query_scalar(
+                        r#"SELECT word FROM dictionary_words 
+                           WHERE dictionary_id = $1 
+                           ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+                    )
+                    .bind(&default_dict_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default()
+                }
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query_scalar(
+                        r#"SELECT word FROM dictionary_words 
+                           WHERE dictionary_id = ? 
+                           ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+                    )
+                    .bind(&default_dict_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default()
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query_scalar(
+                        r#"SELECT word FROM dictionary_words 
+                           WHERE dictionary_id = ? 
+                           ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+                    )
+                    .bind(&default_dict_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default()
+                }
+            };
 
             if !words.is_empty() {
                 return Ok(words);
             }
         }
 
-        if let Some(candidate_id) = sqlx::query_scalar::<_, String>(
-            r#"SELECT id FROM dictionaries 
-               WHERE dict_type = 'subdomain' AND is_active = TRUE 
-               ORDER BY is_builtin DESC, updated_at DESC 
-               LIMIT 1"#,
-        )
-        .fetch_optional(pool)
-        .await?
-        {
-            let words: Vec<String> = sqlx::query_scalar(
-                r#"SELECT word FROM dictionary_words 
-                   WHERE dictionary_id = $1 
-                   ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-            )
-            .bind(&candidate_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+        let candidate_id = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar::<_, String>(
+                    r#"SELECT id FROM dictionaries 
+                       WHERE dict_type = 'subdomain' AND is_active = TRUE 
+                       ORDER BY is_builtin DESC, updated_at DESC 
+                       LIMIT 1"#,
+                )
+                .fetch_optional(pool)
+                .await
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar::<_, String>(
+                    r#"SELECT id FROM dictionaries 
+                       WHERE dict_type = 'subdomain' AND is_active = TRUE 
+                       ORDER BY is_builtin DESC, updated_at DESC 
+                       LIMIT 1"#,
+                )
+                .fetch_optional(pool)
+                .await
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar::<_, String>(
+                    r#"SELECT id FROM dictionaries 
+                       WHERE dict_type = 'subdomain' AND is_active = TRUE 
+                       ORDER BY is_builtin DESC, updated_at DESC 
+                       LIMIT 1"#,
+                )
+                .fetch_optional(pool)
+                .await
+            }
+        };
+        if let Ok(Some(candidate_id)) = candidate_id {
+            let words: Vec<String> = match runtime {
+                DatabasePool::PostgreSQL(pool) => {
+                    sqlx::query_scalar(
+                        r#"SELECT word FROM dictionary_words 
+                           WHERE dictionary_id = $1 
+                           ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+                    )
+                    .bind(&candidate_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default()
+                }
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query_scalar(
+                        r#"SELECT word FROM dictionary_words 
+                           WHERE dictionary_id = ? 
+                           ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+                    )
+                    .bind(&candidate_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default()
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query_scalar(
+                        r#"SELECT word FROM dictionary_words 
+                           WHERE dictionary_id = ? 
+                           ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
+                    )
+                    .bind(&candidate_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default()
+                }
+            };
 
             if !words.is_empty() {
                 return Ok(words);

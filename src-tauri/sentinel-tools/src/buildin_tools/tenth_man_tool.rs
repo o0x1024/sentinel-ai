@@ -108,23 +108,20 @@ impl TenthManTool {
     }
     
     pub const NAME: &'static str = "tenth_man_review";
-    pub const DESCRIPTION: &'static str = "Request adversarial review of your work from the Tenth Man. \
-        \n\nThe Tenth Man reviews your COMPLETE conversation history (not just current message) to find:\
-        \n- Logic flaws across multiple steps\
-        \n- Dangerous assumptions in your reasoning\
-        \n- Overlooked risks and edge cases\
-        \n- Inconsistencies in your approach\
+    pub const DESCRIPTION: &'static str = "Run a structured adversarial review (\"10th Man\") on the current work. \
+        \n\nThis tool challenges prevailing assumptions and stress-tests the plan, analysis, or conclusion against alternatives, uncertainty, and failure modes.\
+        \n\nIt can review complete conversation history (not just the latest message) to surface:\
+        \n- Hidden assumptions and weak evidence\
+        \n- Logical gaps, contradictions, and blind spots\
+        \n- Edge cases, constraints, and second-order effects\
+        \n- Safer or more robust alternative approaches\
         \n\nReview modes:\
-        \n- 'full_history' (default): Reviews entire conversation with smart summarization\
-        \n- 'recent_messages': Reviews last N messages only (specify count)\
+        \n- 'full_history' (default): Review the full thread with summarization\
+        \n- 'recent_messages': Review only the last N messages (set count)\
         \n\nReview types:\
-        \n- 'quick': Fast risk identification (1-2 sentences)\
-        \n- 'full': Comprehensive analysis with detailed critique\
-        \n\nUse this tool when:\
-        \n- Before executing critical operations\
-        \n- After making important decisions\
-        \n- When you want to validate your approach\
-        \n- To catch mistakes before they cause problems";
+        \n- 'quick': Short risk-oriented challenge\
+        \n- 'full': Detailed critique with tradeoffs and mitigation ideas\
+        \n\nUseful for any domain where quality of reasoning matters: decision-making, planning, coding, security, product strategy, operations, policy, and communications.";
 }
 
 impl Tool for TenthManTool {

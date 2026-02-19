@@ -79,6 +79,7 @@ export default {
     tabs: {
       vulnerabilities: '漏洞',
       scanTasks: '扫描任务',
+      codeAudit: '代码审计',
       assets: '资产',
     },
   },

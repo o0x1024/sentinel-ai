@@ -36,12 +36,24 @@
         </svg>
         {{ $t('securityCenter.tabs.scanTasks') }}
       </a>
+      <a
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'codeAudit' }"
+        @click="activeTab = 'codeAudit'"
+      >
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.764A9 9 0 1112 3a9 9 0 017.618 4.236z"></path>
+        </svg>
+        {{ $t('securityCenter.tabs.codeAudit') }}
+      </a>
     </div>
 
     <!-- 扫描任务 Tab -->
     <ScanTasksPanel @stats-updated="updateScanStats" v-if="activeTab === 'scan'"/>
     <!-- 漏洞管理 Tab -->
     <VulnerabilitiesPanel @stats-updated="updateVulnStats" v-if="activeTab === 'vulnerabilities'"/>
+    <!-- 代码审计 Tab -->
+    <CodeAuditFindingsPanel v-if="activeTab === 'codeAudit'"/>
   </div>
 </template>
 
@@ -51,13 +63,14 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import ScanTasksPanel from '../components/SecurityCenter/ScanTasksPanel.vue';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
+import CodeAuditFindingsPanel from '../components/SecurityCenter/CodeAuditFindingsPanel.vue';
 
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 
 // 当前激活的 Tab
-const activeTab = ref<'scan' | 'vulnerabilities' | 'assets'>('vulnerabilities');
+const activeTab = ref<'scan' | 'vulnerabilities' | 'codeAudit' | 'assets'>('vulnerabilities');
 
 // 统计数据
 const overviewStats = ref({
@@ -73,8 +86,8 @@ const overviewStats = ref({
 // 从 URL 参数读取初始 Tab
 onMounted(() => {
   const tab = route.query.tab as string;
-  if (tab && ['scan', 'vulnerabilities'].includes(tab)) {
-    activeTab.value = tab as 'scan' | 'vulnerabilities';
+  if (tab && ['scan', 'vulnerabilities', 'codeAudit'].includes(tab)) {
+    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'codeAudit';
   }
 });
 
@@ -84,7 +97,7 @@ const updateUrlTab = (tab: string) => {
 };
 
 // 监听 Tab 切换
-const switchTab = (tab: 'scan' | 'vulnerabilities' | 'assets') => {
+const switchTab = (tab: 'scan' | 'vulnerabilities' | 'codeAudit' | 'assets') => {
   activeTab.value = tab;
   updateUrlTab(tab);
 };

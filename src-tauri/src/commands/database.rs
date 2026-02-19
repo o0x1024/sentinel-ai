@@ -2,7 +2,10 @@
 
 use crate::services::database::DatabaseService;
 use sentinel_db::Database;
-use sentinel_db::database_service::{DatabaseConfig, DatabasePool, DatabaseMigration};
+use sentinel_db::database_service::{
+    load_db_config_from_disk, save_db_config_to_disk, DatabaseConfig, DatabaseMigration,
+    DatabasePool, DatabaseType,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -82,10 +85,24 @@ pub async fn get_database_status(
     let db_path = db_service.get_db_path();
     tracing::info!("Database path: {}", db_path.display());
     
-    // 获取表数量 - 使用 PostgreSQL 的查询方式
-    let table_count = match db_service.execute_query(
-        "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
-    ).await {
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
+
+    let table_count_sql = match db_kind {
+        DatabaseType::PostgreSQL => {
+            "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        }
+        DatabaseType::MySQL => {
+            "SELECT COUNT(*) as table_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+        }
+        DatabaseType::SQLite => {
+            "SELECT COUNT(*) as table_count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        }
+    };
+
+    let table_count = match db_service.execute_query(table_count_sql).await {
         Ok(rows) => {
             tracing::info!("Table count query result: {:?}", rows);
             if let Some(first) = rows.first() {
@@ -124,9 +141,14 @@ pub async fn get_database_status(
                 config.path.clone().unwrap_or_else(|| "Default".to_string())
             },
             _ => {
+                let default_port = match config.db_type {
+                    sentinel_db::database_service::DatabaseType::PostgreSQL => 5432,
+                    sentinel_db::database_service::DatabaseType::MySQL => 3306,
+                    sentinel_db::database_service::DatabaseType::SQLite => 0,
+                };
                 format!("{}:{}", 
                     config.host.as_deref().unwrap_or("localhost"),
-                    config.port.unwrap_or(5432)
+                    config.port.unwrap_or(default_port)
                 )
             }
         };
@@ -211,18 +233,38 @@ pub async fn restore_database_backup(
 pub async fn optimize_database(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    // 执行 VACUUM 优化
-    db_service
-        .execute_query("VACUUM")
-        .await
-        .map_err(|e| format!("优化数据库失败: {}", e))?;
-    
-    // 执行 ANALYZE 更新统计信息
-    db_service
-        .execute_query("ANALYZE")
-        .await
-        .map_err(|e| format!("更新统计信息失败: {}", e))?;
-    
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
+
+    match db_kind {
+        DatabaseType::PostgreSQL | DatabaseType::SQLite => {
+            db_service
+                .execute_query("VACUUM")
+                .await
+                .map_err(|e| format!("优化数据库失败: {}", e))?;
+
+            db_service
+                .execute_query("ANALYZE")
+                .await
+                .map_err(|e| format!("更新统计信息失败: {}", e))?;
+        }
+        DatabaseType::MySQL => {
+            let tables = db_service
+                .execute_query("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()")
+                .await
+                .map_err(|e| format!("获取 MySQL 表列表失败: {}", e))?;
+
+            for table in tables {
+                if let Some(name) = table.get("table_name").and_then(|v| v.as_str()) {
+                    let sql = format!("OPTIMIZE TABLE `{}`", name);
+                    let _ = db_service.execute_query(&sql).await;
+                }
+            }
+        }
+    }
+
     Ok("数据库优化完成".to_string())
 }
 
@@ -231,9 +273,25 @@ pub async fn optimize_database(
 pub async fn rebuild_database_indexes(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    // 获取所有索引 - PostgreSQL 方式
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
+
+    let index_sql = match db_kind {
+        DatabaseType::PostgreSQL => {
+            "SELECT indexname as name FROM pg_indexes WHERE schemaname = 'public'"
+        }
+        DatabaseType::MySQL => {
+            "SELECT DISTINCT index_name as name FROM information_schema.statistics WHERE table_schema = DATABASE() AND index_name <> 'PRIMARY'"
+        }
+        DatabaseType::SQLite => {
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+        }
+    };
+
     let indexes = db_service
-        .execute_query("SELECT indexname as name FROM pg_indexes WHERE schemaname = 'public'")
+        .execute_query(index_sql)
         .await
         .map_err(|e| format!("获取索引列表失败: {}", e))?;
     
@@ -241,7 +299,14 @@ pub async fn rebuild_database_indexes(
     
     for index in indexes {
         if let Some(name) = index.get("name").and_then(|v| v.as_str()) {
-            let query = format!("REINDEX \"{}\"", name);
+            let query = match db_kind {
+                DatabaseType::PostgreSQL => format!("REINDEX INDEX \"{}\"", name),
+                DatabaseType::SQLite => format!("REINDEX \"{}\"", name),
+                DatabaseType::MySQL => {
+                    // MySQL has no direct REINDEX command; handled by OPTIMIZE TABLE in optimize_database.
+                    continue;
+                }
+            };
             if db_service.execute_query(&query).await.is_ok() {
                 rebuilt_count += 1;
             }
@@ -261,14 +326,47 @@ pub async fn cleanup_database(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let mut deleted_count = 0;
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
+
+    let (logs_query, sessions_query) = match db_kind {
+        DatabaseType::PostgreSQL => (
+            format!(
+                "DELETE FROM agent_session_logs WHERE created_at < NOW() - INTERVAL '{} days'",
+                retention_days
+            ),
+            format!(
+                "DELETE FROM agent_sessions WHERE created_at < NOW() - INTERVAL '{} days'",
+                retention_days
+            ),
+        ),
+        DatabaseType::MySQL => (
+            format!(
+                "DELETE FROM agent_session_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL {} DAY)",
+                retention_days
+            ),
+            format!(
+                "DELETE FROM agent_sessions WHERE created_at < DATE_SUB(NOW(), INTERVAL {} DAY)",
+                retention_days
+            ),
+        ),
+        DatabaseType::SQLite => (
+            format!(
+                "DELETE FROM agent_session_logs WHERE created_at < datetime('now', '-{} days')",
+                retention_days
+            ),
+            format!(
+                "DELETE FROM agent_sessions WHERE created_at < datetime('now', '-{} days')",
+                retention_days
+            ),
+        ),
+    };
     
     // 清理旧日志
     if cleanup_logs {
-        let query = format!(
-            "DELETE FROM agent_session_logs WHERE timestamp < NOW() - INTERVAL '{} days'",
-            retention_days
-        );
-        if let Ok(result) = db_service.execute_query(&query).await {
+        if let Ok(result) = db_service.execute_query(&logs_query).await {
             // 统计删除数量
             deleted_count += result.len();
         }
@@ -276,11 +374,7 @@ pub async fn cleanup_database(
     
     // 清理旧会话
     if cleanup_old_sessions {
-        let query = format!(
-            "DELETE FROM agent_sessions WHERE created_at < NOW() - INTERVAL '{} days'",
-            retention_days
-        );
-        if let Ok(result) = db_service.execute_query(&query).await {
+        if let Ok(result) = db_service.execute_query(&sessions_query).await {
             deleted_count += result.len();
         }
     }
@@ -371,7 +465,8 @@ pub async fn delete_database_backup(backup_path: String) -> Result<(), String> {
     
     // 确保只能删除备份文件
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        if !name.starts_with("backup_") || !name.ends_with(".db") {
+        let valid_ext = name.ends_with(".db") || name.ends_with(".sql");
+        if !name.starts_with("backup_") || !valid_ext {
             return Err("只能删除备份文件".to_string());
         }
     } else {
@@ -389,9 +484,16 @@ pub async fn export_database_json(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let mut export_data = serde_json::Map::new();
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
     
     for table in tables {
-        let query = format!("SELECT * FROM \"{}\"", table);
+        let query = match db_kind {
+            DatabaseType::MySQL => format!("SELECT * FROM `{}`", table),
+            _ => format!("SELECT * FROM \"{}\"", table),
+        };
         match db_service.execute_query(&query).await {
             Ok(rows) => {
                 export_data.insert(table, serde_json::Value::Array(rows));
@@ -453,18 +555,25 @@ pub async fn get_database_statistics(
         .await
         .map_err(|e| format!("获取统计信息失败: {}", e))?;
     
-    // 获取各表的记录数
-    let _table_stats_query = r#"
-        SELECT 
-            name as table_name,
-            (SELECT COUNT(*) FROM pragma_table_info(name)) as column_count
-        FROM sqlite_master 
-        WHERE type='table' AND name NOT LIKE 'sqlite_%'
-        ORDER BY name
-    "#;
-    
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
+
+    let table_info_sql = match db_kind {
+        DatabaseType::PostgreSQL => {
+            "SELECT table_name, 0 as column_count FROM information_schema.tables WHERE table_schema = 'public'"
+        }
+        DatabaseType::MySQL => {
+            "SELECT table_name, 0 as column_count FROM information_schema.tables WHERE table_schema = DATABASE()"
+        }
+        DatabaseType::SQLite => {
+            "SELECT name as table_name, 0 as column_count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        }
+    };
+
     let table_info = db_service
-        .execute_query("SELECT table_name, 0 as column_count FROM information_schema.tables WHERE table_schema = 'public'")
+        .execute_query(table_info_sql)
         .await
         .unwrap_or_default();
     
@@ -498,6 +607,10 @@ pub async fn reset_database(
         .map_err(|e| format!("创建备份失败: {}", e))?;
     
     tracing::warn!("Database reset initiated. Backup created at: {:?}", backup_path);
+    let db_kind = db_service
+        .get_db_config()
+        .map(|c| c.db_type.clone())
+        .unwrap_or(DatabaseType::PostgreSQL);
     
     // 删除所有用户数据表的内容
     let tables_to_clear = vec![
@@ -514,7 +627,10 @@ pub async fn reset_database(
     ];
     
     for table in &tables_to_clear {
-        let query = format!("DELETE FROM \"{}\"", table);
+        let query = match db_kind {
+            DatabaseType::MySQL => format!("DELETE FROM `{}`", table),
+            _ => format!("DELETE FROM \"{}\"", table),
+        };
         let _ = db_service.execute_query(&query).await;
     }
     
@@ -538,7 +654,7 @@ fn get_last_backup_info(db_path: &PathBuf) -> Option<BackupInfo> {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("backup_") && name.ends_with(".db") {
+                if name.starts_with("backup_") && (name.ends_with(".db") || name.ends_with(".sql")) {
                     if let Ok(metadata) = std::fs::metadata(&path) {
                         let created = metadata
                             .created()
@@ -610,11 +726,13 @@ pub async fn export_db_to_json(
     output_path: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    // Get current SQLite pool
-    let pool = db_service.get_sqlite_pool()
-        .map_err(|e| format!("Failed to get database pool: {}", e))?;
-    
-    let db_pool = DatabasePool::SQLite(pool.clone());
+    let source_config = db_service
+        .get_db_config()
+        .cloned()
+        .ok_or_else(|| "Failed to read current database config".to_string())?;
+    let db_pool = DatabasePool::connect(&source_config)
+        .await
+        .map_err(|e| format!("Failed to connect source database: {}", e))?;
     let migration = DatabaseMigration::new(db_pool);
     
     migration.export_to_json(&output_path)
@@ -630,10 +748,13 @@ pub async fn export_db_to_sql(
     output_path: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    let pool = db_service.get_sqlite_pool()
-        .map_err(|e| format!("Failed to get database pool: {}", e))?;
-    
-    let db_pool = DatabasePool::SQLite(pool.clone());
+    let source_config = db_service
+        .get_db_config()
+        .cloned()
+        .ok_or_else(|| "Failed to read current database config".to_string())?;
+    let db_pool = DatabasePool::connect(&source_config)
+        .await
+        .map_err(|e| format!("Failed to connect source database: {}", e))?;
     let migration = DatabaseMigration::new(db_pool);
     
     migration.export_to_sql(&output_path)
@@ -649,10 +770,13 @@ pub async fn import_db_from_json(
     input_path: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    let pool = db_service.get_sqlite_pool()
-        .map_err(|e| format!("Failed to get database pool: {}", e))?;
-    
-    let db_pool = DatabasePool::SQLite(pool.clone());
+    let source_config = db_service
+        .get_db_config()
+        .cloned()
+        .ok_or_else(|| "Failed to read current database config".to_string())?;
+    let db_pool = DatabasePool::connect(&source_config)
+        .await
+        .map_err(|e| format!("Failed to connect source database: {}", e))?;
     let migration = DatabaseMigration::new(db_pool);
     
     migration.import_from_json(&input_path)
@@ -668,20 +792,20 @@ pub async fn migrate_database(
     target_config: DatabaseConfig,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    // Get current SQLite pool
-    let source_pool = db_service.get_sqlite_pool()
-        .map_err(|e| format!("Failed to get source database pool: {}", e))?;
+    let source_config = db_service
+        .get_db_config()
+        .cloned()
+        .ok_or_else(|| "Failed to read current database config".to_string())?;
+    let source_pool = DatabasePool::connect(&source_config)
+        .await
+        .map_err(|e| format!("Failed to connect source database: {}", e))?;
     
     // Connect to target database
     let target_pool = DatabasePool::connect(&target_config)
         .await
         .map_err(|e| format!("Failed to connect to target database: {}", e))?;
     
-    // Perform migration
-    // For migration purposes, we still need DatabasePool to have SQLite variant if we want to migrate FROM it.
-    // Assuming source is SQLite and we want to migrate to target_pool (PostgreSQL)
-    let source_db_pool = DatabasePool::SQLite(source_pool.clone());
-    let migration = DatabaseMigration::new(source_db_pool)
+    let migration = DatabaseMigration::new(source_pool)
         .with_target(target_pool);
     
     migration.migrate()
@@ -694,51 +818,13 @@ pub async fn migrate_database(
 /// Save database configuration to a persistent file
 #[tauri::command]
 pub async fn save_db_config(config: DatabaseConfig) -> Result<String, String> {
-    use std::fs;
-
-    // Save config to a JSON file in the app data directory
-    let config_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sentinel-ai")
-        .join("db_config.json");
-
-    // Ensure the directory exists
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
-
-    // Serialize and write config
-    let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-
-    fs::write(&config_path, config_json)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
-
+    let config_path =
+        save_db_config_to_disk(&config).map_err(|e| format!("Failed to save config: {}", e))?;
     Ok(format!("Database config saved to {:?}", config_path))
 }
 
 /// Load database configuration from the persistent file
 #[tauri::command]
 pub async fn load_db_config() -> Result<Option<DatabaseConfig>, String> {
-    use std::fs;
-
-    let config_path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sentinel-ai")
-        .join("db_config.json");
-
-    // Check if config file exists
-    if !config_path.exists() {
-        return Ok(None);
-    }
-
-    // Read and parse config
-    let config_json = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config file: {}", e))?;
-
-    let config: DatabaseConfig = serde_json::from_str(&config_json)
-        .map_err(|e| format!("Failed to parse config file: {}", e))?;
-
-    Ok(Some(config))
+    load_db_config_from_disk().map_err(|e| format!("Failed to load config: {}", e))
 }

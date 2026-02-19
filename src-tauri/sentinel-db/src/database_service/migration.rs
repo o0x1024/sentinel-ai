@@ -107,10 +107,23 @@ impl DatabaseMigration {
         self.initialize_target_schema(target).await?;
         
         let tables = self.get_table_list().await?;
+        // Sort tables to ensure foreign key dependencies are imported in correct order.
+        let sorted_tables = self.sort_tables_by_dependencies(tables).await?;
 
-        // Sort tables to ensure foreign key dependencies are imported in correct order
-        // Tables with foreign keys should be imported after their referenced tables
-        let _tables = self.sort_tables_by_dependencies(tables).await?;
+        for table in sorted_tables {
+            // Skip internal/system tables defensively
+            if table.starts_with("sqlite_") || table.starts_with("_sqlx") {
+                continue;
+            }
+
+            let table_data = self.export_table(&table).await?;
+            if table_data.rows.is_empty() {
+                info!("Skipping empty table during migration: {}", table);
+                continue;
+            }
+
+            self.import_table_to_pool(&table, &table_data, target).await?;
+        }
 
         info!("Database migration completed successfully");
         Ok(())
@@ -120,7 +133,7 @@ impl DatabaseMigration {
     #[allow(dead_code)]
     async fn table_has_foreign_keys(&self, _table_name: &str) -> Result<bool> {
         match &self.source_pool {
-            DatabasePool::PostgreSQL(_) | DatabasePool::SQLite(_) => {
+            DatabasePool::PostgreSQL(_) | DatabasePool::SQLite(_) | DatabasePool::MySQL(_) => {
                 // For target databases, assume tables may have constraints
                 // We'll handle this in the import logic
                 Ok(true)
@@ -219,6 +232,9 @@ impl DatabaseMigration {
             }
             DatabasePool::SQLite(_) => {
                 info!("SQLite schema initialization not implemented for migration");
+            }
+            DatabasePool::MySQL(_) => {
+                info!("MySQL schema initialization not implemented for migration");
             }
         }
         Ok(())
@@ -378,6 +394,14 @@ impl DatabaseMigration {
                     .collect();
                 Ok(tables)
             }
+            DatabasePool::MySQL(pool) => {
+                let query = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()";
+                let rows = sqlx::query(query).fetch_all(pool).await?;
+                let tables: Vec<String> = rows.iter()
+                    .filter_map(|row| row.try_get::<String, _>(0).ok())
+                    .collect();
+                Ok(tables)
+            }
         }
     }
     
@@ -444,7 +468,7 @@ impl DatabaseMigration {
                     .fetch_all(p)
                     .await?;
                 
-                let schema = columns_rows.into_iter().map(|r| {
+                let schema: Vec<ColumnInfo> = columns_rows.into_iter().map(|r| {
                     ColumnInfo {
                         name: r.get("name"),
                         data_type: r.get("type"),
@@ -456,13 +480,81 @@ impl DatabaseMigration {
                     .await?;
                 
                 let mut rows = Vec::new();
-                for _row in rows_obj {
-                    let row_map = HashMap::new();
-                    // In real implementation, iterate through columns and map values
+                for row in rows_obj {
+                    let mut row_map = HashMap::new();
+                    for (i, column) in schema.iter().enumerate() {
+                        let value: Value = if let Ok(val) = row.try_get::<String, _>(i) {
+                            Value::String(val)
+                        } else if let Ok(val) = row.try_get::<i64, _>(i) {
+                            Value::Number(val.into())
+                        } else if let Ok(val) = row.try_get::<f64, _>(i) {
+                            Value::Number(serde_json::Number::from_f64(val).unwrap_or_else(|| 0.into()))
+                        } else if let Ok(val) = row.try_get::<bool, _>(i) {
+                            Value::Bool(val)
+                        } else if let Ok(val) = row.try_get::<Vec<u8>, _>(i) {
+                            let encoded = base64::engine::general_purpose::STANDARD.encode(&val);
+                            Value::String(encoded)
+                        } else {
+                            Value::Null
+                        };
+                        row_map.insert(column.name.clone(), value);
+                    }
                     rows.push(row_map);
                 }
                 
                 Ok(TableData { schema, rows })
+            }
+            DatabasePool::MySQL(pool) => {
+                let rows = sqlx::query(&query).fetch_all(pool).await?;
+
+                if rows.is_empty() {
+                    return Ok(TableData {
+                        schema: vec![],
+                        rows: vec![],
+                    });
+                }
+
+                let first_row = &rows[0];
+                let schema: Vec<ColumnInfo> = first_row.columns()
+                    .iter()
+                    .map(|col| ColumnInfo {
+                        name: col.name().to_string(),
+                        data_type: col.type_info().name().to_string(),
+                    })
+                    .collect();
+
+                let mut data_rows = Vec::new();
+                for row in rows {
+                    let mut row_data = HashMap::new();
+
+                    for (i, column) in row.columns().iter().enumerate() {
+                        let column_name = column.name();
+
+                        let value: Value = if let Ok(val) = row.try_get::<String, _>(i) {
+                            Value::String(val)
+                        } else if let Ok(val) = row.try_get::<i64, _>(i) {
+                            Value::Number(val.into())
+                        } else if let Ok(val) = row.try_get::<f64, _>(i) {
+                            Value::Number(serde_json::Number::from_f64(val).unwrap_or_else(|| 0.into()))
+                        } else if let Ok(val) = row.try_get::<bool, _>(i) {
+                            Value::Bool(val)
+                        } else if let Ok(val) = row.try_get::<Vec<u8>, _>(i) {
+                            let encoded = base64::engine::general_purpose::STANDARD.encode(&val);
+                            Value::String(encoded)
+                        } else {
+                            Value::Null
+                        };
+
+                        row_data.insert(column_name.to_string(), value);
+                    }
+
+                    data_rows.push(row_data);
+                }
+
+                Ok(TableData {
+                    schema,
+                    rows: data_rows,
+                })
             }
         }
     }
@@ -478,6 +570,9 @@ impl DatabaseMigration {
         }
         
         info!("Importing {} rows into table {}", table_data.rows.len(), table_name);
+
+        // Ensure table exists in target DB; some targets may be fresh and have no schema yet.
+        self.ensure_target_table(table_name, &table_data.schema, pool).await?;
         
         // CRITICAL: Clear existing data - this MUST succeed
         // Use TRUNCATE for PostgreSQL/MySQL (faster and resets auto-increment)
@@ -519,6 +614,11 @@ impl DatabaseMigration {
                     let delete_query = format!("DELETE FROM {}", table_name);
                     sqlx::query(&delete_query).execute(p).await
                         .context(format!("Failed to clear SQLite table {} before import", table_name))?;
+                }
+                DatabasePool::MySQL(p) => {
+                    let delete_query = format!("DELETE FROM {}", table_name);
+                    sqlx::query(&delete_query).execute(p).await
+                        .context(format!("Failed to clear MySQL table {} before import", table_name))?;
                 }
         }
         
@@ -620,11 +720,141 @@ impl DatabaseMigration {
                     }
                     query.execute(p).await?;
                 }
-                DatabasePool::SQLite(_p) => {
-                    // SQLite import not implemented for migration
+                DatabasePool::SQLite(p) => {
+                    let placeholders: Vec<&str> = (0..columns.len()).map(|_| "?").collect();
+
+                    let insert_query = format!(
+                        "INSERT INTO {} ({}) VALUES ({})",
+                        table_name,
+                        columns.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "),
+                        placeholders.join(", ")
+                    );
+
+                    let mut query = sqlx::query::<sqlx::Sqlite>(&insert_query);
+
+                    for col in &columns {
+                        let value = &row_data[*col];
+                        query = match value {
+                            Value::String(s) => query.bind(s),
+                            Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    query.bind(i)
+                                } else if let Some(f) = n.as_f64() {
+                                    query.bind(f)
+                                } else {
+                                    query.bind(0_i64)
+                                }
+                            }
+                            Value::Bool(b) => query.bind(*b),
+                            Value::Null => query.bind(Option::<String>::None),
+                            _ => query.bind(value.to_string()),
+                        };
+                    }
+
+                    query.execute(p).await?;
+                }
+                DatabasePool::MySQL(p) => {
+                    let placeholders: Vec<&str> = (0..columns.len()).map(|_| "?").collect();
+
+                    let insert_query = format!(
+                        "INSERT INTO {} ({}) VALUES ({})",
+                        table_name,
+                        columns.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "),
+                        placeholders.join(", ")
+                    );
+
+                    let mut query = sqlx::query::<sqlx::MySql>(&insert_query);
+
+                    for col in &columns {
+                        let value = &row_data[*col];
+                        query = match value {
+                            Value::String(s) => query.bind(s),
+                            Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    query.bind(i)
+                                } else if let Some(f) = n.as_f64() {
+                                    query.bind(f)
+                                } else {
+                                    query.bind(0_i64)
+                                }
+                            }
+                            Value::Bool(b) => query.bind(*b),
+                            Value::Null => query.bind(Option::<String>::None),
+                            _ => query.bind(value.to_string()),
+                        };
+                    }
+
+                    query.execute(p).await?;
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn ensure_target_table(
+        &self,
+        table_name: &str,
+        schema: &[ColumnInfo],
+        pool: &DatabasePool,
+    ) -> Result<()> {
+        if schema.is_empty() {
+            return Ok(());
+        }
+
+        let table_exists = match pool {
+            DatabasePool::PostgreSQL(p) => {
+                let sql = "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1)";
+                sqlx::query_scalar::<_, bool>(sql).bind(table_name).fetch_one(p).await?
+            }
+            DatabasePool::MySQL(p) => {
+                let sql = "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=?)";
+                sqlx::query_scalar::<_, i64>(sql)
+                    .bind(table_name)
+                    .fetch_one(p)
+                    .await?
+                    > 0
+            }
+            DatabasePool::SQLite(p) => {
+                let sql = "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)";
+                sqlx::query_scalar::<_, i64>(sql)
+                    .bind(table_name)
+                    .fetch_one(p)
+                    .await?
+                    > 0
+            }
+        };
+
+        if table_exists {
+            return Ok(());
+        }
+
+        let columns_sql = schema
+            .iter()
+            .map(|c| {
+                let t = map_type_for_target(&c.data_type, pool);
+                format!("{} {}", quote_ident(&c.name, pool), t)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let create_sql = format!(
+            "CREATE TABLE IF NOT EXISTS {} ({})",
+            quote_ident(table_name, pool),
+            columns_sql
+        );
+
+        match pool {
+            DatabasePool::PostgreSQL(p) => {
+                sqlx::query(&create_sql).execute(p).await?;
+            }
+            DatabasePool::MySQL(p) => {
+                sqlx::query(&create_sql).execute(p).await?;
+            }
+            DatabasePool::SQLite(p) => {
+                sqlx::query(&create_sql).execute(p).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -719,8 +949,71 @@ impl DatabaseMigration {
 
                 query.execute(p).await?;
             }
-            DatabasePool::SQLite(_p) => {
-                // SQLite import not implemented for migration
+            DatabasePool::SQLite(p) => {
+                let placeholders: Vec<&str> = (0..columns.len()).map(|_| "?").collect();
+
+                let insert_query = format!(
+                    "INSERT INTO {} ({}) VALUES ({})",
+                    table_name,
+                    columns.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "),
+                    placeholders.join(", ")
+                );
+
+                let mut query = sqlx::query::<sqlx::Sqlite>(&insert_query);
+
+                for col in &columns {
+                    let value = &row_data[*col];
+                    query = match value {
+                        Value::String(s) => query.bind(s),
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                query.bind(i)
+                            } else if let Some(f) = n.as_f64() {
+                                query.bind(f)
+                            } else {
+                                query.bind(0_i64)
+                            }
+                        }
+                        Value::Bool(b) => query.bind(*b),
+                        Value::Null => query.bind(Option::<String>::None),
+                        _ => query.bind(value.to_string()),
+                    };
+                }
+
+                query.execute(p).await?;
+            }
+            DatabasePool::MySQL(p) => {
+                let placeholders: Vec<&str> = (0..columns.len()).map(|_| "?").collect();
+
+                let insert_query = format!(
+                    "INSERT INTO {} ({}) VALUES ({})",
+                    table_name,
+                    columns.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "),
+                    placeholders.join(", ")
+                );
+
+                let mut query = sqlx::query::<sqlx::MySql>(&insert_query);
+
+                for col in &columns {
+                    let value = &row_data[*col];
+                    query = match value {
+                        Value::String(s) => query.bind(s),
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                query.bind(i)
+                            } else if let Some(f) = n.as_f64() {
+                                query.bind(f)
+                            } else {
+                                query.bind(0_i64)
+                            }
+                        }
+                        Value::Bool(b) => query.bind(*b),
+                        Value::Null => query.bind(Option::<String>::None),
+                        _ => query.bind(value.to_string()),
+                    };
+                }
+
+                query.execute(p).await?;
             }
         }
         Ok(())
@@ -773,5 +1066,41 @@ impl DatabaseMigration {
         
         info!("Database export to SQL completed successfully");
         Ok(())
+    }
+}
+
+fn quote_ident(ident: &str, pool: &DatabasePool) -> String {
+    match pool {
+        DatabasePool::MySQL(_) => format!("`{}`", ident),
+        DatabasePool::PostgreSQL(_) | DatabasePool::SQLite(_) => format!("\"{}\"", ident),
+    }
+}
+
+fn map_type_for_target(source_type: &str, pool: &DatabasePool) -> &'static str {
+    let t = source_type.to_uppercase();
+    match pool {
+        DatabasePool::PostgreSQL(_) => {
+            if t.contains("INT") { "BIGINT" }
+            else if t.contains("DOUBLE") || t.contains("FLOAT") || t.contains("REAL") || t.contains("NUMERIC") { "DOUBLE PRECISION" }
+            else if t.contains("BOOL") { "BOOLEAN" }
+            else if t.contains("TIME") || t.contains("DATE") { "TIMESTAMP" }
+            else if t.contains("BLOB") || t.contains("BINARY") { "BYTEA" }
+            else { "TEXT" }
+        }
+        DatabasePool::MySQL(_) => {
+            if t.contains("INT") { "BIGINT" }
+            else if t.contains("DOUBLE") || t.contains("FLOAT") || t.contains("REAL") || t.contains("NUMERIC") { "DOUBLE" }
+            else if t.contains("BOOL") { "TINYINT(1)" }
+            else if t.contains("TIME") || t.contains("DATE") { "DATETIME" }
+            else if t.contains("BLOB") || t.contains("BINARY") { "LONGBLOB" }
+            else { "LONGTEXT" }
+        }
+        DatabasePool::SQLite(_) => {
+            if t.contains("INT") { "INTEGER" }
+            else if t.contains("DOUBLE") || t.contains("FLOAT") || t.contains("REAL") || t.contains("NUMERIC") { "REAL" }
+            else if t.contains("BOOL") { "INTEGER" }
+            else if t.contains("BLOB") || t.contains("BINARY") { "BLOB" }
+            else { "TEXT" }
+        }
     }
 }

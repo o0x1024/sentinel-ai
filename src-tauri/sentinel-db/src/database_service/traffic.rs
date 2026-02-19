@@ -18,6 +18,7 @@ use std::io::{Write, Read};
 use base64::{Engine as _, engine::general_purpose};
 
 use super::service::DatabaseService;
+use crate::database_service::connection_manager::DatabasePool;
 
 /// 压缩阈值（字节）- 超过此大小才压缩
 const COMPRESSION_THRESHOLD: usize = 1024; // 1KB
@@ -73,46 +74,114 @@ impl DatabaseService {
 
     /// Insert new vulnerability
     pub async fn insert_traffic_vulnerability(&self, finding: &TrafficFinding) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let signature = finding.calculate_signature();
 
         debug!("Inserting vulnerability: title='{}', description='{}'", 
               finding.title, finding.description);
 
-        sqlx::query(
-            r#"
-            INSERT INTO traffic_vulnerabilities (
-                id, plugin_id, vuln_type, severity, confidence, title, description,
-                cwe, owasp, remediation, signature, first_seen_at, last_seen_at, session_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL)
-            "#,
-        )
-        .bind(&finding.id)
-        .bind(&finding.plugin_id)
-        .bind(&finding.vuln_type)
-        .bind(finding.severity.to_string())
-        .bind(format!("{:?}", finding.confidence))
-        .bind(&finding.title)
-        .bind(&finding.description)
-        .bind(&finding.cwe)
-        .bind(&finding.owasp)
-        .bind(&finding.remediation)
-        .bind(&signature)
-        .bind(finding.created_at)
-        .bind(finding.created_at)
-        .execute(pool)
-        .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_vulnerabilities (
+                        id, plugin_id, vuln_type, severity, confidence, title, description,
+                        cwe, owasp, remediation, signature, first_seen_at, last_seen_at, session_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL)
+                    "#,
+                )
+                .bind(&finding.id)
+                .bind(&finding.plugin_id)
+                .bind(&finding.vuln_type)
+                .bind(finding.severity.to_string())
+                .bind(format!("{:?}", finding.confidence))
+                .bind(&finding.title)
+                .bind(&finding.description)
+                .bind(&finding.cwe)
+                .bind(&finding.owasp)
+                .bind(&finding.remediation)
+                .bind(&signature)
+                .bind(finding.created_at)
+                .bind(finding.created_at)
+                .execute(pool)
+                .await?;
 
-        // Insert deduplication index
-        sqlx::query(
-            r#"
-            INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES ($1, $2)
-            "#,
-        )
-        .bind(&signature)
-        .bind(&finding.id)
-        .execute(pool)
-        .await?;
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES ($1, $2)
+                    "#,
+                )
+                .bind(&signature)
+                .bind(&finding.id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_vulnerabilities (
+                        id, plugin_id, vuln_type, severity, confidence, title, description,
+                        cwe, owasp, remediation, signature, first_seen_at, last_seen_at, session_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    "#,
+                )
+                .bind(&finding.id)
+                .bind(&finding.plugin_id)
+                .bind(&finding.vuln_type)
+                .bind(finding.severity.to_string())
+                .bind(format!("{:?}", finding.confidence))
+                .bind(&finding.title)
+                .bind(&finding.description)
+                .bind(&finding.cwe)
+                .bind(&finding.owasp)
+                .bind(&finding.remediation)
+                .bind(&signature)
+                .bind(finding.created_at)
+                .bind(finding.created_at)
+                .execute(pool)
+                .await?;
+
+                sqlx::query("INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)")
+                    .bind(&signature)
+                    .bind(&finding.id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_vulnerabilities (
+                        id, plugin_id, vuln_type, severity, confidence, title, description,
+                        cwe, owasp, remediation, signature, first_seen_at, last_seen_at, session_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    "#,
+                )
+                .bind(&finding.id)
+                .bind(&finding.plugin_id)
+                .bind(&finding.vuln_type)
+                .bind(finding.severity.to_string())
+                .bind(format!("{:?}", finding.confidence))
+                .bind(&finding.title)
+                .bind(&finding.description)
+                .bind(&finding.cwe)
+                .bind(&finding.owasp)
+                .bind(&finding.remediation)
+                .bind(&signature)
+                .bind(finding.created_at)
+                .bind(finding.created_at)
+                .execute(pool)
+                .await?;
+
+                sqlx::query("INSERT INTO traffic_dedupe_index (signature, vuln_id) VALUES (?, ?)")
+                    .bind(&signature)
+                    .bind(&finding.id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         // Insert evidence record
         let evidence = TrafficEvidenceRecord {
@@ -138,38 +207,96 @@ impl DatabaseService {
 
     /// Update vulnerability hit count
     pub async fn update_traffic_vulnerability_hit(&self, signature: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        sqlx::query(
-            r#"
-            UPDATE traffic_vulnerabilities 
-            SET hit_count = hit_count + 1, 
-                last_seen_at = $1,
-                updated_at = $2
-            WHERE signature = $3
-            "#,
-        )
-        .bind(Utc::now())
-        .bind(Utc::now())
-        .bind(signature)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE traffic_vulnerabilities 
+                    SET hit_count = hit_count + 1, 
+                        last_seen_at = $1,
+                        updated_at = $2
+                    WHERE signature = $3
+                    "#,
+                )
+                .bind(Utc::now())
+                .bind(Utc::now())
+                .bind(signature)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE traffic_vulnerabilities 
+                    SET hit_count = hit_count + 1, 
+                        last_seen_at = ?,
+                        updated_at = ?
+                    WHERE signature = ?
+                    "#,
+                )
+                .bind(Utc::now())
+                .bind(Utc::now())
+                .bind(signature)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE traffic_vulnerabilities 
+                    SET hit_count = hit_count + 1, 
+                        last_seen_at = ?,
+                        updated_at = ?
+                    WHERE signature = ?
+                    "#,
+                )
+                .bind(Utc::now())
+                .bind(Utc::now())
+                .bind(signature)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
 
     /// Check if signature exists
     pub async fn check_traffic_signature_exists(&self, signature: &str) -> Result<bool> {
-        let pool = self.get_pool()?;
-        
-        let count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = $1
-            "#,
-        )
-        .bind(signature)
-        .fetch_one(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let count: i64 = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar(
+                    r#"
+                    SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = $1
+                    "#,
+                )
+                .bind(signature)
+                .fetch_one(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = ?")
+                    .bind(signature)
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM traffic_dedupe_index WHERE signature = ?")
+                    .bind(signature)
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
 
         Ok(count > 0)
     }
@@ -179,45 +306,127 @@ impl DatabaseService {
         &self,
         filters: TrafficVulnerabilityFilters,
     ) -> Result<Vec<TrafficVulnerabilityRecord>> {
-        let pool = self.get_pool()?;
-        
-        let mut query_builder = sqlx::QueryBuilder::new(
-            r#"
-            SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
-                   cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                   hit_count, session_id, created_at, updated_at
-            FROM traffic_vulnerabilities
-            WHERE 1=1
-            "#,
-        );
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        if let Some(ref vuln_type) = filters.vuln_type {
-            query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                    r#"
+                    SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
+                           cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
+                           hit_count, session_id, created_at, updated_at
+                    FROM traffic_vulnerabilities
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref vuln_type) = filters.vuln_type {
+                    query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref plugin_id) = filters.plugin_id {
+                    query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
+                }
+                if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
+                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                }
+                query_builder.push(" ORDER BY created_at DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                let records = query_builder
+                    .build_query_as::<TrafficVulnerabilityRecord>()
+                    .fetch_all(pool)
+                    .await?;
+                Ok(records)
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    r#"
+                    SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
+                           cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
+                           hit_count, session_id, created_at, updated_at
+                    FROM traffic_vulnerabilities
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref vuln_type) = filters.vuln_type {
+                    query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref plugin_id) = filters.plugin_id {
+                    query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
+                }
+                if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
+                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                }
+                query_builder.push(" ORDER BY created_at DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                let records = query_builder
+                    .build_query_as::<TrafficVulnerabilityRecord>()
+                    .fetch_all(pool)
+                    .await?;
+                Ok(records)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                    r#"
+                    SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
+                           cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
+                           hit_count, session_id, created_at, updated_at
+                    FROM traffic_vulnerabilities
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref vuln_type) = filters.vuln_type {
+                    query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref plugin_id) = filters.plugin_id {
+                    query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
+                }
+                if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
+                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                }
+                query_builder.push(" ORDER BY created_at DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                let records = query_builder
+                    .build_query_as::<TrafficVulnerabilityRecord>()
+                    .fetch_all(pool)
+                    .await?;
+                Ok(records)
+            }
         }
-        if let Some(ref severity) = filters.severity {
-            query_builder.push(" AND severity = ").push_bind(severity);
-        }
-        if let Some(ref status) = filters.status {
-            query_builder.push(" AND status = ").push_bind(status);
-        }
-        if let Some(ref plugin_id) = filters.plugin_id {
-            query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
-        }
-
-        query_builder.push(" ORDER BY created_at DESC");
-
-        if let Some(limit) = filters.limit {
-            query_builder.push(" LIMIT ").push_bind(limit);
-        }
-        if let Some(offset) = filters.offset {
-            query_builder.push(" OFFSET ").push_bind(offset);
-        }
-
-        let records = query_builder.build_query_as::<TrafficVulnerabilityRecord>()
-            .fetch_all(pool)
-            .await?;
-
-        Ok(records)
     }
 
     /// List vulnerabilities with evidence
@@ -248,95 +457,264 @@ impl DatabaseService {
 
     /// Count vulnerabilities
     pub async fn count_traffic_vulnerabilities(&self, filters: TrafficVulnerabilityFilters) -> Result<i64> {
-        let pool = self.get_pool()?;
-        
-        let mut query_builder = sqlx::QueryBuilder::new(
-            r#"
-            SELECT COUNT(*)
-            FROM traffic_vulnerabilities
-            WHERE 1=1
-            "#,
-        );
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        if let Some(ref vuln_type) = filters.vuln_type {
-            query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM traffic_vulnerabilities
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref vuln_type) = filters.vuln_type {
+                    query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref plugin_id) = filters.plugin_id {
+                    query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
+                }
+                if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
+                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM traffic_vulnerabilities
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref vuln_type) = filters.vuln_type {
+                    query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref plugin_id) = filters.plugin_id {
+                    query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
+                }
+                if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
+                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM traffic_vulnerabilities
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref vuln_type) = filters.vuln_type {
+                    query_builder.push(" AND vuln_type = ").push_bind(vuln_type);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref plugin_id) = filters.plugin_id {
+                    query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
+                }
+                if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
+                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
         }
-        if let Some(ref severity) = filters.severity {
-            query_builder.push(" AND severity = ").push_bind(severity);
-        }
-        if let Some(ref status) = filters.status {
-            query_builder.push(" AND status = ").push_bind(status);
-        }
-        if let Some(ref plugin_id) = filters.plugin_id {
-            query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
-        }
-
-        let row: (i64,) = query_builder.build_query_as()
-            .fetch_one(pool)
-            .await?;
-
-        Ok(row.0)
     }
 
     /// Get vulnerability by ID
     pub async fn get_traffic_vulnerability_by_id(&self, vuln_id: &str) -> Result<Option<TrafficVulnerabilityRecord>> {
-        let pool = self.get_pool()?;
-        
-        let record = sqlx::query_as::<_, TrafficVulnerabilityRecord>(
-            r#"
-            SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
-                   cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
-                   hit_count, session_id, created_at, updated_at
-            FROM traffic_vulnerabilities
-            WHERE id = $1
-            "#,
-        )
-        .bind(vuln_id)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        Ok(record)
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let record = sqlx::query_as::<_, TrafficVulnerabilityRecord>(
+                    r#"
+                    SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
+                           cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
+                           hit_count, session_id, created_at, updated_at
+                    FROM traffic_vulnerabilities
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(record)
+            }
+            DatabasePool::SQLite(pool) => {
+                let record = sqlx::query_as::<_, TrafficVulnerabilityRecord>(
+                    r#"
+                    SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
+                           cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
+                           hit_count, session_id, created_at, updated_at
+                    FROM traffic_vulnerabilities
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(record)
+            }
+            DatabasePool::MySQL(pool) => {
+                let record = sqlx::query_as::<_, TrafficVulnerabilityRecord>(
+                    r#"
+                    SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
+                           cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
+                           hit_count, session_id, created_at, updated_at
+                    FROM traffic_vulnerabilities
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(record)
+            }
+        }
     }
 
     /// Get evidence by vulnerability ID
     pub async fn get_traffic_evidence_by_vuln_id(&self, vuln_id: &str) -> Result<Vec<TrafficEvidenceRecord>> {
-        let pool = self.get_pool()?;
-        
-        let records = sqlx::query_as::<_, TrafficEvidenceRecord>(
-            r#"
-            SELECT id, vuln_id, url, method, location, evidence_snippet,
-                   request_headers, request_body, response_status, response_headers,
-                   response_body, timestamp
-            FROM traffic_evidence
-            WHERE vuln_id = $1
-            ORDER BY timestamp DESC
-            "#,
-        )
-        .bind(vuln_id)
-        .fetch_all(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        Ok(records)
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let records = sqlx::query_as::<_, TrafficEvidenceRecord>(
+                    r#"
+                    SELECT id, vuln_id, url, method, location, evidence_snippet,
+                           request_headers, request_body, response_status, response_headers,
+                           response_body, timestamp
+                    FROM traffic_evidence
+                    WHERE vuln_id = $1
+                    ORDER BY timestamp DESC
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(records)
+            }
+            DatabasePool::SQLite(pool) => {
+                let records = sqlx::query_as::<_, TrafficEvidenceRecord>(
+                    r#"
+                    SELECT id, vuln_id, url, method, location, evidence_snippet,
+                           request_headers, request_body, response_status, response_headers,
+                           response_body, timestamp
+                    FROM traffic_evidence
+                    WHERE vuln_id = ?
+                    ORDER BY timestamp DESC
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(records)
+            }
+            DatabasePool::MySQL(pool) => {
+                let records = sqlx::query_as::<_, TrafficEvidenceRecord>(
+                    r#"
+                    SELECT id, vuln_id, url, method, location, evidence_snippet,
+                           request_headers, request_body, response_status, response_headers,
+                           response_body, timestamp
+                    FROM traffic_evidence
+                    WHERE vuln_id = ?
+                    ORDER BY timestamp DESC
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(records)
+            }
+        }
     }
 
     /// Update vulnerability status
     pub async fn update_traffic_vulnerability_status(&self, vuln_id: &str, status: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        let result = sqlx::query(
-            r#"
-            UPDATE traffic_vulnerabilities 
-            SET status = $1, updated_at = $2
-            WHERE id = $3
-            "#,
-        )
-        .bind(status)
-        .bind(Utc::now())
-        .bind(vuln_id)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        if result.rows_affected() == 0 {
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE traffic_vulnerabilities 
+                    SET status = $1, updated_at = $2
+                    WHERE id = $3
+                    "#,
+                )
+                .bind(status)
+                .bind(Utc::now())
+                .bind(vuln_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE traffic_vulnerabilities 
+                    SET status = ?, updated_at = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(status)
+                .bind(Utc::now())
+                .bind(vuln_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE traffic_vulnerabilities 
+                    SET status = ?, updated_at = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(status)
+                .bind(Utc::now())
+                .bind(vuln_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+        };
+
+        if rows_affected == 0 {
             return Err(anyhow::anyhow!("Vulnerability not found: {}", vuln_id));
         }
 
@@ -347,33 +725,65 @@ impl DatabaseService {
     /// Delete vulnerability and related evidence
     /// Returns the signature of the deleted vulnerability for cache cleanup
     pub async fn delete_traffic_vulnerability(&self, vuln_id: &str) -> Result<Option<String>> {
-        let pool = self.get_pool()?;
-        
-        // First get the signature before deleting
-        let signature: Option<String> = sqlx::query_scalar(
-            r#"
-            SELECT signature FROM traffic_vulnerabilities WHERE id = $1
-            "#,
-        )
-        .bind(vuln_id)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let signature: Option<String> = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar(
+                    r#"
+                    SELECT signature FROM traffic_vulnerabilities WHERE id = $1
+                    "#,
+                )
+                .bind(vuln_id)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar("SELECT signature FROM traffic_vulnerabilities WHERE id = ?")
+                    .bind(vuln_id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar("SELECT signature FROM traffic_vulnerabilities WHERE id = ?")
+                    .bind(vuln_id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+        };
 
         if signature.is_none() {
             return Err(anyhow::anyhow!("Vulnerability not found: {}", vuln_id));
         }
 
-        // Delete the vulnerability
-        let result = sqlx::query(
-            r#"
-            DELETE FROM traffic_vulnerabilities WHERE id = $1
-            "#,
-        )
-        .bind(vuln_id)
-        .execute(pool)
-        .await?;
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM traffic_vulnerabilities WHERE id = $1")
+                    .bind(vuln_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM traffic_vulnerabilities WHERE id = ?")
+                    .bind(vuln_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM traffic_vulnerabilities WHERE id = ?")
+                    .bind(vuln_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+        };
 
-        if result.rows_affected() == 0 {
+        if rows_affected == 0 {
             return Err(anyhow::anyhow!("Vulnerability not found: {}", vuln_id));
         }
 
@@ -384,17 +794,37 @@ impl DatabaseService {
     /// Delete all vulnerabilities
     /// Also clears the deduplication index
     pub async fn delete_all_traffic_vulnerabilities(&self) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        // Delete all vulnerabilities
-        sqlx::query("DELETE FROM traffic_vulnerabilities")
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        // Clear deduplication index
-        sqlx::query("DELETE FROM traffic_dedupe_index")
-            .execute(pool)
-            .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM traffic_vulnerabilities")
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM traffic_dedupe_index")
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM traffic_vulnerabilities")
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM traffic_dedupe_index")
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM traffic_vulnerabilities")
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM traffic_dedupe_index")
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         info!("All vulnerabilities and dedupe index deleted");
         Ok(())
@@ -406,31 +836,88 @@ impl DatabaseService {
 
     /// Insert evidence
     pub async fn insert_traffic_evidence(&self, evidence: &TrafficEvidenceRecord) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        sqlx::query(
-            r#"
-            INSERT INTO traffic_evidence (
-                id, vuln_id, url, method, location, evidence_snippet,
-                request_headers, request_body, response_status, response_headers,
-                response_body, timestamp
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            "#,
-        )
-        .bind(&evidence.id)
-        .bind(&evidence.vuln_id)
-        .bind(&evidence.url)
-        .bind(&evidence.method)
-        .bind(&evidence.location)
-        .bind(&evidence.evidence_snippet)
-        .bind(&evidence.request_headers)
-        .bind(&evidence.request_body)
-        .bind(evidence.response_status)
-        .bind(&evidence.response_headers)
-        .bind(&evidence.response_body)
-        .bind(evidence.timestamp)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_evidence (
+                        id, vuln_id, url, method, location, evidence_snippet,
+                        request_headers, request_body, response_status, response_headers,
+                        response_body, timestamp
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    "#,
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.vuln_id)
+                .bind(&evidence.url)
+                .bind(&evidence.method)
+                .bind(&evidence.location)
+                .bind(&evidence.evidence_snippet)
+                .bind(&evidence.request_headers)
+                .bind(&evidence.request_body)
+                .bind(evidence.response_status)
+                .bind(&evidence.response_headers)
+                .bind(&evidence.response_body)
+                .bind(evidence.timestamp)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_evidence (
+                        id, vuln_id, url, method, location, evidence_snippet,
+                        request_headers, request_body, response_status, response_headers,
+                        response_body, timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.vuln_id)
+                .bind(&evidence.url)
+                .bind(&evidence.method)
+                .bind(&evidence.location)
+                .bind(&evidence.evidence_snippet)
+                .bind(&evidence.request_headers)
+                .bind(&evidence.request_body)
+                .bind(evidence.response_status)
+                .bind(&evidence.response_headers)
+                .bind(&evidence.response_body)
+                .bind(evidence.timestamp)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO traffic_evidence (
+                        id, vuln_id, url, method, location, evidence_snippet,
+                        request_headers, request_body, response_status, response_headers,
+                        response_body, timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&evidence.id)
+                .bind(&evidence.vuln_id)
+                .bind(&evidence.url)
+                .bind(&evidence.method)
+                .bind(&evidence.location)
+                .bind(&evidence.evidence_snippet)
+                .bind(&evidence.request_headers)
+                .bind(&evidence.request_body)
+                .bind(evidence.response_status)
+                .bind(&evidence.response_headers)
+                .bind(&evidence.response_body)
+                .bind(evidence.timestamp)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
@@ -456,114 +943,300 @@ impl DatabaseService {
         quality_score: Option<f64>,
         validation_status: Option<&str>
     ) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
 
-        sqlx::query(
-            r#"
-            INSERT INTO plugin_registry (
-                id, name, version, author, main_category, category, description, default_severity,
-                tags, enabled, plugin_code, quality_score, validation_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10, $11, $12)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                version = excluded.version,
-                author = excluded.author,
-                main_category = excluded.main_category,
-                category = excluded.category,
-                description = excluded.description,
-                default_severity = excluded.default_severity,
-                tags = excluded.tags,
-                plugin_code = excluded.plugin_code,
-                quality_score = excluded.quality_score,
-                validation_status = excluded.validation_status,
-                updated_at = CURRENT_TIMESTAMP
-            "#,
-        )
-        .bind(&plugin.id)
-        .bind(&plugin.name)
-        .bind(&plugin.version)
-        .bind(&plugin.author)
-        .bind(&plugin.main_category)
-        .bind(&plugin.category)
-        .bind(&plugin.description)
-        .bind(plugin.default_severity.to_string())
-        .bind(&tags_json)
-        .bind(plugin_code)
-        .bind(quality_score)
-        .bind(validation_status)
-        .execute(pool)
-        .await?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO plugin_registry (
+                        id, name, version, author, main_category, category, description, default_severity,
+                        tags, enabled, plugin_code, quality_score, validation_status
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10, $11, $12)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        version = excluded.version,
+                        author = excluded.author,
+                        main_category = excluded.main_category,
+                        category = excluded.category,
+                        description = excluded.description,
+                        default_severity = excluded.default_severity,
+                        tags = excluded.tags,
+                        plugin_code = excluded.plugin_code,
+                        quality_score = excluded.quality_score,
+                        validation_status = excluded.validation_status,
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(&plugin.id)
+                .bind(&plugin.name)
+                .bind(&plugin.version)
+                .bind(&plugin.author)
+                .bind(&plugin.main_category)
+                .bind(&plugin.category)
+                .bind(&plugin.description)
+                .bind(plugin.default_severity.to_string())
+                .bind(&tags_json)
+                .bind(plugin_code)
+                .bind(quality_score)
+                .bind(validation_status)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO plugin_registry (
+                        id, name, version, author, main_category, category, description, default_severity,
+                        tags, enabled, plugin_code, quality_score, validation_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        version = excluded.version,
+                        author = excluded.author,
+                        main_category = excluded.main_category,
+                        category = excluded.category,
+                        description = excluded.description,
+                        default_severity = excluded.default_severity,
+                        tags = excluded.tags,
+                        plugin_code = excluded.plugin_code,
+                        quality_score = excluded.quality_score,
+                        validation_status = excluded.validation_status,
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(&plugin.id)
+                .bind(&plugin.name)
+                .bind(&plugin.version)
+                .bind(&plugin.author)
+                .bind(&plugin.main_category)
+                .bind(&plugin.category)
+                .bind(&plugin.description)
+                .bind(plugin.default_severity.to_string())
+                .bind(&tags_json)
+                .bind(plugin_code)
+                .bind(quality_score)
+                .bind(validation_status)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO plugin_registry (
+                        id, name, version, author, main_category, category, description, default_severity,
+                        tags, enabled, plugin_code, quality_score, validation_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        name = VALUES(name),
+                        version = VALUES(version),
+                        author = VALUES(author),
+                        main_category = VALUES(main_category),
+                        category = VALUES(category),
+                        description = VALUES(description),
+                        default_severity = VALUES(default_severity),
+                        tags = VALUES(tags),
+                        plugin_code = VALUES(plugin_code),
+                        quality_score = VALUES(quality_score),
+                        validation_status = VALUES(validation_status),
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(&plugin.id)
+                .bind(&plugin.name)
+                .bind(&plugin.version)
+                .bind(&plugin.author)
+                .bind(&plugin.main_category)
+                .bind(&plugin.category)
+                .bind(&plugin.description)
+                .bind(plugin.default_severity.to_string())
+                .bind(&tags_json)
+                .bind(plugin_code)
+                .bind(quality_score)
+                .bind(validation_status)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
 
     /// Update plugin
     pub async fn update_traffic_plugin(&self, plugin: &TrafficPluginMetadata, plugin_code: &str) -> Result<()> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let tags_json = serde_json::to_string(&plugin.tags).unwrap_or_default();
-        
-        sqlx::query(
-            r#"
-            UPDATE plugin_registry 
-            SET name = $1, version = $2, author = $3, main_category = $4, category = $5,
-                description = $6, default_severity = $7, tags = $8, plugin_code = $9, updated_at = $10
-            WHERE id = $11
-            "#,
-        )
-        .bind(&plugin.name)
-        .bind(&plugin.version)
-        .bind(&plugin.author)
-        .bind(&plugin.main_category)
-        .bind(&plugin.category)
-        .bind(&plugin.description)
-        .bind(plugin.default_severity.to_string())
-        .bind(&tags_json)
-        .bind(plugin_code)
-        .bind(Utc::now())
-        .bind(&plugin.id)
-        .execute(pool)
-        .await?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE plugin_registry 
+                    SET name = $1, version = $2, author = $3, main_category = $4, category = $5,
+                        description = $6, default_severity = $7, tags = $8, plugin_code = $9, updated_at = $10
+                    WHERE id = $11
+                    "#,
+                )
+                .bind(&plugin.name)
+                .bind(&plugin.version)
+                .bind(&plugin.author)
+                .bind(&plugin.main_category)
+                .bind(&plugin.category)
+                .bind(&plugin.description)
+                .bind(plugin.default_severity.to_string())
+                .bind(&tags_json)
+                .bind(plugin_code)
+                .bind(Utc::now())
+                .bind(&plugin.id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE plugin_registry 
+                    SET name = ?, version = ?, author = ?, main_category = ?, category = ?,
+                        description = ?, default_severity = ?, tags = ?, plugin_code = ?, updated_at = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(&plugin.name)
+                .bind(&plugin.version)
+                .bind(&plugin.author)
+                .bind(&plugin.main_category)
+                .bind(&plugin.category)
+                .bind(&plugin.description)
+                .bind(plugin.default_severity.to_string())
+                .bind(&tags_json)
+                .bind(plugin_code)
+                .bind(Utc::now())
+                .bind(&plugin.id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE plugin_registry 
+                    SET name = ?, version = ?, author = ?, main_category = ?, category = ?,
+                        description = ?, default_severity = ?, tags = ?, plugin_code = ?, updated_at = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(&plugin.name)
+                .bind(&plugin.version)
+                .bind(&plugin.author)
+                .bind(&plugin.main_category)
+                .bind(&plugin.category)
+                .bind(&plugin.description)
+                .bind(plugin.default_severity.to_string())
+                .bind(&tags_json)
+                .bind(plugin_code)
+                .bind(Utc::now())
+                .bind(&plugin.id)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
 
     /// Get plugin code
     pub async fn get_traffic_plugin_code(&self, plugin_id: &str) -> Result<Option<String>> {
-        let pool = self.get_pool()?;
-        
-        let result = sqlx::query_scalar::<_, Option<String>>(
-            r#"
-            SELECT plugin_code
-            FROM plugin_registry 
-            WHERE id = $1
-            "#,
-        )
-        .bind(plugin_id)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let result = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar::<_, Option<String>>(
+                    r#"
+                    SELECT plugin_code
+                    FROM plugin_registry 
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(plugin_id)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar::<_, Option<String>>("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+                    .bind(plugin_id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar::<_, Option<String>>("SELECT plugin_code FROM plugin_registry WHERE id = ?")
+                    .bind(plugin_id)
+                    .fetch_optional(pool)
+                    .await?
+            }
+        };
 
         Ok(result.flatten())
     }
 
     /// Get plugin by ID
     pub async fn get_traffic_plugin_by_id(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
-        let pool = self.get_pool()?;
-        
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
         let row: Option<(
             String, String, String, Option<String>, String, String, Option<String>, 
             String, Option<String>, bool, Option<String>
-        )> = sqlx::query_as(
-            r#"
-            SELECT id, name, version, author, main_category, category, description, 
-                   default_severity, tags, enabled, plugin_code
-            FROM plugin_registry 
-            WHERE id = $1
-            "#,
-        )
-        .bind(plugin_id)
-        .fetch_optional(pool)
-        .await?;
+        )> = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT id, name, version, author, main_category, category, description, 
+                           default_severity, tags, enabled, plugin_code
+                    FROM plugin_registry 
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(plugin_id)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT id, name, version, author, main_category, category, description, 
+                           default_severity, tags, enabled, plugin_code
+                    FROM plugin_registry 
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(plugin_id)
+                .fetch_optional(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT id, name, version, author, main_category, category, description, 
+                           default_severity, tags, enabled, plugin_code
+                    FROM plugin_registry 
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(plugin_id)
+                .fetch_optional(pool)
+                .await?
+            }
+        };
 
         if let Some((id, name, version, author, main_category, category, description, 
                      default_severity, tags, enabled, plugin_code)) = row {
@@ -595,28 +1268,73 @@ impl DatabaseService {
         category: &str,
         min_quality_score: f64,
     ) -> Result<Vec<serde_json::Value>> {
-        let pool = self.get_pool()?;
-        
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
         let rows: Vec<(
             String, String, String, Option<String>, String, String, Option<String>,
             String, Option<String>, bool, Option<String>, Option<f64>, Option<String>
-        )> = sqlx::query_as(
-            r#"
-            SELECT id, name, version, author, main_category, category, description,
-                   default_severity, tags, enabled, plugin_code, quality_score, validation_status
-            FROM plugin_registry
-            WHERE category = $1 
-              AND (quality_score IS NULL OR quality_score >= $2)
-              AND validation_status IN ('Approved', 'Passed')
-              AND main_category = 'traffic'
-            ORDER BY quality_score DESC NULLS LAST, updated_at DESC
-            LIMIT 5
-            "#,
-        )
-        .bind(category)
-        .bind(min_quality_score)
-        .fetch_all(pool)
-        .await?;
+        )> = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT id, name, version, author, main_category, category, description,
+                           default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                    FROM plugin_registry
+                    WHERE category = $1 
+                      AND (quality_score IS NULL OR quality_score >= $2)
+                      AND validation_status IN ('Approved', 'Passed')
+                      AND main_category = 'traffic'
+                    ORDER BY quality_score DESC NULLS LAST, updated_at DESC
+                    LIMIT 5
+                    "#,
+                )
+                .bind(category)
+                .bind(min_quality_score)
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT id, name, version, author, main_category, category, description,
+                           default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                    FROM plugin_registry
+                    WHERE category = ? 
+                      AND (quality_score IS NULL OR quality_score >= ?)
+                      AND validation_status IN ('Approved', 'Passed')
+                      AND main_category = 'traffic'
+                    ORDER BY (quality_score IS NULL) ASC, quality_score DESC, updated_at DESC
+                    LIMIT 5
+                    "#,
+                )
+                .bind(category)
+                .bind(min_quality_score)
+                .fetch_all(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT id, name, version, author, main_category, category, description,
+                           default_severity, tags, enabled, plugin_code, quality_score, validation_status
+                    FROM plugin_registry
+                    WHERE category = ? 
+                      AND (quality_score IS NULL OR quality_score >= ?)
+                      AND validation_status IN ('Approved', 'Passed')
+                      AND main_category = 'traffic'
+                    ORDER BY (quality_score IS NULL) ASC, quality_score DESC, updated_at DESC
+                    LIMIT 5
+                    "#,
+                )
+                .bind(category)
+                .bind(min_quality_score)
+                .fetch_all(pool)
+                .await?
+            }
+        };
 
         let mut plugins = Vec::new();
         for (id, name, version, author, main_category, category, description,
@@ -648,37 +1366,91 @@ impl DatabaseService {
 
     /// Update plugin enabled status
     pub async fn update_traffic_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        sqlx::query(
-            r#"
-            UPDATE plugin_registry 
-            SET enabled = $1, updated_at = $2
-            WHERE id = $3
-            "#,
-        )
-        .bind(enabled)
-        .bind(Utc::now())
-        .bind(plugin_id)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE plugin_registry 
+                    SET enabled = $1, updated_at = $2
+                    WHERE id = $3
+                    "#,
+                )
+                .bind(enabled)
+                .bind(Utc::now())
+                .bind(plugin_id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE plugin_registry 
+                    SET enabled = ?, updated_at = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(enabled)
+                .bind(Utc::now())
+                .bind(plugin_id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE plugin_registry 
+                    SET enabled = ?, updated_at = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(enabled)
+                .bind(Utc::now())
+                .bind(plugin_id)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         Ok(())
     }
 
     /// Delete plugin
     pub async fn delete_traffic_plugin(&self, plugin_id: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        sqlx::query(
-            r#"
-            DELETE FROM plugin_registry 
-            WHERE id = $1
-            "#,
-        )
-        .bind(plugin_id)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    DELETE FROM plugin_registry 
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(plugin_id)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM plugin_registry WHERE id = ?")
+                    .bind(plugin_id)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM plugin_registry WHERE id = ?")
+                    .bind(plugin_id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
@@ -689,46 +1461,106 @@ impl DatabaseService {
 
     /// Insert proxy request record (with compression support)
     pub async fn insert_proxy_request(&self, request: &ProxyRequestRecord) -> Result<i64> {
-        let pool = self.get_pool()?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         
         // 智能压缩请求体和响应体
         let (request_body, request_compressed) = smart_compress(request.request_body.as_ref())?;
         let (response_body, response_compressed) = smart_compress(request.response_body.as_ref())?;
         
-        // Postgres returns last inserted ID differently. 
-        // IF we need the ID, we must use RETURNING id.
-        // Assuming table `proxy_requests` has a SERIAL/BIGSERIAL execution `id`.
-        // `result.last_insert_rowid()` is SQLite specific and will not work on PG with sqlx::postgres.
-        
-        let row: (i64,) = sqlx::query_as(
-            r#"
-            INSERT INTO proxy_requests (
-                url, host, protocol, method, status_code,
-                request_headers, request_body, response_headers, response_body,
-                response_size, response_time, timestamp,
-                request_body_compressed, response_body_compressed
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            RETURNING id
-            "#,
-        )
-        .bind(&request.url)
-        .bind(&request.host)
-        .bind(&request.protocol)
-        .bind(&request.method)
-        .bind(request.status_code)
-        .bind(&request.request_headers)
-        .bind(&request_body)
-        .bind(&request.response_headers)
-        .bind(&response_body)
-        .bind(request.response_size)
-        .bind(request.response_time)
-        .bind(request.timestamp)
-        .bind(request_compressed)
-        .bind(response_compressed)
-        .fetch_one(pool)
-        .await?;
-
-        Ok(row.0)
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let row: (i64,) = sqlx::query_as(
+                    r#"
+                    INSERT INTO proxy_requests (
+                        url, host, protocol, method, status_code,
+                        request_headers, request_body, response_headers, response_body,
+                        response_size, response_time, timestamp,
+                        request_body_compressed, response_body_compressed
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    RETURNING id
+                    "#,
+                )
+                .bind(&request.url)
+                .bind(&request.host)
+                .bind(&request.protocol)
+                .bind(&request.method)
+                .bind(request.status_code)
+                .bind(&request.request_headers)
+                .bind(&request_body)
+                .bind(&request.response_headers)
+                .bind(&response_body)
+                .bind(request.response_size)
+                .bind(request.response_time)
+                .bind(request.timestamp)
+                .bind(request_compressed)
+                .bind(response_compressed)
+                .fetch_one(pool)
+                .await?;
+                Ok(row.0)
+            }
+            DatabasePool::SQLite(pool) => {
+                let row: (i64,) = sqlx::query_as(
+                    r#"
+                    INSERT INTO proxy_requests (
+                        url, host, protocol, method, status_code,
+                        request_headers, request_body, response_headers, response_body,
+                        response_size, response_time, timestamp,
+                        request_body_compressed, response_body_compressed
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                    "#,
+                )
+                .bind(&request.url)
+                .bind(&request.host)
+                .bind(&request.protocol)
+                .bind(&request.method)
+                .bind(request.status_code)
+                .bind(&request.request_headers)
+                .bind(&request_body)
+                .bind(&request.response_headers)
+                .bind(&response_body)
+                .bind(request.response_size)
+                .bind(request.response_time)
+                .bind(request.timestamp)
+                .bind(request_compressed)
+                .bind(response_compressed)
+                .fetch_one(pool)
+                .await?;
+                Ok(row.0)
+            }
+            DatabasePool::MySQL(pool) => {
+                let result = sqlx::query(
+                    r#"
+                    INSERT INTO proxy_requests (
+                        url, host, protocol, method, status_code,
+                        request_headers, request_body, response_headers, response_body,
+                        response_size, response_time, timestamp,
+                        request_body_compressed, response_body_compressed
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&request.url)
+                .bind(&request.host)
+                .bind(&request.protocol)
+                .bind(&request.method)
+                .bind(request.status_code)
+                .bind(&request.request_headers)
+                .bind(&request_body)
+                .bind(&request.response_headers)
+                .bind(&response_body)
+                .bind(request.response_size)
+                .bind(request.response_time)
+                .bind(request.timestamp)
+                .bind(request_compressed)
+                .bind(response_compressed)
+                .execute(pool)
+                .await?;
+                Ok(result.last_insert_id() as i64)
+            }
+        }
     }
 
     /// List proxy requests with filters (with decompression support)
@@ -736,49 +1568,128 @@ impl DatabaseService {
         &self,
         filters: ProxyRequestFilters,
     ) -> Result<Vec<ProxyRequestRecord>> {
-        let pool = self.get_pool()?;
-        
-        let mut query_builder = sqlx::QueryBuilder::new(
-            r#"
-            SELECT id, url, host, protocol, method, status_code,
-                   request_headers, request_body, response_headers, response_body,
-                   response_size, response_time, timestamp,
-                   request_body_compressed, response_body_compressed
-            FROM proxy_requests
-            WHERE 1=1
-            "#,
-        );
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        if let Some(ref protocol) = filters.protocol {
-            query_builder.push(" AND protocol = ").push_bind(protocol);
-        }
-        if let Some(ref method) = filters.method {
-            query_builder.push(" AND method = ").push_bind(method);
-        }
-        if let Some(ref host) = filters.host {
-            query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
-        }
-        if let Some(status_min) = filters.status_code_min {
-            query_builder.push(" AND status_code >= ").push_bind(status_min);
-        }
-        if let Some(status_max) = filters.status_code_max {
-            query_builder.push(" AND status_code <= ").push_bind(status_max);
-        }
+        let mut records = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                    r#"
+                    SELECT id, url, host, protocol, method, status_code,
+                           request_headers, request_body, response_headers, response_body,
+                           response_size, response_time, timestamp,
+                           request_body_compressed, response_body_compressed
+                    FROM proxy_requests
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref protocol) = filters.protocol {
+                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                }
+                if let Some(ref method) = filters.method {
+                    query_builder.push(" AND method = ").push_bind(method);
+                }
+                if let Some(ref host) = filters.host {
+                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                }
+                if let Some(status_min) = filters.status_code_min {
+                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                }
+                if let Some(status_max) = filters.status_code_max {
+                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                }
+                query_builder.push(" ORDER BY timestamp DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                query_builder
+                    .build_query_as::<ProxyRequestRecord>()
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    r#"
+                    SELECT id, url, host, protocol, method, status_code,
+                           request_headers, request_body, response_headers, response_body,
+                           response_size, response_time, timestamp,
+                           request_body_compressed, response_body_compressed
+                    FROM proxy_requests
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref protocol) = filters.protocol {
+                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                }
+                if let Some(ref method) = filters.method {
+                    query_builder.push(" AND method = ").push_bind(method);
+                }
+                if let Some(ref host) = filters.host {
+                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                }
+                if let Some(status_min) = filters.status_code_min {
+                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                }
+                if let Some(status_max) = filters.status_code_max {
+                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                }
+                query_builder.push(" ORDER BY timestamp DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                query_builder
+                    .build_query_as::<ProxyRequestRecord>()
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                    r#"
+                    SELECT id, url, host, protocol, method, status_code,
+                           request_headers, request_body, response_headers, response_body,
+                           response_size, response_time, timestamp,
+                           request_body_compressed, response_body_compressed
+                    FROM proxy_requests
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref protocol) = filters.protocol {
+                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                }
+                if let Some(ref method) = filters.method {
+                    query_builder.push(" AND method = ").push_bind(method);
+                }
+                if let Some(ref host) = filters.host {
+                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                }
+                if let Some(status_min) = filters.status_code_min {
+                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                }
+                if let Some(status_max) = filters.status_code_max {
+                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                }
+                query_builder.push(" ORDER BY timestamp DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                query_builder
+                    .build_query_as::<ProxyRequestRecord>()
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
 
-        query_builder.push(" ORDER BY timestamp DESC");
-
-        if let Some(limit) = filters.limit {
-            query_builder.push(" LIMIT ").push_bind(limit);
-        }
-        if let Some(offset) = filters.offset {
-            query_builder.push(" OFFSET ").push_bind(offset);
-        }
-
-        let mut records = query_builder.build_query_as::<ProxyRequestRecord>()
-            .fetch_all(pool)
-            .await?;
-
-        // 解压缩数据
         for record in &mut records {
             record.request_body = smart_decompress(record.request_body.take(), record.request_body_compressed)?;
             record.response_body = smart_decompress(record.response_body.take(), record.response_body_compressed)?;
@@ -802,114 +1713,276 @@ impl DatabaseService {
 
     /// Count proxy requests
     pub async fn count_proxy_requests(&self, filters: ProxyRequestFilters) -> Result<i64> {
-        let pool = self.get_pool()?;
-        
-        let mut query_builder = sqlx::QueryBuilder::new(
-            r#"
-            SELECT COUNT(*)
-            FROM proxy_requests
-            WHERE 1=1
-            "#,
-        );
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        if let Some(ref protocol) = filters.protocol {
-            query_builder.push(" AND protocol = ").push_bind(protocol);
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM proxy_requests
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref protocol) = filters.protocol {
+                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                }
+                if let Some(ref method) = filters.method {
+                    query_builder.push(" AND method = ").push_bind(method);
+                }
+                if let Some(ref host) = filters.host {
+                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                }
+                if let Some(status_min) = filters.status_code_min {
+                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                }
+                if let Some(status_max) = filters.status_code_max {
+                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM proxy_requests
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref protocol) = filters.protocol {
+                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                }
+                if let Some(ref method) = filters.method {
+                    query_builder.push(" AND method = ").push_bind(method);
+                }
+                if let Some(ref host) = filters.host {
+                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                }
+                if let Some(status_min) = filters.status_code_min {
+                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                }
+                if let Some(status_max) = filters.status_code_max {
+                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM proxy_requests
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref protocol) = filters.protocol {
+                    query_builder.push(" AND protocol = ").push_bind(protocol);
+                }
+                if let Some(ref method) = filters.method {
+                    query_builder.push(" AND method = ").push_bind(method);
+                }
+                if let Some(ref host) = filters.host {
+                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                }
+                if let Some(status_min) = filters.status_code_min {
+                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                }
+                if let Some(status_max) = filters.status_code_max {
+                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
         }
-        if let Some(ref method) = filters.method {
-            query_builder.push(" AND method = ").push_bind(method);
-        }
-        if let Some(ref host) = filters.host {
-            query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
-        }
-        if let Some(status_min) = filters.status_code_min {
-            query_builder.push(" AND status_code >= ").push_bind(status_min);
-        }
-        if let Some(status_max) = filters.status_code_max {
-            query_builder.push(" AND status_code <= ").push_bind(status_max);
-        }
-
-        let row: (i64,) = query_builder.build_query_as()
-            .fetch_one(pool)
-            .await?;
-
-        Ok(row.0)
     }
 
     /// Get proxy request by ID
     pub async fn get_proxy_request_by_id(&self, id: i64) -> Result<Option<ProxyRequestRecord>> {
-        let pool = self.get_pool()?;
-        
-        let record = sqlx::query_as::<_, ProxyRequestRecord>(
-            r#"
-            SELECT id, url, host, protocol, method, status_code,
-                   request_headers, request_body, response_headers, response_body,
-                   response_size, response_time, timestamp
-            FROM proxy_requests
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        Ok(record)
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let record = sqlx::query_as::<_, ProxyRequestRecord>(
+                    r#"
+                    SELECT id, url, host, protocol, method, status_code,
+                           request_headers, request_body, response_headers, response_body,
+                           response_size, response_time, timestamp
+                    FROM proxy_requests
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(record)
+            }
+            DatabasePool::SQLite(pool) => {
+                let record = sqlx::query_as::<_, ProxyRequestRecord>(
+                    r#"
+                    SELECT id, url, host, protocol, method, status_code,
+                           request_headers, request_body, response_headers, response_body,
+                           response_size, response_time, timestamp
+                    FROM proxy_requests
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(record)
+            }
+            DatabasePool::MySQL(pool) => {
+                let record = sqlx::query_as::<_, ProxyRequestRecord>(
+                    r#"
+                    SELECT id, url, host, protocol, method, status_code,
+                           request_headers, request_body, response_headers, response_body,
+                           response_size, response_time, timestamp
+                    FROM proxy_requests
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(record)
+            }
+        }
     }
 
     /// Clear all proxy requests
     pub async fn clear_proxy_requests(&self) -> Result<u64> {
-        let pool = self.get_pool()?;
-        
-        let mut tx = pool.begin().await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        // Uses TRUNCATE to clear and reset identity if possible, but standard DELETE is safer transactionally across different DBs if we want to be simple.
-        // However, to mimic "reset ID" behavior of deleting from sqlite_sequence, TRUNCATE with RESTART IDENTITY is best in PG.
-        // casting to u64 is needed for return type.
-        // But sqlx execute result rows_affected for TRUNCATE might be 0 or undefined depending on driver.
-        // Let's stick to DELETE for now to ensure rows_affected is returned correctly, as requested by return type.
-        // And we skip resetting sequence to avoid complexity.
-        
-        let result = sqlx::query("DELETE FROM proxy_requests")
-            .execute(&mut *tx)
-            .await?;
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let result = sqlx::query("DELETE FROM proxy_requests")
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                result.rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                let result = sqlx::query("DELETE FROM proxy_requests")
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                result.rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                let result = sqlx::query("DELETE FROM proxy_requests")
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                result.rows_affected()
+            }
+        };
 
-        // Removed sqlite_sequence deletion as it is SQLite specific.
-
-        tx.commit().await?;
-
-        info!("Cleared {} proxy request records", result.rows_affected());
-        Ok(result.rows_affected())
+        info!("Cleared {} proxy request records", rows_affected);
+        Ok(rows_affected)
     }
 
     /// Delete proxy requests before specified time
     pub async fn delete_proxy_requests_before(&self, before: DateTime<Utc>) -> Result<u64> {
-        let pool = self.get_pool()?;
-        
-        let result = sqlx::query("DELETE FROM proxy_requests WHERE timestamp < $1")
-            .bind(before)
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        info!("Deleted {} old proxy request records", result.rows_affected());
-        Ok(result.rows_affected())
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM proxy_requests WHERE timestamp < $1")
+                    .bind(before)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM proxy_requests WHERE timestamp < ?")
+                    .bind(before)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM proxy_requests WHERE timestamp < ?")
+                    .bind(before)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+        };
+
+        info!("Deleted {} old proxy request records", rows_affected);
+        Ok(rows_affected)
     }
 
     /// Save proxy config
     pub async fn save_proxy_config(&self, key: &str, value: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        sqlx::query(
-            r#"
-            INSERT INTO proxy_config (key, value, updated_at)
-            VALUES ($1, $2, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = CURRENT_TIMESTAMP
-            "#,
-        )
-        .bind(key)
-        .bind(value)
-        .execute(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO proxy_config (key, value, updated_at)
+                    VALUES ($1, $2, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(key)
+                .bind(value)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO proxy_config (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(key)
+                .bind(value)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO proxy_config (`key`, `value`, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON DUPLICATE KEY UPDATE
+                        `value` = VALUES(`value`),
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(key)
+                .bind(value)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         info!("Saved config: {} = {}", key, value);
         Ok(())
@@ -917,26 +1990,62 @@ impl DatabaseService {
 
     /// Load proxy config
     pub async fn load_proxy_config(&self, key: &str) -> Result<Option<String>> {
-        let pool = self.get_pool()?;
-        
-        let result: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM proxy_config WHERE key = $1"
-        )
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        Ok(result.map(|(value,)| value))
+        let result: Option<(String,)> = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as("SELECT value FROM proxy_config WHERE key = $1")
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as("SELECT value FROM proxy_config WHERE key = ?")
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as("SELECT value FROM proxy_config WHERE `key` = ?")
+                    .bind(key)
+                    .fetch_optional(pool)
+                    .await?
+            }
+        };
+
+        Ok(result.map(|(v,)| v))
     }
 
     /// Delete proxy config
     pub async fn delete_proxy_config(&self, key: &str) -> Result<()> {
-        let pool = self.get_pool()?;
-        
-        sqlx::query("DELETE FROM proxy_config WHERE key = $1")
-            .bind(key)
-            .execute(pool)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM proxy_config WHERE key = $1")
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM proxy_config WHERE key = ?")
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM proxy_config WHERE `key` = ?")
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+            }
+        }
 
         info!("Deleted config: {}", key);
         Ok(())
@@ -954,6 +2063,7 @@ pub struct TrafficVulnerabilityFilters {
     pub severity: Option<String>,
     pub status: Option<String>,
     pub plugin_id: Option<String>,
+    pub exclude_plugin_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -1096,3 +2206,743 @@ pub struct TrafficPluginMetadata {
     pub tags: Vec<String>,
 }
 
+/// Agent audit finding filters
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentAuditFindingFilters {
+    pub conversation_id: Option<String>,
+    pub severity: Option<String>,
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// Agent audit finding record
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AgentAuditFindingRecord {
+    pub id: String,
+    pub conversation_id: String,
+    pub finding_id: String,
+    pub signature: String,
+    pub title: String,
+    pub severity: String,
+    pub status: String,
+    pub confidence: Option<f64>,
+    pub cwe: Option<String>,
+    pub files_json: Option<String>,
+    pub source_json: Option<String>,
+    pub sink_json: Option<String>,
+    pub trace_path_json: Option<String>,
+    pub evidence_json: Option<String>,
+    pub fix: Option<String>,
+    pub description: String,
+    pub severity_raw: Option<String>,
+    pub source_message_id: Option<String>,
+    pub hit_count: i64,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl DatabaseService {
+    pub async fn check_agent_audit_signature_exists(&self, signature: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let count: i64 = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM agent_audit_findings WHERE signature = $1")
+                    .bind(signature)
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM agent_audit_findings WHERE signature = ?")
+                    .bind(signature)
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM agent_audit_findings WHERE signature = ?")
+                    .bind(signature)
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
+
+        Ok(count > 0)
+    }
+
+    pub async fn insert_agent_audit_finding(&self, finding: &AgentAuditFindingRecord) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO agent_audit_findings (
+                        id, conversation_id, finding_id, signature, title, severity, status,
+                        confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                        fix, description, severity_raw, source_message_id, hit_count, first_seen_at,
+                        last_seen_at, created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7,
+                        $8, $9, $10, $11, $12, $13, $14,
+                        $15, $16, $17, $18, $19, $20, $21, $22, $23
+                    )
+                    "#,
+                )
+                .bind(&finding.id)
+                .bind(&finding.conversation_id)
+                .bind(&finding.finding_id)
+                .bind(&finding.signature)
+                .bind(&finding.title)
+                .bind(&finding.severity)
+                .bind(&finding.status)
+                .bind(finding.confidence)
+                .bind(&finding.cwe)
+                .bind(&finding.files_json)
+                .bind(&finding.source_json)
+                .bind(&finding.sink_json)
+                .bind(&finding.trace_path_json)
+                .bind(&finding.evidence_json)
+                .bind(&finding.fix)
+                .bind(&finding.description)
+                .bind(&finding.severity_raw)
+                .bind(&finding.source_message_id)
+                .bind(finding.hit_count)
+                .bind(finding.first_seen_at)
+                .bind(finding.last_seen_at)
+                .bind(finding.created_at)
+                .bind(finding.updated_at)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO agent_audit_findings (
+                        id, conversation_id, finding_id, signature, title, severity, status,
+                        confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                        fix, description, severity_raw, source_message_id, hit_count, first_seen_at,
+                        last_seen_at, created_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    "#,
+                )
+                .bind(&finding.id)
+                .bind(&finding.conversation_id)
+                .bind(&finding.finding_id)
+                .bind(&finding.signature)
+                .bind(&finding.title)
+                .bind(&finding.severity)
+                .bind(&finding.status)
+                .bind(finding.confidence)
+                .bind(&finding.cwe)
+                .bind(&finding.files_json)
+                .bind(&finding.source_json)
+                .bind(&finding.sink_json)
+                .bind(&finding.trace_path_json)
+                .bind(&finding.evidence_json)
+                .bind(&finding.fix)
+                .bind(&finding.description)
+                .bind(&finding.severity_raw)
+                .bind(&finding.source_message_id)
+                .bind(finding.hit_count)
+                .bind(finding.first_seen_at)
+                .bind(finding.last_seen_at)
+                .bind(finding.created_at)
+                .bind(finding.updated_at)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO agent_audit_findings (
+                        id, conversation_id, finding_id, signature, title, severity, status,
+                        confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                        fix, description, severity_raw, source_message_id, hit_count, first_seen_at,
+                        last_seen_at, created_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    "#,
+                )
+                .bind(&finding.id)
+                .bind(&finding.conversation_id)
+                .bind(&finding.finding_id)
+                .bind(&finding.signature)
+                .bind(&finding.title)
+                .bind(&finding.severity)
+                .bind(&finding.status)
+                .bind(finding.confidence)
+                .bind(&finding.cwe)
+                .bind(&finding.files_json)
+                .bind(&finding.source_json)
+                .bind(&finding.sink_json)
+                .bind(&finding.trace_path_json)
+                .bind(&finding.evidence_json)
+                .bind(&finding.fix)
+                .bind(&finding.description)
+                .bind(&finding.severity_raw)
+                .bind(&finding.source_message_id)
+                .bind(finding.hit_count)
+                .bind(finding.first_seen_at)
+                .bind(finding.last_seen_at)
+                .bind(finding.created_at)
+                .bind(finding.updated_at)
+                .execute(pool)
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_agent_audit_finding_hit(
+        &self,
+        signature: &str,
+        finding: &AgentAuditFindingRecord,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE agent_audit_findings
+                    SET conversation_id = $1,
+                        finding_id = $2,
+                        title = $3,
+                        severity = $4,
+                        status = $5,
+                        confidence = $6,
+                        cwe = $7,
+                        files_json = $8,
+                        source_json = $9,
+                        sink_json = $10,
+                        trace_path_json = $11,
+                        evidence_json = $12,
+                        fix = $13,
+                        description = $14,
+                        severity_raw = $15,
+                        source_message_id = $16,
+                        hit_count = hit_count + 1,
+                        last_seen_at = $17,
+                        updated_at = $18
+                    WHERE signature = $19
+                    "#,
+                )
+                .bind(&finding.conversation_id)
+                .bind(&finding.finding_id)
+                .bind(&finding.title)
+                .bind(&finding.severity)
+                .bind(&finding.status)
+                .bind(finding.confidence)
+                .bind(&finding.cwe)
+                .bind(&finding.files_json)
+                .bind(&finding.source_json)
+                .bind(&finding.sink_json)
+                .bind(&finding.trace_path_json)
+                .bind(&finding.evidence_json)
+                .bind(&finding.fix)
+                .bind(&finding.description)
+                .bind(&finding.severity_raw)
+                .bind(&finding.source_message_id)
+                .bind(finding.last_seen_at)
+                .bind(finding.updated_at)
+                .bind(signature)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE agent_audit_findings
+                    SET conversation_id = ?,
+                        finding_id = ?,
+                        title = ?,
+                        severity = ?,
+                        status = ?,
+                        confidence = ?,
+                        cwe = ?,
+                        files_json = ?,
+                        source_json = ?,
+                        sink_json = ?,
+                        trace_path_json = ?,
+                        evidence_json = ?,
+                        fix = ?,
+                        description = ?,
+                        severity_raw = ?,
+                        source_message_id = ?,
+                        hit_count = hit_count + 1,
+                        last_seen_at = ?,
+                        updated_at = ?
+                    WHERE signature = ?
+                    "#,
+                )
+                .bind(&finding.conversation_id)
+                .bind(&finding.finding_id)
+                .bind(&finding.title)
+                .bind(&finding.severity)
+                .bind(&finding.status)
+                .bind(finding.confidence)
+                .bind(&finding.cwe)
+                .bind(&finding.files_json)
+                .bind(&finding.source_json)
+                .bind(&finding.sink_json)
+                .bind(&finding.trace_path_json)
+                .bind(&finding.evidence_json)
+                .bind(&finding.fix)
+                .bind(&finding.description)
+                .bind(&finding.severity_raw)
+                .bind(&finding.source_message_id)
+                .bind(finding.last_seen_at)
+                .bind(finding.updated_at)
+                .bind(signature)
+                .execute(pool)
+                .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE agent_audit_findings
+                    SET conversation_id = ?,
+                        finding_id = ?,
+                        title = ?,
+                        severity = ?,
+                        status = ?,
+                        confidence = ?,
+                        cwe = ?,
+                        files_json = ?,
+                        source_json = ?,
+                        sink_json = ?,
+                        trace_path_json = ?,
+                        evidence_json = ?,
+                        fix = ?,
+                        description = ?,
+                        severity_raw = ?,
+                        source_message_id = ?,
+                        hit_count = hit_count + 1,
+                        last_seen_at = ?,
+                        updated_at = ?
+                    WHERE signature = ?
+                    "#,
+                )
+                .bind(&finding.conversation_id)
+                .bind(&finding.finding_id)
+                .bind(&finding.title)
+                .bind(&finding.severity)
+                .bind(&finding.status)
+                .bind(finding.confidence)
+                .bind(&finding.cwe)
+                .bind(&finding.files_json)
+                .bind(&finding.source_json)
+                .bind(&finding.sink_json)
+                .bind(&finding.trace_path_json)
+                .bind(&finding.evidence_json)
+                .bind(&finding.fix)
+                .bind(&finding.description)
+                .bind(&finding.severity_raw)
+                .bind(&finding.source_message_id)
+                .bind(finding.last_seen_at)
+                .bind(finding.updated_at)
+                .bind(signature)
+                .execute(pool)
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn list_agent_audit_findings(
+        &self,
+        filters: AgentAuditFindingFilters,
+    ) -> Result<Vec<AgentAuditFindingRecord>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref conversation_id) = filters.conversation_id {
+                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
+                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                    query_builder.push(")");
+                }
+                query_builder.push(" ORDER BY last_seen_at DESC, created_at DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                let records = query_builder
+                    .build_query_as::<AgentAuditFindingRecord>()
+                    .fetch_all(pool)
+                    .await?;
+                Ok(records)
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref conversation_id) = filters.conversation_id {
+                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
+                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                    query_builder.push(")");
+                }
+                query_builder.push(" ORDER BY last_seen_at DESC, created_at DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                let records = query_builder
+                    .build_query_as::<AgentAuditFindingRecord>()
+                    .fetch_all(pool)
+                    .await?;
+                Ok(records)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE 1=1
+                    "#,
+                );
+                if let Some(ref conversation_id) = filters.conversation_id {
+                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
+                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                    query_builder.push(")");
+                }
+                query_builder.push(" ORDER BY last_seen_at DESC, created_at DESC");
+                if let Some(limit) = filters.limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                if let Some(offset) = filters.offset {
+                    query_builder.push(" OFFSET ").push_bind(offset);
+                }
+                let records = query_builder
+                    .build_query_as::<AgentAuditFindingRecord>()
+                    .fetch_all(pool)
+                    .await?;
+                Ok(records)
+            }
+        }
+    }
+
+    pub async fn count_agent_audit_findings(&self, filters: AgentAuditFindingFilters) -> Result<i64> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                    "SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1",
+                );
+                if let Some(ref conversation_id) = filters.conversation_id {
+                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
+                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                    query_builder.push(")");
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder =
+                    sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1");
+                if let Some(ref conversation_id) = filters.conversation_id {
+                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
+                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                    query_builder.push(")");
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder =
+                    sqlx::QueryBuilder::<sqlx::MySql>::new("SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1");
+                if let Some(ref conversation_id) = filters.conversation_id {
+                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                }
+                if let Some(ref severity) = filters.severity {
+                    query_builder.push(" AND severity = ").push_bind(severity);
+                }
+                if let Some(ref status) = filters.status {
+                    query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
+                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
+                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                    query_builder.push(")");
+                }
+                let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
+                Ok(row.0)
+            }
+        }
+    }
+
+    pub async fn get_agent_audit_finding_by_id(&self, finding_id: &str) -> Result<Option<AgentAuditFindingRecord>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(finding_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(finding_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(finding_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+        }
+    }
+
+    pub async fn update_agent_audit_finding_status(&self, finding_id: &str, status: &str) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    "UPDATE agent_audit_findings SET status = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(status)
+                .bind(Utc::now())
+                .bind(finding_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    "UPDATE agent_audit_findings SET status = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(status)
+                .bind(Utc::now())
+                .bind(finding_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    "UPDATE agent_audit_findings SET status = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(status)
+                .bind(Utc::now())
+                .bind(finding_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+        };
+
+        if rows_affected == 0 {
+            return Err(anyhow::anyhow!("Agent audit finding not found: {}", finding_id));
+        }
+
+        Ok(())
+    }
+
+    pub async fn delete_agent_audit_finding(&self, finding_id: &str) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM agent_audit_findings WHERE id = $1")
+                    .bind(finding_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM agent_audit_findings WHERE id = ?")
+                    .bind(finding_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM agent_audit_findings WHERE id = ?")
+                    .bind(finding_id)
+                    .execute(pool)
+                    .await?
+                    .rows_affected()
+            }
+        };
+
+        if rows_affected == 0 {
+            return Err(anyhow::anyhow!("Agent audit finding not found: {}", finding_id));
+        }
+
+        Ok(())
+    }
+
+    pub async fn delete_all_agent_audit_findings(&self) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM agent_audit_findings")
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM agent_audit_findings")
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM agent_audit_findings")
+                    .execute(pool)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+}
