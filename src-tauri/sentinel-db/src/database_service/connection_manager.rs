@@ -45,20 +45,26 @@ impl DatabasePool {
                         .context("Failed to create SQLite database directory")?;
                 }
 
+                let enable_wal = config.enable_wal;
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(config.max_connections)
                     .acquire_timeout(Duration::from_secs(config.query_timeout))
+                    .after_connect(move |conn, _meta| {
+                        Box::pin(async move {
+                            sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await?;
+                            // Wait before returning SQLITE_BUSY to reduce transient write contention.
+                            sqlx::query("PRAGMA busy_timeout = 10000").execute(&mut *conn).await?;
+                            if enable_wal {
+                                sqlx::query("PRAGMA journal_mode = WAL").execute(&mut *conn).await?;
+                                sqlx::query("PRAGMA synchronous = NORMAL").execute(&mut *conn).await?;
+                            }
+                            Ok(())
+                        })
+                    })
                     .connect(&connection_string)
                     .await
                     .context("Failed to connect to SQLite database")?;
 
-                if config.enable_wal {
-                    sqlx::query("PRAGMA journal_mode = WAL")
-                        .execute(&pool)
-                        .await
-                        .context("Failed to enable SQLite WAL mode")?;
-                }
-                
                 Ok(DatabasePool::SQLite(pool))
             }
             DatabaseType::MySQL => {

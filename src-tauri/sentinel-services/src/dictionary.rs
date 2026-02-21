@@ -1,26 +1,132 @@
 use anyhow::Result;
-use sqlx::postgres::PgPool;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-// 从主项目导入模型定义
 use sentinel_core::models::dictionary::{
     Dictionary, DictionaryExport, DictionaryFilter, DictionaryImportOptions, DictionarySet,
     DictionarySetRelation, DictionaryStats, DictionaryType, DictionaryWord, MergeMode, ServiceType,
 };
+use sentinel_db::DatabasePool;
 
-/// 字典服务
-#[derive(Debug, Clone) ]
+macro_rules! db_execute {
+    ($svc:expr, $sql:expr, |$q:ident| $binds:expr) => {{
+        let sql = $svc.sql($sql);
+        match &$svc.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let $q = sqlx::query(&sql);
+                $binds.execute(pool).await?.rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                let $q = sqlx::query(&sql);
+                $binds.execute(pool).await?.rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                let $q = sqlx::query(&sql);
+                $binds.execute(pool).await?.rows_affected()
+            }
+        }
+    }};
+}
+
+macro_rules! db_fetch_optional_as {
+    ($svc:expr, $ty:ty, $sql:expr, |$q:ident| $binds:expr) => {{
+        let sql = $svc.sql($sql);
+        match &$svc.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let $q = sqlx::query_as::<_, $ty>(&sql);
+                $binds.fetch_optional(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let $q = sqlx::query_as::<_, $ty>(&sql);
+                $binds.fetch_optional(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let $q = sqlx::query_as::<_, $ty>(&sql);
+                $binds.fetch_optional(pool).await?
+            }
+        }
+    }};
+}
+
+macro_rules! db_fetch_all_as {
+    ($svc:expr, $ty:ty, $sql:expr, |$q:ident| $binds:expr) => {{
+        let sql = $svc.sql($sql);
+        match &$svc.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let $q = sqlx::query_as::<_, $ty>(&sql);
+                $binds.fetch_all(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let $q = sqlx::query_as::<_, $ty>(&sql);
+                $binds.fetch_all(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let $q = sqlx::query_as::<_, $ty>(&sql);
+                $binds.fetch_all(pool).await?
+            }
+        }
+    }};
+}
+
+macro_rules! db_fetch_scalar {
+    ($svc:expr, $ty:ty, $sql:expr, |$q:ident| $binds:expr) => {{
+        let sql = $svc.sql($sql);
+        match &$svc.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let $q = sqlx::query_scalar::<_, $ty>(&sql);
+                $binds.fetch_one(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let $q = sqlx::query_scalar::<_, $ty>(&sql);
+                $binds.fetch_one(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let $q = sqlx::query_scalar::<_, $ty>(&sql);
+                $binds.fetch_one(pool).await?
+            }
+        }
+    }};
+}
+
+#[derive(Debug, Clone)]
 pub struct DictionaryService {
-    pool: PgPool,
+    pool: DatabasePool,
 }
 
 impl DictionaryService {
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: DatabasePool) -> Self {
         Self { pool }
     }
 
-    /// 创建字典
+    fn sql(&self, sql: &str) -> String {
+        if matches!(self.pool, DatabasePool::PostgreSQL(_)) {
+            return sql.to_string();
+        }
+
+        let mut out = String::with_capacity(sql.len());
+        let bytes = sql.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if bytes[i] == b'$' {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > i + 1 {
+                    out.push('?');
+                    i = j;
+                    continue;
+                }
+            }
+
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+
+        out
+    }
+
     pub async fn create_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary> {
         if dictionary.id.is_empty() {
             dictionary.id = Uuid::new_v4().to_string();
@@ -30,7 +136,8 @@ impl DictionaryService {
         dictionary.created_at = now;
         dictionary.updated_at = now;
 
-        sqlx::query(
+        db_execute!(
+            self,
             r#"
             INSERT INTO dictionaries (
                 id, name, description, dict_type, service_type, category,
@@ -39,53 +146,53 @@ impl DictionaryService {
                 created_at, updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         "#,
-        )
-        .bind(&dictionary.id)
-        .bind(&dictionary.name)
-        .bind(&dictionary.description)
-        .bind(&dictionary.dict_type)
-        .bind(&dictionary.service_type)
-        .bind(&dictionary.category)
-        .bind(dictionary.is_builtin)
-        .bind(dictionary.is_active)
-        .bind(dictionary.word_count)
-        .bind(dictionary.file_size)
-        .bind(&dictionary.checksum)
-        .bind(&dictionary.version)
-        .bind(&dictionary.author)
-        .bind(&dictionary.source_url)
-        .bind(&dictionary.tags)
-        .bind(&dictionary.metadata)
-        .bind(&dictionary.created_at)
-        .bind(&dictionary.updated_at)
-        .execute(&self.pool)
-        .await?;
+            |q| {
+                q.bind(&dictionary.id)
+                    .bind(&dictionary.name)
+                    .bind(&dictionary.description)
+                    .bind(&dictionary.dict_type)
+                    .bind(&dictionary.service_type)
+                    .bind(&dictionary.category)
+                    .bind(dictionary.is_builtin)
+                    .bind(dictionary.is_active)
+                    .bind(dictionary.word_count)
+                    .bind(dictionary.file_size)
+                    .bind(&dictionary.checksum)
+                    .bind(&dictionary.version)
+                    .bind(&dictionary.author)
+                    .bind(&dictionary.source_url)
+                    .bind(&dictionary.tags)
+                    .bind(&dictionary.metadata)
+                    .bind(&dictionary.created_at)
+                    .bind(&dictionary.updated_at)
+            }
+        );
 
         Ok(dictionary)
     }
 
-    /// 获取字典
     pub async fn get_dictionary(&self, id: &str) -> Result<Option<Dictionary>> {
-        let dictionary = sqlx::query_as::<_, Dictionary>("SELECT * FROM dictionaries WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let dictionary = db_fetch_optional_as!(
+            self,
+            Dictionary,
+            "SELECT * FROM dictionaries WHERE id = $1",
+            |q| q.bind(id)
+        );
 
         Ok(dictionary)
     }
 
-    /// 根据名称获取字典
     pub async fn get_dictionary_by_name(&self, name: &str) -> Result<Option<Dictionary>> {
-        let dictionary =
-            sqlx::query_as::<_, Dictionary>("SELECT * FROM dictionaries WHERE name = $1")
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?;
+        let dictionary = db_fetch_optional_as!(
+            self,
+            Dictionary,
+            "SELECT * FROM dictionaries WHERE name = $1",
+            |q| q.bind(name)
+        );
 
         Ok(dictionary)
     }
 
-    /// 获取字典列表
     pub async fn list_dictionaries(
         &self,
         filter: Option<DictionaryFilter>,
@@ -121,28 +228,49 @@ impl DictionaryService {
                 params.push(is_active.to_string());
             }
             if let Some(search_term) = filter.search_term {
-                query.push_str(&format!(" AND (name LIKE ${0} OR description LIKE ${0})", param_idx));
-                let search_pattern = format!("%{}%", search_term);
-                params.push(search_pattern);
+                query.push_str(&format!(
+                    " AND (name LIKE ${0} OR description LIKE ${0})",
+                    param_idx
+                ));
+                params.push(format!("%{}%", search_term));
             }
         }
 
         query.push_str(" ORDER BY created_at DESC");
+        let query = self.sql(&query);
 
-        let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
-        for param in params {
-            sql_query = sql_query.bind(param);
-        }
+        let dictionaries = match &self.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_all(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_all(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_all(pool).await?
+            }
+        };
 
-        let dictionaries = sql_query.fetch_all(&self.pool).await?;
         Ok(dictionaries)
     }
 
-    /// 更新字典
     pub async fn update_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary> {
         dictionary.updated_at = chrono::Utc::now();
 
-        sqlx::query(
+        db_execute!(
+            self,
             r#"
             UPDATE dictionaries SET
                 name = $1, description = $2, dict_type = $3, service_type = $4,
@@ -151,54 +279,48 @@ impl DictionaryService {
                 source_url = $13, tags = $14, metadata = $15, updated_at = $16
             WHERE id = $17
         "#,
-        )
-        .bind(&dictionary.name)
-        .bind(&dictionary.description)
-        .bind(&dictionary.dict_type)
-        .bind(&dictionary.service_type)
-        .bind(&dictionary.category)
-        .bind(dictionary.is_builtin)
-        .bind(dictionary.is_active)
-        .bind(dictionary.word_count)
-        .bind(dictionary.file_size)
-        .bind(&dictionary.checksum)
-        .bind(&dictionary.version)
-        .bind(&dictionary.author)
-        .bind(&dictionary.source_url)
-        .bind(&dictionary.tags)
-        .bind(&dictionary.metadata)
-        .bind(&dictionary.updated_at)
-        .bind(&dictionary.id)
-        .execute(&self.pool)
-        .await?;
+            |q| {
+                q.bind(&dictionary.name)
+                    .bind(&dictionary.description)
+                    .bind(&dictionary.dict_type)
+                    .bind(&dictionary.service_type)
+                    .bind(&dictionary.category)
+                    .bind(dictionary.is_builtin)
+                    .bind(dictionary.is_active)
+                    .bind(dictionary.word_count)
+                    .bind(dictionary.file_size)
+                    .bind(&dictionary.checksum)
+                    .bind(&dictionary.version)
+                    .bind(&dictionary.author)
+                    .bind(&dictionary.source_url)
+                    .bind(&dictionary.tags)
+                    .bind(&dictionary.metadata)
+                    .bind(&dictionary.updated_at)
+                    .bind(&dictionary.id)
+            }
+        );
 
         Ok(dictionary)
     }
 
-    /// 删除字典
     pub async fn delete_dictionary(&self, id: &str) -> Result<()> {
-        // 先删除相关的词条
-        sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        db_execute!(
+            self,
+            "DELETE FROM dictionary_words WHERE dictionary_id = $1",
+            |q| q.bind(id)
+        );
 
-        // 删除字典集合关系
-        sqlx::query("DELETE FROM dictionary_set_relations WHERE dictionary_id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        db_execute!(
+            self,
+            "DELETE FROM dictionary_set_relations WHERE dictionary_id = $1",
+            |q| q.bind(id)
+        );
 
-        // 删除字典
-        sqlx::query("DELETE FROM dictionaries WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        db_execute!(self, "DELETE FROM dictionaries WHERE id = $1", |q| q.bind(id));
 
         Ok(())
     }
 
-    /// 添加词条到字典
     pub async fn add_words(
         &self,
         dictionary_id: &str,
@@ -209,82 +331,76 @@ impl DictionaryService {
         for word in words {
             let dict_word = DictionaryWord::new(dictionary_id.to_string(), word);
 
-            sqlx::query(r#"
+            db_execute!(
+                self,
+                r#"
                 INSERT INTO dictionary_words (id, dictionary_id, word, weight, category, metadata, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#)
-            .bind(&dict_word.id)
-            .bind(&dict_word.dictionary_id)
-            .bind(&dict_word.word)
-            .bind(dict_word.weight)
-            .bind(&dict_word.category)
-            .bind(&dict_word.metadata)
-            .bind(&dict_word.created_at)
-            .execute(&self.pool)
-            .await?;
+            "#,
+                |q| {
+                    q.bind(&dict_word.id)
+                        .bind(&dict_word.dictionary_id)
+                        .bind(&dict_word.word)
+                        .bind(dict_word.weight)
+                        .bind(&dict_word.category)
+                        .bind(&dict_word.metadata)
+                        .bind(&dict_word.created_at)
+                }
+            );
 
             added_words.push(dict_word);
         }
 
-        // 更新字典的词条数量
         self.update_word_count(dictionary_id).await?;
 
         Ok(added_words)
     }
 
-    /// 从字典中移除词条
     pub async fn remove_words(&self, dictionary_id: &str, words: Vec<String>) -> Result<u64> {
         let mut removed_count = 0;
 
         for word in words {
-            let result: sqlx::postgres::PgQueryResult =
-                sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = $1 AND word = $2")
-                    .bind(dictionary_id)
-                    .bind(&word)
-                    .execute(&self.pool)
-                    .await?;
+            let affected = db_execute!(
+                self,
+                "DELETE FROM dictionary_words WHERE dictionary_id = $1 AND word = $2",
+                |q| q.bind(dictionary_id).bind(&word)
+            );
 
-            removed_count += result.rows_affected();
+            removed_count += affected;
         }
 
-        // 更新字典的词条数量
         self.update_word_count(dictionary_id).await?;
 
         Ok(removed_count)
     }
 
-    /// 获取字典的所有词条
     pub async fn get_dictionary_words(&self, dictionary_id: &str) -> Result<Vec<DictionaryWord>> {
-        let words = sqlx::query_as::<_, DictionaryWord>(
+        let words = db_fetch_all_as!(
+            self,
+            DictionaryWord,
             "SELECT * FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC",
-        )
-        .bind(dictionary_id)
-        .fetch_all(&self.pool)
-        .await?;
+            |q| q.bind(dictionary_id)
+        );
 
         Ok(words)
     }
 
-    /// 分页获取字典词条
     pub async fn get_dictionary_words_paged(
         &self,
         dictionary_id: &str,
         offset: u32,
         limit: u32,
     ) -> Result<Vec<DictionaryWord>> {
-        let words = sqlx::query_as::<_, DictionaryWord>(
+        let words = db_fetch_all_as!(
+            self,
+            DictionaryWord,
             "SELECT * FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2 OFFSET $3",
-        )
-        .bind(dictionary_id)
-        .bind(limit as i64)
-        .bind(offset as i64)
-        .fetch_all(&self.pool)
-        .await?;
+            |q| q.bind(dictionary_id).bind(limit as i64).bind(offset as i64)
+        );
 
         Ok(words)
     }
 
-    /// 搜索词条
     pub async fn search_words(
         &self,
         dictionary_id: &str,
@@ -298,16 +414,35 @@ impl DictionaryService {
         );
 
         let search_pattern = format!("%{}%", pattern);
-        let words = sqlx::query_as::<_, DictionaryWord>(&query)
-            .bind(dictionary_id)
-            .bind(search_pattern)
-            .fetch_all(&self.pool)
-            .await?;
+        let query = self.sql(&query);
+
+        let words = match &self.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, DictionaryWord>(&query)
+                    .bind(dictionary_id)
+                    .bind(search_pattern.clone())
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, DictionaryWord>(&query)
+                    .bind(dictionary_id)
+                    .bind(search_pattern.clone())
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, DictionaryWord>(&query)
+                    .bind(dictionary_id)
+                    .bind(search_pattern)
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
 
         Ok(words)
     }
 
-    /// 搜索词条（分页版，支持 OFFSET）
     pub async fn search_words_paged(
         &self,
         dictionary_id: &str,
@@ -315,53 +450,46 @@ impl DictionaryService {
         offset: u32,
         limit: u32,
     ) -> Result<Vec<DictionaryWord>> {
-        let query =
-            "SELECT * FROM dictionary_words WHERE dictionary_id = $1 AND word LIKE $2 ORDER BY weight DESC, word ASC LIMIT $3 OFFSET $4";
-
         let search_pattern = format!("%{}%", pattern);
-        let words = sqlx::query_as::<_, DictionaryWord>(query)
-            .bind(dictionary_id)
-            .bind(search_pattern)
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(&self.pool)
-            .await?;
+        let words = db_fetch_all_as!(
+            self,
+            DictionaryWord,
+            "SELECT * FROM dictionary_words WHERE dictionary_id = $1 AND word LIKE $2 ORDER BY weight DESC, word ASC LIMIT $3 OFFSET $4",
+            |q| q.bind(dictionary_id).bind(search_pattern).bind(limit as i64).bind(offset as i64)
+        );
 
         Ok(words)
     }
 
-    /// 清空字典词条
     pub async fn clear_dictionary(&self, dictionary_id: &str) -> Result<u64> {
-        let result: sqlx::postgres::PgQueryResult = sqlx::query("DELETE FROM dictionary_words WHERE dictionary_id = $1")
-            .bind(dictionary_id)
-            .execute(&self.pool)
-            .await?;
+        let affected = db_execute!(
+            self,
+            "DELETE FROM dictionary_words WHERE dictionary_id = $1",
+            |q| q.bind(dictionary_id)
+        );
 
-        // 更新字典的词条数量
         self.update_word_count(dictionary_id).await?;
 
-        Ok(result.rows_affected())
+        Ok(affected)
     }
 
-    /// 更新字典的词条数量
     async fn update_word_count(&self, dictionary_id: &str) -> Result<()> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionary_words WHERE dictionary_id = $1")
-                .bind(dictionary_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let count: i64 = db_fetch_scalar!(
+            self,
+            i64,
+            "SELECT COUNT(*) FROM dictionary_words WHERE dictionary_id = $1",
+            |q| q.bind(dictionary_id)
+        );
 
-        sqlx::query("UPDATE dictionaries SET word_count = $1, updated_at = $2 WHERE id = $3")
-            .bind(count)
-            .bind(chrono::Utc::now())
-            .bind(dictionary_id)
-            .execute(&self.pool)
-            .await?;
+        db_execute!(
+            self,
+            "UPDATE dictionaries SET word_count = $1, updated_at = $2 WHERE id = $3",
+            |q| q.bind(count).bind(chrono::Utc::now()).bind(dictionary_id)
+        );
 
         Ok(())
     }
 
-    /// 导出字典
     pub async fn export_dictionary(&self, dictionary_id: &str) -> Result<DictionaryExport> {
         let dictionary = self
             .get_dictionary(dictionary_id)
@@ -373,7 +501,6 @@ impl DictionaryService {
         Ok(DictionaryExport::new(dictionary, words))
     }
 
-    /// 导入字典
     pub async fn import_dictionary(
         &self,
         export_data: DictionaryExport,
@@ -383,24 +510,19 @@ impl DictionaryService {
 
         match options.merge_mode {
             MergeMode::CreateNew => {
-                // 创建新字典
                 dictionary.id = Uuid::new_v4().to_string();
                 dictionary.name = format!("{}_imported", dictionary.name);
                 let created_dict = self.create_dictionary(dictionary).await?;
 
-                // 添加词条
                 let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
                 self.add_words(&created_dict.id, words).await?;
 
                 Ok(created_dict)
             }
             MergeMode::Replace => {
-                // 查找现有字典
                 if let Some(existing) = self.get_dictionary_by_name(&dictionary.name).await? {
-                    // 清空现有词条
                     self.clear_dictionary(&existing.id).await?;
 
-                    // 更新字典信息
                     if options.update_metadata {
                         let mut updated_dict = existing;
                         updated_dict.description = dictionary.description;
@@ -418,48 +540,37 @@ impl DictionaryService {
                         dictionary = existing;
                     }
 
-                    // 添加新词条
-                    let words: Vec<String> =
-                        export_data.words.into_iter().map(|w| w.word).collect();
+                    let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
                     self.add_words(&dictionary.id, words).await?;
                 } else {
-                    // 字典不存在，创建新的
                     dictionary = self.create_dictionary(dictionary).await?;
-                    let words: Vec<String> =
-                        export_data.words.into_iter().map(|w| w.word).collect();
+                    let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
                     self.add_words(&dictionary.id, words).await?;
                 }
 
                 Ok(dictionary)
             }
             MergeMode::Merge => {
-                // 合并到现有字典
                 if let Some(existing) = self.get_dictionary_by_name(&dictionary.name).await? {
                     dictionary = existing;
 
-                    // 获取现有词条
                     let existing_words = self.get_dictionary_words(&dictionary.id).await?;
                     let existing_word_set: std::collections::HashSet<String> =
                         existing_words.into_iter().map(|w| w.word).collect();
 
-                    // 过滤重复词条
                     let new_words: Vec<String> = export_data
                         .words
                         .into_iter()
                         .map(|w| w.word)
-                        .filter(|word| {
-                            !options.skip_duplicates || !existing_word_set.contains(word)
-                        })
+                        .filter(|word| !options.skip_duplicates || !existing_word_set.contains(word))
                         .collect();
 
                     if !new_words.is_empty() {
                         self.add_words(&dictionary.id, new_words).await?;
                     }
                 } else {
-                    // 字典不存在，创建新的
                     dictionary = self.create_dictionary(dictionary).await?;
-                    let words: Vec<String> =
-                        export_data.words.into_iter().map(|w| w.word).collect();
+                    let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
                     self.add_words(&dictionary.id, words).await?;
                 }
 
@@ -468,53 +579,55 @@ impl DictionaryService {
         }
     }
 
-    /// 获取字典统计信息
     pub async fn get_stats(&self) -> Result<DictionaryStats> {
-        let total_dictionaries: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries")
-            .fetch_one(&self.pool)
-            .await?;
+        let total_dictionaries: i64 =
+            db_fetch_scalar!(self, i64, "SELECT COUNT(*) FROM dictionaries", |q| q);
 
-        let total_words: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dictionary_words")
-            .fetch_one(&self.pool)
-            .await?;
+        let total_words: i64 =
+            db_fetch_scalar!(self, i64, "SELECT COUNT(*) FROM dictionary_words", |q| q);
 
-        let builtin_dictionaries: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_builtin = TRUE")
-                .fetch_one(&self.pool)
-                .await?;
+        let builtin_dictionaries: i64 = db_fetch_scalar!(
+            self,
+            i64,
+            "SELECT COUNT(*) FROM dictionaries WHERE is_builtin = TRUE",
+            |q| q
+        );
 
-        let custom_dictionaries: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_builtin = FALSE")
-                .fetch_one(&self.pool)
-                .await?;
+        let custom_dictionaries: i64 = db_fetch_scalar!(
+            self,
+            i64,
+            "SELECT COUNT(*) FROM dictionaries WHERE is_builtin = FALSE",
+            |q| q
+        );
 
-        let active_dictionaries: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM dictionaries WHERE is_active = TRUE")
-                .fetch_one(&self.pool)
-                .await?;
+        let active_dictionaries: i64 = db_fetch_scalar!(
+            self,
+            i64,
+            "SELECT COUNT(*) FROM dictionaries WHERE is_active = TRUE",
+            |q| q
+        );
 
-        let total_sets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dictionary_sets")
-            .fetch_one(&self.pool)
-            .await?;
+        let total_sets: i64 =
+            db_fetch_scalar!(self, i64, "SELECT COUNT(*) FROM dictionary_sets", |q| q);
 
-        // 按类型统计
-        let type_stats: Vec<(String, i64)> = sqlx::query_as(
+        let type_stats: Vec<(String, i64)> = db_fetch_all_as!(
+            self,
+            (String, i64),
             "SELECT dict_type, COUNT(*) as count FROM dictionaries GROUP BY dict_type",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+            |q| q
+        );
 
         let by_type: HashMap<String, f64> = type_stats
             .into_iter()
             .map(|(dict_type, count)| (dict_type, count as f64))
             .collect();
 
-        // 按服务类型统计
-        let service_stats: Vec<(Option<String>, i64)> = sqlx::query_as(
+        let service_stats: Vec<(Option<String>, i64)> = db_fetch_all_as!(
+            self,
+            (Option<String>, i64),
             "SELECT service_type, COUNT(*) as count FROM dictionaries GROUP BY service_type",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+            |q| q
+        );
 
         let by_service: HashMap<String, f64> = service_stats
             .into_iter()
@@ -536,7 +649,6 @@ impl DictionaryService {
         })
     }
 
-    /// 创建字典集合
     pub async fn create_dictionary_set(&self, mut set: DictionarySet) -> Result<DictionarySet> {
         if set.id.is_empty() {
             set.id = Uuid::new_v4().to_string();
@@ -546,70 +658,73 @@ impl DictionaryService {
         set.created_at = now;
         set.updated_at = now;
 
-        sqlx::query(r#"
+        db_execute!(
+            self,
+            r#"
             INSERT INTO dictionary_sets (id, name, description, service_type, scenario, is_active, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        "#)
-        .bind(&set.id)
-        .bind(&set.name)
-        .bind(&set.description)
-        .bind(&set.service_type)
-        .bind(&set.scenario)
-        .bind(set.is_active)
-        .bind(&set.created_at)
-        .bind(&set.updated_at)
-        .execute(&self.pool)
-        .await?;
+        "#,
+            |q| {
+                q.bind(&set.id)
+                    .bind(&set.name)
+                    .bind(&set.description)
+                    .bind(&set.service_type)
+                    .bind(&set.scenario)
+                    .bind(set.is_active)
+                    .bind(&set.created_at)
+                    .bind(&set.updated_at)
+            }
+        );
 
         Ok(set)
     }
 
-    /// 向字典集合添加字典
     pub async fn add_dictionary_to_set(
         &self,
         set_id: &str,
         dictionary_id: &str,
         priority: Option<i32>,
     ) -> Result<DictionarySetRelation> {
-        let relation = DictionarySetRelation::new(set_id.to_string(), dictionary_id.to_string())
-            .with_priority(priority.unwrap_or(0));
+        let relation =
+            DictionarySetRelation::new(set_id.to_string(), dictionary_id.to_string())
+                .with_priority(priority.unwrap_or(0));
 
-        sqlx::query(r#"
+        db_execute!(
+            self,
+            r#"
             INSERT INTO dictionary_set_relations (id, set_id, dictionary_id, priority, is_enabled, created_at)
             VALUES ($1, $2, $3, $4, $5, $6)
-        "#)
-        .bind(&relation.id)
-        .bind(&relation.set_id)
-        .bind(&relation.dictionary_id)
-        .bind(relation.priority)
-        .bind(relation.is_enabled)
-        .bind(&relation.created_at)
-        .execute(&self.pool)
-        .await?;
+        "#,
+            |q| {
+                q.bind(&relation.id)
+                    .bind(&relation.set_id)
+                    .bind(&relation.dictionary_id)
+                    .bind(relation.priority)
+                    .bind(relation.is_enabled)
+                    .bind(&relation.created_at)
+            }
+        );
 
         Ok(relation)
     }
 
-    /// 获取字典集合中的所有字典
     pub async fn get_set_dictionaries(&self, set_id: &str) -> Result<Vec<Dictionary>> {
-        let dictionaries = sqlx::query_as::<_, Dictionary>(
+        let dictionaries = db_fetch_all_as!(
+            self,
+            Dictionary,
             r#"
             SELECT d.* FROM dictionaries d
             JOIN dictionary_set_relations r ON d.id = r.dictionary_id
             WHERE r.set_id = $1 AND r.is_enabled = TRUE
             ORDER BY r.priority DESC, d.name ASC
         "#,
-        )
-        .bind(set_id)
-        .fetch_all(&self.pool)
-        .await?;
+            |q| q.bind(set_id)
+        );
 
         Ok(dictionaries)
     }
 
-    /// 初始化内置字典
     pub async fn initialize_builtin_dictionaries(&self) -> Result<()> {
-        // 创建默认的子域名字典
         let subdomain_dict = Dictionary {
             id: "builtin_subdomain_common".to_string(),
             name: "Common Subdomains".to_string(),
@@ -631,105 +746,25 @@ impl DictionaryService {
             updated_at: chrono::Utc::now(),
         };
 
-        // 检查是否已存在
         if self.get_dictionary(&subdomain_dict.id).await?.is_none() {
             self.create_dictionary(subdomain_dict).await?;
 
-            // 添加常见子域名
             let common_subdomains = vec![
-                "www",
-                "mail",
-                "ftp",
-                "admin",
-                "api",
-                "dev",
-                "test",
-                "staging",
-                "blog",
-                "shop",
-                "store",
-                "support",
-                "help",
-                "docs",
-                "cdn",
-                "static",
-                "assets",
-                "img",
-                "images",
-                "media",
-                "files",
-                "download",
-                "upload",
-                "secure",
-                "ssl",
-                "vpn",
-                "remote",
-                "portal",
-                "dashboard",
-                "panel",
-                "control",
-                "manage",
-                "login",
-                "auth",
-                "sso",
-                "oauth",
-                "app",
-                "mobile",
-                "m",
-                "wap",
-                "beta",
-                "alpha",
-                "demo",
-                "sandbox",
-                "old",
-                "legacy",
-                "archive",
-                "backup",
-                "mirror",
-                "proxy",
-                "cache",
-                "db",
-                "database",
-                "sql",
-                "mysql",
-                "postgres",
-                "redis",
-                "mongo",
-                "elastic",
-                "search",
-                "solr",
-                "kibana",
-                "grafana",
-                "prometheus",
-                "jenkins",
-                "ci",
-                "cd",
-                "build",
-                "deploy",
-                "git",
-                "svn",
-                "repo",
-                "jira",
-                "confluence",
-                "wiki",
-                "forum",
-                "chat",
-                "slack",
-                "teams",
-                "monitoring",
-                "metrics",
-                "logs",
-                "analytics",
-                "stats",
-                "reports",
+                "www", "mail", "ftp", "admin", "api", "dev", "test", "staging", "blog",
+                "shop", "store", "support", "help", "docs", "cdn", "static", "assets", "img",
+                "images", "media", "files", "download", "upload", "secure", "ssl", "vpn", "remote",
+                "portal", "dashboard", "panel", "control", "manage", "login", "auth", "sso", "oauth",
+                "app", "mobile", "m", "wap", "beta", "alpha", "demo", "sandbox", "old", "legacy",
+                "archive", "backup", "mirror", "proxy", "cache", "db", "database", "sql", "mysql",
+                "postgres", "redis", "mongo", "elastic", "search", "solr", "kibana", "grafana",
+                "prometheus", "jenkins", "ci", "cd", "build", "deploy", "git", "svn", "repo", "jira",
+                "confluence", "wiki", "forum", "chat", "slack", "teams", "monitoring", "metrics", "logs",
+                "analytics", "stats", "reports",
             ];
 
             self.add_words(
                 "builtin_subdomain_common",
-                common_subdomains
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
+                common_subdomains.into_iter().map(|s| s.to_string()).collect(),
             )
             .await?;
         }

@@ -741,8 +741,6 @@ impl IntegerTypeMigration {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_migration_apply_and_rollback() {
         // This test requires a test database

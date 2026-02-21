@@ -165,6 +165,7 @@ async fn load_tasks_from_db(scheduler: &MonitorScheduler, db: &DatabaseService) 
 pub async fn monitor_start_scheduler(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
     db_service: State<'_, Arc<DatabaseService>>,
+    plugin_manager: State<'_, Arc<sentinel_traffic::PluginManager>>,
     app: AppHandle,
 ) -> Result<bool, String> {
     // Ensure tasks are loaded
@@ -186,10 +187,58 @@ pub async fn monitor_start_scheduler(
     let scheduler = state_guard.scheduler.clone();
     drop(state_guard);
 
-    // Set up event callback to emit Tauri events
+    // Set up event callback to emit Tauri events and save to DB
     let app_clone = app.clone();
+    let db_for_event = (*db_service).clone();
+    let pm_for_event = (*plugin_manager).clone();
+    
     scheduler.set_event_callback(move |event| {
-        let _ = app_clone.emit("monitor:change-detected", event);
+        let _ = app_clone.emit("monitor:change-detected", &event);
+        
+        let db = db_for_event.clone();
+        let pm = pm_for_event.clone();
+        let app_handle = app_clone.clone();
+        
+        tokio::spawn(async move {
+            let row = sentinel_db::BountyChangeEventRow {
+                id: event.id.clone(),
+                program_id: event.program_id.clone(),
+                asset_id: event.asset_id.clone(),
+                event_type: serde_json::to_string(&event.event_type).unwrap_or_default().trim_matches('"').to_string(),
+                severity: serde_json::to_string(&event.severity).unwrap_or_default().trim_matches('"').to_string(),
+                status: "new".to_string(),
+                title: event.title.clone(),
+                description: event.description.clone(),
+                old_value: event.old_value.clone(),
+                new_value: event.new_value.clone(),
+                diff: event.diff.clone(),
+                affected_scope: event.affected_scope.clone(),
+                detection_method: event.detection_method.clone(),
+                triggered_workflows_json: if !event.triggered_workflows.is_empty() { Some(serde_json::to_string(&event.triggered_workflows).unwrap_or_default()) } else { None },
+                generated_findings_json: if !event.generated_findings.is_empty() { Some(serde_json::to_string(&event.generated_findings).unwrap_or_default()) } else { None },
+                tags_json: if !event.tags.is_empty() { Some(serde_json::to_string(&event.tags).unwrap_or_default()) } else { None },
+                metadata_json: if !event.metadata.is_empty() { Some(serde_json::to_string(&event.metadata).unwrap_or_default()) } else { None },
+                risk_score: event.risk_score,
+                auto_trigger_enabled: event.auto_trigger_enabled,
+                created_at: event.created_at.to_rfc3339(),
+                updated_at: event.updated_at.to_rfc3339(),
+                resolved_at: event.resolved_at.map(|d| d.to_rfc3339()),
+            };
+            
+            if let Err(e) = db.create_bounty_change_event(&row).await {
+                tracing::error!("Failed to save change event to DB: {}", e);
+                return;
+            }
+            
+            if event.auto_trigger_enabled {
+                let _ = crate::commands::bounty_commands::bounty_trigger_workflows_for_event_internal(
+                    app_handle,
+                    db.clone(),
+                    pm.clone(),
+                    event.id.clone()
+                ).await;
+            }
+        });
     }).await;
 
     // Register Task Executor

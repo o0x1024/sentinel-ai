@@ -385,43 +385,29 @@ export default {
     proxyPort: 'Proxy Port',
     proxyUsername: 'Proxy Username',
     proxyPassword: 'Proxy Password',
-    proxyTest: {
-      title: 'Proxy Config Dynamic Update Test',
-      descriptionTitle: 'Test Description:',
-      description: 'This test verifies that after network settings change, the proxy config is dynamically updated to prevent request failures across AI architectures.',
-      currentConfig: 'Current Proxy Config',
-      statusLabel: 'Status:',
-      schemeLabel: 'Scheme:',
-      hostLabel: 'Host:',
-      portLabel: 'Port:',
-      usernameLabel: 'Username:',
-      noProxyLabel: 'No Proxy:',
-      noConfig: 'No proxy configuration',
-      dynamic: {
-        title: 'Dynamic Update Test',
-        description: 'Test whether the HTTP client automatically applies new proxy settings after a change'
-      },
-      persistence: {
-        title: 'Persistence Test',
-        description: 'Test whether proxy settings are saved to the database and loaded correctly'
-      },
-      client: {
-        title: 'Client Update Test',
-        description: 'Test the HTTP client proxy auto-update mechanism'
-      },
-      testing: 'Testing...',
-      startTest: 'Start Test',
-      testFailed: 'Test failed: {error}',
-      results: 'Test Results',
-      responseTime: 'Response time: {ms}ms',
-      clearResults: 'Clear Results'
+    gateway: {
+      title: 'AI HTTP Gateway',
+      description: 'Expose AI assistant via HTTP API (disabled by default)',
+      host: 'Gateway Host',
+      port: 'Gateway Port',
+      allowLan: 'Allow LAN Access',
+      save: 'Save Gateway Config',
+      generateApiKey: 'Generate API Key',
+      refreshStatus: 'Refresh Status',
+      status: 'Gateway Status',
+      saved: 'Gateway config saved',
+      saveFailed: 'Failed to save gateway config: {error}',
+      started: 'HTTP gateway started',
+      stopped: 'HTTP gateway stopped',
+      toggleFailed: 'Failed to switch gateway state: {error}',
+      generated: 'New API key generated',
+      generatedKeyNotice: 'Save this API key now. It will be shown only once.',
+      generateFailed: 'Failed to generate API key: {error}'
     },
     toast: {
       proxySaved: 'Global proxy saved and applied',
       proxySaveFailed: 'Failed to save global proxy'
     },
-    proxyTestSuccess: 'Proxy connection successful',
-    proxyTestFailed: 'Proxy connection failed',
     timeout: 'Network Timeout',
     timeoutDesc: 'Network request timeout (seconds)',
     retryAttempts: 'Retry Attempts',
@@ -439,8 +425,7 @@ export default {
     database: 'Database',
     system: 'System Settings',
     security: 'Security Settings',
-    network: 'Network Settings',
-    proxy_test: 'Proxy Testing'
+    network: 'Network Settings'
   },
   agent: {
     title: 'Agent Settings',
@@ -463,6 +448,8 @@ export default {
       dockerImagePlaceholder: 'e.g., sentinel-sandbox:latest',
       useDocker: 'Use Docker',
       useDockerDesc: 'Use Docker container as terminal environment (recommended), otherwise uses host terminal',
+      useHostNetwork: 'Use Host Network',
+      useHostNetworkDesc: 'When enabled, Docker uses host network mode; when disabled, it uses bridge mode (default)',
       memoryLimit: 'Memory Limit',
       memoryLimitDesc: 'Container memory limit, e.g., 512m, 1g, 2g',
       memoryLimitPlaceholder: 'e.g., 2g',
@@ -481,8 +468,8 @@ export default {
       uploadDisabledWarning: 'Uploading images to model is disabled. Switch back to local OCR or enable upload permission.'
     },
     fileUploads: {
-      title: 'Uploaded Files',
-      desc: 'Manage historical files uploaded for Agent tasks. Files are stored in date-based directories and require manual cleanup.',
+      title: 'Workspace Management',
+      desc: 'Manage storage quota and cleanup policy for the Agent workspace, including uploaded files and execution artifacts.',
       maxFileMb: 'Max file size (MB)',
       maxTotalMb: 'Max total storage (MB)',
       maxPerConversation: 'Max files per conversation',

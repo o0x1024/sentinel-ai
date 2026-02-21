@@ -1,4 +1,7 @@
 //! Executor utility helpers.
+use std::sync::Arc;
+use sentinel_db::Database;
+use tauri::{AppHandle, Manager};
 
 /// Truncate text for compact memory summaries.
 pub fn truncate_for_memory(text: &str, max_len: usize) -> String {
@@ -12,7 +15,23 @@ pub fn truncate_for_memory(text: &str, max_len: usize) -> String {
 /// Cleanup container workspace files asynchronously (non-blocking).
 /// Removes temporary files created during task execution in /workspace.
 /// Preserves conversation history at /workspace/context/history.txt.
-pub async fn cleanup_container_context_async(execution_id: &str) {
+pub async fn cleanup_container_context_async(app_handle: &AppHandle, execution_id: &str) {
+    let auto_cleanup_enabled = match app_handle.try_state::<Arc<crate::services::database::DatabaseService>>() {
+        Some(db) => match db.get_config("agent", "workspace_auto_cleanup_enabled").await {
+            Ok(Some(v)) => v == "1" || v.eq_ignore_ascii_case("true"),
+            _ => false,
+        },
+        None => false,
+    };
+
+    if !auto_cleanup_enabled {
+        tracing::info!(
+            "Skipping container workspace cleanup for execution {} because upload auto-cleanup is disabled",
+            execution_id
+        );
+        return;
+    }
+
     tracing::info!("Starting container workspace cleanup for execution: {}", execution_id);
 
     let execution_id = execution_id.to_string();
@@ -45,4 +64,3 @@ pub async fn cleanup_container_context_async(execution_id: &str) {
         }
     });
 }
-

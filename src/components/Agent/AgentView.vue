@@ -343,6 +343,10 @@ interface AuditFinding {
   description?: string
   source?: Record<string, any>
   sink?: Record<string, any>
+  hits?: Array<Record<string, any>>
+  sources?: Array<Record<string, any>>
+  sinks?: Array<Record<string, any>>
+  source_sinks?: Array<Record<string, any>>
   trace_path?: Array<Record<string, any>>
   evidence?: string[]
 }
@@ -427,7 +431,7 @@ const toolConfig = ref({
     scope: 'git_diff' as AuditScope,
     verification_level: 'high' as VerificationLevel,
     policy_profile: 'balanced' as PolicyProfile,
-    required_tools: ['code_search', 'git_diff_scope'],
+    required_tools: [],
   },
 })
 
@@ -438,7 +442,7 @@ const defaultAuditConfig = (): AuditConfig => ({
   scope: 'git_diff',
   verification_level: 'high',
   policy_profile: 'balanced',
-  required_tools: ['code_search', 'git_diff_scope'],
+  required_tools: [],
 })
 
 const normalizeAuditConfig = (raw?: Partial<AuditConfig> | null): AuditConfig => {
@@ -604,7 +608,6 @@ const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.val
 const isHtmlPanelActive = ref(false)
 const htmlPanelContent = ref('')
 const isAuditFindingsPanelActive = ref(false)
-const lastPersistedAuditSignature = ref('')
 const lastPersistedPolicyGateSignature = ref('')
 
 // Handle render HTML from code block
@@ -755,6 +758,10 @@ const parseAuditPayloadFromText = (content: string): ParsedAuditPayload => {
           description: item.description ? String(item.description) : undefined,
           source: item.source && typeof item.source === 'object' ? item.source : undefined,
           sink: item.sink && typeof item.sink === 'object' ? item.sink : undefined,
+          hits: Array.isArray(item.hits) ? item.hits.filter((v: any) => v && typeof v === 'object') : undefined,
+          sources: Array.isArray(item.sources) ? item.sources.filter((v: any) => v && typeof v === 'object') : undefined,
+          sinks: Array.isArray(item.sinks) ? item.sinks.filter((v: any) => v && typeof v === 'object') : undefined,
+          source_sinks: Array.isArray(item.source_sinks) ? item.source_sinks.filter((v: any) => v && typeof v === 'object') : undefined,
           trace_path: Array.isArray(item.trace_path) ? item.trace_path.filter((v: any) => v && typeof v === 'object') : undefined,
           evidence: Array.isArray(item.evidence) ? item.evidence.map((v: any) => String(v)) : undefined,
         }))
@@ -888,46 +895,6 @@ const auditPolicyGate = computed<PolicyGateResult | null>(() => {
   return evaluatePolicyGate(auditFindings.value, profile)
 })
 
-const persistAuditFindingsToSecurityCenter = async (findings: AuditFinding[]) => {
-  if (!conversationId.value || findings.length === 0) return
-  const signature = JSON.stringify({
-    conversationId: conversationId.value,
-    findings: findings.map((item) => ({
-      id: item.id,
-      severity: item.severity,
-      severity_raw: item.severity_raw,
-      status: item.status,
-      files: item.files,
-      fix: item.fix,
-      cwe: item.cwe,
-      description: item.description,
-      source: item.source,
-      sink: item.sink,
-      trace_path: item.trace_path,
-      evidence: item.evidence,
-    })),
-  })
-  if (signature === lastPersistedAuditSignature.value) {
-    return
-  }
-
-  try {
-    const result = await invoke<any>('upsert_agent_audit_findings', {
-      request: {
-        conversation_id: conversationId.value,
-        findings,
-      },
-    })
-    if (result?.success) {
-      lastPersistedAuditSignature.value = signature
-    } else {
-      console.warn('[AgentView] Failed to persist audit findings:', result?.error)
-    }
-  } catch (e) {
-    console.warn('[AgentView] Persist audit findings failed:', e)
-  }
-}
-
 const persistAuditPolicyGate = async (gate: PolicyGateResult | null) => {
   if (!conversationId.value || !gate || !toolConfig.value.audit_mode) return
   const active = auditFindings.value.filter((item) => {
@@ -956,7 +923,7 @@ const persistAuditPolicyGate = async (gate: PolicyGateResult | null) => {
 
   try {
     await invoke('save_audit_policy_gate', {
-      conversation_id: conversationId.value,
+      conversationId: conversationId.value,
       gate: {
         passed: gate.passed,
         reason: gate.reason,
@@ -1059,8 +1026,52 @@ const handleToggleTools = (enabled: boolean) => {
   console.log('[AgentView] Tools:', enabled ? 'enabled' : 'disabled')
 }
 
+const buildPersistableToolConfig = (config: UiToolConfigPayload) => ({
+  enabled: config.enabled,
+  selection_strategy: config.selection_strategy,
+  max_tools: config.max_tools,
+  fixed_tools: config.fixed_tools,
+  disabled_tools: config.disabled_tools,
+})
+
+const TOOL_CONFIG_SAVE_DEBOUNCE_MS = 300
+const lastPersistedToolConfigSignature = ref('')
+let pendingToolConfigSignature = ''
+let toolConfigSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+const schedulePersistToolConfig = (config: UiToolConfigPayload) => {
+  const persistableToolConfig = buildPersistableToolConfig(config)
+  const signature = JSON.stringify(persistableToolConfig)
+  if (signature === lastPersistedToolConfigSignature.value || signature === pendingToolConfigSignature) {
+    return
+  }
+
+  pendingToolConfigSignature = signature
+  if (toolConfigSaveTimer) {
+    clearTimeout(toolConfigSaveTimer)
+  }
+
+  toolConfigSaveTimer = setTimeout(async () => {
+    try {
+      await invoke('save_tool_config', {
+        toolConfig: persistableToolConfig,
+      })
+      lastPersistedToolConfigSignature.value = signature
+      console.log('[AgentView] Tool config saved globally')
+    } catch (e) {
+      console.error('[AgentView] Failed to save tool config:', e)
+      localError.value = t('agent.failedToSaveToolConfig') + ': ' + e
+    } finally {
+      if (pendingToolConfigSignature === signature) {
+        pendingToolConfigSignature = ''
+      }
+      toolConfigSaveTimer = null
+    }
+  }, TOOL_CONFIG_SAVE_DEBOUNCE_MS)
+}
+
 // Handle Tool Config update
-const handleToolConfigUpdate = async (config: UiToolConfigPayload) => {
+const handleToolConfigUpdate = (config: UiToolConfigPayload) => {
   const normalizedAuditConfig = normalizeAuditConfig(config.audit_config)
   const auditModeEnabled = !!config.audit_mode
   const runtimeConfig = {
@@ -1079,22 +1090,7 @@ const handleToolConfigUpdate = async (config: UiToolConfigPayload) => {
 
   // Save tool config to database (global config, not bound to conversation)
   // Audit fields are frontend-owned for now and are stored in localStorage.
-  try {
-    const persistableToolConfig = {
-      enabled: config.enabled,
-      selection_strategy: config.selection_strategy,
-      max_tools: config.max_tools,
-      fixed_tools: config.fixed_tools,
-      disabled_tools: config.disabled_tools,
-    }
-    await invoke('save_tool_config', {
-      toolConfig: persistableToolConfig
-    })
-    console.log('[AgentView] Tool config saved globally')
-  } catch (e) {
-    console.error('[AgentView] Failed to save tool config:', e)
-    localError.value = t('agent.failedToSaveToolConfig') + ': ' + e
-  }
+  schedulePersistToolConfig(config)
 }
 
 // Handle attachments
@@ -1358,9 +1354,6 @@ const handleStop = async () => {
       console.log('[AgentView] Stopping Web Explorer')
       webExplorerEvents.stop()
     }
-    
-    // Clear todos when user stops execution
-    todosComposable.clearTodos()
     
   } catch (e) {
     console.error('[AgentView] Failed to stop execution:', e)
@@ -1891,6 +1884,13 @@ const loadToolConfig = async () => {
         audit_config: localAuditConfig,
       }
       toolsEnabled.value = savedConfig.enabled
+      lastPersistedToolConfigSignature.value = JSON.stringify(
+        buildPersistableToolConfig({
+          ...(savedConfig as any),
+          audit_mode: localAuditConfig.enabled,
+          audit_config: localAuditConfig,
+        }),
+      )
       console.log('[AgentView] Loaded tool config from database:', savedConfig)
     } else {
       toolConfig.value.audit_mode = localAuditConfig.enabled
@@ -1961,7 +1961,6 @@ onActivated(() => {
 
 // Watch for conversation changes to update title
 watch(conversationId, async (newId) => {
-  lastPersistedAuditSignature.value = ''
   lastPersistedPolicyGateSignature.value = ''
   if (newId) {
     try {
@@ -1975,11 +1974,6 @@ watch(conversationId, async (newId) => {
     }
   }
 })
-
-watch(auditFindings, async (newFindings) => {
-  if (!toolConfig.value.audit_mode) return
-  await persistAuditFindingsToSecurityCenter(newFindings)
-}, { deep: true })
 
 watch(auditPolicyGate, async (newGate) => {
   if (!toolConfig.value.audit_mode) return

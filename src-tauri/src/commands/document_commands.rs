@@ -65,7 +65,7 @@ pub struct UploadedFileEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UploadedFileSettings {
+pub struct WorkspaceSettings {
     pub auto_cleanup_enabled: bool,
     pub retention_days: i64,
     pub max_file_mb: u64,
@@ -177,8 +177,8 @@ fn compute_sha256(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-async fn load_uploaded_file_settings(app_handle: &AppHandle) -> UploadedFileSettings {
-    let mut settings = UploadedFileSettings {
+pub async fn load_workspace_settings(app_handle: &AppHandle) -> WorkspaceSettings {
+    let mut settings = WorkspaceSettings {
         auto_cleanup_enabled: false,
         retention_days: DEFAULT_RETENTION_DAYS,
         max_file_mb: DEFAULT_MAX_FILE_MB,
@@ -191,25 +191,25 @@ async fn load_uploaded_file_settings(app_handle: &AppHandle) -> UploadedFileSett
         return settings;
     };
 
-    if let Ok(Some(v)) = db.get_config("agent", "upload_auto_cleanup_enabled").await {
+    if let Ok(Some(v)) = db.get_config("agent", "workspace_auto_cleanup_enabled").await {
         settings.auto_cleanup_enabled = v == "1" || v.eq_ignore_ascii_case("true");
     }
-    if let Ok(Some(v)) = db.get_config("agent", "upload_retention_days").await {
+    if let Ok(Some(v)) = db.get_config("agent", "workspace_retention_days").await {
         if let Ok(n) = v.parse::<i64>() {
             settings.retention_days = n.max(1);
         }
     }
-    if let Ok(Some(v)) = db.get_config("agent", "upload_max_file_mb").await {
+    if let Ok(Some(v)) = db.get_config("agent", "workspace_max_file_mb").await {
         if let Ok(n) = v.parse::<u64>() {
             settings.max_file_mb = n.max(1);
         }
     }
-    if let Ok(Some(v)) = db.get_config("agent", "upload_max_total_mb").await {
+    if let Ok(Some(v)) = db.get_config("agent", "workspace_max_total_mb").await {
         if let Ok(n) = v.parse::<u64>() {
             settings.max_total_mb = n.max(1);
         }
     }
-    if let Ok(Some(v)) = db.get_config("agent", "upload_max_files_per_conversation").await {
+    if let Ok(Some(v)) = db.get_config("agent", "workspace_max_files_per_conversation").await {
         if let Ok(n) = v.parse::<usize>() {
             settings.max_files_per_conversation = n.max(1);
         }
@@ -219,34 +219,34 @@ async fn load_uploaded_file_settings(app_handle: &AppHandle) -> UploadedFileSett
 }
 
 #[tauri::command]
-pub async fn get_uploaded_file_settings(app_handle: AppHandle) -> Result<UploadedFileSettings, String> {
-    Ok(load_uploaded_file_settings(&app_handle).await)
+pub async fn get_workspace_settings(app_handle: AppHandle) -> Result<WorkspaceSettings, String> {
+    Ok(load_workspace_settings(&app_handle).await)
 }
 
 #[tauri::command]
-pub async fn save_uploaded_file_settings(
+pub async fn save_workspace_settings(
     app_handle: AppHandle,
-    settings: UploadedFileSettings,
+    settings: WorkspaceSettings,
 ) -> Result<(), String> {
     let db = app_handle
         .try_state::<Arc<crate::services::database::DatabaseService>>()
         .ok_or_else(|| "Database service not available".to_string())?;
 
-    db.set_config("agent", "upload_auto_cleanup_enabled", if settings.auto_cleanup_enabled { "true" } else { "false" }, None)
+    db.set_config("agent", "workspace_auto_cleanup_enabled", if settings.auto_cleanup_enabled { "true" } else { "false" }, None)
         .await
         .map_err(|e| format!("Failed to save config: {}", e))?;
-    db.set_config("agent", "upload_retention_days", &settings.retention_days.to_string(), None)
+    db.set_config("agent", "workspace_retention_days", &settings.retention_days.to_string(), None)
         .await
         .map_err(|e| format!("Failed to save config: {}", e))?;
-    db.set_config("agent", "upload_max_file_mb", &settings.max_file_mb.to_string(), None)
+    db.set_config("agent", "workspace_max_file_mb", &settings.max_file_mb.to_string(), None)
         .await
         .map_err(|e| format!("Failed to save config: {}", e))?;
-    db.set_config("agent", "upload_max_total_mb", &settings.max_total_mb.to_string(), None)
+    db.set_config("agent", "workspace_max_total_mb", &settings.max_total_mb.to_string(), None)
         .await
         .map_err(|e| format!("Failed to save config: {}", e))?;
     db.set_config(
         "agent",
-        "upload_max_files_per_conversation",
+        "workspace_max_files_per_conversation",
         &settings.max_files_per_conversation.to_string(),
         None,
     )
@@ -257,7 +257,7 @@ pub async fn save_uploaded_file_settings(
 }
 
 async fn maybe_auto_cleanup(app_handle: &AppHandle, index: &mut UploadIndex) -> Result<(), String> {
-    let settings = load_uploaded_file_settings(app_handle).await;
+    let settings = load_workspace_settings(app_handle).await;
     if !settings.auto_cleanup_enabled {
         return Ok(());
     }
@@ -435,7 +435,7 @@ pub async fn upload_document_attachment(
         return Err(format!("Not a regular file: {}", file_path));
     }
 
-    let settings = load_uploaded_file_settings(&app_handle).await;
+    let settings = load_workspace_settings(&app_handle).await;
 
     let bytes = tokio::fs::read(source)
         .await

@@ -160,6 +160,25 @@ impl SubmissionDbService {
             .await
             .map_err(|e| e.into())
     }
+
+    pub async fn batch_delete_submissions(
+        db: &DatabaseService,
+        ids: Vec<String>,
+    ) -> Result<u64> {
+        db.batch_delete_bounty_submissions(&ids)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    pub async fn batch_update_submission_status(
+        db: &DatabaseService,
+        ids: Vec<String>,
+        status: String,
+    ) -> Result<u64> {
+        db.batch_update_bounty_submission_status(&ids, &status)
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 fn validate_required(value: &str, field: &str) -> Result<()> {

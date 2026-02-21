@@ -1,11 +1,12 @@
 //! Bug Bounty database operations
 
 use anyhow::Result;
-use chrono;
+use chrono::{self, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tracing::info;
 
+use crate::database_service::connection_manager::DatabasePool;
 use super::service::DatabaseService;
 
 // ============================================================================
@@ -234,6 +235,61 @@ fn row_to_bounty_workflow_template(row: sqlx::postgres::PgRow) -> BountyWorkflow
     }
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct BountyProgramCompatRow {
+    id: String,
+    name: String,
+    organization: String,
+    platform: String,
+    platform_handle: Option<String>,
+    url: Option<String>,
+    program_type: String,
+    status: String,
+    description: Option<String>,
+    rewards_json: Option<String>,
+    response_sla_days: Option<i32>,
+    resolution_sla_days: Option<i32>,
+    rules_json: Option<String>,
+    tags_json: Option<String>,
+    metadata_json: Option<String>,
+    priority_score: f64,
+    total_submissions: i32,
+    accepted_submissions: i32,
+    total_earnings: f64,
+    created_at: String,
+    updated_at: String,
+    last_activity_at: Option<String>,
+}
+
+impl From<BountyProgramCompatRow> for BountyProgramRow {
+    fn from(row: BountyProgramCompatRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            organization: row.organization,
+            platform: row.platform,
+            platform_handle: row.platform_handle,
+            url: row.url,
+            program_type: row.program_type,
+            status: row.status,
+            description: row.description,
+            rewards_json: row.rewards_json,
+            response_sla_days: row.response_sla_days,
+            resolution_sla_days: row.resolution_sla_days,
+            rules_json: row.rules_json,
+            tags_json: row.tags_json,
+            metadata_json: row.metadata_json,
+            priority_score: row.priority_score,
+            total_submissions: row.total_submissions,
+            accepted_submissions: row.accepted_submissions,
+            total_earnings: row.total_earnings,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            last_activity_at: row.last_activity_at,
+        }
+    }
+}
+
 /// Map PgRow to BountyWorkflowBindingRow
 fn row_to_bounty_workflow_binding(row: sqlx::postgres::PgRow) -> BountyWorkflowBindingRow {
     BountyWorkflowBindingRow {
@@ -352,7 +408,7 @@ fn row_to_bounty_asset(row: sqlx::postgres::PgRow) -> BountyAssetRow {
 // ============================================================================
 
 /// Bug Bounty Program database model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyProgramRow {
     pub id: String,
     pub name: String,
@@ -379,7 +435,7 @@ pub struct BountyProgramRow {
 }
 
 /// Program Scope database model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ProgramScopeRow {
     pub id: String,
     pub program_id: String,
@@ -400,7 +456,7 @@ pub struct ProgramScopeRow {
 }
 
 /// Bounty Finding database model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyFindingRow {
     pub id: String,
     pub program_id: String,
@@ -433,7 +489,7 @@ pub struct BountyFindingRow {
 }
 
 /// Bounty Submission database model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountySubmissionRow {
     pub id: String,
     pub program_id: String,
@@ -482,6 +538,80 @@ impl DatabaseService {
 
     /// Create a new bounty program
     pub async fn create_bounty_program(&self, program: &BountyProgramRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_programs (
+                    id, name, organization, platform, platform_handle, url,
+                    program_type, status, description, rewards_json,
+                    response_sla_days, resolution_sla_days, rules_json, tags_json,
+                    metadata_json, priority_score, total_submissions, accepted_submissions,
+                    total_earnings, created_at, updated_at, last_activity_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&program.id)
+                        .bind(&program.name)
+                        .bind(&program.organization)
+                        .bind(&program.platform)
+                        .bind(&program.platform_handle)
+                        .bind(&program.url)
+                        .bind(&program.program_type)
+                        .bind(&program.status)
+                        .bind(&program.description)
+                        .bind(&program.rewards_json)
+                        .bind(program.response_sla_days)
+                        .bind(program.resolution_sla_days)
+                        .bind(&program.rules_json)
+                        .bind(&program.tags_json)
+                        .bind(&program.metadata_json)
+                        .bind(program.priority_score)
+                        .bind(program.total_submissions)
+                        .bind(program.accepted_submissions)
+                        .bind(program.total_earnings)
+                        .bind(&program.created_at)
+                        .bind(&program.updated_at)
+                        .bind(&program.last_activity_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&program.id)
+                        .bind(&program.name)
+                        .bind(&program.organization)
+                        .bind(&program.platform)
+                        .bind(&program.platform_handle)
+                        .bind(&program.url)
+                        .bind(&program.program_type)
+                        .bind(&program.status)
+                        .bind(&program.description)
+                        .bind(&program.rewards_json)
+                        .bind(program.response_sla_days)
+                        .bind(program.resolution_sla_days)
+                        .bind(&program.rules_json)
+                        .bind(&program.tags_json)
+                        .bind(&program.metadata_json)
+                        .bind(program.priority_score)
+                        .bind(program.total_submissions)
+                        .bind(program.accepted_submissions)
+                        .bind(program.total_earnings)
+                        .bind(&program.created_at)
+                        .bind(&program.updated_at)
+                        .bind(&program.last_activity_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created bounty program: {}", program.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_programs (
                 id, name, organization, platform, platform_handle, url,
@@ -522,6 +652,31 @@ impl DatabaseService {
 
     /// Get a bounty program by ID
     pub async fn get_bounty_program(&self, id: &str) -> Result<Option<BountyProgramRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, name, organization, platform, platform_handle, url, program_type, status,
+                    description, rewards_json, response_sla_days, resolution_sla_days, rules_json,
+                    tags_json, metadata_json, priority_score, total_submissions, accepted_submissions,
+                    total_earnings, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at,
+                    CAST(last_activity_at AS TEXT) AS last_activity_at
+                FROM bounty_programs
+                WHERE id = ?
+            "#;
+            let row = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).bind(id).fetch_optional(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).bind(id).fetch_optional(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            return Ok(row);
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_programs WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -532,6 +687,79 @@ impl DatabaseService {
 
     /// Update a bounty program
     pub async fn update_bounty_program(&self, program: &BountyProgramRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_programs SET
+                    name = ?, organization = ?, platform = ?, platform_handle = ?,
+                    url = ?, program_type = ?, status = ?, description = ?,
+                    rewards_json = ?, response_sla_days = ?, resolution_sla_days = ?,
+                    rules_json = ?, tags_json = ?, metadata_json = ?, priority_score = ?,
+                    total_submissions = ?, accepted_submissions = ?, total_earnings = ?,
+                    updated_at = ?, last_activity_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&program.name)
+                        .bind(&program.organization)
+                        .bind(&program.platform)
+                        .bind(&program.platform_handle)
+                        .bind(&program.url)
+                        .bind(&program.program_type)
+                        .bind(&program.status)
+                        .bind(&program.description)
+                        .bind(&program.rewards_json)
+                        .bind(program.response_sla_days)
+                        .bind(program.resolution_sla_days)
+                        .bind(&program.rules_json)
+                        .bind(&program.tags_json)
+                        .bind(&program.metadata_json)
+                        .bind(program.priority_score)
+                        .bind(program.total_submissions)
+                        .bind(program.accepted_submissions)
+                        .bind(program.total_earnings)
+                        .bind(&program.updated_at)
+                        .bind(&program.last_activity_at)
+                        .bind(&program.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&program.name)
+                        .bind(&program.organization)
+                        .bind(&program.platform)
+                        .bind(&program.platform_handle)
+                        .bind(&program.url)
+                        .bind(&program.program_type)
+                        .bind(&program.status)
+                        .bind(&program.description)
+                        .bind(&program.rewards_json)
+                        .bind(program.response_sla_days)
+                        .bind(program.resolution_sla_days)
+                        .bind(&program.rules_json)
+                        .bind(&program.tags_json)
+                        .bind(&program.metadata_json)
+                        .bind(program.priority_score)
+                        .bind(program.total_submissions)
+                        .bind(program.accepted_submissions)
+                        .bind(program.total_earnings)
+                        .bind(&program.updated_at)
+                        .bind(&program.last_activity_at)
+                        .bind(&program.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_programs SET
                 name = $1, organization = $2, platform = $3, platform_handle = $4,
@@ -571,6 +799,25 @@ impl DatabaseService {
 
     /// Delete a bounty program
     pub async fn delete_bounty_program(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_programs WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_programs WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_programs WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -588,6 +835,64 @@ impl DatabaseService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<BountyProgramRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, name, organization, platform, platform_handle, url, program_type, status,
+                    description, rewards_json, response_sla_days, resolution_sla_days, rules_json,
+                    tags_json, metadata_json, priority_score, total_submissions, accepted_submissions,
+                    total_earnings, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at,
+                    CAST(last_activity_at AS TEXT) AS last_activity_at
+                FROM bounty_programs
+                ORDER BY priority_score DESC, updated_at DESC
+            "#;
+
+            let rows: Vec<BountyProgramCompatRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+
+            let mut programs: Vec<BountyProgramRow> = rows.into_iter().map(Into::into).collect();
+
+            if let Some(platforms) = platforms {
+                if !platforms.is_empty() {
+                    programs.retain(|p| platforms.contains(&p.platform));
+                }
+            }
+
+            if let Some(statuses) = statuses {
+                if !statuses.is_empty() {
+                    programs.retain(|p| statuses.contains(&p.status));
+                }
+            }
+
+            if let Some(search) = search {
+                if !search.is_empty() {
+                    let needle = search.to_lowercase();
+                    programs.retain(|p| {
+                        p.name.to_lowercase().contains(&needle)
+                            || p.organization.to_lowercase().contains(&needle)
+                    });
+                }
+            }
+
+            if let Some(off) = offset {
+                programs = programs.into_iter().skip(off as usize).collect();
+            }
+            if let Some(lim) = limit {
+                programs.truncate(lim as usize);
+            }
+
+            return Ok(programs);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_programs WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -645,21 +950,52 @@ impl DatabaseService {
 
     /// Get bounty program statistics
     pub async fn get_bounty_program_stats(&self) -> Result<BountyProgramStats> {
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bounty_programs")
-            .fetch_one(self.get_pool()?)
-            .await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let active: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'"
-        )
-        .fetch_one(self.get_pool()?)
-        .await?;
+        let total: (i64,) = match runtime {
+            DatabasePool::PostgreSQL(pool) => sqlx::query_as("SELECT COUNT(*) FROM bounty_programs").fetch_one(pool).await?,
+            DatabasePool::SQLite(pool) => sqlx::query_as("SELECT COUNT(*) FROM bounty_programs").fetch_one(pool).await?,
+            DatabasePool::MySQL(pool) => sqlx::query_as("SELECT COUNT(*) FROM bounty_programs").fetch_one(pool).await?,
+        };
 
-        let totals: (i64, i64, f64) = sqlx::query_as(
-            "SELECT COALESCE(SUM(total_submissions), 0), COALESCE(SUM(accepted_submissions), 0), COALESCE(SUM(total_earnings), 0.0) FROM bounty_programs"
-        )
-        .fetch_one(self.get_pool()?)
-        .await?;
+        let active: (i64,) = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'").fetch_one(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'").fetch_one(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_programs WHERE status = 'active'").fetch_one(pool).await?
+            }
+        };
+
+        let totals: (i64, i64, f64) = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as(
+                    "SELECT COALESCE(SUM(total_submissions), 0), COALESCE(SUM(accepted_submissions), 0), COALESCE(SUM(total_earnings), 0.0) FROM bounty_programs"
+                )
+                .fetch_one(pool)
+                .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as(
+                    "SELECT COALESCE(SUM(total_submissions), 0), COALESCE(SUM(accepted_submissions), 0), COALESCE(SUM(total_earnings), 0.0) FROM bounty_programs"
+                )
+                .fetch_one(pool)
+                .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as(
+                    "SELECT COALESCE(SUM(total_submissions), 0), COALESCE(SUM(accepted_submissions), 0), COALESCE(SUM(total_earnings), 0.0) FROM bounty_programs"
+                )
+                .fetch_one(pool)
+                .await?
+            }
+        };
 
         Ok(BountyProgramStats {
             total_programs: total.0 as i32,
@@ -676,6 +1012,66 @@ impl DatabaseService {
 
     /// Create a new program scope
     pub async fn create_program_scope(&self, scope: &ProgramScopeRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_scopes (
+                    id, program_id, scope_type, target_type, target, description,
+                    allowed_tests_json, instructions_json, requires_auth, test_accounts_json,
+                    asset_count, finding_count, priority, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&scope.id)
+                        .bind(&scope.program_id)
+                        .bind(&scope.scope_type)
+                        .bind(&scope.target_type)
+                        .bind(&scope.target)
+                        .bind(&scope.description)
+                        .bind(&scope.allowed_tests_json)
+                        .bind(&scope.instructions_json)
+                        .bind(scope.requires_auth)
+                        .bind(&scope.test_accounts_json)
+                        .bind(scope.asset_count)
+                        .bind(scope.finding_count)
+                        .bind(scope.priority)
+                        .bind(&scope.metadata_json)
+                        .bind(&scope.created_at)
+                        .bind(&scope.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&scope.id)
+                        .bind(&scope.program_id)
+                        .bind(&scope.scope_type)
+                        .bind(&scope.target_type)
+                        .bind(&scope.target)
+                        .bind(&scope.description)
+                        .bind(&scope.allowed_tests_json)
+                        .bind(&scope.instructions_json)
+                        .bind(scope.requires_auth)
+                        .bind(&scope.test_accounts_json)
+                        .bind(scope.asset_count)
+                        .bind(scope.finding_count)
+                        .bind(scope.priority)
+                        .bind(&scope.metadata_json)
+                        .bind(&scope.created_at)
+                        .bind(&scope.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created program scope: {}", scope.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_scopes (
                 id, program_id, scope_type, target_type, target, description,
@@ -708,6 +1104,29 @@ impl DatabaseService {
 
     /// Get a program scope by ID
     pub async fn get_program_scope(&self, id: &str) -> Result<Option<ProgramScopeRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, scope_type, target_type, target, description, allowed_tests_json,
+                    instructions_json, requires_auth, test_accounts_json, asset_count, finding_count,
+                    priority, metadata_json, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at
+                FROM bounty_scopes
+                WHERE id = ?
+            "#;
+            let row = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).bind(id).fetch_optional(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).bind(id).fetch_optional(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            return Ok(row);
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_scopes WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -718,6 +1137,63 @@ impl DatabaseService {
 
     /// Update a program scope
     pub async fn update_program_scope(&self, scope: &ProgramScopeRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_scopes SET
+                    scope_type = ?, target_type = ?, target = ?, description = ?,
+                    allowed_tests_json = ?, instructions_json = ?, requires_auth = ?,
+                    test_accounts_json = ?, asset_count = ?, finding_count = ?,
+                    priority = ?, metadata_json = ?, updated_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&scope.scope_type)
+                        .bind(&scope.target_type)
+                        .bind(&scope.target)
+                        .bind(&scope.description)
+                        .bind(&scope.allowed_tests_json)
+                        .bind(&scope.instructions_json)
+                        .bind(scope.requires_auth)
+                        .bind(&scope.test_accounts_json)
+                        .bind(scope.asset_count)
+                        .bind(scope.finding_count)
+                        .bind(scope.priority)
+                        .bind(&scope.metadata_json)
+                        .bind(&scope.updated_at)
+                        .bind(&scope.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&scope.scope_type)
+                        .bind(&scope.target_type)
+                        .bind(&scope.target)
+                        .bind(&scope.description)
+                        .bind(&scope.allowed_tests_json)
+                        .bind(&scope.instructions_json)
+                        .bind(scope.requires_auth)
+                        .bind(&scope.test_accounts_json)
+                        .bind(scope.asset_count)
+                        .bind(scope.finding_count)
+                        .bind(scope.priority)
+                        .bind(&scope.metadata_json)
+                        .bind(&scope.updated_at)
+                        .bind(&scope.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_scopes SET
                 scope_type = $1, target_type = $2, target = $3, description = $4,
@@ -748,6 +1224,25 @@ impl DatabaseService {
 
     /// Delete a program scope
     pub async fn delete_program_scope(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_scopes WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_scopes WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_scopes WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -762,6 +1257,35 @@ impl DatabaseService {
         program_id: Option<&str>,
         scope_type: Option<&str>,
     ) -> Result<Vec<ProgramScopeRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, scope_type, target_type, target, description, allowed_tests_json,
+                    instructions_json, requires_auth, test_accounts_json, asset_count, finding_count,
+                    priority, metadata_json, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at
+                FROM bounty_scopes
+                ORDER BY priority DESC, created_at DESC
+            "#;
+            let mut scopes: Vec<ProgramScopeRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            if let Some(pid) = program_id {
+                scopes.retain(|s| s.program_id == pid);
+            }
+            if let Some(st) = scope_type {
+                scopes.retain(|s| s.scope_type == st);
+            }
+            return Ok(scopes);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_scopes WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -799,7 +1323,7 @@ pub struct BountyProgramStats {
 }
 
 /// Bounty Evidence database model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyEvidenceRow {
     pub id: String,
     pub finding_id: String,
@@ -828,6 +1352,93 @@ impl DatabaseService {
 
     /// Create a new bounty finding
     pub async fn create_bounty_finding(&self, finding: &BountyFindingRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_findings (
+                    id, program_id, scope_id, asset_id, title, description, finding_type,
+                    severity, status, confidence, cvss_score, cwe_id, affected_url,
+                    affected_parameter, reproduction_steps_json, impact, remediation,
+                    evidence_ids_json, tags_json, metadata_json, fingerprint, duplicate_of,
+                    first_seen_at, last_seen_at, verified_at, created_at, updated_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&finding.id)
+                        .bind(&finding.program_id)
+                        .bind(&finding.scope_id)
+                        .bind(&finding.asset_id)
+                        .bind(&finding.title)
+                        .bind(&finding.description)
+                        .bind(&finding.finding_type)
+                        .bind(&finding.severity)
+                        .bind(&finding.status)
+                        .bind(&finding.confidence)
+                        .bind(finding.cvss_score)
+                        .bind(&finding.cwe_id)
+                        .bind(&finding.affected_url)
+                        .bind(&finding.affected_parameter)
+                        .bind(&finding.reproduction_steps_json)
+                        .bind(&finding.impact)
+                        .bind(&finding.remediation)
+                        .bind(&finding.evidence_ids_json)
+                        .bind(&finding.tags_json)
+                        .bind(&finding.metadata_json)
+                        .bind(&finding.fingerprint)
+                        .bind(&finding.duplicate_of)
+                        .bind(&finding.first_seen_at)
+                        .bind(&finding.last_seen_at)
+                        .bind(&finding.verified_at)
+                        .bind(&finding.created_at)
+                        .bind(&finding.updated_at)
+                        .bind(&finding.created_by)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&finding.id)
+                        .bind(&finding.program_id)
+                        .bind(&finding.scope_id)
+                        .bind(&finding.asset_id)
+                        .bind(&finding.title)
+                        .bind(&finding.description)
+                        .bind(&finding.finding_type)
+                        .bind(&finding.severity)
+                        .bind(&finding.status)
+                        .bind(&finding.confidence)
+                        .bind(finding.cvss_score)
+                        .bind(&finding.cwe_id)
+                        .bind(&finding.affected_url)
+                        .bind(&finding.affected_parameter)
+                        .bind(&finding.reproduction_steps_json)
+                        .bind(&finding.impact)
+                        .bind(&finding.remediation)
+                        .bind(&finding.evidence_ids_json)
+                        .bind(&finding.tags_json)
+                        .bind(&finding.metadata_json)
+                        .bind(&finding.fingerprint)
+                        .bind(&finding.duplicate_of)
+                        .bind(&finding.first_seen_at)
+                        .bind(&finding.last_seen_at)
+                        .bind(&finding.verified_at)
+                        .bind(&finding.created_at)
+                        .bind(&finding.updated_at)
+                        .bind(&finding.created_by)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+
+            info!("Created bounty finding: {}", finding.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_findings (
                 id, program_id, scope_id, asset_id, title, description, finding_type,
@@ -874,6 +1485,19 @@ impl DatabaseService {
 
     /// Get a bounty finding by ID
     pub async fn get_bounty_finding(&self, id: &str) -> Result<Option<BountyFindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_findings WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_findings WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_findings WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -884,6 +1508,19 @@ impl DatabaseService {
 
     /// Get a bounty finding by fingerprint (for deduplication)
     pub async fn get_bounty_finding_by_fingerprint(&self, fingerprint: &str) -> Result<Option<BountyFindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_findings WHERE fingerprint = ?").bind(fingerprint).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_findings WHERE fingerprint = ?").bind(fingerprint).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_findings WHERE fingerprint = $1")
         .bind(fingerprint)
         .fetch_optional(self.get_pool()?)
@@ -898,6 +1535,27 @@ impl DatabaseService {
         fingerprint: &str,
         exclude_id: &str,
     ) -> Result<Option<BountyFindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_findings WHERE fingerprint = ? AND id <> ?")
+                    .bind(fingerprint)
+                    .bind(exclude_id)
+                    .fetch_optional(pool)
+                    .await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_findings WHERE fingerprint = ? AND id <> ?")
+                    .bind(fingerprint)
+                    .bind(exclude_id)
+                    .fetch_optional(pool)
+                    .await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_findings WHERE fingerprint = $1 AND id <> $2")
             .bind(fingerprint)
             .bind(exclude_id)
@@ -909,6 +1567,83 @@ impl DatabaseService {
 
     /// Update a bounty finding
     pub async fn update_bounty_finding(&self, finding: &BountyFindingRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_findings SET
+                    scope_id = ?, asset_id = ?, title = ?, description = ?, finding_type = ?,
+                    severity = ?, status = ?, confidence = ?, cvss_score = ?, cwe_id = ?,
+                    affected_url = ?, affected_parameter = ?, reproduction_steps_json = ?,
+                    impact = ?, remediation = ?, evidence_ids_json = ?, tags_json = ?,
+                    metadata_json = ?, duplicate_of = ?, last_seen_at = ?, verified_at = ?,
+                    updated_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&finding.scope_id)
+                        .bind(&finding.asset_id)
+                        .bind(&finding.title)
+                        .bind(&finding.description)
+                        .bind(&finding.finding_type)
+                        .bind(&finding.severity)
+                        .bind(&finding.status)
+                        .bind(&finding.confidence)
+                        .bind(finding.cvss_score)
+                        .bind(&finding.cwe_id)
+                        .bind(&finding.affected_url)
+                        .bind(&finding.affected_parameter)
+                        .bind(&finding.reproduction_steps_json)
+                        .bind(&finding.impact)
+                        .bind(&finding.remediation)
+                        .bind(&finding.evidence_ids_json)
+                        .bind(&finding.tags_json)
+                        .bind(&finding.metadata_json)
+                        .bind(&finding.duplicate_of)
+                        .bind(&finding.last_seen_at)
+                        .bind(&finding.verified_at)
+                        .bind(&finding.updated_at)
+                        .bind(&finding.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&finding.scope_id)
+                        .bind(&finding.asset_id)
+                        .bind(&finding.title)
+                        .bind(&finding.description)
+                        .bind(&finding.finding_type)
+                        .bind(&finding.severity)
+                        .bind(&finding.status)
+                        .bind(&finding.confidence)
+                        .bind(finding.cvss_score)
+                        .bind(&finding.cwe_id)
+                        .bind(&finding.affected_url)
+                        .bind(&finding.affected_parameter)
+                        .bind(&finding.reproduction_steps_json)
+                        .bind(&finding.impact)
+                        .bind(&finding.remediation)
+                        .bind(&finding.evidence_ids_json)
+                        .bind(&finding.tags_json)
+                        .bind(&finding.metadata_json)
+                        .bind(&finding.duplicate_of)
+                        .bind(&finding.last_seen_at)
+                        .bind(&finding.verified_at)
+                        .bind(&finding.updated_at)
+                        .bind(&finding.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_findings SET
                 scope_id = $1, asset_id = $2, title = $3, description = $4, finding_type = $5,
@@ -950,12 +1685,94 @@ impl DatabaseService {
 
     /// Delete a bounty finding
     pub async fn delete_bounty_finding(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_findings WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_findings WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_findings WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Batch delete bounty findings
+    pub async fn batch_delete_bounty_findings(&self, ids: &[String]) -> Result<u64> {
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        if ids.is_empty() { return Ok(0); }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let pg_placeholders = ids.iter().enumerate().map(|(i, _)| format!("${}", i + 1)).collect::<Vec<_>>().join(",");
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let query_str = format!("DELETE FROM bounty_findings WHERE id IN ({})", placeholders);
+                let mut query = sqlx::query(&query_str);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::MySQL(pool) => {
+                let query_str = format!("DELETE FROM bounty_findings WHERE id IN ({})", placeholders);
+                let mut query = sqlx::query(&query_str);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::PostgreSQL(_) => {
+                let query_str = format!("DELETE FROM bounty_findings WHERE id IN ({})", pg_placeholders);
+                let mut query = sqlx::query(&query_str);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(self.get_pool()?).await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
+    /// Batch update bounty finding status
+    pub async fn batch_update_bounty_finding_status(&self, ids: &[String], status: &str) -> Result<u64> {
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        if ids.is_empty() { return Ok(0); }
+        let now = Utc::now().to_rfc3339();
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let pg_placeholders = ids.iter().enumerate().map(|(i, _)| format!("${}", i + 3)).collect::<Vec<_>>().join(",");
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let query_str = format!("UPDATE bounty_findings SET status = ?, updated_at = ? WHERE id IN ({})", placeholders);
+                let mut query = sqlx::query(&query_str).bind(status).bind(&now);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::MySQL(pool) => {
+                let query_str = format!("UPDATE bounty_findings SET status = ?, updated_at = ? WHERE id IN ({})", placeholders);
+                let mut query = sqlx::query(&query_str).bind(status).bind(&now);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::PostgreSQL(_) => {
+                let query_str = format!("UPDATE bounty_findings SET status = $1, updated_at = $2 WHERE id IN ({})", pg_placeholders);
+                let mut query = sqlx::query(&query_str).bind(status).bind(&now);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(self.get_pool()?).await?;
+                Ok(result.rows_affected())
+            }
+        }
     }
 
     /// List bounty findings with optional filtering
@@ -971,6 +1788,82 @@ impl DatabaseService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<BountyFindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, scope_id, asset_id, title, description, finding_type, severity, status,
+                    confidence, cvss_score, cwe_id, affected_url, affected_parameter, reproduction_steps_json,
+                    impact, remediation, evidence_ids_json, tags_json, metadata_json, fingerprint, duplicate_of,
+                    CAST(first_seen_at AS TEXT) AS first_seen_at, CAST(last_seen_at AS TEXT) AS last_seen_at,
+                    CAST(verified_at AS TEXT) AS verified_at, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at, created_by
+                FROM bounty_findings
+            "#;
+            let mut findings: Vec<BountyFindingRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+
+            if let Some(pid) = program_id {
+                findings.retain(|f| f.program_id == pid);
+            }
+            if let Some(sid) = scope_id {
+                findings.retain(|f| f.scope_id.as_deref() == Some(sid));
+            }
+            if let Some(sevs) = severities {
+                if !sevs.is_empty() {
+                    findings.retain(|f| sevs.contains(&f.severity));
+                }
+            }
+            if let Some(stats) = statuses {
+                if !stats.is_empty() {
+                    findings.retain(|f| stats.contains(&f.status));
+                }
+            }
+            if let Some(keyword) = search {
+                if !keyword.is_empty() {
+                    let needle = keyword.to_lowercase();
+                    findings.retain(|f| {
+                        f.title.to_lowercase().contains(&needle)
+                            || f.description.to_lowercase().contains(&needle)
+                    });
+                }
+            }
+
+            let order_by = sort_by.unwrap_or("created_at");
+            let direction = sort_dir.unwrap_or("desc").to_lowercase();
+            findings.sort_by(|a, b| {
+                let ord = match order_by {
+                    "created_at" => a.created_at.cmp(&b.created_at),
+                    "updated_at" => a.updated_at.cmp(&b.updated_at),
+                    "severity" => a.severity.cmp(&b.severity),
+                    "status" => a.status.cmp(&b.status),
+                    "title" => a.title.cmp(&b.title),
+                    "cvss_score" => a
+                        .cvss_score
+                        .partial_cmp(&b.cvss_score)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                    "last_seen_at" => a.last_seen_at.cmp(&b.last_seen_at),
+                    _ => a.created_at.cmp(&b.created_at),
+                };
+                if direction == "asc" { ord } else { ord.reverse() }
+            });
+
+            if let Some(off) = offset {
+                findings = findings.into_iter().skip(off as usize).collect();
+            }
+            if let Some(lim) = limit {
+                findings.truncate(lim as usize);
+            }
+            return Ok(findings);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_findings WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -1056,6 +1949,37 @@ impl DatabaseService {
         finding_type: &str,
         limit: i64,
     ) -> Result<Vec<BountyFindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, scope_id, asset_id, title, description, finding_type, severity, status,
+                    confidence, cvss_score, cwe_id, affected_url, affected_parameter, reproduction_steps_json,
+                    impact, remediation, evidence_ids_json, tags_json, metadata_json, fingerprint, duplicate_of,
+                    CAST(first_seen_at AS TEXT) AS first_seen_at, CAST(last_seen_at AS TEXT) AS last_seen_at,
+                    CAST(verified_at AS TEXT) AS verified_at, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at, created_by
+                FROM bounty_findings
+                WHERE program_id = ? AND finding_type = ?
+                ORDER BY created_at DESC
+            "#;
+            let mut rows: Vec<BountyFindingRow> = match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query_as(query).bind(program_id).bind(finding_type).fetch_all(pool).await?
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query_as(query).bind(program_id).bind(finding_type).fetch_all(pool).await?
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            rows.truncate(limit.max(0) as usize);
+            return Ok(rows);
+        }
+
         let rows = sqlx::query(
             "SELECT * FROM bounty_findings WHERE program_id = $1 AND finding_type = $2 ORDER BY created_at DESC LIMIT $3",
         )
@@ -1070,38 +1994,107 @@ impl DatabaseService {
 
     /// Get bounty finding statistics
     pub async fn get_bounty_finding_stats(&self, program_id: Option<&str>) -> Result<BountyFindingStats> {
-        let base_where = program_id.map(|_| "WHERE program_id = $1").unwrap_or("");
-        
-        let total_query = format!("SELECT COUNT(*) FROM bounty_findings {}", base_where);
-        let mut q = sqlx::query_as::<_, (i64,)>(&total_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let total: (i64,) = q.fetch_one(self.get_pool()?).await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let by_severity_query = format!(
-            "SELECT severity, COUNT(*) FROM bounty_findings {} GROUP BY severity",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (String, i64)>(&by_severity_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let severity_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
+        let total: (i64,) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_findings WHERE program_id = $1").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_findings").fetch_one(pool).await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_findings WHERE program_id = ?").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_findings").fetch_one(pool).await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_findings WHERE program_id = ?").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_findings").fetch_one(pool).await?
+            }
+        };
+
+        let severity_rows: Vec<(String, i64)> = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_findings WHERE program_id = $1 GROUP BY severity")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_findings GROUP BY severity")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_findings WHERE program_id = ? GROUP BY severity")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_findings GROUP BY severity")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_findings WHERE program_id = ? GROUP BY severity")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_findings GROUP BY severity")
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
         let by_severity: std::collections::HashMap<String, i32> = severity_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
             .collect();
 
-        let by_status_query = format!(
-            "SELECT status, COUNT(*) FROM bounty_findings {} GROUP BY status",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (String, i64)>(&by_status_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let status_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
+        let status_rows: Vec<(String, i64)> = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_findings WHERE program_id = $1 GROUP BY status")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_findings GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_findings WHERE program_id = ? GROUP BY status")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_findings GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_findings WHERE program_id = ? GROUP BY status")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_findings GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
         let by_status: std::collections::HashMap<String, i32> = status_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
@@ -1120,6 +2113,71 @@ impl DatabaseService {
 
     /// Create a new bounty evidence
     pub async fn create_bounty_evidence(&self, evidence: &BountyEvidenceRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_evidence (
+                    id, finding_id, evidence_type, title, description, file_path, file_url,
+                    content, mime_type, file_size, http_request_json, http_response_json,
+                    diff, tags_json, metadata_json, display_order, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&evidence.id)
+                        .bind(&evidence.finding_id)
+                        .bind(&evidence.evidence_type)
+                        .bind(&evidence.title)
+                        .bind(&evidence.description)
+                        .bind(&evidence.file_path)
+                        .bind(&evidence.file_url)
+                        .bind(&evidence.content)
+                        .bind(&evidence.mime_type)
+                        .bind(evidence.file_size)
+                        .bind(&evidence.http_request_json)
+                        .bind(&evidence.http_response_json)
+                        .bind(&evidence.diff)
+                        .bind(&evidence.tags_json)
+                        .bind(&evidence.metadata_json)
+                        .bind(evidence.display_order)
+                        .bind(&evidence.created_at)
+                        .bind(&evidence.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&evidence.id)
+                        .bind(&evidence.finding_id)
+                        .bind(&evidence.evidence_type)
+                        .bind(&evidence.title)
+                        .bind(&evidence.description)
+                        .bind(&evidence.file_path)
+                        .bind(&evidence.file_url)
+                        .bind(&evidence.content)
+                        .bind(&evidence.mime_type)
+                        .bind(evidence.file_size)
+                        .bind(&evidence.http_request_json)
+                        .bind(&evidence.http_response_json)
+                        .bind(&evidence.diff)
+                        .bind(&evidence.tags_json)
+                        .bind(&evidence.metadata_json)
+                        .bind(evidence.display_order)
+                        .bind(&evidence.created_at)
+                        .bind(&evidence.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+
+            info!("Created bounty evidence: {}", evidence.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_evidence (
                 id, finding_id, evidence_type, title, description, file_path, file_url,
@@ -1154,6 +2212,19 @@ impl DatabaseService {
 
     /// Get a bounty evidence by ID
     pub async fn get_bounty_evidence(&self, id: &str) -> Result<Option<BountyEvidenceRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_evidence WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_evidence WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_evidence WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -1164,6 +2235,67 @@ impl DatabaseService {
 
     /// Update a bounty evidence
     pub async fn update_bounty_evidence(&self, evidence: &BountyEvidenceRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_evidence SET
+                    evidence_type = ?, title = ?, description = ?, file_path = ?,
+                    file_url = ?, content = ?, mime_type = ?, file_size = ?,
+                    http_request_json = ?, http_response_json = ?, diff = ?,
+                    tags_json = ?, metadata_json = ?, display_order = ?, updated_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&evidence.evidence_type)
+                        .bind(&evidence.title)
+                        .bind(&evidence.description)
+                        .bind(&evidence.file_path)
+                        .bind(&evidence.file_url)
+                        .bind(&evidence.content)
+                        .bind(&evidence.mime_type)
+                        .bind(evidence.file_size)
+                        .bind(&evidence.http_request_json)
+                        .bind(&evidence.http_response_json)
+                        .bind(&evidence.diff)
+                        .bind(&evidence.tags_json)
+                        .bind(&evidence.metadata_json)
+                        .bind(evidence.display_order)
+                        .bind(&evidence.updated_at)
+                        .bind(&evidence.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&evidence.evidence_type)
+                        .bind(&evidence.title)
+                        .bind(&evidence.description)
+                        .bind(&evidence.file_path)
+                        .bind(&evidence.file_url)
+                        .bind(&evidence.content)
+                        .bind(&evidence.mime_type)
+                        .bind(evidence.file_size)
+                        .bind(&evidence.http_request_json)
+                        .bind(&evidence.http_response_json)
+                        .bind(&evidence.diff)
+                        .bind(&evidence.tags_json)
+                        .bind(&evidence.metadata_json)
+                        .bind(evidence.display_order)
+                        .bind(&evidence.updated_at)
+                        .bind(&evidence.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_evidence SET
                 evidence_type = $1, title = $2, description = $3, file_path = $4,
@@ -1196,6 +2328,25 @@ impl DatabaseService {
 
     /// Delete a bounty evidence
     pub async fn delete_bounty_evidence(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_evidence WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_evidence WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_evidence WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -1206,6 +2357,30 @@ impl DatabaseService {
 
     /// List evidence for a finding
     pub async fn list_bounty_evidence(&self, finding_id: &str) -> Result<Vec<BountyEvidenceRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, finding_id, evidence_type, title, description, file_path, file_url, content,
+                    mime_type, file_size, http_request_json, http_response_json, diff, tags_json,
+                    metadata_json, display_order, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at
+                FROM bounty_evidence
+                WHERE finding_id = ?
+                ORDER BY display_order, created_at
+            "#;
+            let rows: Vec<BountyEvidenceRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).bind(finding_id).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).bind(finding_id).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            return Ok(rows);
+        }
+
         let rows = sqlx::query("SELECT * FROM bounty_evidence WHERE finding_id = $1 ORDER BY display_order, created_at")
         .bind(finding_id)
         .fetch_all(self.get_pool()?)
@@ -1220,6 +2395,106 @@ impl DatabaseService {
 
     /// Create a new bounty submission
     pub async fn create_bounty_submission(&self, submission: &BountySubmissionRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_submissions (
+                    id, program_id, finding_id, platform_submission_id, title, status,
+                    priority, vulnerability_type, severity, cvss_score, cwe_id, description,
+                    reproduction_steps_json, impact, remediation, evidence_ids_json, platform_url,
+                    reward_amount, reward_currency, bonus_amount, response_time_hours,
+                    resolution_time_hours, requires_retest, retest_at, last_retest_at,
+                    communications_json, timeline_json, tags_json, metadata_json, created_at, submitted_at,
+                    updated_at, closed_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&submission.id)
+                        .bind(&submission.program_id)
+                        .bind(&submission.finding_id)
+                        .bind(&submission.platform_submission_id)
+                        .bind(&submission.title)
+                        .bind(&submission.status)
+                        .bind(&submission.priority)
+                        .bind(&submission.vulnerability_type)
+                        .bind(&submission.severity)
+                        .bind(submission.cvss_score)
+                        .bind(&submission.cwe_id)
+                        .bind(&submission.description)
+                        .bind(&submission.reproduction_steps_json)
+                        .bind(&submission.impact)
+                        .bind(&submission.remediation)
+                        .bind(&submission.evidence_ids_json)
+                        .bind(&submission.platform_url)
+                        .bind(submission.reward_amount)
+                        .bind(&submission.reward_currency)
+                        .bind(submission.bonus_amount)
+                        .bind(submission.response_time_hours)
+                        .bind(submission.resolution_time_hours)
+                        .bind(submission.requires_retest)
+                        .bind(&submission.retest_at)
+                        .bind(&submission.last_retest_at)
+                        .bind(&submission.communications_json)
+                        .bind(&submission.timeline_json)
+                        .bind(&submission.tags_json)
+                        .bind(&submission.metadata_json)
+                        .bind(&submission.created_at)
+                        .bind(&submission.submitted_at)
+                        .bind(&submission.updated_at)
+                        .bind(&submission.closed_at)
+                        .bind(&submission.created_by)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&submission.id)
+                        .bind(&submission.program_id)
+                        .bind(&submission.finding_id)
+                        .bind(&submission.platform_submission_id)
+                        .bind(&submission.title)
+                        .bind(&submission.status)
+                        .bind(&submission.priority)
+                        .bind(&submission.vulnerability_type)
+                        .bind(&submission.severity)
+                        .bind(submission.cvss_score)
+                        .bind(&submission.cwe_id)
+                        .bind(&submission.description)
+                        .bind(&submission.reproduction_steps_json)
+                        .bind(&submission.impact)
+                        .bind(&submission.remediation)
+                        .bind(&submission.evidence_ids_json)
+                        .bind(&submission.platform_url)
+                        .bind(submission.reward_amount)
+                        .bind(&submission.reward_currency)
+                        .bind(submission.bonus_amount)
+                        .bind(submission.response_time_hours)
+                        .bind(submission.resolution_time_hours)
+                        .bind(submission.requires_retest)
+                        .bind(&submission.retest_at)
+                        .bind(&submission.last_retest_at)
+                        .bind(&submission.communications_json)
+                        .bind(&submission.timeline_json)
+                        .bind(&submission.tags_json)
+                        .bind(&submission.metadata_json)
+                        .bind(&submission.created_at)
+                        .bind(&submission.submitted_at)
+                        .bind(&submission.updated_at)
+                        .bind(&submission.closed_at)
+                        .bind(&submission.created_by)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created bounty submission: {}", submission.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_submissions (
                 id, program_id, finding_id, platform_submission_id, title, status,
@@ -1274,6 +2549,19 @@ impl DatabaseService {
 
     /// Get a bounty submission by ID
     pub async fn get_bounty_submission(&self, id: &str) -> Result<Option<BountySubmissionRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_submissions WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_submissions WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_submissions WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -1284,6 +2572,98 @@ impl DatabaseService {
 
     /// Update a bounty submission
     pub async fn update_bounty_submission(&self, submission: &BountySubmissionRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_submissions SET
+                    platform_submission_id = ?, title = ?, status = ?, priority = ?,
+                    vulnerability_type = ?, severity = ?, cvss_score = ?, cwe_id = ?,
+                    description = ?, reproduction_steps_json = ?, impact = ?, remediation = ?,
+                    evidence_ids_json = ?, platform_url = ?, reward_amount = ?, reward_currency = ?,
+                    bonus_amount = ?, response_time_hours = ?, resolution_time_hours = ?,
+                    requires_retest = ?, retest_at = ?, last_retest_at = ?, communications_json = ?,
+                    timeline_json = ?, tags_json = ?, metadata_json = ?, submitted_at = ?, updated_at = ?, closed_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&submission.platform_submission_id)
+                        .bind(&submission.title)
+                        .bind(&submission.status)
+                        .bind(&submission.priority)
+                        .bind(&submission.vulnerability_type)
+                        .bind(&submission.severity)
+                        .bind(submission.cvss_score)
+                        .bind(&submission.cwe_id)
+                        .bind(&submission.description)
+                        .bind(&submission.reproduction_steps_json)
+                        .bind(&submission.impact)
+                        .bind(&submission.remediation)
+                        .bind(&submission.evidence_ids_json)
+                        .bind(&submission.platform_url)
+                        .bind(submission.reward_amount)
+                        .bind(&submission.reward_currency)
+                        .bind(submission.bonus_amount)
+                        .bind(submission.response_time_hours)
+                        .bind(submission.resolution_time_hours)
+                        .bind(submission.requires_retest)
+                        .bind(&submission.retest_at)
+                        .bind(&submission.last_retest_at)
+                        .bind(&submission.communications_json)
+                        .bind(&submission.timeline_json)
+                        .bind(&submission.tags_json)
+                        .bind(&submission.metadata_json)
+                        .bind(&submission.submitted_at)
+                        .bind(&submission.updated_at)
+                        .bind(&submission.closed_at)
+                        .bind(&submission.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&submission.platform_submission_id)
+                        .bind(&submission.title)
+                        .bind(&submission.status)
+                        .bind(&submission.priority)
+                        .bind(&submission.vulnerability_type)
+                        .bind(&submission.severity)
+                        .bind(submission.cvss_score)
+                        .bind(&submission.cwe_id)
+                        .bind(&submission.description)
+                        .bind(&submission.reproduction_steps_json)
+                        .bind(&submission.impact)
+                        .bind(&submission.remediation)
+                        .bind(&submission.evidence_ids_json)
+                        .bind(&submission.platform_url)
+                        .bind(submission.reward_amount)
+                        .bind(&submission.reward_currency)
+                        .bind(submission.bonus_amount)
+                        .bind(submission.response_time_hours)
+                        .bind(submission.resolution_time_hours)
+                        .bind(submission.requires_retest)
+                        .bind(&submission.retest_at)
+                        .bind(&submission.last_retest_at)
+                        .bind(&submission.communications_json)
+                        .bind(&submission.timeline_json)
+                        .bind(&submission.tags_json)
+                        .bind(&submission.metadata_json)
+                        .bind(&submission.submitted_at)
+                        .bind(&submission.updated_at)
+                        .bind(&submission.closed_at)
+                        .bind(&submission.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_submissions SET
                 platform_submission_id = $1, title = $2, status = $3, priority = $4,
@@ -1333,12 +2713,101 @@ impl DatabaseService {
 
     /// Delete a bounty submission
     pub async fn delete_bounty_submission(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_submissions WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_submissions WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_submissions WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
             .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Batch delete bounty submissions
+    pub async fn batch_delete_bounty_submissions(&self, ids: &[String]) -> Result<u64> {
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        if ids.is_empty() { return Ok(0); }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let pg_placeholders = ids.iter().enumerate().map(|(i, _)| format!("${}", i + 1)).collect::<Vec<_>>().join(",");
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let query_str = format!("DELETE FROM bounty_submissions WHERE id IN ({})", placeholders);
+                let mut query = sqlx::query(&query_str);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::MySQL(pool) => {
+                let query_str = format!("DELETE FROM bounty_submissions WHERE id IN ({})", placeholders);
+                let mut query = sqlx::query(&query_str);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::PostgreSQL(_) => {
+                let query_str = format!("DELETE FROM bounty_submissions WHERE id IN ({})", pg_placeholders);
+                let mut query = sqlx::query(&query_str);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(self.get_pool()?).await?;
+                Ok(result.rows_affected())
+            }
+        }
+    }
+
+    /// Batch update bounty submission status
+    pub async fn batch_update_bounty_submission_status(&self, ids: &[String], status: &str) -> Result<u64> {
+        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        if ids.is_empty() { return Ok(0); }
+        let now = Utc::now().to_rfc3339();
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let pg_placeholders = ids.iter().enumerate().map(|(i, _)| format!("${}", i + 3)).collect::<Vec<_>>().join(",");
+        
+        let (close_clause, close_pg) = if ["accepted", "rejected", "duplicate", "closed"].contains(&status) {
+            (format!(", closed_at = '{}'", now), format!(", closed_at = '{}'", now))
+        } else {
+            (String::new(), String::new())
+        };
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let query_str = format!("UPDATE bounty_submissions SET status = ?, updated_at = ? {} WHERE id IN ({})", close_clause, placeholders);
+                let mut query = sqlx::query(&query_str).bind(status).bind(&now);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::MySQL(pool) => {
+                let query_str = format!("UPDATE bounty_submissions SET status = ?, updated_at = ? {} WHERE id IN ({})", close_clause, placeholders);
+                let mut query = sqlx::query(&query_str).bind(status).bind(&now);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(pool).await?;
+                Ok(result.rows_affected())
+            }
+            DatabasePool::PostgreSQL(_) => {
+                let query_str = format!("UPDATE bounty_submissions SET status = $1, updated_at = $2 {} WHERE id IN ({})", close_pg, pg_placeholders);
+                let mut query = sqlx::query(&query_str).bind(status).bind(&now);
+                for id in ids { query = query.bind(id); }
+                let result = query.execute(self.get_pool()?).await?;
+                Ok(result.rows_affected())
+            }
+        }
     }
 
     /// List bounty submissions with optional filtering
@@ -1353,6 +2822,79 @@ impl DatabaseService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<BountySubmissionRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, finding_id, platform_submission_id, title, status, priority,
+                    vulnerability_type, severity, cvss_score, cwe_id, description, reproduction_steps_json,
+                    impact, remediation, evidence_ids_json, platform_url, reward_amount, reward_currency,
+                    bonus_amount, response_time_hours, resolution_time_hours, requires_retest,
+                    CAST(retest_at AS TEXT) AS retest_at, CAST(last_retest_at AS TEXT) AS last_retest_at,
+                    communications_json, timeline_json, tags_json, metadata_json,
+                    CAST(created_at AS TEXT) AS created_at, CAST(submitted_at AS TEXT) AS submitted_at,
+                    CAST(updated_at AS TEXT) AS updated_at, CAST(closed_at AS TEXT) AS closed_at, created_by
+                FROM bounty_submissions
+            "#;
+            let mut submissions: Vec<BountySubmissionRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+
+            if let Some(pid) = program_id {
+                submissions.retain(|s| s.program_id == pid);
+            }
+            if let Some(fid) = finding_id {
+                submissions.retain(|s| s.finding_id == fid);
+            }
+            if let Some(stats) = statuses {
+                if !stats.is_empty() {
+                    submissions.retain(|s| stats.contains(&s.status));
+                }
+            }
+            if let Some(keyword) = search {
+                if !keyword.is_empty() {
+                    let needle = keyword.to_lowercase();
+                    submissions.retain(|s| {
+                        s.title.to_lowercase().contains(&needle)
+                            || s.description.to_lowercase().contains(&needle)
+                    });
+                }
+            }
+
+            let order_by = sort_by.unwrap_or("created_at");
+            let direction = sort_dir.unwrap_or("desc").to_lowercase();
+            submissions.sort_by(|a, b| {
+                let ord = match order_by {
+                    "created_at" => a.created_at.cmp(&b.created_at),
+                    "updated_at" => a.updated_at.cmp(&b.updated_at),
+                    "severity" => a.severity.cmp(&b.severity),
+                    "status" => a.status.cmp(&b.status),
+                    "priority" => a.priority.cmp(&b.priority),
+                    "reward_amount" => a
+                        .reward_amount
+                        .partial_cmp(&b.reward_amount)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                    "submitted_at" => a.submitted_at.cmp(&b.submitted_at),
+                    _ => a.created_at.cmp(&b.created_at),
+                };
+                if direction == "asc" { ord } else { ord.reverse() }
+            });
+
+            if let Some(off) = offset {
+                submissions = submissions.into_iter().skip(off as usize).collect();
+            }
+            if let Some(lim) = limit {
+                submissions.truncate(lim as usize);
+            }
+            return Ok(submissions);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_submissions WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -1422,35 +2964,103 @@ impl DatabaseService {
 
     /// Get bounty submission statistics
     pub async fn get_bounty_submission_stats(&self, program_id: Option<&str>) -> Result<BountySubmissionStats> {
-        let base_where = program_id.map(|_| "WHERE program_id = $1").unwrap_or("");
-        
-        let total_query = format!("SELECT COUNT(*) FROM bounty_submissions {}", base_where);
-        let mut q = sqlx::query_as::<_, (i64,)>(&total_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let total: (i64,) = q.fetch_one(self.get_pool()?).await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let accepted_query = format!(
-            "SELECT COUNT(*) FROM bounty_submissions {} {} status IN ('accepted', 'resolved', 'paid')",
-            base_where,
-            if program_id.is_some() { "AND" } else { "WHERE" }
-        );
-        let mut q = sqlx::query_as::<_, (i64,)>(&accepted_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let accepted: (i64,) = q.fetch_one(self.get_pool()?).await?;
+        let total: (i64,) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE program_id = $1").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions").fetch_one(pool).await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE program_id = ?").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions").fetch_one(pool).await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE program_id = ?").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions").fetch_one(pool).await?
+            }
+        };
 
-        let earnings_query = format!(
-            "SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions {}",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (f64, f64)>(&earnings_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let earnings: (f64, f64) = q.fetch_one(self.get_pool()?).await?;
+        let accepted: (i64,) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE program_id = $1 AND status IN ('accepted', 'resolved', 'paid')")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE status IN ('accepted', 'resolved', 'paid')")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE program_id = ? AND status IN ('accepted', 'resolved', 'paid')")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE status IN ('accepted', 'resolved', 'paid')")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE program_id = ? AND status IN ('accepted', 'resolved', 'paid')")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_submissions WHERE status IN ('accepted', 'resolved', 'paid')")
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
+
+        let earnings: (f64, f64) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions WHERE program_id = $1")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions WHERE program_id = ?")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions WHERE program_id = ?")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COALESCE(SUM(reward_amount), 0.0), COALESCE(SUM(bonus_amount), 0.0) FROM bounty_submissions")
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
 
         Ok(BountySubmissionStats {
             total_submissions: total.0 as i32,
@@ -1483,7 +3093,7 @@ pub struct BountySubmissionStats {
 // ============================================================================
 
 /// Change Event database model for ASM monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyChangeEventRow {
     pub id: String,
     pub program_id: Option<String>,
@@ -1527,6 +3137,79 @@ impl DatabaseService {
 
     /// Create a new change event
     pub async fn create_bounty_change_event(&self, event: &BountyChangeEventRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_change_events (
+                    id, program_id, asset_id, event_type, severity, status, title, description,
+                    old_value, new_value, diff, affected_scope, detection_method,
+                    triggered_workflows_json, generated_findings_json, tags_json, metadata_json,
+                    risk_score, auto_trigger_enabled, created_at, updated_at, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&event.id)
+                        .bind(&event.program_id)
+                        .bind(&event.asset_id)
+                        .bind(&event.event_type)
+                        .bind(&event.severity)
+                        .bind(&event.status)
+                        .bind(&event.title)
+                        .bind(&event.description)
+                        .bind(&event.old_value)
+                        .bind(&event.new_value)
+                        .bind(&event.diff)
+                        .bind(&event.affected_scope)
+                        .bind(&event.detection_method)
+                        .bind(&event.triggered_workflows_json)
+                        .bind(&event.generated_findings_json)
+                        .bind(&event.tags_json)
+                        .bind(&event.metadata_json)
+                        .bind(event.risk_score)
+                        .bind(event.auto_trigger_enabled)
+                        .bind(&event.created_at)
+                        .bind(&event.updated_at)
+                        .bind(&event.resolved_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&event.id)
+                        .bind(&event.program_id)
+                        .bind(&event.asset_id)
+                        .bind(&event.event_type)
+                        .bind(&event.severity)
+                        .bind(&event.status)
+                        .bind(&event.title)
+                        .bind(&event.description)
+                        .bind(&event.old_value)
+                        .bind(&event.new_value)
+                        .bind(&event.diff)
+                        .bind(&event.affected_scope)
+                        .bind(&event.detection_method)
+                        .bind(&event.triggered_workflows_json)
+                        .bind(&event.generated_findings_json)
+                        .bind(&event.tags_json)
+                        .bind(&event.metadata_json)
+                        .bind(event.risk_score)
+                        .bind(event.auto_trigger_enabled)
+                        .bind(&event.created_at)
+                        .bind(&event.updated_at)
+                        .bind(&event.resolved_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created bounty change event: {}", event.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_change_events (
                 id, program_id, asset_id, event_type, severity, status, title, description,
@@ -1566,6 +3249,19 @@ impl DatabaseService {
 
     /// Get a change event by ID
     pub async fn get_bounty_change_event(&self, id: &str) -> Result<Option<BountyChangeEventRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_change_events WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_change_events WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_change_events WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -1576,6 +3272,78 @@ impl DatabaseService {
 
     /// Update a change event
     pub async fn update_bounty_change_event(&self, event: &BountyChangeEventRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_change_events SET
+                    program_id = ?, asset_id = ?, event_type = ?, severity = ?, status = ?,
+                    title = ?, description = ?, old_value = ?, new_value = ?, diff = ?,
+                    affected_scope = ?, detection_method = ?, triggered_workflows_json = ?,
+                    generated_findings_json = ?, tags_json = ?, metadata_json = ?,
+                    risk_score = ?, auto_trigger_enabled = ?, updated_at = ?, resolved_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&event.program_id)
+                        .bind(&event.asset_id)
+                        .bind(&event.event_type)
+                        .bind(&event.severity)
+                        .bind(&event.status)
+                        .bind(&event.title)
+                        .bind(&event.description)
+                        .bind(&event.old_value)
+                        .bind(&event.new_value)
+                        .bind(&event.diff)
+                        .bind(&event.affected_scope)
+                        .bind(&event.detection_method)
+                        .bind(&event.triggered_workflows_json)
+                        .bind(&event.generated_findings_json)
+                        .bind(&event.tags_json)
+                        .bind(&event.metadata_json)
+                        .bind(event.risk_score)
+                        .bind(event.auto_trigger_enabled)
+                        .bind(&event.updated_at)
+                        .bind(&event.resolved_at)
+                        .bind(&event.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&event.program_id)
+                        .bind(&event.asset_id)
+                        .bind(&event.event_type)
+                        .bind(&event.severity)
+                        .bind(&event.status)
+                        .bind(&event.title)
+                        .bind(&event.description)
+                        .bind(&event.old_value)
+                        .bind(&event.new_value)
+                        .bind(&event.diff)
+                        .bind(&event.affected_scope)
+                        .bind(&event.detection_method)
+                        .bind(&event.triggered_workflows_json)
+                        .bind(&event.generated_findings_json)
+                        .bind(&event.tags_json)
+                        .bind(&event.metadata_json)
+                        .bind(event.risk_score)
+                        .bind(event.auto_trigger_enabled)
+                        .bind(&event.updated_at)
+                        .bind(&event.resolved_at)
+                        .bind(&event.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_change_events SET
                 program_id = $1, asset_id = $2, event_type = $3, severity = $4, status = $5,
@@ -1614,6 +3382,25 @@ impl DatabaseService {
 
     /// Delete a change event
     pub async fn delete_bounty_change_event(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_change_events WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_change_events WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_change_events WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -1633,6 +3420,59 @@ impl DatabaseService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<BountyChangeEventRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, asset_id, event_type, severity, status, title, description, old_value,
+                    new_value, diff, affected_scope, detection_method, triggered_workflows_json,
+                    generated_findings_json, tags_json, metadata_json, risk_score, auto_trigger_enabled,
+                    CAST(created_at AS TEXT) AS created_at, CAST(updated_at AS TEXT) AS updated_at,
+                    CAST(resolved_at AS TEXT) AS resolved_at
+                FROM bounty_change_events
+                ORDER BY created_at DESC
+            "#;
+            let mut events: Vec<BountyChangeEventRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+
+            if let Some(pid) = program_id {
+                events.retain(|e| e.program_id.as_deref() == Some(pid));
+            }
+            if let Some(aid) = asset_id {
+                events.retain(|e| e.asset_id == aid);
+            }
+            if let Some(types) = event_types {
+                if !types.is_empty() {
+                    events.retain(|e| types.contains(&e.event_type));
+                }
+            }
+            if let Some(sevs) = severities {
+                if !sevs.is_empty() {
+                    events.retain(|e| sevs.contains(&e.severity));
+                }
+            }
+            if let Some(stats) = statuses {
+                if !stats.is_empty() {
+                    events.retain(|e| stats.contains(&e.status));
+                }
+            }
+
+            if let Some(off) = offset {
+                events = events.into_iter().skip(off as usize).collect();
+            }
+            if let Some(lim) = limit {
+                events.truncate(lim as usize);
+            }
+            return Ok(events);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_change_events WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -1699,83 +3539,223 @@ impl DatabaseService {
 
     /// Get change event statistics
     pub async fn get_bounty_change_event_stats(&self, program_id: Option<&str>) -> Result<BountyChangeEventStats> {
-        let base_where = program_id.map(|_| "WHERE program_id = $1").unwrap_or("");
-        
-        // Total events
-        let total_query = format!("SELECT COUNT(*) FROM bounty_change_events {}", base_where);
-        let mut q = sqlx::query_as::<_, (i64,)>(&total_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let total: (i64,) = q.fetch_one(self.get_pool()?).await?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        // By type
-        let by_type_query = format!(
-            "SELECT event_type, COUNT(*) FROM bounty_change_events {} GROUP BY event_type",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (String, i64)>(&by_type_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let type_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
+        let total: (i64,) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE program_id = $1").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events").fetch_one(pool).await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE program_id = ?").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events").fetch_one(pool).await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE program_id = ?").bind(pid).fetch_one(pool).await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events").fetch_one(pool).await?
+            }
+        };
+
+        let type_rows: Vec<(String, i64)> = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT event_type, COUNT(*) FROM bounty_change_events WHERE program_id = $1 GROUP BY event_type")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT event_type, COUNT(*) FROM bounty_change_events GROUP BY event_type")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT event_type, COUNT(*) FROM bounty_change_events WHERE program_id = ? GROUP BY event_type")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT event_type, COUNT(*) FROM bounty_change_events GROUP BY event_type")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT event_type, COUNT(*) FROM bounty_change_events WHERE program_id = ? GROUP BY event_type")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT event_type, COUNT(*) FROM bounty_change_events GROUP BY event_type")
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
         let by_type: std::collections::HashMap<String, i32> = type_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
             .collect();
 
-        // By severity
-        let by_severity_query = format!(
-            "SELECT severity, COUNT(*) FROM bounty_change_events {} GROUP BY severity",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (String, i64)>(&by_severity_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let severity_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
+        let severity_rows: Vec<(String, i64)> = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_change_events WHERE program_id = $1 GROUP BY severity")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_change_events GROUP BY severity")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_change_events WHERE program_id = ? GROUP BY severity")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_change_events GROUP BY severity")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_change_events WHERE program_id = ? GROUP BY severity")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT severity, COUNT(*) FROM bounty_change_events GROUP BY severity")
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
         let by_severity: std::collections::HashMap<String, i32> = severity_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
             .collect();
 
-        // By status
-        let by_status_query = format!(
-            "SELECT status, COUNT(*) FROM bounty_change_events {} GROUP BY status",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (String, i64)>(&by_status_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let status_rows: Vec<(String, i64)> = q.fetch_all(self.get_pool()?).await?;
+        let status_rows: Vec<(String, i64)> = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_change_events WHERE program_id = $1 GROUP BY status")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_change_events GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_change_events WHERE program_id = ? GROUP BY status")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_change_events GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_change_events WHERE program_id = ? GROUP BY status")
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM bounty_change_events GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
         let by_status: std::collections::HashMap<String, i32> = status_rows
             .into_iter()
             .map(|(k, v)| (k, v as i32))
             .collect();
 
-        // Pending review count
-        let pending_query = format!(
-            "SELECT COUNT(*) FROM bounty_change_events {} {} status IN ('new', 'analyzing', 'review_required')",
-            base_where,
-            if program_id.is_some() { "AND" } else { "WHERE" }
-        );
-        let mut q = sqlx::query_as::<_, (i64,)>(&pending_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let pending: (i64,) = q.fetch_one(self.get_pool()?).await?;
+        let pending: (i64,) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE program_id = $1 AND status IN ('new', 'analyzing', 'review_required')")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE status IN ('new', 'analyzing', 'review_required')")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE program_id = ? AND status IN ('new', 'analyzing', 'review_required')")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE status IN ('new', 'analyzing', 'review_required')")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE program_id = ? AND status IN ('new', 'analyzing', 'review_required')")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COUNT(*) FROM bounty_change_events WHERE status IN ('new', 'analyzing', 'review_required')")
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
 
-        // Average risk score
-        let avg_query = format!(
-            "SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events {}",
-            base_where
-        );
-        let mut q = sqlx::query_as::<_, (f64,)>(&avg_query);
-        if let Some(pid) = program_id {
-            q = q.bind(pid);
-        }
-        let avg: (f64,) = q.fetch_one(self.get_pool()?).await?;
+        let avg: (f64,) = match (runtime, program_id) {
+            (DatabasePool::PostgreSQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events WHERE program_id = $1")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::PostgreSQL(pool), None) => {
+                sqlx::query_as("SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events WHERE program_id = ?")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::SQLite(pool), None) => {
+                sqlx::query_as("SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events")
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), Some(pid)) => {
+                sqlx::query_as("SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events WHERE program_id = ?")
+                    .bind(pid)
+                    .fetch_one(pool)
+                    .await?
+            }
+            (DatabasePool::MySQL(pool), None) => {
+                sqlx::query_as("SELECT COALESCE(AVG(risk_score), 0.0) FROM bounty_change_events")
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
 
         Ok(BountyChangeEventStats {
             total_events: total.0 as i32,
@@ -1794,7 +3774,42 @@ impl DatabaseService {
         status: &str,
         resolved_at: Option<&str>,
     ) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
         let now = chrono::Utc::now().to_rfc3339();
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(
+                        "UPDATE bounty_change_events SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?"
+                    )
+                    .bind(status)
+                    .bind(resolved_at)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(
+                        "UPDATE bounty_change_events SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?"
+                    )
+                    .bind(status)
+                    .bind(resolved_at)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             "UPDATE bounty_change_events SET status = $1, resolved_at = $2, updated_at = $3 WHERE id = $4"
         )
@@ -1867,7 +3882,7 @@ impl DatabaseService {
 // ============================================================================
 
 /// Bounty workflow template
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyWorkflowTemplateRow {
     pub id: String,
     pub name: String,
@@ -1885,7 +3900,7 @@ pub struct BountyWorkflowTemplateRow {
 }
 
 /// Bounty workflow binding (template → program/scope)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyWorkflowBindingRow {
     pub id: String,
     pub program_id: String,
@@ -1909,6 +3924,60 @@ impl DatabaseService {
 
     /// Create a workflow template
     pub async fn create_bounty_workflow_template(&self, template: &BountyWorkflowTemplateRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_workflow_templates (
+                    id, name, description, category, workflow_definition_id, steps_json,
+                    input_schema_json, output_schema_json, tags_json, is_built_in,
+                    estimated_duration_mins, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&template.id)
+                        .bind(&template.name)
+                        .bind(&template.description)
+                        .bind(&template.category)
+                        .bind(&template.workflow_definition_id)
+                        .bind(&template.steps_json)
+                        .bind(&template.input_schema_json)
+                        .bind(&template.output_schema_json)
+                        .bind(&template.tags_json)
+                        .bind(template.is_built_in)
+                        .bind(template.estimated_duration_mins)
+                        .bind(&template.created_at)
+                        .bind(&template.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&template.id)
+                        .bind(&template.name)
+                        .bind(&template.description)
+                        .bind(&template.category)
+                        .bind(&template.workflow_definition_id)
+                        .bind(&template.steps_json)
+                        .bind(&template.input_schema_json)
+                        .bind(&template.output_schema_json)
+                        .bind(&template.tags_json)
+                        .bind(template.is_built_in)
+                        .bind(template.estimated_duration_mins)
+                        .bind(&template.created_at)
+                        .bind(&template.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created bounty workflow template: {}", template.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_workflow_templates (
                 id, name, description, category, workflow_definition_id, steps_json,
@@ -1938,6 +4007,19 @@ impl DatabaseService {
 
     /// Get a workflow template by ID
     pub async fn get_bounty_workflow_template(&self, id: &str) -> Result<Option<BountyWorkflowTemplateRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_workflow_templates WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_workflow_templates WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_workflow_templates WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -1952,6 +4034,34 @@ impl DatabaseService {
         category: Option<&str>,
         is_built_in: Option<bool>,
     ) -> Result<Vec<BountyWorkflowTemplateRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, name, description, category, workflow_definition_id, steps_json, input_schema_json,
+                    output_schema_json, tags_json, is_built_in, estimated_duration_mins,
+                    CAST(created_at AS TEXT) AS created_at, CAST(updated_at AS TEXT) AS updated_at
+                FROM bounty_workflow_templates
+                ORDER BY name ASC
+            "#;
+            let mut templates: Vec<BountyWorkflowTemplateRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            if let Some(cat) = category {
+                templates.retain(|t| t.category == cat);
+            }
+            if let Some(built_in) = is_built_in {
+                templates.retain(|t| t.is_built_in == built_in);
+            }
+            return Ok(templates);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_workflow_templates WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -1980,6 +4090,56 @@ impl DatabaseService {
 
     /// Update a workflow template
     pub async fn update_bounty_workflow_template(&self, template: &BountyWorkflowTemplateRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_workflow_templates SET
+                    name = ?, description = ?, category = ?, workflow_definition_id = ?,
+                    steps_json = ?, input_schema_json = ?, output_schema_json = ?,
+                    tags_json = ?, estimated_duration_mins = ?, updated_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&template.name)
+                        .bind(&template.description)
+                        .bind(&template.category)
+                        .bind(&template.workflow_definition_id)
+                        .bind(&template.steps_json)
+                        .bind(&template.input_schema_json)
+                        .bind(&template.output_schema_json)
+                        .bind(&template.tags_json)
+                        .bind(template.estimated_duration_mins)
+                        .bind(&template.updated_at)
+                        .bind(&template.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&template.name)
+                        .bind(&template.description)
+                        .bind(&template.category)
+                        .bind(&template.workflow_definition_id)
+                        .bind(&template.steps_json)
+                        .bind(&template.input_schema_json)
+                        .bind(&template.output_schema_json)
+                        .bind(&template.tags_json)
+                        .bind(template.estimated_duration_mins)
+                        .bind(&template.updated_at)
+                        .bind(&template.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_workflow_templates SET
                 name = $1, description = $2, category = $3, workflow_definition_id = $4,
@@ -2006,6 +4166,25 @@ impl DatabaseService {
 
     /// Delete a workflow template
     pub async fn delete_bounty_workflow_template(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_workflow_templates WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_workflow_templates WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_workflow_templates WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -2020,6 +4199,60 @@ impl DatabaseService {
 
     /// Create a workflow binding
     pub async fn create_bounty_workflow_binding(&self, binding: &BountyWorkflowBindingRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_workflow_bindings (
+                    id, program_id, scope_id, workflow_template_id, is_enabled,
+                    auto_run_on_change, trigger_conditions_json, schedule_cron,
+                    last_run_at, last_run_status, run_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&binding.id)
+                        .bind(&binding.program_id)
+                        .bind(&binding.scope_id)
+                        .bind(&binding.workflow_template_id)
+                        .bind(binding.is_enabled)
+                        .bind(binding.auto_run_on_change)
+                        .bind(&binding.trigger_conditions_json)
+                        .bind(&binding.schedule_cron)
+                        .bind(&binding.last_run_at)
+                        .bind(&binding.last_run_status)
+                        .bind(binding.run_count)
+                        .bind(&binding.created_at)
+                        .bind(&binding.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&binding.id)
+                        .bind(&binding.program_id)
+                        .bind(&binding.scope_id)
+                        .bind(&binding.workflow_template_id)
+                        .bind(binding.is_enabled)
+                        .bind(binding.auto_run_on_change)
+                        .bind(&binding.trigger_conditions_json)
+                        .bind(&binding.schedule_cron)
+                        .bind(&binding.last_run_at)
+                        .bind(&binding.last_run_status)
+                        .bind(binding.run_count)
+                        .bind(&binding.created_at)
+                        .bind(&binding.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created bounty workflow binding: {}", binding.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_workflow_bindings (
                 id, program_id, scope_id, workflow_template_id, is_enabled,
@@ -2049,6 +4282,19 @@ impl DatabaseService {
 
     /// Get a workflow binding by ID
     pub async fn get_bounty_workflow_binding(&self, id: &str) -> Result<Option<BountyWorkflowBindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_workflow_bindings WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_workflow_bindings WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_workflow_bindings WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -2064,6 +4310,38 @@ impl DatabaseService {
         scope_id: Option<&str>,
         is_enabled: Option<bool>,
     ) -> Result<Vec<BountyWorkflowBindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"
+                SELECT
+                    id, program_id, scope_id, workflow_template_id, is_enabled, auto_run_on_change,
+                    trigger_conditions_json, schedule_cron, CAST(last_run_at AS TEXT) AS last_run_at,
+                    last_run_status, run_count, CAST(created_at AS TEXT) AS created_at,
+                    CAST(updated_at AS TEXT) AS updated_at
+                FROM bounty_workflow_bindings
+                ORDER BY created_at DESC
+            "#;
+            let mut bindings: Vec<BountyWorkflowBindingRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(query).fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+            if let Some(pid) = program_id {
+                bindings.retain(|b| b.program_id == pid);
+            }
+            if let Some(sid) = scope_id {
+                bindings.retain(|b| b.scope_id.as_deref() == Some(sid));
+            }
+            if let Some(enabled) = is_enabled {
+                bindings.retain(|b| b.is_enabled == enabled);
+            }
+            return Ok(bindings);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_workflow_bindings WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -2093,6 +4371,54 @@ impl DatabaseService {
 
     /// Update a workflow binding
     pub async fn update_bounty_workflow_binding(&self, binding: &BountyWorkflowBindingRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_workflow_bindings SET
+                    scope_id = ?, is_enabled = ?, auto_run_on_change = ?,
+                    trigger_conditions_json = ?, schedule_cron = ?,
+                    last_run_at = ?, last_run_status = ?, run_count = ?, updated_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&binding.scope_id)
+                        .bind(binding.is_enabled)
+                        .bind(binding.auto_run_on_change)
+                        .bind(&binding.trigger_conditions_json)
+                        .bind(&binding.schedule_cron)
+                        .bind(&binding.last_run_at)
+                        .bind(&binding.last_run_status)
+                        .bind(binding.run_count)
+                        .bind(&binding.updated_at)
+                        .bind(&binding.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&binding.scope_id)
+                        .bind(binding.is_enabled)
+                        .bind(binding.auto_run_on_change)
+                        .bind(&binding.trigger_conditions_json)
+                        .bind(&binding.schedule_cron)
+                        .bind(&binding.last_run_at)
+                        .bind(&binding.last_run_status)
+                        .bind(binding.run_count)
+                        .bind(&binding.updated_at)
+                        .bind(&binding.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_workflow_bindings SET
                 scope_id = $1, is_enabled = $2, auto_run_on_change = $3,
@@ -2118,6 +4444,25 @@ impl DatabaseService {
 
     /// Delete a workflow binding
     pub async fn delete_bounty_workflow_binding(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_workflow_bindings WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_workflow_bindings WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_workflow_bindings WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -2132,7 +4477,46 @@ impl DatabaseService {
         id: &str,
         status: &str,
     ) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
         let now = chrono::Utc::now().to_rfc3339();
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(
+                        r#"UPDATE bounty_workflow_bindings SET
+                            last_run_at = ?, last_run_status = ?, run_count = run_count + 1, updated_at = ?
+                        WHERE id = ?"#
+                    )
+                    .bind(&now)
+                    .bind(status)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(
+                        r#"UPDATE bounty_workflow_bindings SET
+                            last_run_at = ?, last_run_status = ?, run_count = run_count + 1, updated_at = ?
+                        WHERE id = ?"#
+                    )
+                    .bind(&now)
+                    .bind(status)
+                    .bind(&now)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_workflow_bindings SET
                 last_run_at = $1, last_run_status = $2, run_count = run_count + 1, updated_at = $3
@@ -2153,6 +4537,31 @@ impl DatabaseService {
         &self,
         program_id: &str,
     ) -> Result<Vec<BountyWorkflowBindingRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as(
+                    r#"SELECT * FROM bounty_workflow_bindings
+                       WHERE program_id = ? AND is_enabled = 1 AND auto_run_on_change = 1"#
+                )
+                .bind(program_id)
+                .fetch_all(pool)
+                .await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as(
+                    r#"SELECT * FROM bounty_workflow_bindings
+                       WHERE program_id = ? AND is_enabled = TRUE AND auto_run_on_change = TRUE"#
+                )
+                .bind(program_id)
+                .fetch_all(pool)
+                .await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let rows = sqlx::query(
             r#"SELECT * FROM bounty_workflow_bindings
                WHERE program_id = $1 AND is_enabled = TRUE AND auto_run_on_change = TRUE"#
@@ -2170,7 +4579,7 @@ impl DatabaseService {
 // ============================================================================
 
 /// Bounty asset model (Enhanced for ASM - Attack Surface Management)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BountyAssetRow {
     pub id: String,
     pub program_id: String,
@@ -2298,6 +4707,90 @@ impl DatabaseService {
 
     /// Create a bounty asset
     pub async fn create_bounty_asset(&self, asset: &BountyAssetRow) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"INSERT INTO bounty_assets (
+                    id, program_id, scope_id, asset_type, canonical_url, original_urls_json,
+                    hostname, port, path, protocol, ip_addresses_json, dns_records_json,
+                    tech_stack_json, fingerprint, tags_json, labels_json, priority_score,
+                    risk_score, is_alive, last_checked_at, first_seen_at, last_seen_at,
+                    findings_count, change_events_count, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+            match runtime {
+                DatabasePool::SQLite(pool) => {
+                    sqlx::query(query)
+                        .bind(&asset.id)
+                        .bind(&asset.program_id)
+                        .bind(&asset.scope_id)
+                        .bind(&asset.asset_type)
+                        .bind(&asset.canonical_url)
+                        .bind(&asset.original_urls_json)
+                        .bind(&asset.hostname)
+                        .bind(asset.port)
+                        .bind(&asset.path)
+                        .bind(&asset.protocol)
+                        .bind(&asset.ip_addresses_json)
+                        .bind(&asset.dns_records_json)
+                        .bind(&asset.tech_stack_json)
+                        .bind(&asset.fingerprint)
+                        .bind(&asset.tags_json)
+                        .bind(&asset.labels_json)
+                        .bind(asset.priority_score)
+                        .bind(asset.risk_score)
+                        .bind(asset.is_alive)
+                        .bind(&asset.last_checked_at)
+                        .bind(&asset.first_seen_at)
+                        .bind(&asset.last_seen_at)
+                        .bind(asset.findings_count)
+                        .bind(asset.change_events_count)
+                        .bind(&asset.metadata_json)
+                        .bind(&asset.created_at)
+                        .bind(&asset.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::MySQL(pool) => {
+                    sqlx::query(query)
+                        .bind(&asset.id)
+                        .bind(&asset.program_id)
+                        .bind(&asset.scope_id)
+                        .bind(&asset.asset_type)
+                        .bind(&asset.canonical_url)
+                        .bind(&asset.original_urls_json)
+                        .bind(&asset.hostname)
+                        .bind(asset.port)
+                        .bind(&asset.path)
+                        .bind(&asset.protocol)
+                        .bind(&asset.ip_addresses_json)
+                        .bind(&asset.dns_records_json)
+                        .bind(&asset.tech_stack_json)
+                        .bind(&asset.fingerprint)
+                        .bind(&asset.tags_json)
+                        .bind(&asset.labels_json)
+                        .bind(asset.priority_score)
+                        .bind(asset.risk_score)
+                        .bind(asset.is_alive)
+                        .bind(&asset.last_checked_at)
+                        .bind(&asset.first_seen_at)
+                        .bind(&asset.last_seen_at)
+                        .bind(asset.findings_count)
+                        .bind(asset.change_events_count)
+                        .bind(&asset.metadata_json)
+                        .bind(&asset.created_at)
+                        .bind(&asset.updated_at)
+                        .execute(pool)
+                        .await?;
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            }
+            info!("Created bounty asset: {}", asset.id);
+            return Ok(());
+        }
+
         sqlx::query(
             r#"INSERT INTO bounty_assets (
                 id, program_id, scope_id, asset_type, canonical_url, original_urls_json,
@@ -2343,6 +4836,19 @@ impl DatabaseService {
 
     /// Get a bounty asset by ID
     pub async fn get_bounty_asset(&self, id: &str) -> Result<Option<BountyAssetRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_assets WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_assets WHERE id = ?").bind(id).fetch_optional(pool).await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_assets WHERE id = $1")
         .bind(id)
         .fetch_optional(self.get_pool()?)
@@ -2357,6 +4863,27 @@ impl DatabaseService {
         program_id: &str,
         canonical_url: &str,
     ) -> Result<Option<BountyAssetRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_assets WHERE program_id = ? AND canonical_url = ?")
+                    .bind(program_id)
+                    .bind(canonical_url)
+                    .fetch_optional(pool)
+                    .await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_assets WHERE program_id = ? AND canonical_url = ?")
+                    .bind(program_id)
+                    .bind(canonical_url)
+                    .fetch_optional(pool)
+                    .await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_assets WHERE program_id = $1 AND canonical_url = $2")
         .bind(program_id)
         .bind(canonical_url)
@@ -2372,6 +4899,27 @@ impl DatabaseService {
         program_id: &str,
         fingerprint: &str,
     ) -> Result<Option<BountyAssetRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_assets WHERE program_id = ? AND fingerprint = ?")
+                    .bind(program_id)
+                    .bind(fingerprint)
+                    .fetch_optional(pool)
+                    .await?),
+                DatabasePool::MySQL(pool) => Ok(sqlx::query_as("SELECT * FROM bounty_assets WHERE program_id = ? AND fingerprint = ?")
+                    .bind(program_id)
+                    .bind(fingerprint)
+                    .fetch_optional(pool)
+                    .await?),
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let row = sqlx::query("SELECT * FROM bounty_assets WHERE program_id = $1 AND fingerprint = $2")
         .bind(program_id)
         .bind(fingerprint)
@@ -2395,6 +4943,82 @@ impl DatabaseService {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<BountyAssetRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let mut assets: Vec<BountyAssetRow> = match runtime {
+                DatabasePool::SQLite(pool) => sqlx::query_as("SELECT * FROM bounty_assets").fetch_all(pool).await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as("SELECT * FROM bounty_assets").fetch_all(pool).await?,
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+
+            if let Some(pid) = program_id {
+                assets.retain(|a| a.program_id == pid);
+            }
+            if let Some(sid) = scope_id {
+                assets.retain(|a| a.scope_id.as_deref() == Some(sid));
+            }
+            if let Some(at) = asset_type {
+                assets.retain(|a| a.asset_type == at);
+            }
+            if let Some(alive) = is_alive {
+                assets.retain(|a| a.is_alive == alive);
+            }
+            if let Some(findings) = has_findings {
+                if findings {
+                    assets.retain(|a| a.findings_count > 0);
+                } else {
+                    assets.retain(|a| a.findings_count == 0);
+                }
+            }
+            if let Some(keyword) = search {
+                if !keyword.is_empty() {
+                    let needle = keyword.to_lowercase();
+                    assets.retain(|a| {
+                        a.hostname.as_deref().unwrap_or_default().to_lowercase().contains(&needle)
+                            || a.canonical_url.to_lowercase().contains(&needle)
+                            || a.service_name.as_deref().unwrap_or_default().to_lowercase().contains(&needle)
+                            || a.title.as_deref().unwrap_or_default().to_lowercase().contains(&needle)
+                    });
+                }
+            }
+
+            let order_by = sort_by.unwrap_or("priority_score");
+            let direction = sort_dir.unwrap_or("desc").to_lowercase();
+            assets.sort_by(|a, b| {
+                let ord = match order_by {
+                    "priority_score" => a
+                        .priority_score
+                        .partial_cmp(&b.priority_score)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                    "risk_score" => a
+                        .risk_score
+                        .partial_cmp(&b.risk_score)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                    "last_seen_at" => a.last_seen_at.cmp(&b.last_seen_at),
+                    "created_at" => a.created_at.cmp(&b.created_at),
+                    "hostname" => a.hostname.cmp(&b.hostname),
+                    "canonical_url" => a.canonical_url.cmp(&b.canonical_url),
+                    _ => a
+                        .priority_score
+                        .partial_cmp(&b.priority_score)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                };
+                if direction == "asc" { ord } else { ord.reverse() }
+            });
+
+            if let Some(off) = offset {
+                assets = assets.into_iter().skip(off.max(0) as usize).collect();
+            }
+            if let Some(lim) = limit {
+                assets.truncate(lim.max(0) as usize);
+            }
+            return Ok(assets);
+        }
+
         let mut query = String::from("SELECT * FROM bounty_assets WHERE 1=1");
         let mut params: Vec<String> = Vec::new();
 
@@ -2473,6 +5097,85 @@ impl DatabaseService {
 
     /// Update a bounty asset
     pub async fn update_bounty_asset(&self, asset: &BountyAssetRow) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let query = r#"UPDATE bounty_assets SET
+                    scope_id = ?, asset_type = ?, canonical_url = ?, original_urls_json = ?,
+                    hostname = ?, port = ?, path = ?, protocol = ?, ip_addresses_json = ?,
+                    dns_records_json = ?, tech_stack_json = ?, fingerprint = ?, tags_json = ?,
+                    labels_json = ?, priority_score = ?, risk_score = ?, is_alive = ?,
+                    last_checked_at = ?, last_seen_at = ?, findings_count = ?,
+                    change_events_count = ?, metadata_json = ?, updated_at = ?
+                WHERE id = ?"#;
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&asset.scope_id)
+                        .bind(&asset.asset_type)
+                        .bind(&asset.canonical_url)
+                        .bind(&asset.original_urls_json)
+                        .bind(&asset.hostname)
+                        .bind(asset.port)
+                        .bind(&asset.path)
+                        .bind(&asset.protocol)
+                        .bind(&asset.ip_addresses_json)
+                        .bind(&asset.dns_records_json)
+                        .bind(&asset.tech_stack_json)
+                        .bind(&asset.fingerprint)
+                        .bind(&asset.tags_json)
+                        .bind(&asset.labels_json)
+                        .bind(asset.priority_score)
+                        .bind(asset.risk_score)
+                        .bind(asset.is_alive)
+                        .bind(&asset.last_checked_at)
+                        .bind(&asset.last_seen_at)
+                        .bind(asset.findings_count)
+                        .bind(asset.change_events_count)
+                        .bind(&asset.metadata_json)
+                        .bind(&asset.updated_at)
+                        .bind(&asset.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query(query)
+                        .bind(&asset.scope_id)
+                        .bind(&asset.asset_type)
+                        .bind(&asset.canonical_url)
+                        .bind(&asset.original_urls_json)
+                        .bind(&asset.hostname)
+                        .bind(asset.port)
+                        .bind(&asset.path)
+                        .bind(&asset.protocol)
+                        .bind(&asset.ip_addresses_json)
+                        .bind(&asset.dns_records_json)
+                        .bind(&asset.tech_stack_json)
+                        .bind(&asset.fingerprint)
+                        .bind(&asset.tags_json)
+                        .bind(&asset.labels_json)
+                        .bind(asset.priority_score)
+                        .bind(asset.risk_score)
+                        .bind(asset.is_alive)
+                        .bind(&asset.last_checked_at)
+                        .bind(&asset.last_seen_at)
+                        .bind(asset.findings_count)
+                        .bind(asset.change_events_count)
+                        .bind(&asset.metadata_json)
+                        .bind(&asset.updated_at)
+                        .bind(&asset.id)
+                        .execute(pool)
+                        .await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query(
             r#"UPDATE bounty_assets SET
                 scope_id = $1, asset_type = $2, canonical_url = $3, original_urls_json = $4,
@@ -2515,6 +5218,25 @@ impl DatabaseService {
 
     /// Delete a bounty asset
     pub async fn delete_bounty_asset(&self, id: &str) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            return match runtime {
+                DatabasePool::SQLite(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_assets WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::MySQL(pool) => {
+                    let result = sqlx::query("DELETE FROM bounty_assets WHERE id = ?").bind(id).execute(pool).await?;
+                    Ok(result.rows_affected() > 0)
+                }
+                DatabasePool::PostgreSQL(_) => unreachable!(),
+            };
+        }
+
         let result = sqlx::query("DELETE FROM bounty_assets WHERE id = $1")
             .bind(id)
             .execute(self.get_pool()?)
@@ -2525,6 +5247,38 @@ impl DatabaseService {
 
     /// Get bounty asset statistics
     pub async fn get_bounty_asset_stats(&self, program_id: Option<&str>) -> Result<BountyAssetStats> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let assets = self
+                .list_bounty_assets(program_id, None, None, None, None, None, None, None, None, None)
+                .await?;
+
+            let total_assets = assets.len() as i32;
+            let alive_assets = assets.iter().filter(|a| a.is_alive).count() as i32;
+            let with_findings = assets.iter().filter(|a| a.findings_count > 0).count() as i32;
+            let high_priority = assets
+                .iter()
+                .filter(|a| a.priority_score.unwrap_or(0.0) >= 7.0)
+                .count() as i32;
+
+            let mut by_type = std::collections::HashMap::new();
+            for asset in assets {
+                *by_type.entry(asset.asset_type).or_insert(0) += 1;
+            }
+
+            return Ok(BountyAssetStats {
+                total_assets,
+                alive_assets,
+                by_type,
+                with_findings,
+                high_priority,
+            });
+        }
+
         let pool = self.get_pool()?;
         let filter = program_id.map(|_| " WHERE program_id = $1").unwrap_or_default();
 
@@ -2619,6 +5373,30 @@ impl DatabaseService {
         program_id: &str,
         limit: i64,
     ) -> Result<Vec<BountyAssetRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let mut assets = self
+                .list_bounty_assets(
+                    Some(program_id),
+                    None,
+                    None,
+                    Some(true),
+                    None,
+                    None,
+                    Some("priority_score"),
+                    Some("desc"),
+                    None,
+                    None,
+                )
+                .await?;
+            assets.truncate(limit.max(0) as usize);
+            return Ok(assets);
+        }
+
         let rows = sqlx::query(
             r#"SELECT * FROM bounty_assets
                WHERE program_id = $1 AND is_alive = TRUE

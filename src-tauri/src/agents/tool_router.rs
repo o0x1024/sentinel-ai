@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    CallGraphLiteTool, CodeSearchTool, GitDiffScopeTool, HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
+    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
     TaintSliceLiteTool,
     browser::constants as browser_constants, TenthManTool, SubagentAwaitTool, SubagentChannelTool,
     SubagentExecuteTool, TodosTool,
@@ -349,6 +349,21 @@ impl ToolRouter {
                 always_available: false,
             },
             ToolMetadata {
+                id: GitCloneRepoTool::NAME.to_string(),
+                name: GitCloneRepoTool::NAME.to_string(),
+                description: GitCloneRepoTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "git".to_string(),
+                    "clone".to_string(),
+                    "repository".to_string(),
+                    "bootstrap".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
                 id: CallGraphLiteTool::NAME.to_string(),
                 name: CallGraphLiteTool::NAME.to_string(),
                 description: CallGraphLiteTool::DESCRIPTION.to_string(),
@@ -374,6 +389,20 @@ impl ToolRouter {
                     "sink".to_string(),
                     "dataflow".to_string(),
                     "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: "audit_finding_upsert".to_string(),
+                name: "audit_finding_upsert".to_string(),
+                description: "Persist one or many structured code audit findings into Security Center.".to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "audit".to_string(),
+                    "finding".to_string(),
+                    "upsert".to_string(),
+                    "security-center".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
@@ -871,7 +900,6 @@ impl ToolRouter {
         task: &str,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
-        _db_pool: Option<&sqlx::postgres::PgPool>,
     ) -> Result<ToolSelectionPlan> {
         if !config.enabled {
             return Ok(ToolSelectionPlan {

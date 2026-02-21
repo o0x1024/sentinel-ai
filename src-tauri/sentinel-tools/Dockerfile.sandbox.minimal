@@ -272,6 +272,7 @@ RUN find /usr/lib/python* -name "*.py[co]" -delete 2>/dev/null || true
 #         chown sandbox:sandbox /home/sandbox/.gdbinit /home/sandbox/.gdbinit-gef.py
 
 RUN mkdir -p /workspace
+RUN mkdir -p /workspace/script
 
 ENV TERM=xterm-256color
 

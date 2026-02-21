@@ -139,16 +139,20 @@
 
             <div class="form-control">
               <label class="label">
-                <span class="label-text text-sm">{{ t('agent.requiredAuditTools') }}</span>
+                <span class="label-text text-sm">{{ t('agent.auditMandatoryTools') }}</span>
               </label>
-              <input
-                v-model="requiredAuditToolsText"
-                type="text"
-                class="input input-bordered input-sm"
-                :placeholder="t('agent.requiredAuditToolsPlaceholder')"
-                @blur="syncRequiredAuditTools"
-              />
+              <div class="flex flex-wrap gap-2">
+                <span
+                  v-for="tool in mandatoryAuditTools"
+                  :key="tool"
+                  class="badge badge-warning badge-outline"
+                >
+                  {{ tool }}
+                </span>
+              </div>
+              <p class="text-xs text-base-content/60 mt-1">{{ t('agent.auditMandatoryToolsHint') }}</p>
             </div>
+
           </div>
         </div>
 
@@ -184,11 +188,11 @@
           <p class="text-xs text-base-content/50 mt-2">{{ t('agent.skillsManagedInTools') }}</p>
         </div>
 
-        <!-- Tool Management (hidden in Skills mode) -->
-        <div v-if="localConfig.selection_strategy !== 'Skills'" class="form-control">
+        <!-- Tool Management -->
+        <div v-if="localConfig.audit_mode || localConfig.selection_strategy !== 'Skills'" class="form-control">
           <label class="label">
             <span class="label-text font-medium">
-              {{ localConfig.selection_strategy === 'Manual' ? t('agent.selectTools') : t('agent.toolManagement') }}
+              {{ shouldUseCheckboxSelection ? t('agent.selectTools') : t('agent.toolManagement') }}
             </span>
             <button @click="loadTools" class="btn btn-xs btn-ghost">
               <i class="fas fa-sync-alt"></i>
@@ -235,12 +239,12 @@
 
               <!-- 已选按钮 (仅手动模式) -->
               <button 
-                v-if="localConfig.selection_strategy === 'Manual'"
+                v-if="shouldUseCheckboxSelection"
                 @click="toggleShowSelected"
                 class="btn btn-xs"
                 :class="showSelectedOnly ? 'btn-primary' : 'btn-ghost'"
               >
-                {{ t('agent.selected') }} ({{ (localConfig.manual_tools || []).length }})
+                {{ t('agent.selected') }} ({{ currentSelectionCount }})
               </button>
               
               <!-- 所有分类按钮（包括插件和浏览器） -->
@@ -256,7 +260,7 @@
               </button>
 
               <!-- 全选/取消全选按钮 (仅手动模式) -->
-              <div v-if="localConfig.selection_strategy === 'Manual'" class="ml-auto flex gap-1">
+              <div v-if="shouldUseCheckboxSelection" class="ml-auto flex gap-1">
                 <button 
                   @click="selectAllFilteredTools"
                   class="btn btn-xs btn-outline btn-success"
@@ -278,13 +282,12 @@
 
             <!-- Tool List -->
             <div v-for="tool in filteredTools" :key="tool.id" class="form-control hover:bg-base-200 rounded px-2 transition-colors">
-              <label v-if="localConfig.selection_strategy === 'Manual'" class="label cursor-pointer justify-start gap-3 py-2">
+              <label v-if="shouldUseCheckboxSelection" class="label cursor-pointer justify-start gap-3 py-2">
                 <input 
                   type="checkbox" 
-                  :value="tool.id"
-                  v-model="localConfig.manual_tools"
+                  :checked="isToolSelected(tool.id)"
                   class="checkbox checkbox-sm checkbox-primary"
-                  @change="emitUpdate"
+                  @change="toggleToolSelection(tool.id)"
                 />
                 <div class="flex-1">
                   <div class="flex items-center gap-2">
@@ -569,7 +572,7 @@ const defaultAuditConfig = (): AuditConfig => ({
   scope: 'git_diff',
   verification_level: 'high',
   policy_profile: 'balanced',
-  required_tools: ['code_search', 'git_diff_scope'],
+  required_tools: [],
 })
 
 // 初始化 localConfig，处理 Manual/Skills 枚举格式
@@ -614,7 +617,6 @@ const { t } = useI18n()
 const router = useRouter()
 
 const localConfig = ref<ToolConfig>(initLocalConfig())
-const requiredAuditToolsText = ref('')
 const allTools = ref<ToolMetadata[]>([])
 const statistics = ref<ToolStatistics | null>(null)
 const usageStats = ref<ToolUsageStatistics | null>(null)
@@ -643,8 +645,40 @@ const hasPluginTools = computed(() => {
   return allTools.value.some(t => t.category === 'Plugin')
 })
 
+const mandatoryAuditTools = [
+  'todos',
+  'skills',
+  'code_search',
+  'git_diff_scope',
+  'git_clone_repo',
+  'tenth_man_review',
+  'audit_finding_upsert',
+]
+
+const selectedAuditExtraTools = computed(() => {
+  const required = localConfig.value.audit_config?.required_tools || []
+  return required.filter((id) => !mandatoryAuditTools.includes(id))
+})
+
+const shouldUseCheckboxSelection = computed(() => {
+  return localConfig.value.audit_mode || localConfig.value.selection_strategy === 'Manual'
+})
+
+const currentSelectionIds = computed(() => {
+  if (localConfig.value.audit_mode) {
+    return selectedAuditExtraTools.value
+  }
+  return localConfig.value.manual_tools || []
+})
+
+const currentSelectionCount = computed(() => currentSelectionIds.value.length)
+
+const filteredAuditExtraTools = computed(() => {
+  return allTools.value.filter((tool) => !mandatoryAuditTools.includes(tool.id))
+})
+
 const filteredTools = computed(() => {
-  let tools = allTools.value
+  let tools = localConfig.value.audit_mode ? filteredAuditExtraTools.value : allTools.value
 
   // Filter by search query
   if (searchQuery.value.trim()) {
@@ -657,7 +691,7 @@ const filteredTools = computed(() => {
 
   // Filter by Selected Only
   if (showSelectedOnly.value) {
-    const selectedIds = localConfig.value.manual_tools || []
+    const selectedIds = currentSelectionIds.value
     tools = tools.filter(t => selectedIds.includes(t.id))
   }
 
@@ -745,6 +779,22 @@ const getCategoryIcon = (category: string) => {
 
 // 全选当前筛选的工具
 const selectAllFilteredTools = () => {
+  if (localConfig.value.audit_mode) {
+    if (!localConfig.value.audit_config) {
+      localConfig.value.audit_config = defaultAuditConfig()
+    }
+    const current = localConfig.value.audit_config.required_tools || []
+    const extras = current.filter((id) => !mandatoryAuditTools.includes(id))
+    for (const tool of filteredTools.value) {
+      if (!extras.includes(tool.id)) {
+        extras.push(tool.id)
+      }
+    }
+    localConfig.value.audit_config.required_tools = extras
+    emitUpdate()
+    return
+  }
+
   if (!localConfig.value.manual_tools) {
     localConfig.value.manual_tools = []
   }
@@ -758,8 +808,20 @@ const selectAllFilteredTools = () => {
 
 // 取消选择当前筛选的工具
 const deselectAllFilteredTools = () => {
-  if (!localConfig.value.manual_tools) return
   const filteredIds = new Set(filteredTools.value.map(t => t.id))
+  if (localConfig.value.audit_mode) {
+    if (!localConfig.value.audit_config) {
+      localConfig.value.audit_config = defaultAuditConfig()
+    }
+    const current = localConfig.value.audit_config.required_tools || []
+    localConfig.value.audit_config.required_tools = current
+      .filter((id) => !mandatoryAuditTools.includes(id))
+      .filter((id) => !filteredIds.has(id))
+    emitUpdate()
+    return
+  }
+
+  if (!localConfig.value.manual_tools) return
   localConfig.value.manual_tools = localConfig.value.manual_tools.filter(id => !filteredIds.has(id))
   emitUpdate()
 }
@@ -881,18 +943,43 @@ const resetToDefault = () => {
     audit_mode: false,
     audit_config: defaultAuditConfig(),
   }
-  requiredAuditToolsText.value = (localConfig.value.audit_config?.required_tools || []).join(', ')
   emitUpdate()
 }
 
-const syncRequiredAuditTools = () => {
+const isToolSelected = (toolId: string) => {
+  if (localConfig.value.audit_mode) {
+    return selectedAuditExtraTools.value.includes(toolId)
+  }
+  return (localConfig.value.manual_tools || []).includes(toolId)
+}
+
+const toggleToolSelection = (toolId: string) => {
+  if (!localConfig.value.audit_mode) {
+    if (!localConfig.value.manual_tools) {
+      localConfig.value.manual_tools = []
+    }
+    const index = localConfig.value.manual_tools.indexOf(toolId)
+    if (index >= 0) {
+      localConfig.value.manual_tools.splice(index, 1)
+    } else {
+      localConfig.value.manual_tools.push(toolId)
+    }
+    emitUpdate()
+    return
+  }
+
   if (!localConfig.value.audit_config) {
     localConfig.value.audit_config = defaultAuditConfig()
   }
-  localConfig.value.audit_config.required_tools = requiredAuditToolsText.value
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
+  const current = localConfig.value.audit_config.required_tools || []
+  const extras = current.filter((id) => !mandatoryAuditTools.includes(id))
+  const index = extras.indexOf(toolId)
+  if (index >= 0) {
+    extras.splice(index, 1)
+  } else {
+    extras.push(toolId)
+  }
+  localConfig.value.audit_config.required_tools = extras
   emitUpdate()
 }
 
@@ -953,19 +1040,12 @@ watch(() => props.config, (newConfig) => {
       ...(newConfig.audit_config || {}),
     },
   }
-  requiredAuditToolsText.value = (localConfig.value.audit_config?.required_tools || []).join(', ')
-  
-  if (strategy === 'Skills') {
-    localConfig.value.skills = []
-    emitUpdate()
-  }
 }, { deep: true })
 
 onMounted(() => {
   loadTools()
   loadUsageStats()
   loadSkills()
-  requiredAuditToolsText.value = (localConfig.value.audit_config?.required_tools || []).join(', ')
 })
 </script>
 

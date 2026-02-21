@@ -10,11 +10,37 @@ use crate::agents::context_engineering::policy::ContextPolicy;
 use crate::agents::context_engineering::tool_digest::ToolDigest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextMemoryItem {
+    pub id: String,
+    pub text: String,
+    pub kind: String,
+    pub importance: u8,
+    pub created_at_ms: i64,
+    pub last_used_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextRunState {
     pub task: String,
     pub task_brief: String,
     pub selected_tools: Vec<String>,
+    #[serde(default)]
+    pub goals: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+    #[serde(default)]
+    pub decisions: Vec<String>,
+    #[serde(default)]
+    pub open_todos: Vec<String>,
+    #[serde(default)]
+    pub user_preferences: Vec<String>,
+    #[serde(default)]
+    pub current_plan: Option<String>,
     pub last_tool_digests: Vec<ToolDigest>,
+    #[serde(default)]
+    pub memory_items: Vec<ContextMemoryItem>,
+    #[serde(default)]
+    pub run_state_version: i64,
     pub last_updated_at_ms: i64,
 }
 
@@ -69,8 +95,31 @@ pub async fn append_tool_digest(
         let keep_from = state.last_tool_digests.len() - policy.run_state_max_digests;
         state.last_tool_digests = state.last_tool_digests.split_off(keep_from);
     }
+    state.run_state_version += 1;
     state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
     save_run_state(app_handle, execution_id, &state).await?;
     Ok(())
 }
 
+pub async fn append_tool_digests(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    digests: Vec<ToolDigest>,
+    policy: &ContextPolicy,
+) -> Result<()> {
+    if digests.is_empty() {
+        return Ok(());
+    }
+    let mut state = load_run_state(app_handle, execution_id)
+        .await?
+        .unwrap_or_default();
+    state.last_tool_digests.extend(digests);
+    if state.last_tool_digests.len() > policy.run_state_max_digests {
+        let keep_from = state.last_tool_digests.len() - policy.run_state_max_digests;
+        state.last_tool_digests = state.last_tool_digests.split_off(keep_from);
+    }
+    state.run_state_version += 1;
+    state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
+    save_run_state(app_handle, execution_id, &state).await?;
+    Ok(())
+}

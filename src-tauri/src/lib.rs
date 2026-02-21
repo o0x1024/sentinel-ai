@@ -32,6 +32,7 @@ use commands::{
     ai, aisettings, asset, config, database as db_commands, dictionary,
     get_cache, set_cache, delete_cache, cleanup_expired_cache, get_all_cache_keys,
     traffic_analysis_commands::{self, TrafficAnalysisState},
+    code_audit_commands,
     performance,
     proxifier_commands::{self, ProxifierState},
     monitor_commands::MonitorSchedulerState,
@@ -79,7 +80,7 @@ pub fn run() {
     let file_appender = tracing_appender::rolling::daily(&logs_dir, "sentinel-ai.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let mut env_filter = tracing_subscriber::EnvFilter::from_default_env()
+    let env_filter = tracing_subscriber::EnvFilter::from_default_env()
         .add_directive("sentinel_ai=info".parse().unwrap())
         .add_directive("sentinel_plugins=info".parse().unwrap())
         .add_directive("sentinel_workflow=info".parse().unwrap())
@@ -439,6 +440,7 @@ pub fn run() {
                 let db_service_for_mcp = db_service.clone();
                 let db_for_tracker = db_service.clone();
                 let db_service_for_enrichment = db_service.clone();
+                let ai_manager_for_gateway = ai_manager.clone();
 
                 // Register as concrete type
                 handle.manage(db_service.clone());
@@ -494,6 +496,21 @@ pub fn run() {
                     
                     if let Err(e) = auto_start_proxy_if_enabled(&handle_for_proxy, &traffic_state_for_proxy).await {
                         tracing::warn!("Failed to auto-start proxy listener: {}", e);
+                    }
+                });
+
+                // Auto-start HTTP gateway if enabled in config
+                let db_service_for_gateway = db_service.clone();
+                let handle_for_gateway = handle.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                    if let Err(e) = commands::http_gateway_commands::auto_start_http_gateway_if_enabled(
+                        db_service_for_gateway,
+                        ai_manager_for_gateway,
+                        handle_for_gateway,
+                    ).await {
+                        tracing::warn!("Failed to auto-start HTTP gateway: {}", e);
                     }
                 });
 
@@ -727,6 +744,8 @@ pub fn run() {
             commands::bounty_get_finding,
             commands::bounty_update_finding,
             commands::bounty_delete_finding,
+            commands::bounty_batch_update_finding_status,
+            commands::bounty_batch_delete_findings,
             commands::bounty_list_findings,
             commands::bounty_get_finding_stats,
             // Bug Bounty Evidence commands
@@ -740,6 +759,8 @@ pub fn run() {
             commands::bounty_get_submission,
             commands::bounty_update_submission,
             commands::bounty_delete_submission,
+            commands::bounty_batch_update_submission_status,
+            commands::bounty_batch_delete_submissions,
             commands::bounty_list_submissions,
             commands::bounty_get_submission_stats,
             // Bug Bounty Change Event commands
@@ -932,6 +953,15 @@ pub fn run() {
             rag_commands::delete_rag_document,
             rag_commands::ensure_default_rag_collection,
             rag_commands::test_embedding_connection,
+            // Code audit commands
+            code_audit_commands::upsert_agent_audit_findings,
+            code_audit_commands::list_agent_audit_findings,
+            code_audit_commands::count_agent_audit_findings,
+            code_audit_commands::get_agent_audit_finding,
+            code_audit_commands::update_agent_audit_finding_status,
+            code_audit_commands::delete_agent_audit_finding,
+            code_audit_commands::delete_agent_audit_findings_batch,
+            code_audit_commands::delete_all_agent_audit_findings,
             // Traffic scan commands
             traffic_analysis_commands::start_traffic_analysis,
             traffic_analysis_commands::stop_traffic_analysis,
@@ -939,14 +969,7 @@ pub fn run() {
             traffic_analysis_commands::reload_plugin_in_pipeline,
             traffic_analysis_commands::list_findings,
             traffic_analysis_commands::count_findings,
-            traffic_analysis_commands::upsert_agent_audit_findings,
-            traffic_analysis_commands::list_agent_audit_findings,
-            traffic_analysis_commands::count_agent_audit_findings,
-            traffic_analysis_commands::get_agent_audit_finding,
-            traffic_analysis_commands::update_agent_audit_finding_status,
-            traffic_analysis_commands::delete_agent_audit_finding,
-            traffic_analysis_commands::delete_agent_audit_findings_batch,
-            traffic_analysis_commands::delete_all_agent_audit_findings,
+
             traffic_analysis_commands::enable_plugin,
             traffic_analysis_commands::disable_plugin,
             traffic_analysis_commands::batch_enable_plugins,
@@ -1083,9 +1106,6 @@ pub fn run() {
             packet_capture_commands::get_file_stream_packets,
             packet_capture_commands::save_selected_files,
             // Test commands
-            commands::test_proxy::test_proxy_dynamic_update,
-            commands::test_proxy::test_proxy_persistence,
-            commands::test_proxy::test_http_client_proxy_update,
             commands::test_proxy::test_proxy_connection,
             commands::test_proxy::get_current_proxy_config,
             // Tool commands
@@ -1148,8 +1168,8 @@ pub fn run() {
             commands::check_docker_for_file_analysis,
             commands::upload_document_attachment,
             commands::run_file_security_analysis,
-            commands::get_uploaded_file_settings,
-            commands::save_uploaded_file_settings,
+            commands::get_workspace_settings,
+            commands::save_workspace_settings,
             commands::list_uploaded_files,
             commands::clear_uploaded_files,
             // Terminal WebSocket commands
@@ -1161,6 +1181,12 @@ pub fn run() {
             commands::get_terminal_websocket_url,
             commands::cleanup_terminal_containers,
             commands::get_terminal_container_info,
+            commands::start_http_gateway,
+            commands::stop_http_gateway,
+            commands::get_http_gateway_status,
+            commands::get_http_gateway_config,
+            commands::save_http_gateway_config,
+            commands::rotate_http_gateway_api_key,
             // Agent config commands
             tool_commands::get_agent_config,
             tool_commands::save_agent_config,

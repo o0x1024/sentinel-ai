@@ -97,7 +97,7 @@ pub async fn execute_agent_simple(
             )
             .await;
 
-            cleanup_container_context_async(&params.execution_id).await;
+            cleanup_container_context_async(app_handle, &params.execution_id).await;
             Ok(response)
         }
         Err(e) => {
@@ -106,7 +106,7 @@ pub async fn execute_agent_simple(
                 params.execution_id,
                 e
             );
-            cleanup_container_context_async(&params.execution_id).await;
+            cleanup_container_context_async(app_handle, &params.execution_id).await;
             Err(e)
         }
     }

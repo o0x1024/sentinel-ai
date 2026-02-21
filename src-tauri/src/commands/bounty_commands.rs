@@ -524,6 +524,25 @@ pub async fn bounty_delete_finding(
     db_service.delete_bounty_finding(&id).await.map_err(|e| e.to_string())
 }
 
+/// Batch delete findings
+#[tauri::command]
+pub async fn bounty_batch_delete_findings(
+    db_service: State<'_, Arc<DatabaseService>>,
+    ids: Vec<String>,
+) -> Result<u64, String> {
+    FindingService::batch_delete_findings(db_service.inner().as_ref(), ids).await.map_err(|e| e.to_string())
+}
+
+/// Batch update finding status
+#[tauri::command]
+pub async fn bounty_batch_update_finding_status(
+    db_service: State<'_, Arc<DatabaseService>>,
+    ids: Vec<String>,
+    status: String,
+) -> Result<u64, String> {
+    FindingService::batch_update_finding_status(db_service.inner().as_ref(), ids, status).await.map_err(|e| e.to_string())
+}
+
 /// List findings with optional filter
 #[tauri::command]
 pub async fn bounty_list_findings(
@@ -823,6 +842,25 @@ pub async fn bounty_delete_submission(
     db_service.delete_bounty_submission(&id).await.map_err(|e| e.to_string())
 }
 
+/// Batch delete submissions
+#[tauri::command]
+pub async fn bounty_batch_delete_submissions(
+    db_service: State<'_, Arc<DatabaseService>>,
+    ids: Vec<String>,
+) -> Result<u64, String> {
+    SubmissionDbService::batch_delete_submissions(db_service.inner().as_ref(), ids).await.map_err(|e| e.to_string())
+}
+
+/// Batch update submission status
+#[tauri::command]
+pub async fn bounty_batch_update_submission_status(
+    db_service: State<'_, Arc<DatabaseService>>,
+    ids: Vec<String>,
+    status: String,
+) -> Result<u64, String> {
+    SubmissionDbService::batch_update_submission_status(db_service.inner().as_ref(), ids, status).await.map_err(|e| e.to_string())
+}
+
 /// List submissions with optional filter
 #[tauri::command]
 pub async fn bounty_list_submissions(
@@ -903,6 +941,8 @@ pub struct ChangeEventFilter {
 /// Create a new change event
 #[tauri::command]
 pub async fn bounty_create_change_event(
+    app_handle: AppHandle,
+    plugin_manager: State<'_, Arc<PluginManager>>,
     db_service: State<'_, Arc<DatabaseService>>,
     request: CreateChangeEventRequest,
 ) -> Result<BountyChangeEventRow, String> {
@@ -938,6 +978,17 @@ pub async fn bounty_create_change_event(
     };
 
     db_service.create_bounty_change_event(&event).await.map_err(|e| e.to_string())?;
+    
+    // Auto-trigger workflows if enabled
+    if event.auto_trigger_enabled {
+        let _ = bounty_trigger_workflows_for_event_internal(
+            app_handle,
+            (*db_service).clone(),
+            (*plugin_manager).clone(),
+            event.id.clone(),
+        ).await;
+    }
+    
     Ok(event)
 }
 
@@ -2849,11 +2900,31 @@ pub async fn bounty_get_triggered_workflows(
 /// Trigger workflows for a change event
 #[tauri::command]
 pub async fn bounty_trigger_workflows_for_event(
+    app_handle: AppHandle,
     db_service: State<'_, Arc<DatabaseService>>,
+    plugin_manager: State<'_, Arc<PluginManager>>,
+    event_id: String,
+) -> Result<Vec<String>, String> {
+    bounty_trigger_workflows_for_event_internal(
+        app_handle,
+        (*db_service).clone(),
+        (*plugin_manager).clone(),
+        event_id,
+    ).await
+}
+
+pub async fn bounty_trigger_workflows_for_event_internal(
+    app_handle: AppHandle,
+    db_service: Arc<DatabaseService>,
+    plugin_manager: Arc<PluginManager>,
     event_id: String,
 ) -> Result<Vec<String>, String> {
     let triggered_results = bounty_get_triggered_workflows_internal(&db_service, &event_id).await?;
     
+    let event = db_service.get_bounty_change_event(&event_id)
+        .await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Change event not found".to_string())?;
+        
     let mut triggered_workflow_ids = Vec::new();
 
     for result in triggered_results {
@@ -2864,6 +2935,39 @@ pub async fn bounty_trigger_workflows_for_event(
 
             // Update binding run status
             let _ = db_service.update_bounty_workflow_binding_run_status(&result.binding_id, "triggered").await;
+            
+            // Actually run the workflow immediately
+            if let Ok(Some(template)) = db_service.get_bounty_workflow_template(&result.template_id).await {
+                if let Ok(steps) = serde_json::from_str::<Vec<WorkflowStepDefinition>>(&template.steps_json) {
+                    if !steps.is_empty() {
+                        let execution_id = uuid::Uuid::new_v4().to_string();
+                        let inputs = serde_json::json!({
+                            "asset_id": event.asset_id,
+                            "event_id": event.id,
+                        });
+                        
+                        log::info!("Auto-triggering workflow execution {} for template {} based on event {}", execution_id, template.id, event.id);
+                        
+                        let exec_id = execution_id.clone();
+                        let db = db_service.clone();
+                        let pm = plugin_manager.clone();
+                        let app = app_handle.clone();
+                        let program_id = event.program_id.clone();
+                        
+                        tokio::spawn(async move {
+                            execute_workflow_steps(
+                                exec_id,
+                                steps,
+                                inputs,
+                                program_id,
+                                db,
+                                pm,
+                                app,
+                            ).await;
+                        });
+                    }
+                }
+            }
         }
     }
 

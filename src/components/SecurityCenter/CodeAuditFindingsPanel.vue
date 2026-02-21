@@ -32,14 +32,14 @@
         </div>
         <button @click="refreshFindings" class="btn btn-outline btn-sm">刷新</button>
         <button
-          @click="deleteSelectedFindings"
+          @click="openDeleteSelectedModal"
           :disabled="selectedIds.length === 0 || isDeleting"
           class="btn btn-warning btn-sm"
         >
           删除选中 ({{ selectedIds.length }})
         </button>
         <button
-          @click="deleteAllFindings"
+          @click="openDeleteAllModal"
           :disabled="totalCount === 0 || isDeleting"
           class="btn btn-error btn-sm"
         >
@@ -95,7 +95,7 @@
               <td class="text-xs opacity-70">{{ formatTime(finding.last_seen_at) }}</td>
               <td>
                 <button @click="openDetails(finding)" class="btn btn-xs btn-outline">详情</button>
-                <button @click="deleteSingleFinding(finding)" class="btn btn-xs btn-error ml-2" :disabled="isDeleting">
+                <button @click="openDeleteSingleModal(finding)" class="btn btn-xs btn-error ml-2" :disabled="isDeleting">
                   删除
                 </button>
               </td>
@@ -231,6 +231,17 @@
         <button @click="closeDetails">close</button>
       </form>
     </dialog>
+
+    <dialog :class="['modal', { 'modal-open': showDeleteModal }]" @click.self="showDeleteModal = false" @keydown.esc="showDeleteModal = false">
+      <div class="modal-box">
+        <h3 class="font-bold text-lg text-error">确认删除</h3>
+        <p class="py-4">{{ deleteModalMessage }}</p>
+        <div class="modal-action">
+          <button @click="showDeleteModal = false" class="btn btn-sm">取消</button>
+          <button @click="executeDelete" class="btn btn-sm btn-error" :disabled="isDeleting">确认删除</button>
+        </div>
+      </div>
+    </dialog>
   </div>
 </template>
 
@@ -269,6 +280,12 @@ const showDetailsModal = ref(false);
 const selectedFinding = ref<AgentAuditFinding | null>(null);
 const selectedIds = ref<string[]>([]);
 const isDeleting = ref(false);
+
+const showDeleteModal = ref(false);
+const deleteModalMessage = ref('');
+const deleteActionType = ref<'single' | 'selected' | 'all'>('single');
+const findingToDelete = ref<AgentAuditFinding | null>(null);
+
 const currentPage = ref(1);
 const pageSize = 10;
 const totalCount = ref(0);
@@ -361,8 +378,41 @@ const toggleSelectAllCurrentPage = (checked: boolean) => {
   selectedIds.value = selectedIds.value.filter((id) => !currentIds.includes(id));
 };
 
-const deleteSingleFinding = async (finding: AgentAuditFinding) => {
-  if (!window.confirm(`确认删除漏洞「${finding.title}」吗？`)) return;
+const openDeleteSingleModal = (finding: AgentAuditFinding) => {
+  findingToDelete.value = finding;
+  deleteActionType.value = 'single';
+  deleteModalMessage.value = `确认删除漏洞「${finding.title}」吗？`;
+  showDeleteModal.value = true;
+};
+
+const openDeleteSelectedModal = () => {
+  if (selectedIds.value.length === 0) return;
+  deleteActionType.value = 'selected';
+  deleteModalMessage.value = `确认删除选中的 ${selectedIds.value.length} 条漏洞吗？`;
+  showDeleteModal.value = true;
+};
+
+const openDeleteAllModal = () => {
+  if (totalCount.value === 0) return;
+  deleteActionType.value = 'all';
+  deleteModalMessage.value = `确认删除所有相关代码审计漏洞吗？此操作不可逆！`;
+  showDeleteModal.value = true;
+};
+
+const executeDelete = async () => {
+  showDeleteModal.value = false;
+  if (deleteActionType.value === 'single') {
+    await executeDeleteSingle();
+  } else if (deleteActionType.value === 'selected') {
+    await executeDeleteSelected();
+  } else if (deleteActionType.value === 'all') {
+    await executeDeleteAll();
+  }
+};
+
+const executeDeleteSingle = async () => {
+  const finding = findingToDelete.value;
+  if (!finding) return;
   isDeleting.value = true;
   try {
     const resp = await invoke<any>('delete_agent_audit_finding', { findingId: finding.id });
@@ -381,9 +431,8 @@ const deleteSingleFinding = async (finding: AgentAuditFinding) => {
   }
 };
 
-const deleteSelectedFindings = async () => {
+const executeDeleteSelected = async () => {
   if (selectedIds.value.length === 0) return;
-  if (!window.confirm(`确认删除选中的 ${selectedIds.value.length} 条漏洞吗？`)) return;
   isDeleting.value = true;
   try {
     const resp = await invoke<any>('delete_agent_audit_findings_batch', {
@@ -404,9 +453,8 @@ const deleteSelectedFindings = async () => {
   }
 };
 
-const deleteAllFindings = async () => {
+const executeDeleteAll = async () => {
   if (totalCount.value === 0) return;
-  if (!window.confirm(`确认删除全部 ${totalCount.value} 条代码审计漏洞吗？`)) return;
   isDeleting.value = true;
   try {
     const resp = await invoke<any>('delete_all_agent_audit_findings');

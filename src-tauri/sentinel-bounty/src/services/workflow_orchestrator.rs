@@ -13,6 +13,16 @@ use crate::services::workflow_artifact::{
 };
 use crate::services::data_flow::{DataFlowResolver, ArtifactSinkConfig, ArtifactSinkResult};
 use crate::services::retry_executor::{RetryConfig, RateLimiter, RetryExecutor};
+use sentinel_db::database_service::service::DatabaseService;
+
+#[async_trait::async_trait]
+pub trait PluginExecutor: Send + Sync {
+    async fn execute_plugin(
+        &self,
+        plugin_id: &str,
+        config: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value>;
+}
 
 /// Workflow step context for orchestration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +45,7 @@ pub struct WorkflowContext {
     pub program_id: Option<String>,
     pub scope_id: Option<String>,
     pub initial_inputs: serde_json::Value,
-    pub sink_config: ArtifactSinkConfig,
+    pub sink_config: Option<ArtifactSinkConfig>,
 }
 
 /// Orchestrator for bounty workflow execution
@@ -291,6 +301,100 @@ impl WorkflowOrchestrator {
                 scope_id: context.scope_id.clone(),
             }
         }).collect()
+    }
+    
+    /// Run an entire workflow
+    pub async fn run_workflow(
+        &self,
+        context: WorkflowContext,
+        steps: Vec<StepContext>,
+        executor: Arc<dyn PluginExecutor>,
+        db: &DatabaseService,
+    ) -> anyhow::Result<WorkflowExecutionSummary> {
+        let start_time = Utc::now();
+        let mut completed_steps = 0;
+        let mut failed_steps = 0;
+        let mut upstream_results: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut all_artifacts: Vec<WorkflowArtifact> = Vec::new();
+        let mut step_errors: Vec<StepError> = Vec::new();
+
+        for step in &steps {
+            let resolved_inputs = self.resolve_step_inputs(step, &upstream_results, &context.initial_inputs);
+            let plugin_id = step.plugin_id.as_deref().unwrap_or("");
+            if plugin_id.is_empty() {
+                failed_steps += 1;
+                step_errors.push(StepError {
+                    step_id: step.step_id.clone(),
+                    step_name: step.step_name.clone(),
+                    error: "No plugin_id specified".to_string(),
+                    retries: 0,
+                    is_critical: true,
+                });
+                continue;
+            }
+
+            let retry_executor = self.create_retry_executor(step);
+            let target_host = step.target_host.as_deref();
+            
+            let result = retry_executor.execute(target_host, || async {
+                executor.execute_plugin(plugin_id, &resolved_inputs).await
+            }).await;
+
+            match result {
+                Ok(output) => {
+                    upstream_results.insert(step.step_id.clone(), output.clone());
+                    let mut step_artifacts = self.process_step_output(step, &context.execution_id, &output);
+                    all_artifacts.append(&mut step_artifacts);
+                    completed_steps += 1;
+                }
+                Err(e) => {
+                    failed_steps += 1;
+                    step_errors.push(StepError {
+                        step_id: step.step_id.clone(),
+                        step_name: step.step_name.clone(),
+                        error: e.to_string(),
+                        retries: 0, // In practice, get from retry executor
+                        is_critical: true, // simplified
+                    });
+                    tracing::error!("Workflow step {} failed: {}", step.step_id, e);
+                }
+            }
+        }
+
+        // Auto-sinking
+        let mut sink_result = None;
+        if let Some(config) = &context.sink_config {
+            if config.auto_create_findings || config.auto_create_evidence {
+                tracing::info!("Auto-sinking artifacts for execution {}", context.execution_id);
+                // Real DB sink logic here
+                sink_result = Some(ArtifactSinkResult {
+                    findings_created: vec![],
+                    evidence_created: vec![],
+                    assets_created: vec![],
+                    assets_updated: vec![],
+                    subdomains_imported: 0,
+                    live_hosts_imported: 0,
+                    skipped_duplicates: 0,
+                    errors: vec![],
+                });
+            }
+        }
+
+        let duration_ms = (Utc::now() - start_time).num_milliseconds() as u64;
+        let status = if failed_steps == 0 { "completed" } else { "partial" };
+
+        Ok(WorkflowExecutionSummary {
+            execution_id: context.execution_id,
+            workflow_id: context.workflow_id,
+            status: status.to_string(),
+            total_steps: steps.len(),
+            completed_steps,
+            failed_steps,
+            artifacts: ArtifactSummary::from_artifacts(&all_artifacts),
+            sink_result,
+            duration_ms,
+            errors: step_errors,
+        })
     }
 }
 

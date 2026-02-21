@@ -12389,6 +12389,7 @@ dependencies = [
  "arrow-array 55.2.0",
  "arrow-schema 55.2.0",
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "bincode",
  "chrono",

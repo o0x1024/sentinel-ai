@@ -13,12 +13,15 @@ use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, To
 use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
 use sentinel_db::DatabaseService;
 
-use crate::agents::{append_tool_digest, build_context, build_tool_digest, ContextBuildInput};
+use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
 use crate::agents::executor::message_store::save_assistant_message;
 use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
 use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
 use crate::agents::tool_router::ToolRouter;
+use crate::commands::code_audit_commands::{
+    upsert_agent_audit_findings_with_db, AgentAuditFindingInput, UpsertAgentAuditFindingsRequest,
+};
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use super::AgentExecuteParams;
 
@@ -133,8 +136,18 @@ fn apply_allowed_tools_policy(
     tool_ids
 }
 
+const AUDIT_FINDING_UPSERT_TOOL: &str = "audit_finding_upsert";
+
 fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
-    const REQUIRED: &[&str] = &["skills", "git_clone_repo", "code_search", "git_diff_scope"];
+    const REQUIRED: &[&str] = &[
+        "todos",
+        "skills",
+        "git_clone_repo",
+        "code_search",
+        "git_diff_scope",
+        "tenth_man_review",
+        AUDIT_FINDING_UPSERT_TOOL,
+    ];
     let mut seen = tool_ids
         .iter()
         .cloned()
@@ -145,6 +158,13 @@ fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
         }
     }
     tool_ids
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct AuditFindingUpsertToolArgs {
+    #[serde(default)]
+    conversation_id: Option<String>,
+    findings: Vec<AgentAuditFindingInput>,
 }
 
 fn infer_tool_result_success(raw: &str) -> bool {
@@ -201,6 +221,30 @@ fn infer_tool_result_success(raw: &str) -> bool {
     }
 }
 
+async fn persist_ai_message_with_retry(
+    db: Arc<sentinel_db::DatabaseService>,
+    msg: sentinel_core::models::database::AiMessage,
+    log_label: &str,
+) {
+    const MAX_RETRIES: usize = 3;
+    for attempt in 0..=MAX_RETRIES {
+        match db.upsert_ai_message_append(&msg).await {
+            Ok(_) => return,
+            Err(e) => {
+                let err = e.to_string().to_lowercase();
+                let locked = err.contains("database is locked") || err.contains("(code: 5)");
+                if locked && attempt < MAX_RETRIES {
+                    let backoff_ms = 30u64 * (1u64 << attempt);
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    continue;
+                }
+                tracing::warn!("Failed to persist {}: {}", log_label, e);
+                return;
+            }
+        }
+    }
+}
+
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
     params: AgentExecuteParams,
@@ -235,9 +279,8 @@ pub async fn execute_agent_with_tools(
     }
 
     // Use plan_tools to support Skills mode with injected context
-    let db_pool = db_service.get_pool().ok();
     let selection_plan = tool_router
-        .plan_tools(&params.task, &tool_config, Some(&llm_config), db_pool)
+        .plan_tools(&params.task, &tool_config, Some(&llm_config))
         .await?;
 
     let mut selected_tool_ids = apply_allowed_tools_policy(
@@ -298,7 +341,18 @@ pub async fn execute_agent_with_tools(
     })
     .await?;
 
-    let final_system_prompt_content = Some(context_result.system_prompt);
+    let mut final_system_prompt = context_result.system_prompt;
+    if params.audit_mode {
+        final_system_prompt.push_str(
+            "\n\n<audit_persistence_rules>\n\
+             - Do NOT output full findings JSON in assistant final message.\n\
+             - When you confirm a vulnerability, call `audit_finding_upsert` immediately.\n\
+             - Use `findings` array in the tool args; single finding is still an array with one item.\n\
+             - Final assistant message must contain only a concise summary and instruct users to view details in Security Center > Code Audit.\n\
+             </audit_persistence_rules>\n",
+        );
+    }
+    let final_system_prompt_content = Some(final_system_prompt);
     let mut history_chat_messages = context_result.history_messages;
 
     // 移除历史记录中最后一条用户消息，避免与当前任务重复发送
@@ -331,6 +385,8 @@ pub async fn execute_agent_with_tools(
     let tool_call_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let reasoning_content_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let pending_tool_digests: Arc<Mutex<Vec<crate::agents::ToolDigest>>> =
+        Arc::new(Mutex::new(Vec::new()));
     let context_policy_for_stream = context_policy.clone();
     
     let collector = tool_calls_collector.clone();
@@ -339,6 +395,7 @@ pub async fn execute_agent_with_tools(
     let tool_counter = tool_call_counter.clone();
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
+    let pending_digests = pending_tool_digests.clone();
 
     // Ensure skills tool enforces per-skill enable flags at execution time.
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
@@ -426,6 +483,84 @@ pub async fn execute_agent_with_tools(
     let mut force_history_with_tools = false;
     while retries <= max_retries {
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
+
+        if current_tool_ids.iter().any(|id| id == AUDIT_FINDING_UPSERT_TOOL) {
+            let db_for_audit_tool = db_service.inner().clone();
+            let execution_id_for_audit_tool = params.execution_id.clone();
+            let audit_finding_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+                let db_for_audit_tool = db_for_audit_tool.clone();
+                let execution_id_for_audit_tool = execution_id_for_audit_tool.clone();
+                Box::pin(async move {
+                    let tool_args: AuditFindingUpsertToolArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                    if tool_args.findings.is_empty() {
+                        return Err("findings must contain at least one item".to_string());
+                    }
+
+                    let conversation_id = tool_args
+                        .conversation_id
+                        .filter(|v| !v.trim().is_empty())
+                        .unwrap_or(execution_id_for_audit_tool);
+
+                    let request = UpsertAgentAuditFindingsRequest {
+                        conversation_id,
+                        findings: tool_args.findings,
+                    };
+                    let result = upsert_agent_audit_findings_with_db(&db_for_audit_tool, request)
+                        .await
+                        .map_err(|e| format!("Audit finding upsert failed: {}", e))?;
+
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize audit finding upsert result: {}", e))
+                })
+            });
+
+            let audit_finding_def = DynamicToolDef {
+                name: AUDIT_FINDING_UPSERT_TOOL.to_string(),
+                description: "Persist code audit findings into Security Center immediately. Supports single or batch save via `findings` array.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "conversation_id": {
+                            "type": "string",
+                            "description": "Optional conversation id. Defaults to current execution id."
+                        },
+                        "findings": {
+                            "type": "array",
+                            "description": "One or more structured audit findings to upsert",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "string" },
+                                    "title": { "type": "string" },
+                                    "severity": { "type": "string" },
+                                    "severity_raw": { "type": "string" },
+                                    "confidence": { "type": "number" },
+                                    "status": { "type": "string" },
+                                    "cwe": { "type": "string" },
+                                    "files": { "type": "array", "items": { "type": "string" } },
+                                    "source": { "type": "object" },
+                                    "sink": { "type": "object" },
+                                    "trace_path": { "type": "array", "items": { "type": "object" } },
+                                    "evidence": { "type": "array", "items": { "type": "string" } },
+                                    "fix": { "type": "string" },
+                                    "description": { "type": "string" }
+                                },
+                                "required": ["id"]
+                            }
+                        }
+                    },
+                    "required": ["findings"]
+                }),
+                output_schema: None,
+                source: ToolSource::Builtin,
+                category: "security".to_string(),
+                executor: audit_finding_executor,
+            };
+            dynamic_tools.push(DynamicTool::new(audit_finding_def));
+        }
+
         if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
             if let Some(shell_info) = tool_server.get_tool(ShellTool::NAME).await {
                 let execution_id_for_shell = params.execution_id.clone();
@@ -725,12 +860,12 @@ pub async fn execute_agent_with_tools(
                                         structured_data: None,
                                     };
                                     tauri::async_runtime::spawn(async move {
-                                        if let Err(e) = db.upsert_ai_message_append(&seg_msg).await {
-                                            tracing::warn!(
-                                                "Failed to persist assistant segment: {}",
-                                                e
-                                            );
-                                        }
+                                        persist_ai_message_with_retry(
+                                            db,
+                                            seg_msg,
+                                            "assistant segment",
+                                        )
+                                        .await;
                                     });
                                 }
                             }
@@ -780,9 +915,8 @@ pub async fn execute_agent_with_tools(
                                     structured_data: None,
                                 };
                                 tauri::async_runtime::spawn(async move {
-                                    if let Err(e) = db.upsert_ai_message_append(&tool_msg).await {
-                                        tracing::warn!("Failed to persist tool call message: {}", e);
-                                    }
+                                    persist_ai_message_with_retry(db, tool_msg, "tool call message")
+                                        .await;
                                 });
                             }
 
@@ -880,14 +1014,12 @@ pub async fn execute_agent_with_tools(
                                             structured_data: None,
                                         };
                                         tauri::async_runtime::spawn(async move {
-                                            if let Err(e) =
-                                                db.upsert_ai_message_append(&tool_msg).await
-                                            {
-                                                tracing::warn!(
-                                                    "Failed to persist tool result update: {}",
-                                                    e
-                                                );
-                                            }
+                                            persist_ai_message_with_retry(
+                                                db,
+                                                tool_msg,
+                                                "tool result update",
+                                            )
+                                            .await;
                                         });
                                     }
 
@@ -915,21 +1047,12 @@ pub async fn execute_agent_with_tools(
                                         }
                                     }
 
-                                    // Update run state with tool digest for resumption context
-                                    let app_for_digest = app.clone();
-                                    let exec_for_digest = execution_id.clone();
-                                    let policy_for_digest = context_policy_for_stream.clone();
                                     let args_value: serde_json::Value = serde_json::from_str(&args_for_meta)
                                         .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
                                     let digest = build_tool_digest(&name_for_meta, &args_value, &result);
-                                    tauri::async_runtime::spawn(async move {
-                                        if let Err(e) =
-                                            append_tool_digest(&app_for_digest, &exec_for_digest, digest, &policy_for_digest)
-                                                .await
-                                        {
-                                            tracing::warn!("Failed to append tool digest: {}", e);
-                                        }
-                                    });
+                                    if let Ok(mut queue) = pending_digests.lock() {
+                                        queue.push(digest);
+                                    }
                                 }
                             }
 
@@ -1021,6 +1144,21 @@ pub async fn execute_agent_with_tools(
             )
             .await;
 
+        let digests_to_flush = pending_tool_digests
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default();
+        if let Err(e) = append_tool_digests(
+            app_handle,
+            &params.execution_id,
+            digests_to_flush,
+            &context_policy_for_stream,
+        )
+        .await
+        {
+            tracing::warn!("Failed to flush tool digests: {}", e);
+        }
+
         if skill_reload_requested.load(Ordering::SeqCst) {
             if skill_reload_count >= max_skill_reload {
                 skill_reload_requested.store(false, Ordering::SeqCst);
@@ -1059,11 +1197,7 @@ pub async fn execute_agent_with_tools(
                                 "skills".to_string(),
                                 "todos".to_string(),
                             ];
-                            // Keep shell available across skill reload retries unless explicitly disabled.
-                            if !tool_config
-                                .disabled_tools
-                                .contains(&ShellTool::NAME.to_string())
-                            {
+                            if !tool_config.disabled_tools.contains(&ShellTool::NAME.to_string()) {
                                 next_tools.push(ShellTool::NAME.to_string());
                             }
                             next_tools.extend(skill.allowed_tools.clone());
@@ -1323,7 +1457,7 @@ pub async fn execute_agent_with_tools(
                 }
 
                 // Cleanup container context files (keep history.txt)
-                cleanup_container_context_async(&params.execution_id).await;
+                cleanup_container_context_async(&app, &params.execution_id).await;
 
                 return Ok(final_response);
             }
@@ -1331,7 +1465,7 @@ pub async fn execute_agent_with_tools(
                 let err_msg = e.to_string();
                 
                 // Cleanup container context files even on error
-                cleanup_container_context_async(&params.execution_id).await;
+                cleanup_container_context_async(&app, &params.execution_id).await;
                 
                 // 优化错误消息
                 let friendly_err = if err_msg.contains("error decoding response body") {

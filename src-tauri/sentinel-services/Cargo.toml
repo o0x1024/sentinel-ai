@@ -24,6 +24,8 @@ rand = "0.8"
 sqlx = { version = "0.8.6", features = [
     "runtime-tokio",
     "postgres",
+    "sqlite",
+    "mysql",
     "chrono",
     "uuid",
 ] }

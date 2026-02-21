@@ -349,12 +349,16 @@ const showFindingDetailModal = ref(false)
 const showSubmissionDetailModal = ref(false)
 const showChangeEventDetailModal = ref(false)
 const showWorkflowTemplateDetailModal = ref(false)
+const showSelectWorkflowModal = ref(false)
 const submissionInitialData = ref<any>(null)
 const selectedProgram = ref<any>(null)
 const selectedFinding = ref<any>(null)
 const selectedSubmission = ref<any>(null)
 const selectedChangeEvent = ref<any>(null)
+const selectedWorkflowEvent = ref<any>(null)
 const selectedWorkflowTemplate = ref<any>(null)
+const selectedWorkflowTemplateId = ref<string>('')
+const workflowTemplates = ref<any[]>([])
 const editingProgram = ref<any>(null) // Program being edited
 
 // Data
@@ -638,23 +642,42 @@ const createFinding = async (data: any) => {
 const createSubmission = async (data: any) => {
   try {
     creating.value = true
-    const request = {
-      program_id: data.program_id,
-      finding_id: data.finding_id,
-      title: data.title,
-      vulnerability_type: data.vulnerability_type,
-      severity: data.severity,
-      cvss_score: data.cvss_score,
-      description: data.description,
-      impact: data.impact,
-      cwe_id: null,
-      reproduction_steps: null,
-      remediation: null,
-      evidence_ids: null,
-      tags: null,
+    const isEdit = !!submissionInitialData.value?.id
+    
+    if (isEdit) {
+      const request = {
+        title: data.title,
+        vulnerability_type: data.vulnerability_type,
+        severity: data.severity,
+        cvss_score: data.cvss_score,
+        description: data.description,
+        impact: data.impact,
+        status: data.status || 'draft',
+      }
+      await invoke('bounty_update_submission', { 
+        id: submissionInitialData.value.id, 
+        request 
+      })
+      toast.success(t('bugBounty.success.submissionUpdated'))
+    } else {
+      const request = {
+        program_id: data.program_id,
+        finding_id: data.finding_id,
+        title: data.title,
+        vulnerability_type: data.vulnerability_type,
+        severity: data.severity,
+        cvss_score: data.cvss_score,
+        description: data.description,
+        impact: data.impact,
+        cwe_id: null,
+        reproduction_steps: null,
+        remediation: null,
+        evidence_ids: null,
+        tags: null,
+      }
+      await invoke('bounty_create_submission', { request })
+      toast.success(t('bugBounty.success.submissionCreated'))
     }
-    await invoke('bounty_create_submission', { request })
-    toast.success(t('bugBounty.success.submissionCreated'))
     closeSubmissionModal()
     await loadSubmissions()
     await loadSubmissionStats()
@@ -781,7 +804,11 @@ const onSubmissionUpdated = async () => {
 }
 
 const editSubmission = (submission: any) => {
-  toast.info(t('bugBounty.comingSoon'))
+  submissionInitialData.value = { ...submission }
+  if (submission.program_id) {
+    loadProgramFindings(submission.program_id)
+  }
+  showCreateSubmissionModal.value = true
 }
 
 const onFindingFilterChange = (filter: any) => {
@@ -830,8 +857,36 @@ const viewChangeEvent = (event: any) => {
 }
 
 const triggerWorkflowFromEvent = async (event: any) => {
-  // TODO: Trigger workflow from change event
-  toast.info(t('bugBounty.comingSoon'))
+  selectedWorkflowEvent.value = event
+  selectedWorkflowTemplateId.value = ''
+  showSelectWorkflowModal.value = true
+  try {
+    // Load workflows to select from
+    workflowTemplates.value = await invoke('bounty_list_workflow_templates', { category: null, isBuiltIn: null })
+  } catch(e) {
+    console.error('Failed to load templates:', e)
+  }
+}
+
+const confirmTriggerWorkflow = async () => {
+  if (!selectedWorkflowTemplateId.value || !selectedWorkflowEvent.value) return
+  
+  try {
+    await invoke('bounty_run_workflow_template', {
+      templateId: selectedWorkflowTemplateId.value,
+      programId: selectedWorkflowEvent.value.program_id,
+      inputs: {
+        asset_id: selectedWorkflowEvent.value.asset_id,
+        event_id: selectedWorkflowEvent.value.id
+      }
+    })
+    toast.success(t('bugBounty.changeEvents.workflowTriggered') || 'Workflow triggered successfully')
+    showSelectWorkflowModal.value = false
+    await loadChangeEventStats() // refresh stats if status changed
+  } catch (error: any) {
+    console.error('Failed to trigger workflow:', error)
+    toast.error(t('bugBounty.errors.createFailed') || 'Failed to trigger workflow')
+  }
 }
 
 const onChangeEventUpdated = async () => {
@@ -892,15 +947,7 @@ const batchUpdateFindingStatus = async (ids: string[], status: string) => {
   if (!confirm(t('bugBounty.batch.confirmUpdateStatus', { count: ids.length }))) return
   
   try {
-    let successCount = 0
-    for (const id of ids) {
-      try {
-        await invoke('bounty_update_finding', { id, request: { status } })
-        successCount++
-      } catch (error) {
-        console.error(`Failed to update finding ${id}:`, error)
-      }
-    }
+    const successCount = await invoke('bounty_batch_update_finding_status', { ids, status })
     toast.success(t('bugBounty.batch.updateSuccess', { count: successCount }))
     await loadFindings()
     await loadFindingStats()
@@ -911,17 +958,9 @@ const batchUpdateFindingStatus = async (ids: string[], status: string) => {
 }
 
 const batchDeleteFindings = async (ids: string[]) => {
-  
+  if (!confirm(t('bugBounty.batch.confirmDeleteFindings', { count: ids.length }))) return
   try {
-    let successCount = 0
-    for (const id of ids) {
-      try {
-        await invoke('bounty_delete_finding', { id })
-        successCount++
-      } catch (error) {
-        console.error(`Failed to delete finding ${id}:`, error)
-      }
-    }
+    const successCount = await invoke('bounty_batch_delete_findings', { ids })
     toast.success(t('bugBounty.batch.deleteSuccess', { count: successCount }))
     await loadFindings()
     await loadFindingStats()
@@ -935,15 +974,7 @@ const batchUpdateSubmissionStatus = async (ids: string[], status: string) => {
   if (!confirm(t('bugBounty.batch.confirmUpdateStatus', { count: ids.length }))) return
   
   try {
-    let successCount = 0
-    for (const id of ids) {
-      try {
-        await invoke('bounty_update_submission', { id, request: { status } })
-        successCount++
-      } catch (error) {
-        console.error(`Failed to update submission ${id}:`, error)
-      }
-    }
+    const successCount = await invoke('bounty_batch_update_submission_status', { ids, status })
     toast.success(t('bugBounty.batch.updateSuccess', { count: successCount }))
     await loadSubmissions()
     await loadSubmissionStats()
@@ -954,17 +985,9 @@ const batchUpdateSubmissionStatus = async (ids: string[], status: string) => {
 }
 
 const batchDeleteSubmissions = async (ids: string[]) => {
-  
+  if (!confirm(t('bugBounty.batch.confirmDeleteSubmissions', { count: ids.length }))) return
   try {
-    let successCount = 0
-    for (const id of ids) {
-      try {
-        await invoke('bounty_delete_submission', { id })
-        successCount++
-      } catch (error) {
-        console.error(`Failed to delete submission ${id}:`, error)
-      }
-    }
+    const successCount = await invoke('bounty_batch_delete_submissions', { ids })
     toast.success(t('bugBounty.batch.deleteSuccess', { count: successCount }))
     await loadSubmissions()
     await loadSubmissionStats()

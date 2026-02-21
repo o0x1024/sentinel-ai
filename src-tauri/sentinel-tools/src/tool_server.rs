@@ -1098,7 +1098,10 @@ impl ToolServer {
 
                 // 4. Permission check for host execution only
                 if session_execution_mode == ExecutionMode::Host {
-                    check_shell_permission(&cmd)
+                    let execution_id = args
+                        .get("execution_id")
+                        .and_then(|v| v.as_str());
+                    check_shell_permission(&cmd, execution_id)
                         .await
                         .map_err(|e| format!("Permission denied: {}", e))?;
                 }

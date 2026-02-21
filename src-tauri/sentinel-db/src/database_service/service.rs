@@ -53,6 +53,18 @@ impl DatabaseService {
         }
     }
 
+    pub fn get_runtime_pool(&self) -> Result<DatabasePool> {
+        if let Some(runtime) = self.runtime_pool.as_ref() {
+            return Ok(runtime.clone());
+        }
+
+        if let Some(pool) = self.pool.as_ref() {
+            return Ok(DatabasePool::PostgreSQL(pool.clone()));
+        }
+
+        Err(anyhow::anyhow!("数据库未初始化"))
+    }
+
     /// Get database pool (public method for external use)
     pub fn pool(&self) -> &PgPool {
         self.get_pool().expect("Database not initialized")
@@ -187,6 +199,11 @@ impl DatabaseService {
         };
 
         self.config = Some(config.clone());
+        self.write_semaphore = Arc::new(Semaphore::new(if matches!(config.db_type, DatabaseType::SQLite) {
+            1
+        } else {
+            10
+        }));
 
         // Non-PostgreSQL databases use runtime pool for generic commands and migrations.
         if !matches!(config.db_type, DatabaseType::PostgreSQL) {

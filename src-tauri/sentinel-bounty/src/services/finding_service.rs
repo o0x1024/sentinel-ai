@@ -213,6 +213,25 @@ impl FindingService {
             .await
             .map_err(|e| e.into())
     }
+
+    pub async fn batch_delete_findings(
+        db: &DatabaseService,
+        ids: Vec<String>,
+    ) -> Result<u64> {
+        db.batch_delete_bounty_findings(&ids)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    pub async fn batch_update_finding_status(
+        db: &DatabaseService,
+        ids: Vec<String>,
+        status: String,
+    ) -> Result<u64> {
+        db.batch_update_bounty_finding_status(&ids, &status)
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 fn validate_required(value: &str, field: &str) -> Result<()> {

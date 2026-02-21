@@ -8,6 +8,12 @@ pub struct ToolDigest {
     pub tool_name: String,
     pub status: String,
     pub summary: String,
+    #[serde(default)]
+    pub artifact_id: Option<String>,
+    #[serde(default)]
+    pub artifact_kind: Option<String>,
+    #[serde(default)]
+    pub preview_snippets: Vec<String>,
     pub created_at_ms: i64,
 }
 
@@ -86,10 +92,19 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
         _ => condense_text(result, 240),
     };
 
+    let (artifact_id, artifact_kind) = extract_artifact_reference(result);
+    let mut preview_snippets = Vec::new();
+    if let Some(preview) = extract_preview_snippet(result) {
+        preview_snippets.push(preview);
+    }
+
     ToolDigest {
         tool_name: tool_name.to_string(),
         status,
         summary,
+        artifact_id,
+        artifact_kind,
+        preview_snippets,
         created_at_ms,
     }
 }
@@ -106,3 +121,57 @@ pub fn condense_text(text: &str, max_len: usize) -> String {
     format!("{}...<truncated>...{}", head, tail)
 }
 
+fn extract_artifact_reference(result: &str) -> (Option<String>, Option<String>) {
+    let Ok(value) = serde_json::from_str::<Value>(result) else {
+        return (None, None);
+    };
+    let Some(obj) = value.as_object() else {
+        return (None, None);
+    };
+
+    if let Some(path) = obj
+        .get("container_path")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("host_path").and_then(|v| v.as_str()))
+        .or_else(|| obj.get("file_path").and_then(|v| v.as_str()))
+        .or_else(|| obj.get("stored_path").and_then(|v| v.as_str()))
+    {
+        let kind = if path.starts_with('/') {
+            "file".to_string()
+        } else {
+            "artifact".to_string()
+        };
+        return (Some(path.to_string()), Some(kind));
+    }
+
+    if let Some(stored) = obj.get("output_stored").and_then(|v| v.as_bool()) {
+        if stored {
+            let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("tool");
+            return (
+                Some(format!("inline://{}:{}", command, created_suffix(result))),
+                Some("inline".to_string()),
+            );
+        }
+    }
+
+    (None, None)
+}
+
+fn extract_preview_snippet(result: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(result).ok()?;
+    let obj = value.as_object()?;
+    let preview = obj
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("stdout").and_then(|v| v.as_str()))
+        .or_else(|| obj.get("stderr").and_then(|v| v.as_str()))
+        .or_else(|| obj.get("output").and_then(|v| v.as_str()))?;
+    Some(condense_text(preview, 120))
+}
+
+fn created_suffix(result: &str) -> String {
+    let hash = result
+        .bytes()
+        .fold(0u64, |acc, b| acc.wrapping_mul(16777619).wrapping_add(b as u64));
+    format!("{:016x}", hash)
+}

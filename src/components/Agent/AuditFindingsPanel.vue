@@ -48,6 +48,36 @@
             {{ f }}
           </div>
         </div>
+
+        <details v-if="buildHitRows(item).length > 0" class="mt-3 bg-base-200/40 rounded-md border border-base-300">
+          <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-base-content/80">
+            {{ t('agent.hitDetails') }} ({{ buildHitRows(item).length }} {{ t('agent.times') }})
+          </summary>
+          <div class="p-3 pt-2 overflow-auto">
+            <table class="table table-xs w-full">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>{{ t('agent.sourceLabel') }}</th>
+                  <th>{{ t('agent.sinkLabel') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in buildHitRows(item)" :key="row.id">
+                  <td class="align-top text-xs text-base-content/60">{{ row.index }}</td>
+                  <td class="align-top">
+                    <div class="text-xs font-mono break-all">{{ row.source.location }}</div>
+                    <div v-if="row.source.code" class="text-xs text-base-content/70 mt-1 break-all">{{ row.source.code }}</div>
+                  </td>
+                  <td class="align-top">
+                    <div class="text-xs font-mono break-all">{{ row.sink.location }}</div>
+                    <div v-if="row.sink.code" class="text-xs text-base-content/70 mt-1 break-all">{{ row.sink.code }}</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
       </div>
     </div>
   </div>
@@ -62,6 +92,13 @@ interface AuditFinding {
   severity?: string
   fix?: string
   files?: string[]
+  source?: Record<string, any>
+  sink?: Record<string, any>
+  hits?: Array<Record<string, any>>
+  sources?: Array<Record<string, any>>
+  sinks?: Array<Record<string, any>>
+  source_sinks?: Array<Record<string, any>>
+  trace_path?: Array<Record<string, any>>
 }
 
 interface PolicyGateResult {
@@ -93,5 +130,88 @@ const severityClass = (severity?: string) => {
     default:
       return 'badge-ghost'
   }
+}
+
+interface HitCell {
+  location: string
+  code?: string
+}
+
+interface HitRow {
+  id: string
+  index: number
+  source: HitCell
+  sink: HitCell
+}
+
+const pickLocation = (node?: Record<string, any>): string => {
+  if (!node || typeof node !== 'object') return '-'
+  const file = node.file || node.path || node.filename || node.source_file || '-'
+  const line = node.line || node.line_number || node.start_line
+  return line ? `${String(file)}:${String(line)}` : String(file)
+}
+
+const pickCode = (node?: Record<string, any>): string | undefined => {
+  if (!node || typeof node !== 'object') return undefined
+  const raw = node.code || node.snippet || node.text || node.content
+  return raw ? String(raw) : undefined
+}
+
+const normalizeHitRow = (source: Record<string, any> | undefined, sink: Record<string, any> | undefined, index: number): HitRow => ({
+  id: `${pickLocation(source)}->${pickLocation(sink)}#${index}`,
+  index,
+  source: {
+    location: pickLocation(source),
+    code: pickCode(source),
+  },
+  sink: {
+    location: pickLocation(sink),
+    code: pickCode(sink),
+  },
+})
+
+const buildHitRows = (item: AuditFinding): HitRow[] => {
+  const rows: HitRow[] = []
+
+  const pairs = Array.isArray(item.source_sinks) ? item.source_sinks : []
+  for (const pair of pairs) {
+    rows.push(normalizeHitRow(pair?.source, pair?.sink, rows.length + 1))
+  }
+
+  const hits = Array.isArray(item.hits) ? item.hits : []
+  for (const hit of hits) {
+    const source = hit?.source || hit?.from
+    const sink = hit?.sink || hit?.to
+    rows.push(normalizeHitRow(source, sink, rows.length + 1))
+  }
+
+  const sources = Array.isArray(item.sources) ? item.sources : []
+  const sinks = Array.isArray(item.sinks) ? item.sinks : []
+  if (sources.length > 0 && sinks.length > 0) {
+    const maxLen = Math.max(sources.length, sinks.length)
+    for (let i = 0; i < maxLen; i += 1) {
+      rows.push(normalizeHitRow(sources[i], sinks[i], rows.length + 1))
+    }
+  }
+
+  if (item.source || item.sink) {
+    rows.push(normalizeHitRow(item.source, item.sink, rows.length + 1))
+  }
+
+  if (Array.isArray(item.trace_path) && item.trace_path.length >= 2) {
+    const traceSource = item.trace_path[0]
+    const traceSink = item.trace_path[item.trace_path.length - 1]
+    rows.push(normalizeHitRow(traceSource, traceSink, rows.length + 1))
+  }
+
+  const dedup = new Map<string, HitRow>()
+  for (const row of rows) {
+    const key = `${row.source.location}|${row.source.code || ''}|${row.sink.location}|${row.sink.code || ''}`
+    if (!dedup.has(key)) {
+      dedup.set(key, row)
+    }
+  }
+
+  return Array.from(dedup.values()).map((row, idx) => ({ ...row, index: idx + 1 }))
 }
 </script>

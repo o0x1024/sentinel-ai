@@ -180,6 +180,7 @@ tempfile = "3.8"
 # HTTP 探测
 headers = "0.4"
 mime = "0.3"
+axum = "0.8"
 tauri-plugin-fs = "2"
 rsubdomain = "1.2.6"
 

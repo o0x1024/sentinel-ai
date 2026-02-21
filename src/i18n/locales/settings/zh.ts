@@ -377,43 +377,29 @@ export default {
     proxyPort: '代理端口',
     proxyUsername: '代理用户名',
     proxyPassword: '代理密码',
-    proxyTest: {
-      title: '代理配置动态更新测试',
-      descriptionTitle: '测试功能说明：',
-      description: '此测试验证网络设置更改后，三大AI架构能够动态更新代理配置，防止请求出错。',
-      currentConfig: '当前代理配置',
-      statusLabel: '状态:',
-      schemeLabel: '协议:',
-      hostLabel: '主机:',
-      portLabel: '端口:',
-      usernameLabel: '用户名:',
-      noProxyLabel: '不代理:',
-      noConfig: '没有代理配置',
-      dynamic: {
-        title: '动态更新测试',
-        description: '测试HTTP客户端能否在代理配置变更后自动应用新配置'
-      },
-      persistence: {
-        title: '持久化测试',
-        description: '测试代理配置能否正确保存到数据库并加载'
-      },
-      client: {
-        title: '客户端更新测试',
-        description: '测试HTTP客户端的代理自动更新机制'
-      },
-      testing: '测试中...',
-      startTest: '开始测试',
-      testFailed: '测试失败: {error}',
-      results: '测试结果',
-      responseTime: '响应时间: {ms}ms',
-      clearResults: '清空结果'
+    gateway: {
+      title: 'AI HTTP 网关',
+      description: '通过 HTTP API 暴露 AI 助手（默认关闭）',
+      host: '网关主机',
+      port: '网关端口',
+      allowLan: '允许局域网访问',
+      save: '保存网关配置',
+      generateApiKey: '生成 API 密钥',
+      refreshStatus: '刷新状态',
+      status: '网关状态',
+      saved: '网关配置已保存',
+      saveFailed: '保存网关配置失败: {error}',
+      started: 'HTTP 网关已启动',
+      stopped: 'HTTP 网关已停止',
+      toggleFailed: '切换网关状态失败: {error}',
+      generated: '已生成新的 API 密钥',
+      generatedKeyNotice: '请立即保存该密钥，仅显示一次。',
+      generateFailed: '生成 API 密钥失败: {error}'
     },
     toast: {
       proxySaved: '全局代理已保存并生效',
       proxySaveFailed: '保存全局代理失败'
     },
-    proxyTestSuccess: '代理连接成功',
-    proxyTestFailed: '代理连接失败',
     timeout: '网络超时',
     timeoutDesc: '网络请求超时时间（秒）',
     retryAttempts: '重试次数',
@@ -431,8 +417,7 @@ export default {
     database: '数据库',
     system: '系统设置',
     security: '安全设置',
-    network: '网络设置',
-    proxy_test: '代理测试'
+    network: '网络设置'
   },
   agent: {
     title: 'Agent设置',
@@ -455,6 +440,8 @@ export default {
       dockerImagePlaceholder: '例如: sentinel-sandbox:latest',
       useDocker: '使用 Docker',
       useDockerDesc: '使用 Docker 容器作为终端环境（推荐），关闭后将使用主机终端',
+      useHostNetwork: '使用主机网络',
+      useHostNetworkDesc: '开启后容器将使用 host 网络模式；关闭时使用 bridge 网络（默认）',
       memoryLimit: '内存限制',
       memoryLimitDesc: '容器内存限制，例如 512m、1g、2g',
       memoryLimitPlaceholder: '例如: 2g',
@@ -473,8 +460,8 @@ export default {
       uploadDisabledWarning: '当前未允许上传图片到模型，请切回本地 OCR 或开启上传权限。'
     },
     fileUploads: {
-      title: '上传文件管理',
-      desc: '统一管理 Agent 上传的历史文件。文件按日期分目录存储，需要手动清理。',
+      title: '工作区管理',
+      desc: '统一管理 Agent 工作区（含上传文件与执行产物）的存储配额与清理策略。',
       maxFileMb: '单文件大小上限 (MB)',
       maxTotalMb: '总存储上限 (MB)',
       maxPerConversation: '单会话文件上限',

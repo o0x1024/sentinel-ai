@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Audit Multilang"
+  short_description: "Audit code security for PHP/Java/Go/Node/Python"
+  default_prompt: "Use $code-audit-multilang to audit this repository for exploitable security issues and provide prioritized fixes."

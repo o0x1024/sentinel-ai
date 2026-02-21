@@ -22,7 +22,7 @@ pub async fn get_dictionaries(
     is_active: Option<bool>,
     search_term: Option<String>,
 ) -> Result<Vec<Dictionary>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let filter = if dict_type.is_some()
@@ -57,7 +57,7 @@ pub async fn get_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<Option<Dictionary>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -77,7 +77,7 @@ pub async fn create_dictionary(
     category: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<Dictionary, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let mut dictionary = Dictionary::new(
@@ -104,7 +104,7 @@ pub async fn update_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     dictionary: Dictionary,
 ) -> Result<Dictionary, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -119,7 +119,7 @@ pub async fn delete_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     id: String,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -134,7 +134,7 @@ pub async fn get_dictionary_words(
     db_service: State<'_, Arc<DatabaseService>>,
     dictionary_id: String,
 ) -> Result<Vec<DictionaryWord>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -152,7 +152,7 @@ pub async fn get_dictionary_words_paged(
     limit: Option<u32>,
     pattern: Option<String>,
 ) -> Result<Vec<DictionaryWord>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let off = offset.unwrap_or(0);
@@ -178,7 +178,7 @@ pub async fn add_dictionary_words(
     dictionary_id: String,
     words: Vec<String>,
 ) -> Result<Vec<DictionaryWord>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -194,7 +194,7 @@ pub async fn remove_dictionary_words(
     dictionary_id: String,
     words: Vec<String>,
 ) -> Result<u64, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -211,7 +211,7 @@ pub async fn search_dictionary_words(
     pattern: String,
     limit: Option<u32>,
 ) -> Result<Vec<DictionaryWord>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -226,7 +226,7 @@ pub async fn clear_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     dictionary_id: String,
 ) -> Result<u64, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -241,7 +241,7 @@ pub async fn export_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     dictionary_id: String,
 ) -> Result<DictionaryExport, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -257,7 +257,7 @@ pub async fn import_dictionary(
     export_data: DictionaryExport,
     options: DictionaryImportOptions,
 ) -> Result<Dictionary, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -274,7 +274,7 @@ pub async fn import_dictionary_from_file(
     file_content: String,
     separator: Option<String>,
 ) -> Result<Vec<DictionaryWord>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let sep = separator.unwrap_or_else(|| "\n".to_string());
@@ -298,7 +298,7 @@ pub async fn export_dictionary_to_file(
     format: String, // "txt", "json", "csv"
     separator: Option<String>,
 ) -> Result<String, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let words = dictionary_service
@@ -337,7 +337,7 @@ pub async fn export_dictionary_to_file(
 pub async fn get_dictionary_stats(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<DictionaryStats, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -355,7 +355,7 @@ pub async fn create_dictionary_set(
     description: Option<String>,
     scenario: Option<String>,
 ) -> Result<DictionarySet, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let mut set = DictionarySet::new(name, service_type.map(ServiceType::from));
@@ -376,7 +376,7 @@ pub async fn add_dictionary_to_set(
     dictionary_id: String,
     priority: Option<i32>,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -393,7 +393,7 @@ pub async fn get_set_dictionaries(
     db_service: State<'_, Arc<DatabaseService>>,
     set_id: String,
 ) -> Result<Vec<Dictionary>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -407,7 +407,7 @@ pub async fn get_set_dictionaries(
 pub async fn initialize_builtin_dictionaries(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     dictionary_service
@@ -423,7 +423,7 @@ pub async fn initialize_builtin_dictionaries(
 pub async fn get_subdomain_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<String>, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     // 查找内置的子域名字典
@@ -448,7 +448,7 @@ pub async fn set_subdomain_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     words: Vec<String>,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     // 查找或创建子域名字典
@@ -491,7 +491,7 @@ pub async fn add_subdomain_words(
     db_service: State<'_, Arc<DatabaseService>>,
     words: Vec<String>,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     // 查找子域名字典
@@ -515,7 +515,7 @@ pub async fn remove_subdomain_words(
     db_service: State<'_, Arc<DatabaseService>>,
     words: Vec<String>,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     // 查找子域名字典
@@ -538,7 +538,7 @@ pub async fn remove_subdomain_words(
 pub async fn reset_subdomain_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     // 删除现有字典并重新初始化
@@ -568,7 +568,7 @@ pub async fn import_subdomain_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
     file_content: String,
 ) -> Result<(), String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     let words: Vec<String> = file_content
@@ -611,7 +611,7 @@ pub async fn import_subdomain_dictionary(
 pub async fn export_subdomain_dictionary(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
-    let pool = db_service.get_pool().map_err(|e| e.to_string())?;
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
 
     // 查找子域名字典

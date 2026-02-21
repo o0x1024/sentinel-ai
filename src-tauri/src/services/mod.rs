@@ -8,6 +8,7 @@ pub mod database {
 }
 pub mod vulnerability;
 pub mod mcp;
+pub mod http_gateway;
 
 // Re-export from sentinel-services
 pub use sentinel_services::message_emitter;

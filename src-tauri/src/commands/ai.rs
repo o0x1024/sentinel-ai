@@ -2206,10 +2206,9 @@ fn build_audit_allowed_tools(audit_config: &AuditExecuteConfig) -> Vec<String> {
         "git_clone_repo".to_string(),
         "code_search".to_string(),
         "git_diff_scope".to_string(),
-        "call_graph_lite".to_string(),
-        "taint_slice_lite".to_string(),
         "tenth_man_review".to_string(),
         "todos".to_string(),
+        "audit_finding_upsert".to_string(),
     ];
 
     if let Some(required) = &audit_config.required_tools {
@@ -2694,7 +2693,9 @@ JSON shape:
 Rules:
 - Every finding must include at least one concrete file path in `files`.
 - If dataflow exists, fill `source`, `sink`, and `trace_path` with file/line.
-- Use the severity enum exactly; do not invent other values."#;
+- Use the severity enum exactly; do not invent other values.
+- Tool usage strategy: for code/file lookup, use `code_search` first.
+- Use only currently exposed tools; do not assume unavailable tools."#;
             base_system_prompt = match base_system_prompt {
                 Some(existing) if !existing.trim().is_empty() => {
                     Some(format!("{}\n\n{}", existing, audit_instruction))

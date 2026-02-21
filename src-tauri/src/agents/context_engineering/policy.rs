@@ -1,5 +1,14 @@
 //! Context policies and scopes.
 
+#[derive(Debug, Clone)]
+pub struct ContextBudgetPolicy {
+    pub system_max_tokens: usize,
+    pub run_state_max_tokens: usize,
+    pub window_max_tokens: usize,
+    pub retrieval_max_tokens: usize,
+    pub tool_digest_max_tokens: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextScope {
     Agent,
@@ -19,6 +28,8 @@ pub struct ContextPolicy {
     pub run_state_max_chars: usize,
     pub task_brief_max_chars: usize,
     pub layer_max_chars: usize,
+    pub feature_context_packet_v2: bool,
+    pub budget: ContextBudgetPolicy,
 }
 
 impl Default for ContextPolicy {
@@ -35,6 +46,14 @@ impl Default for ContextPolicy {
             run_state_max_chars: 2400,
             task_brief_max_chars: 600,
             layer_max_chars: 12000,
+            feature_context_packet_v2: true,
+            budget: ContextBudgetPolicy {
+                system_max_tokens: 4000,
+                run_state_max_tokens: 1800,
+                window_max_tokens: 12000,
+                retrieval_max_tokens: 2400,
+                tool_digest_max_tokens: 1800,
+            },
         }
     }
 }
@@ -53,6 +72,14 @@ impl ContextPolicy {
             run_state_max_chars: 1600,
             task_brief_max_chars: 400,
             layer_max_chars: 8000,
+            feature_context_packet_v2: true,
+            budget: ContextBudgetPolicy {
+                system_max_tokens: 2500,
+                run_state_max_tokens: 1200,
+                window_max_tokens: 7000,
+                retrieval_max_tokens: 1200,
+                tool_digest_max_tokens: 1000,
+            },
         }
     }
 }

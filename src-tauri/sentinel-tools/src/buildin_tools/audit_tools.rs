@@ -27,6 +27,18 @@ fn default_code_search_max_results() -> usize {
     100
 }
 
+const CODE_SEARCH_TIMEOUT_SECS: u64 = 60;
+const CODE_SEARCH_MAX_FILESIZE: &str = "2M";
+const CODE_SEARCH_EXCLUDE_GLOBS: &[&str] = &[
+    "!**/.git/**",
+    "!**/node_modules/**",
+    "!**/target/**",
+    "!**/dist/**",
+    "!**/build/**",
+    "!**/.next/**",
+    "!**/coverage/**",
+];
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CodeSearchMatch {
     pub file: String,
@@ -92,6 +104,8 @@ impl Tool for CodeSearchTool {
             "--no-heading".to_string(),
             "--color".to_string(),
             "never".to_string(),
+            "--max-filesize".to_string(),
+            CODE_SEARCH_MAX_FILESIZE.to_string(),
         ];
 
         if args.case_sensitive {
@@ -105,10 +119,21 @@ impl Tool for CodeSearchTool {
             command_args.push(file_glob.clone());
         }
 
+        for exclude_glob in CODE_SEARCH_EXCLUDE_GLOBS {
+            command_args.push("--glob".to_string());
+            command_args.push((*exclude_glob).to_string());
+        }
+
         command_args.push(args.pattern.clone());
         command_args.push(path.clone());
 
-        let output = run_command_for_code_search("rg", &command_args, 20, &runtime).await?;
+        let output = run_command_for_code_search(
+            "rg",
+            &command_args,
+            CODE_SEARCH_TIMEOUT_SECS,
+            &runtime,
+        )
+        .await?;
 
         let mut matches = Vec::new();
         for line in output.stdout.lines() {
@@ -799,7 +824,7 @@ impl Tool for TaintSliceLiteTool {
     }
 }
 
-fn resolve_effective_path(input: Option<&str>, mode: &ShellExecutionMode) -> String {
+pub(crate) fn resolve_effective_path(input: Option<&str>, mode: &ShellExecutionMode) -> String {
     if *mode == ShellExecutionMode::Docker {
         let default_path = "/workspace".to_string();
         let Some(raw) = input else {
@@ -915,12 +940,12 @@ async fn get_repo_head_commit(path: &str, runtime: &AuditRuntime) -> Result<Stri
 }
 
 #[derive(Debug, Clone)]
-struct AuditRuntime {
-    mode: ShellExecutionMode,
-    docker_config: Option<DockerSandboxConfig>,
+pub(crate) struct AuditRuntime {
+    pub(crate) mode: ShellExecutionMode,
+    pub(crate) docker_config: Option<DockerSandboxConfig>,
 }
 
-async fn load_audit_runtime() -> AuditRuntime {
+pub(crate) async fn load_audit_runtime() -> AuditRuntime {
     let shell_cfg = get_shell_config().await;
     AuditRuntime {
         mode: shell_cfg.default_execution_mode.clone(),
@@ -928,18 +953,18 @@ async fn load_audit_runtime() -> AuditRuntime {
     }
 }
 
-struct CommandOutput {
-    stdout: String,
+pub(crate) struct CommandOutput {
+    pub(crate) stdout: String,
 }
 
-fn shell_escape(arg: &str) -> String {
+pub(crate) fn shell_escape(arg: &str) -> String {
     if arg.is_empty() {
         return "''".to_string();
     }
     format!("'{}'", arg.replace('\'', "'\"'\"'"))
 }
 
-fn build_shell_command(program: &str, args: &[String]) -> String {
+pub(crate) fn build_shell_command(program: &str, args: &[String]) -> String {
     let mut parts = Vec::with_capacity(args.len() + 1);
     parts.push(shell_escape(program));
     for arg in args {
@@ -948,7 +973,7 @@ fn build_shell_command(program: &str, args: &[String]) -> String {
     parts.join(" ")
 }
 
-async fn run_audit_command(
+pub(crate) async fn run_audit_command(
     program: &str,
     args: &[String],
     timeout_secs: u64,
@@ -971,33 +996,6 @@ async fn run_audit_command(
             );
             let (mut stdout, mut stderr, mut exit_code) =
                 execute_in_docker(&docker_cfg, &cmd, timeout_secs).await?;
-
-            let missing_binary = exit_code == 127
-                && (stderr.contains(&format!("{} not found in PATH=", program))
-                    || stderr.contains(&format!("{}: command not found", program)));
-            let missing_workspace_path = stderr.contains("No such file or directory")
-                && args.iter().any(|a| a.starts_with("/workspace/"));
-
-            // Self-heal stale persistent sandbox: recreate container and retry once.
-            if (missing_binary || missing_workspace_path)
-                && docker_cfg.reuse_container
-                && docker_cfg.container_name.is_some()
-            {
-                if let Some(container_name) = docker_cfg.container_name.as_deref() {
-                    tracing::warn!(
-                        "Audit command self-heal triggered (missing_binary={}, missing_workspace_path={}) for container '{}'",
-                        missing_binary,
-                        missing_workspace_path,
-                        container_name
-                    );
-                    let _ = remove_container_by_name(container_name).await;
-                    let (retry_stdout, retry_stderr, retry_exit_code) =
-                        execute_in_docker(&docker_cfg, &cmd, timeout_secs).await?;
-                    stdout = retry_stdout;
-                    stderr = retry_stderr;
-                    exit_code = retry_exit_code;
-                }
-            }
 
             // Terminal and audit use different persistent containers by design.
             // If audit container still misses required binaries/paths, try terminal container once.
@@ -1080,26 +1078,6 @@ async fn execute_in_docker(
         .map_err(|e| e.to_string())
 }
 
-async fn remove_container_by_name(container_name: &str) -> Result<(), String> {
-    let output = Command::new("docker")
-        .args(["rm", "-f", container_name])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| format!("failed to remove stale container '{}': {}", container_name, e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        if !stderr.to_lowercase().contains("no such container") {
-            return Err(format!(
-                "failed to remove stale container '{}': {}",
-                container_name, stderr
-            ));
-        }
-    }
-    Ok(())
-}
-
 async fn run_command_for_code_search(
     program: &str,
     args: &[String],
@@ -1154,7 +1132,7 @@ async fn run_command_for_git_clone(
     }
 }
 
-fn parse_rg_line(line: &str) -> Option<CodeSearchMatch> {
+pub(crate) fn parse_rg_line(line: &str) -> Option<CodeSearchMatch> {
     let mut parts = line.splitn(4, ':');
     let file = parts.next()?.to_string();
     let line_number = parts.next()?.parse::<usize>().ok()?;

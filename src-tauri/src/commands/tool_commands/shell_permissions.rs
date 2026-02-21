@@ -21,6 +21,7 @@ static SHELL_PERMISSION_SENDERS: Lazy<RwLock<HashMap<String, tokio::sync::onesho
 pub struct PendingPermissionRequest {
     pub id: String,
     pub command: String,
+    pub execution_id: Option<String>,
     pub timestamp: u64,
 }
 
@@ -33,7 +34,7 @@ struct ShellPermissionImpl {
 
 #[async_trait::async_trait]
 impl ShellPermissionHandler for ShellPermissionImpl {
-    async fn check_permission(&self, command: &str) -> bool {
+    async fn check_permission(&self, command: &str, execution_id: Option<&str>) -> bool {
         let id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -48,6 +49,7 @@ impl ShellPermissionHandler for ShellPermissionImpl {
             pending.push(PendingPermissionRequest {
                 id: id.clone(),
                 command: command.to_string(),
+                execution_id: execution_id.map(|v| v.to_string()),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -58,15 +60,17 @@ impl ShellPermissionHandler for ShellPermissionImpl {
         // Emit event to frontend
         use tauri::Emitter;
         tracing::info!(
-            "Requesting permission for command: {} (id: {})",
+            "Requesting permission for command: {} (id: {}, execution_id: {:?})",
             command,
-            id
+            id,
+            execution_id
         );
         if let Err(e) = self.app.emit(
             "shell-permission-request",
             serde_json::json!({
                 "id": id,
-                "command": command
+                "command": command,
+                "execution_id": execution_id,
             }),
         ) {
             tracing::error!("Failed to emit permission request: {}", e);
@@ -171,5 +175,4 @@ pub async fn get_pending_shell_permissions() -> Result<Vec<PendingPermissionRequ
     let pending = PENDING_PERMISSION_REQUESTS.read().await;
     Ok(pending.clone())
 }
-
 

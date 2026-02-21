@@ -49,6 +49,9 @@ pub struct TerminalConfig {
     /// Docker container CPU limit (e.g., "1.0", "4.0")
     #[serde(default = "default_docker_cpu_limit")]
     pub docker_cpu_limit: String,
+    /// Whether to use host network mode for Docker
+    #[serde(default)]
+    pub docker_use_host_network: bool,
 }
 
 fn default_docker_memory_limit() -> String {
@@ -66,6 +69,7 @@ impl Default for TerminalConfig {
             default_execution_mode: ExecutionMode::Docker,
             docker_memory_limit: default_docker_memory_limit(),
             docker_cpu_limit: default_docker_cpu_limit(),
+            docker_use_host_network: false,
         }
     }
 }
@@ -183,6 +187,11 @@ pub async fn save_agent_config(
         docker_cfg.image = config.terminal.docker_image.clone();
         docker_cfg.memory_limit = config.terminal.docker_memory_limit.clone();
         docker_cfg.cpu_limit = config.terminal.docker_cpu_limit.clone();
+        docker_cfg.network_mode = if config.terminal.docker_use_host_network {
+            "host".to_string()
+        } else {
+            "bridge".to_string()
+        };
     }
     set_shell_config(shell_cfg).await;
 
@@ -210,6 +219,11 @@ pub async fn init_agent_config(db: &sentinel_db::DatabaseService) -> Result<(), 
         docker_cfg.image = terminal_config.docker_image.clone();
         docker_cfg.memory_limit = terminal_config.docker_memory_limit.clone();
         docker_cfg.cpu_limit = terminal_config.docker_cpu_limit.clone();
+        docker_cfg.network_mode = if terminal_config.docker_use_host_network {
+            "host".to_string()
+        } else {
+            "bridge".to_string()
+        };
     }
     
     set_shell_config(shell_cfg).await;
@@ -340,6 +354,11 @@ pub async fn load_terminal_config_from_db(db: &sentinel_db::DatabaseService) -> 
         config.docker_cpu_limit = value;
     }
 
+    // Load docker_use_host_network
+    if let Ok(Some(value)) = db.get_config("agent", "docker_use_host_network").await {
+        config.docker_use_host_network = value == "1" || value.eq_ignore_ascii_case("true");
+    }
+
     config
 }
 
@@ -440,12 +459,23 @@ async fn save_terminal_config_to_db(
     .await
     .map_err(|e| e.to_string())?;
 
+    // Save docker host network toggle
+    db.set_config(
+        "agent",
+        "docker_use_host_network",
+        if config.docker_use_host_network { "true" } else { "false" },
+        Some("Whether Docker should use host network mode"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     tracing::info!(
-        "Terminal config saved: execution_mode={:?}, docker_image={}, memory={}, cpu={}",
+        "Terminal config saved: execution_mode={:?}, docker_image={}, memory={}, cpu={}, host_network={}",
         config.default_execution_mode,
         config.docker_image,
         config.docker_memory_limit,
-        config.docker_cpu_limit
+        config.docker_cpu_limit,
+        config.docker_use_host_network
     );
 
     Ok(())

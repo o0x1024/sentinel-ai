@@ -21,21 +21,41 @@
             </h4>
             
             <!-- Execution Mode Toggle -->
-            <div class="form-control mb-4">
-              <label class="label cursor-pointer justify-start gap-4">
-                <input 
-                  type="checkbox" 
-                  class="toggle toggle-primary" 
-                  :checked="terminalConfig.default_execution_mode === 'docker'"
-                  @change="toggleExecutionMode"
-                />
-                <div>
-                  <span class="label-text font-medium">{{ t('settings.agent.terminal.useDocker') }}</span>
-                  <p class="text-xs text-base-content/60 mt-1">
-                    {{ t('settings.agent.terminal.useDockerDesc') }}
-                  </p>
-                </div>
-              </label>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                  <input 
+                    type="checkbox" 
+                    class="toggle toggle-primary" 
+                    :checked="terminalConfig.default_execution_mode === 'docker'"
+                    @change="toggleExecutionMode"
+                  />
+                  <div>
+                    <span class="label-text font-medium">{{ t('settings.agent.terminal.useDocker') }}</span>
+                    <p class="text-xs text-base-content/60 mt-1">
+                      {{ t('settings.agent.terminal.useDockerDesc') }}
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-4">
+                  <input
+                    type="checkbox"
+                    class="toggle toggle-primary"
+                    :checked="terminalConfig.docker_use_host_network"
+                    :disabled="terminalConfig.default_execution_mode !== 'docker'"
+                    @change="toggleDockerHostNetwork"
+                  />
+                  <div>
+                    <span class="label-text font-medium">{{ t('settings.agent.terminal.useHostNetwork') }}</span>
+                    <p class="text-xs text-base-content/60 mt-1">
+                      {{ t('settings.agent.terminal.useHostNetworkDesc') }}
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <!-- Docker Image Input -->
@@ -502,6 +522,7 @@ interface TerminalConfig {
   default_execution_mode: ExecutionMode
   docker_memory_limit: string
   docker_cpu_limit: string
+  docker_use_host_network: boolean
 }
 
 interface ImageAttachmentsConfig {
@@ -528,7 +549,7 @@ interface UploadedFileEntry {
   conversation_id?: string
 }
 
-interface UploadedFileSettings {
+interface WorkspaceSettings {
   auto_cleanup_enabled: boolean
   retention_days: number
   max_file_mb: number
@@ -549,7 +570,8 @@ const terminalConfig = ref<TerminalConfig>({
   docker_image: 'sentinel-sandbox:latest',
   default_execution_mode: 'docker',
   docker_memory_limit: '2g',
-  docker_cpu_limit: '4.0'
+  docker_cpu_limit: '4.0',
+  docker_use_host_network: false
 })
 
 const imageAttachments = ref<ImageAttachmentsConfig>({
@@ -564,7 +586,7 @@ const uploadedFiles = ref<UploadedFileEntry[]>([])
 const uploadsLoading = ref(false)
 const selectedUploadDate = ref('')
 const conversationFilter = ref('')
-const uploadSettings = ref<UploadedFileSettings>({
+const uploadSettings = ref<WorkspaceSettings>({
   auto_cleanup_enabled: false,
   retention_days: 30,
   max_file_mb: 20,
@@ -610,7 +632,8 @@ async function loadConfig() {
         docker_image: result.terminal.docker_image || 'sentinel-sandbox:latest',
         default_execution_mode: result.terminal.default_execution_mode || 'docker',
         docker_memory_limit: result.terminal.docker_memory_limit || '2g',
-        docker_cpu_limit: result.terminal.docker_cpu_limit || '4.0'
+        docker_cpu_limit: result.terminal.docker_cpu_limit || '4.0',
+        docker_use_host_network: !!result.terminal.docker_use_host_network
       }
     }
     if (result?.image_attachments) {
@@ -648,7 +671,7 @@ async function loadUploadedFiles() {
 
 async function loadUploadSettings() {
   try {
-    uploadSettings.value = await invoke<UploadedFileSettings>('get_uploaded_file_settings')
+    uploadSettings.value = await invoke<WorkspaceSettings>('get_workspace_settings')
   } catch (e) {
     console.error('Failed to load upload settings:', e)
   }
@@ -656,7 +679,7 @@ async function loadUploadSettings() {
 
 async function saveUploadSettings() {
   try {
-    await invoke('save_uploaded_file_settings', { settings: uploadSettings.value })
+    await invoke('save_workspace_settings', { settings: uploadSettings.value })
     dialog.toast.success(t('settings.saveSuccess'))
   } catch (e) {
     console.error('Failed to save upload settings:', e)
@@ -765,6 +788,13 @@ function updateDockerMemoryLimit(event: Event) {
 function updateDockerCpuLimit(event: Event) {
   const target = event.target as HTMLInputElement
   terminalConfig.value.docker_cpu_limit = target.value
+  autoSaveConfig()
+}
+
+// Toggle docker host network mode
+function toggleDockerHostNetwork(event: Event) {
+  const target = event.target as HTMLInputElement
+  terminalConfig.value.docker_use_host_network = target.checked
   autoSaveConfig()
 }
 

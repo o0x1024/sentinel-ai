@@ -203,7 +203,7 @@ fn command_matches_pattern(command: &str, pattern: &str) -> bool {
 /// Trait for handling permission requests (implemented by app layer)
 #[async_trait::async_trait]
 pub trait ShellPermissionHandler: Send + Sync {
-    async fn check_permission(&self, command: &str) -> bool;
+    async fn check_permission(&self, command: &str, execution_id: Option<&str>) -> bool;
 }
 
 /// Global shell configuration
@@ -258,12 +258,16 @@ pub async fn set_shell_config(config: ShellConfig) {
 }
 
 /// Check command permission using current shell config
-pub async fn check_shell_permission(command: &str) -> Result<(), ShellError> {
+pub async fn check_shell_permission(command: &str, execution_id: Option<&str>) -> Result<(), ShellError> {
     let config = SHELL_CONFIG.read().await;
-    check_shell_permission_with_config(command, &config).await
+    check_shell_permission_with_config(command, &config, execution_id).await
 }
 
-async fn check_shell_permission_with_config(command: &str, config: &ShellConfig) -> Result<(), ShellError> {
+async fn check_shell_permission_with_config(
+    command: &str,
+    config: &ShellConfig,
+    execution_id: Option<&str>,
+) -> Result<(), ShellError> {
     // Check if command is in deny list (always deny these)
     if config.is_denied(command) {
         return Err(ShellError::PermissionDenied(format!(
@@ -279,16 +283,16 @@ async fn check_shell_permission_with_config(command: &str, config: &ShellConfig)
 
     // Check if needs confirmation based on policy
     if config.needs_confirmation(command) {
-        return ask_permission(command).await;
+        return ask_permission(command, execution_id).await;
     }
 
     Ok(())
 }
 
-async fn ask_permission(command: &str) -> Result<(), ShellError> {
+async fn ask_permission(command: &str, execution_id: Option<&str>) -> Result<(), ShellError> {
     let handler_guard = PERMISSION_HANDLER.read().await;
     if let Some(handler) = &*handler_guard {
-        if handler.check_permission(command).await {
+        if handler.check_permission(command, execution_id).await {
             Ok(())
         } else {
             Err(ShellError::PermissionDenied(
@@ -523,8 +527,8 @@ impl ShellTool {
     }
 
     /// Validate command permissions
-    async fn check_permission(&self, cmd: &str) -> Result<(), ShellError> {
-        check_shell_permission(cmd).await
+    async fn check_permission(&self, cmd: &str, execution_id: Option<&str>) -> Result<(), ShellError> {
+        check_shell_permission(cmd, execution_id).await
     }
 }
 
@@ -639,7 +643,7 @@ impl Tool for ShellTool {
                             tracing::warn!("Executing command on host machine: {}", args.command);
 
                             // Host execution requires permission check
-                            self.check_permission(&args.command).await?;
+                            self.check_permission(&args.command, execution_id.as_deref()).await?;
                             
                             let (stdout, stderr, exit_code) = self.execute_on_host(
                                 &args.command,
@@ -699,7 +703,7 @@ impl Tool for ShellTool {
             }
             ShellExecutionMode::Host => {
                 tracing::warn!("Executing command on host machine: {}", args.command);
-                self.check_permission(&args.command).await?;
+                self.check_permission(&args.command, execution_id.as_deref()).await?;
                 let (stdout, stderr, exit_code) = self.execute_on_host(
                     &args.command,
                     args.cwd.as_deref(),

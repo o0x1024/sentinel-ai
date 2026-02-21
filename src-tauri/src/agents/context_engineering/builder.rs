@@ -10,11 +10,12 @@ use sentinel_llm::{ChatMessage, LlmConfig};
 use sentinel_tools::output_storage::{get_host_context_dir, get_history_path, CONTAINER_CONTEXT_DIR};
 use sentinel_tools::shell::{get_shell_config, ShellExecutionMode};
 
-use crate::agents::context_engineering::checkpoint::{
-    load_or_init_run_state, save_run_state, ContextRunState,
-};
+use crate::agents::context_engineering::checkpoint::{load_or_init_run_state, save_run_state, ContextRunState};
+use crate::agents::context_engineering::memory_index::{ingest_memory_items, retrieve_memory_items, MemoryQuery};
+use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
 use crate::agents::context_engineering::tool_digest::condense_text;
+use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
 use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
 use crate::agents::types::DocumentAttachmentInfo;
 
@@ -34,6 +35,7 @@ pub struct ContextBuildInput {
 pub struct ContextBuildResult {
     pub system_prompt: String,
     pub history_messages: Vec<ChatMessage>,
+    pub context_packet: ContextPacket,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,28 +77,6 @@ async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
     }
 }
 
-fn build_context_storage_examples(os_name: &str, context_dir: &str) -> String {
-    if os_name.eq_ignore_ascii_case("windows") {
-        format!(
-            "Examples:\n\
-            • Get-ChildItem \"{0}\"  (list all stored files)\n\
-            • Select-String -Path \"{0}\\*.txt\" -Pattern \"pattern\"  (search for pattern)\n\
-            • Get-Content \"{0}\\http_response_*.txt\" -Tail 100  (view HTTP output)\n\
-            • Get-Content \"{0}\\history.txt\"  (view conversation history)",
-            context_dir
-        )
-    } else {
-        format!(
-            "Examples:\n\
-            • ls -lh \"{0}\"  (list all stored files)\n\
-            • grep -ri \"pattern\" \"{0}\"/*.txt  (search for pattern)\n\
-            • tail -n 100 \"{0}\"/http_response_*.txt  (view HTTP output)\n\
-            • cat \"{0}\"/history.txt  (view conversation history)",
-            context_dir
-        )
-    }
-}
-
 fn env_label(env: ExecutionEnvironment) -> &'static str {
     match env {
         ExecutionEnvironment::Host => "host",
@@ -107,8 +87,19 @@ fn env_label(env: ExecutionEnvironment) -> &'static str {
 pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResult> {
     let mut system_prompt = input.base_system_prompt;
     let execution_context = resolve_execution_context(&input.app_handle).await;
+    let mut policy = input.policy.clone();
+    if let Some(db) = input.app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        if let Ok(Some(raw)) = db.get_config("agent", "context_packet_v2_enabled").await {
+            let enabled = matches!(raw.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on");
+            policy.feature_context_packet_v2 = enabled;
+        }
+    }
+    let mut run_state_block = String::new();
+    let mut retrieved_memory_lines: Vec<String> = Vec::new();
+    let mut retrieved_memory_ids: Vec<String> = Vec::new();
+    let mut run_state_digests = Vec::new();
 
-    if input.policy.include_skill_instructions {
+    if policy.include_skill_instructions {
         if let Some(injected) = input.injected_skill_prompt {
             system_prompt.push_str(&injected);
         }
@@ -119,38 +110,88 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         input.execution_id
     ));
 
-    if input.policy.include_task_mainline {
+    if policy.include_task_mainline {
         system_prompt = inject_task_mainline_summary(system_prompt, &input.task);
     }
 
-    if input.policy.include_run_state {
+    if policy.include_run_state {
         let init_state = ContextRunState {
             task: input.task.clone(),
-            task_brief: condense_text(&input.task, input.policy.task_brief_max_chars),
+            task_brief: condense_text(&input.task, policy.task_brief_max_chars),
             selected_tools: input.selected_tool_ids.clone(),
+            goals: Vec::new(),
+            constraints: Vec::new(),
+            decisions: Vec::new(),
+            open_todos: Vec::new(),
+            user_preferences: Vec::new(),
+            current_plan: None,
             last_tool_digests: vec![],
+            memory_items: Vec::new(),
+            run_state_version: 0,
             last_updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
         let mut state =
             load_or_init_run_state(&input.app_handle, &input.execution_id, init_state).await?;
         state.task = input.task.clone();
-        state.task_brief = condense_text(&input.task, input.policy.task_brief_max_chars);
+        state.task_brief = condense_text(&input.task, policy.task_brief_max_chars);
         state.selected_tools = input.selected_tool_ids.clone();
+        if !state.goals.iter().any(|goal| goal == &state.task_brief) {
+            state.goals.push(state.task_brief.clone());
+        }
+        state.goals.truncate(8);
+        if let Some(todos) = load_execution_todos(&input.app_handle, &input.execution_id).await {
+            state.open_todos = todos
+                .iter()
+                .filter(|item| item.status.to_lowercase() != "done")
+                .map(|item| item.description.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .take(12)
+                .collect();
+        }
+        let memory_facts = vec![state.task_brief.clone()];
+        let memory_decisions = state.decisions.clone();
+        let memory_todos = state.open_todos.clone();
+        ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
+        run_state_digests = state.last_tool_digests.clone();
+        if policy.feature_context_packet_v2 {
+            let query = MemoryQuery {
+                execution_id: input.execution_id.clone(),
+                query: format!("{}\n{}", state.task_brief, input.task),
+                top_k: 8,
+            };
+            let retrieved = retrieve_memory_items(&mut state, &query);
+            retrieved_memory_ids = retrieved.iter().map(|item| item.id.clone()).collect();
+            let retrieved_text = retrieved
+                .iter()
+                .map(|item| {
+                    format!(
+                        "[{}|importance={}|score={:.2}] {}",
+                        item.kind, item.importance, item.score, item.text
+                    )
+                })
+                .collect::<Vec<_>>();
+            retrieved_memory_lines = retrieved_text.clone();
+        }
         state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
         save_run_state(&input.app_handle, &input.execution_id, &state).await?;
         let todos = load_execution_todos(&input.app_handle, &input.execution_id).await;
         if let Some(ref items) = todos {
             if !items.is_empty() {
-                system_prompt.push_str(&build_todos_context(items, input.policy.run_state_max_chars));
+                run_state_block.push_str(&build_todos_context(items, policy.run_state_max_chars));
             }
         }
-        system_prompt.push_str(&format!(
-            "\n\n[RunState]\n{}",
-            render_run_state(&state, &input.policy, todos.as_deref())
-        ));
+        run_state_block.push_str(&render_run_state(&state, &policy, todos.as_deref()));
+        if !retrieved_memory_lines.is_empty() {
+            run_state_block.push_str("\nRetrieved Memory:\n");
+            for item in &retrieved_memory_lines {
+                run_state_block.push_str("- ");
+                run_state_block.push_str(item);
+                run_state_block.push('\n');
+            }
+        }
     }
 
-    if input.policy.include_working_dir {
+    if policy.include_working_dir {
         if let Some(db) = input.app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
             let configured_dir = db
                 .get_config("ai", "working_directory")
@@ -208,10 +249,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         );
     }
 
-    if input.policy.include_context_storage {
-        // Use execution_id for history file isolation
-        let history_path = get_history_path(&execution_context.context_dir, Some(&input.execution_id));
-        let examples = build_context_storage_examples(&execution_context.os_name, &execution_context.context_dir);
+    if policy.include_context_storage {
+        let history_path =
+            get_history_path(&execution_context.context_dir, Some(&input.execution_id));
         system_prompt.push_str(&format!(
             "\n\n[Context Storage]\n\
             - Environment: {} ({})\n\
@@ -220,21 +260,17 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             - Tool outputs exceeding threshold are saved as files (not truncated)\n\
             - Applies to: shell commands, HTTP responses, and other tools\n\
             - Your conversation history is at '{}' (isolated per execution)\n\
-            \n\
-            {}\n\
-            \n\
-            All files are centralized in one directory for easy management and search.\n\
-            Note: Each execution has its own history file to prevent cross-session data leakage.",
+            - Use local runtime context (not prompt) for detailed file exploration commands.\n\
+            - Keep model responses focused on task-critical facts and artifact references.",
             env_label(execution_context.env),
             execution_context.os_name,
             input.execution_id,
             execution_context.context_dir,
-            history_path,
-            examples
+            history_path
         ));
     }
 
-    if input.policy.include_document_attachments {
+    if policy.include_document_attachments {
         if let Some(doc_attachments) = input.document_attachments {
             if !doc_attachments.is_empty() {
                 let doc_context = build_document_attachments_context(&doc_attachments);
@@ -247,11 +283,23 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    system_prompt = trim_layer(system_prompt, input.policy.layer_max_chars);
+    system_prompt = trim_layer(system_prompt, policy.layer_max_chars);
 
     let max_context_length =
         get_provider_max_context_length(&input.app_handle, &input.rig_provider).await?;
-    system_prompt = trim_system_prompt_to_budget(system_prompt, max_context_length);
+    let max_tokens = max_context_length as usize;
+    let budget = &policy.budget;
+
+    let mut packet = ContextPacket::new(system_prompt);
+    packet.run_state = condense_text(
+        &run_state_block,
+        run_state_block_target_chars(max_tokens, budget.run_state_max_tokens),
+    );
+    if policy.feature_context_packet_v2 {
+        packet.retrieved_memories = retrieved_memory_lines;
+    }
+    packet.set_tool_digests(&run_state_digests);
+    packet.system_instructions = trim_system_prompt_to_budget(packet.system_instructions, max_context_length);
 
     let sw_config = SlidingWindowConfig {
         max_context_tokens: max_context_length as usize,
@@ -269,7 +317,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         tracing::warn!("Sliding window compression failed: {}", e);
     }
 
-    if input.policy.scope == ContextScope::Agent {
+    if policy.scope == ContextScope::Agent {
         if let Ok(history_content) = sliding_window.export_history().await {
             // Store history based on execution environment with execution_id isolation
             match execution_context.env {
@@ -311,9 +359,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    let context_messages = sliding_window.build_context(&system_prompt);
+    let context_messages = sliding_window.build_context(&packet.system_instructions);
     let (mut system_prompt_content, mut history_messages) = split_context_messages(
-        &system_prompt,
+        &packet.system_instructions,
         context_messages,
     );
     system_prompt_content = trim_system_prompt_to_budget(system_prompt_content, max_context_length);
@@ -324,50 +372,87 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    // Enforce context limit: truncate history if total exceeds max_context_length
-    // Reserve 15% for model output and safety margin
     let safe_limit = (max_context_length as f64 * 0.85) as usize;
-    let system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
-    let available_for_history = safe_limit.saturating_sub(system_tokens);
-    
-    // Truncate history from oldest messages if needed
-    let mut history_tokens: usize = history_messages.iter()
-        .map(estimate_message_tokens)
-        .sum();
-    
-    if history_tokens > available_for_history {
-        tracing::warn!(
-            "Context overflow detected: history_tokens={}, available={}, truncating oldest messages",
-            history_tokens,
-            available_for_history
-        );
-        
-        // Remove oldest messages until we're under the limit
-        while history_tokens > available_for_history && !history_messages.is_empty() {
-            if let Some(removed) = history_messages.first() {
-                let removed_tokens = estimate_message_tokens(removed);
-                history_tokens = history_tokens.saturating_sub(removed_tokens);
-                history_messages.remove(0);
-            }
-        }
-        
-        tracing::info!(
-            "After truncation: history_messages={}, history_tokens={}",
-            history_messages.len(),
-            history_tokens
-        );
+    let mut trim_trace = Vec::new();
+
+    let mut system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
+    if system_tokens > budget.system_max_tokens {
+        let target_chars = run_state_block_target_chars(max_tokens, budget.system_max_tokens);
+        system_prompt_content = condense_text(&system_prompt_content, target_chars);
+        system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
+        trim_trace.push("trimmed_system".to_string());
     }
 
-    // Calculate context usage for frontend display
-    // Include all message components: content, tool_calls, reasoning_content
-    let system_prompt_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
-    let summary_stats = sliding_window.summary_stats();
-    let summary_tokens = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
+    let mut run_state_tokens = estimate_tokens(&packet.run_state);
+    if run_state_tokens > budget.run_state_max_tokens {
+        packet.run_state = condense_text(
+            &packet.run_state,
+            run_state_block_target_chars(max_tokens, budget.run_state_max_tokens),
+        );
+        run_state_tokens = estimate_tokens(&packet.run_state);
+        trim_trace.push("trimmed_run_state".to_string());
+    }
+
+    let mut retrieval_tokens = estimate_tokens(&packet.retrieved_memories.join("\n"));
+    while retrieval_tokens > budget.retrieval_max_tokens && !packet.retrieved_memories.is_empty() {
+        packet.retrieved_memories.pop();
+        retrieval_tokens = estimate_tokens(&packet.retrieved_memories.join("\n"));
+    }
+    if retrieval_tokens > budget.retrieval_max_tokens {
+        trim_trace.push("trimmed_retrieval".to_string());
+    }
+
+    let mut tool_digest_tokens = estimate_tokens(
+        &packet
+            .tool_digests
+            .iter()
+            .map(|item| format!("{} {}", item.tool_name, item.summary))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    while tool_digest_tokens > budget.tool_digest_max_tokens && !packet.tool_digests.is_empty() {
+        packet.tool_digests.remove(0);
+        tool_digest_tokens = estimate_tokens(
+            &packet
+                .tool_digests
+                .iter()
+                .map(|item| format!("{} {}", item.tool_name, item.summary))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    if tool_digest_tokens > budget.tool_digest_max_tokens {
+        trim_trace.push("trimmed_tool_digests".to_string());
+    }
+
     let history_tokens: usize = history_messages.iter()
         .map(estimate_message_tokens)
         .sum();
+    let available_for_history = safe_limit
+        .saturating_sub(system_tokens)
+        .saturating_sub(run_state_tokens)
+        .saturating_sub(retrieval_tokens)
+        .saturating_sub(tool_digest_tokens)
+        .min(budget.window_max_tokens);
+
+    if history_tokens > available_for_history {
+        history_messages = trim_history_preserve_tool_pairs(
+            &history_messages,
+            history_tokens,
+            available_for_history,
+            estimate_message_tokens,
+        );
+        trim_trace.push("trimmed_window".to_string());
+    }
+
+    packet.system_instructions = system_prompt_content.clone();
+    packet.window_messages = history_messages.clone();
+
+    let system_prompt_tokens = estimate_tokens(&packet.render_system_prompt()) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
+    let summary_stats = sliding_window.summary_stats();
+    let summary_tokens = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
+    let history_tokens: usize = packet.window_messages.iter().map(estimate_message_tokens).sum();
     let used_tokens = system_prompt_tokens + history_tokens;
-    let max_tokens = max_context_length as usize;
     let usage_percentage = if max_tokens > 0 {
         (used_tokens as f64 / max_tokens as f64 * 100.0).min(100.0)
     } else {
@@ -382,12 +467,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "max_tokens": max_tokens,
             "usage_percentage": usage_percentage,
             "system_prompt_tokens": system_prompt_tokens,
+            "run_state_tokens": run_state_tokens,
             "history_tokens": history_tokens,
-            "history_count": history_messages.len(),
+            "history_count": packet.window_messages.len(),
             "summary_tokens": summary_tokens,
             "summary_global_tokens": summary_stats.global_summary_tokens,
             "summary_segment_tokens": summary_stats.segment_summary_tokens,
             "summary_segment_count": summary_stats.segment_count,
+            "trim_trace": trim_trace,
         }),
     );
     tracing::info!(
@@ -404,13 +491,37 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         "agent:context_built",
         &json!({
             "execution_id": input.execution_id,
-            "history_count": history_messages.len(),
+            "history_count": packet.window_messages.len(),
         }),
     );
 
+    record_context_snapshot(
+        &input.app_handle,
+        &ContextSnapshot {
+            execution_id: input.execution_id.clone(),
+            system_tokens: estimate_tokens(&packet.system_instructions),
+            run_state_tokens,
+            window_tokens: history_tokens,
+            retrieval_tokens: estimate_tokens(&packet.retrieved_memories.join("\n")),
+            tool_digest_tokens: estimate_tokens(
+                &packet
+                    .tool_digests
+                    .iter()
+                    .map(|t| t.summary.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            total_tokens: used_tokens,
+            max_tokens,
+            trim_trace,
+            retrieval_ids: retrieved_memory_ids,
+        },
+    );
+
     Ok(ContextBuildResult {
-        system_prompt: system_prompt_content,
-        history_messages,
+        system_prompt: packet.render_system_prompt(),
+        history_messages: packet.window_messages.clone(),
+        context_packet: packet,
     })
 }
 
@@ -441,6 +552,30 @@ fn render_run_state(
     todos: Option<&[AgentTodoItem]>,
 ) -> String {
     let mut out = String::new();
+    if !state.goals.is_empty() {
+        out.push_str("Goals:\n");
+        for goal in state.goals.iter().take(6) {
+            out.push_str("- ");
+            out.push_str(goal.trim());
+            out.push('\n');
+        }
+    }
+    if !state.constraints.is_empty() {
+        out.push_str("Constraints:\n");
+        for constraint in state.constraints.iter().take(6) {
+            out.push_str("- ");
+            out.push_str(constraint.trim());
+            out.push('\n');
+        }
+    }
+    if !state.decisions.is_empty() {
+        out.push_str("Decisions:\n");
+        for decision in state.decisions.iter().take(8) {
+            out.push_str("- ");
+            out.push_str(decision.trim());
+            out.push('\n');
+        }
+    }
     if let Some(items) = todos {
         if !items.is_empty() {
             out.push_str("Todos Summary:\n");
@@ -461,6 +596,9 @@ fn render_run_state(
         }
     }
     out.push_str(&format!("Task Brief: {}\n", state.task_brief));
+    if let Some(plan) = state.current_plan.as_ref().filter(|plan| !plan.trim().is_empty()) {
+        out.push_str(&format!("Current Plan: {}\n", condense_text(plan, 280)));
+    }
     if !state.selected_tools.is_empty() {
         out.push_str(&format!(
             "Selected Tools: {}\n",
@@ -470,10 +608,17 @@ fn render_run_state(
     if !state.last_tool_digests.is_empty() {
         out.push_str("Recent Tool Digests:\n");
         for digest in state.last_tool_digests.iter().rev().take(policy.run_state_max_digests) {
-            out.push_str(&format!(
-                "- [{}] {}: {}\n",
-                digest.status, digest.tool_name, digest.summary
-            ));
+            if let Some(artifact_id) = digest.artifact_id.as_ref() {
+                out.push_str(&format!(
+                    "- [{}] {}: {} (artifact_id: {})\n",
+                    digest.status, digest.tool_name, digest.summary, artifact_id
+                ));
+            } else {
+                out.push_str(&format!(
+                    "- [{}] {}: {}\n",
+                    digest.status, digest.tool_name, digest.summary
+                ));
+            }
         }
     }
     let trimmed = condense_text(&out, policy.run_state_max_chars);
@@ -586,6 +731,15 @@ fn trim_system_prompt_to_budget(system_prompt: String, max_context_length: u32) 
     let target_chars = ((current_chars as f64) * ratio).floor() as usize;
     let target_chars = target_chars.max(200);
     condense_text(&system_prompt, target_chars)
+}
+
+fn run_state_block_target_chars(max_tokens: usize, target_tokens: usize) -> usize {
+    if max_tokens == 0 || target_tokens == 0 {
+        return 400;
+    }
+    let ratio = target_tokens as f64 / max_tokens as f64;
+    let chars = ((max_tokens as f64 * ratio) / 0.45).round() as usize;
+    chars.max(200)
 }
 
 const SYSTEM_MESSAGE_OVERHEAD_TOKENS: usize = 10;
