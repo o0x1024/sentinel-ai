@@ -176,10 +176,14 @@
             :processed-documents="processedDocuments"
             :referenced-traffic="referencedTraffic"
             :context-usage="contextUsage"
+            :available-models="assistantModelOptions"
+            :selected-model="assistantSelectedModel"
+            :model-loading="isLoadingAssistantModels"
             @send-message="handleSubmit"
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
             @toggle-tools="handleToggleTools"
+            @change-model="handleAssistantModelChange"
             @add-attachments="handleAddAttachments"
             @remove-attachment="handleRemoveAttachment"
             @add-documents="handleAddDocuments"
@@ -187,6 +191,7 @@
             @document-processed="handleDocumentProcessed"
             @remove-traffic="handleRemoveTraffic"
             @clear-traffic="handleClearTraffic"
+            @create-new-conversation="handleCreateConversation"
             @clear-conversation="handleClearConversation"
             @open-tool-config="showToolConfig = true"
           />
@@ -271,10 +276,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onActivated, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useWebExplorerEvents } from '@/composables/useWebExplorerEvents'
@@ -361,6 +367,12 @@ interface ParsedAuditPayload {
   policyGate?: PolicyGateResult
 }
 
+interface AssistantModelOption {
+  value: string
+  label: string
+  description?: string
+}
+
 
 const props = withDefaults(defineProps<{
   executionId?: string
@@ -399,6 +411,9 @@ const pendingAttachments = ref<any[]>([])
 const pendingDocuments = ref<PendingDocumentAttachment[]>([])
 const processedDocuments = ref<ProcessedDocumentResult[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
+const assistantModelOptions = ref<AssistantModelOption[]>([])
+const assistantSelectedModel = ref('')
+const isLoadingAssistantModels = ref(false)
 const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
 
@@ -485,6 +500,136 @@ const loadAuditConfigFromLocal = (): AuditConfig => {
   } catch (e) {
     console.warn('[AgentView] Failed to load audit config, using defaults:', e)
     return defaultAuditConfig()
+  }
+}
+
+const ASSISTANT_MODEL_STORAGE_KEY = 'sentinel:agent:assistant-model'
+let unlistenAiConfigUpdated: UnlistenFn | null = null
+
+const normalizeProviderName = (provider: string) => {
+  const lower = provider.toLowerCase()
+  const names: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    gemini: 'Gemini',
+    deepseek: 'DeepSeek',
+    moonshot: 'Moonshot',
+    ollama: 'Ollama',
+    openrouter: 'OpenRouter',
+    modelscope: 'ModelScope',
+    groq: 'Groq',
+    perplexity: 'Perplexity',
+    togetherai: 'TogetherAI',
+    xai: 'xAI',
+    cohere: 'Cohere',
+    'lm studio': 'LM Studio',
+    lmstudio: 'LM Studio',
+    lm_studio: 'LM Studio',
+  }
+  return names[lower] || provider
+}
+
+const extractModelId = (item: any): string => {
+  if (!item) return ''
+  if (typeof item === 'string') return item
+  if (typeof item.id === 'string') return item.id
+  if (typeof item.name === 'string') return item.name
+  return ''
+}
+
+const loadAssistantModelOptions = async () => {
+  isLoadingAssistantModels.value = true
+  try {
+    const aiConfig = await invoke<any>('get_ai_config')
+    const providers = aiConfig?.providers && typeof aiConfig.providers === 'object'
+      ? aiConfig.providers
+      : {}
+    const defaultModel = typeof aiConfig?.default_llm_model === 'string' ? aiConfig.default_llm_model : ''
+    const options: AssistantModelOption[] = []
+
+    Object.entries(providers).forEach(([providerKey, providerValue]) => {
+      const cfg = providerValue as any
+      if (cfg?.enabled === false) return
+
+      const providerRaw = String(cfg?.provider || providerKey).trim()
+      const provider = providerRaw.toLowerCase()
+      if (!provider) return
+
+      const modelsRaw = Array.isArray(cfg?.models) ? cfg.models : []
+      const modelIds = modelsRaw.map(extractModelId).filter((v: string) => !!v)
+      if (typeof cfg?.default_model === 'string' && cfg.default_model.trim()) {
+        const providerDefaultModel = cfg.default_model.trim()
+        if (!modelIds.some((id) => id === providerDefaultModel)) {
+          modelIds.push(providerDefaultModel)
+        }
+      }
+
+      Array.from(new Set<string>(modelIds)).forEach((modelId: string) => {
+        options.push({
+          value: `${provider}/${modelId}`,
+          label: modelId,
+          description: normalizeProviderName(providerRaw),
+        })
+      })
+    })
+
+    options.sort((a, b) => a.label.localeCompare(b.label))
+
+    if (defaultModel && defaultModel.includes('/')) {
+      const [defaultProvider, ...defaultModelParts] = defaultModel.split('/')
+      const defaultModelName = defaultModelParts.join('/')
+      const providerLower = defaultProvider.toLowerCase()
+      const key = `${providerLower}/${defaultModelName}`
+      if (
+        !options.some((item) => item.value.toLowerCase() === key.toLowerCase()) &&
+        providerLower &&
+        defaultModelName
+      ) {
+        options.unshift({
+          value: key,
+          label: defaultModelName,
+          description: normalizeProviderName(providerLower),
+        })
+      }
+    }
+
+    assistantModelOptions.value = options
+
+    let stored = ''
+    try {
+      stored = localStorage.getItem(ASSISTANT_MODEL_STORAGE_KEY) || ''
+    } catch {
+      stored = ''
+    }
+
+    const preferred = stored || assistantSelectedModel.value || defaultModel
+    if (preferred && options.some((item) => item.value === preferred)) {
+      assistantSelectedModel.value = preferred
+    } else if (defaultModel && options.some((item) => item.value === defaultModel)) {
+      assistantSelectedModel.value = defaultModel
+    } else if (options.length > 0) {
+      assistantSelectedModel.value = options[0].value
+    } else {
+      assistantSelectedModel.value = ''
+    }
+  } catch (e) {
+    console.warn('[AgentView] Failed to load assistant model options:', e)
+    assistantModelOptions.value = []
+  } finally {
+    isLoadingAssistantModels.value = false
+  }
+}
+
+const handleAssistantModelChange = (value: string) => {
+  assistantSelectedModel.value = value
+  try {
+    if (value) {
+      localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, value)
+    } else {
+      localStorage.removeItem(ASSISTANT_MODEL_STORAGE_KEY)
+    }
+  } catch {
+    // ignore storage errors
   }
 }
 
@@ -1839,6 +1984,10 @@ const handleSubmit = async () => {
       conversationListRef.value?.loadConversations()
     }
     
+    const modelOverrideValue = assistantSelectedModel.value && assistantSelectedModel.value.includes('/')
+      ? assistantSelectedModel.value
+      : undefined
+
     // Call agent_execute command (tool config passed directly from frontend to ensure latest config takes effect immediately)
     const result = await invoke('agent_execute', {
       task: fullTask,
@@ -1860,6 +2009,7 @@ const handleSubmit = async () => {
             }
           : undefined,
         display_content: displayContent,
+        model_override: modelOverrideValue,
       }
     })
     
@@ -1925,6 +2075,10 @@ const loadLatestConversation = async () => {
 // Initialize
 onMounted(async () => {
   console.log('[AgentView] Mounted with executionId:', props.executionId)
+  await loadAssistantModelOptions()
+  unlistenAiConfigUpdated = await listen('ai_config_updated', async () => {
+    await loadAssistantModelOptions()
+  })
   
   // Load saved tool configuration from database
   await loadToolConfig()
@@ -1948,6 +2102,13 @@ onMounted(async () => {
   nextTick(() => {
     inputAreaRef.value?.focusInput()
   })
+})
+
+onUnmounted(() => {
+  if (unlistenAiConfigUpdated) {
+    unlistenAiConfigUpdated()
+    unlistenAiConfigUpdated = null
+  }
 })
 
 // When component is activated (e.g., switching back from another page)

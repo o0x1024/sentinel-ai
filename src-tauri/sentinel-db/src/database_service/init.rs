@@ -33,6 +33,19 @@ impl DatabaseService {
             )"#
         ).execute(pool).await?;
 
+        // LLM 测试套件表
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS llm_test_suites (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL DEFAULT '1.0.0',
+                description TEXT DEFAULT '',
+                cases TEXT NOT NULL DEFAULT '[]',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
         // AI 对话和消息表
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -1382,9 +1395,43 @@ impl DatabaseService {
         // 初始化默认AI角色
         self.initialize_default_roles(pool).await?;
         
+        // 初始化预置 OWASP LLM Top 10 (2025) 测试套件
+        self.initialize_default_llm_suites(pool).await?;
+        
         info!("Default data insertion completed");
         Ok(())
     }
+
+    pub async fn initialize_default_llm_suites(&self, pool: &PgPool) -> Result<()> {
+        let suites_json = Self::default_llm_suites_json();
+        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json)
+            .unwrap_or_default();
+
+        for suite in &suites {
+            let id = suite["id"].as_str().unwrap_or_default();
+            let name = suite["name"].as_str().unwrap_or_default();
+            let version = suite["version"].as_str().unwrap_or("1.0.0");
+            let description = suite["description"].as_str().unwrap_or("");
+            let cases = serde_json::to_string(&suite["cases"]).unwrap_or_else(|_| "[]".to_string());
+
+            sqlx::query(
+                "INSERT INTO llm_test_suites (id, name, version, description, cases) \
+                 VALUES ($1, $2, $3, $4, $5) \
+                 ON CONFLICT(id) DO NOTHING",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(version)
+            .bind(description)
+            .bind(&cases)
+            .execute(pool)
+            .await?;
+        }
+
+        info!("Default LLM test suites seeded (or already present)");
+        Ok(())
+    }
+
 
     pub async fn initialize_default_roles(&self, pool: &PgPool) -> Result<()> {
         let roles = vec![

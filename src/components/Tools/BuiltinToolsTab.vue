@@ -455,7 +455,7 @@ function getToolIcon(toolName: string) {
     'web_search': 'fas fa-search',
     'http_request': 'fas fa-globe',
     'local_time': 'fas fa-clock',
-    'memory_manager': 'fas fa-memory',
+    'memory': 'fas fa-memory',
     'ocr': 'fas fa-file-image',
     'tenth_man_review': 'fas fa-user-secret',
     'todos': 'fas fa-tasks',

@@ -57,7 +57,7 @@ pub enum MemoryManagerError {
 pub struct MemoryManagerTool;
 
 impl MemoryManagerTool {
-    pub const NAME: &'static str = "memory_manager";
+    pub const NAME: &'static str = "memory";
     pub const DESCRIPTION: &'static str = "Long-term memory tool. Use 'store' to save solutions, techniques, and findings after completing tasks. Use 'retrieve' to search past experiences before starting new work. Always store results after task completion to build knowledge base.";
 }
 

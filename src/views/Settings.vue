@@ -49,7 +49,7 @@
         <!-- AI服务配置 -->
         <AISettings v-if="activeCategory === 'ai'" 
                     :ai-service-status="aiServiceStatus"
-                    :ai-config="aiConfig"
+                    v-model:ai-config="aiConfig"
                     v-model:selected-ai-provider="selectedAiProvider"
                     :settings="settings"
                     :custom-provider="customProvider"

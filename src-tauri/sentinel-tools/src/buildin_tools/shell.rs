@@ -539,9 +539,19 @@ impl Tool for ShellTool {
     type Error = ShellError;
 
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
+        let config = SHELL_CONFIG.read().await;
+        let is_docker = config.default_execution_mode == ShellExecutionMode::Docker;
+        
+        let mut desc = Self::DESCRIPTION.to_string();
+        if is_docker {
+            desc.push_str(" [ENVIRONMENT: This shell runs in a Kali Linux docker sandbox with pre-installed cybersecurity tools like nmap, sqlmap, msfconsole, masscan, dirb, etc. Do not hesitate to use these tools directly.]");
+        } else {
+            desc.push_str(" [ENVIRONMENT: This shell runs on the Host OS.]");
+        }
+
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: Self::DESCRIPTION.to_string(),
+            description: desc,
             parameters: serde_json::to_value(schemars::schema_for!(ShellArgs))
                 .unwrap_or_default(),
         }

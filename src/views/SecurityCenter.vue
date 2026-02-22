@@ -37,12 +37,25 @@
         </svg>
         {{ $t('securityCenter.tabs.codeAudit') }}
       </a>
+
+      <a
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'llmSecurity' }"
+        @click="activeTab = 'llmSecurity'"
+      >
+        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a.75.75 0 01.75.75V5h3V3.75a.75.75 0 011.5 0V5H16a2 2 0 012 2v2.25a.75.75 0 01-1.5 0V7a.5.5 0 00-.5-.5H8a.5.5 0 00-.5.5v2.25a.75.75 0 01-1.5 0V7a2 2 0 012-2h1V3.75A.75.75 0 019.75 3zM6.75 12A1.75 1.75 0 005 13.75v4.5C5 19.216 5.784 20 6.75 20h10.5A1.75 1.75 0 0019 18.25v-4.5A1.75 1.75 0 0017.25 12H6.75z"></path>
+        </svg>
+        {{ $t('securityCenter.tabs.llmSecurity') }}
+      </a>
     </div>
 
     <!-- 漏洞管理 Tab -->
     <VulnerabilitiesPanel @stats-updated="updateVulnStats" v-if="activeTab === 'vulnerabilities'"/>
     <!-- 代码审计 Tab -->
     <CodeAuditFindingsPanel v-if="activeTab === 'codeAudit'"/>
+    <!-- LLM Security Tab -->
+    <LlmSecurityPanel v-if="activeTab === 'llmSecurity'" />
   </div>
 </template>
 
@@ -52,6 +65,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
 import CodeAuditFindingsPanel from '../components/SecurityCenter/CodeAuditFindingsPanel.vue';
+import LlmSecurityPanel from '../components/SecurityCenter/LlmSecurityPanel.vue';
 
 
 defineOptions({
@@ -63,7 +77,7 @@ const route = useRoute();
 const router = useRouter();
 
 // 当前激活的 Tab
-const activeTab = ref<'scan' | 'vulnerabilities' | 'codeAudit' | 'assets'>('vulnerabilities');
+const activeTab = ref<'scan' | 'vulnerabilities' | 'codeAudit' | 'llmSecurity' | 'assets'>('vulnerabilities');
 
 // 统计数据
 const overviewStats = ref({
@@ -79,8 +93,8 @@ const overviewStats = ref({
 // 从 URL 参数读取初始 Tab
 onMounted(() => {
   const tab = route.query.tab as string;
-  if (tab && ['scan', 'vulnerabilities', 'codeAudit'].includes(tab)) {
-    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'codeAudit';
+  if (tab && ['scan', 'vulnerabilities', 'codeAudit', 'llmSecurity'].includes(tab)) {
+    activeTab.value = tab as 'scan' | 'vulnerabilities' | 'codeAudit' | 'llmSecurity';
   }
 });
 
@@ -90,7 +104,7 @@ const updateUrlTab = (tab: string) => {
 };
 
 // 监听 Tab 切换
-const switchTab = (tab: 'scan' | 'vulnerabilities' | 'codeAudit' | 'assets') => {
+const switchTab = (tab: 'scan' | 'vulnerabilities' | 'codeAudit' | 'llmSecurity' | 'assets') => {
   activeTab.value = tab;
   updateUrlTab(tab);
 };

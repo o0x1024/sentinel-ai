@@ -340,6 +340,7 @@ pub async fn set_default_llm_model(
     model: String,
     ai_manager: State<'_, Arc<AiServiceManager>>,
     db: State<'_, Arc<DatabaseService>>,
+    app: AppHandle,
 ) -> Result<(), String> {
     // Save to database
     db.set_config_internal(
@@ -362,6 +363,11 @@ pub async fn set_default_llm_model(
     }
 
     tracing::info!("Set default chat model to: {}", model);
+
+    if let Err(e) = app.emit("ai_default_llm_model_updated", &model) {
+        tracing::warn!("Failed to emit ai_default_llm_model_updated event: {}", e);
+    }
+
     Ok(())
 }
 

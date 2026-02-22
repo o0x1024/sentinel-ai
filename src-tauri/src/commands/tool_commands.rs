@@ -546,6 +546,49 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
+    // todos tool
+    tools.push(BuiltinToolInfo {
+        id: TodosTool::NAME.to_string(),
+        name: TodosTool::NAME.to_string(),
+        description: TodosTool::DESCRIPTION.to_string(),
+        category: ToolCategory::AI.to_string(),
+        version: "1.0.0".to_string(),
+        enabled: *states.get(TodosTool::NAME).unwrap_or(&true),
+        input_schema: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "execution_id": {
+                    "type": "string",
+                    "description": "Current execution/conversation ID"
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Action: add_items, update_status, get_list, reset, replan, update_item, delete_item, insert_item, cleanup",
+                    "enum": ["add_items", "update_status", "get_list", "reset", "replan", "update_item", "delete_item", "insert_item", "cleanup"]
+                },
+                "items": {
+                    "type": "array",
+                    "description": "List of todo item descriptions (for add_items / replan)",
+                    "items": { "type": "string" }
+                },
+                "item_index": {
+                    "type": "integer",
+                    "description": "Zero-based index of the item to update/delete/insert-before"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "New status: pending, in_progress, completed, cancelled",
+                    "enum": ["pending", "in_progress", "completed", "cancelled"]
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description for update_item / item description for insert_item"
+                }
+            },
+            "required": ["execution_id", "action"]
+        })),
+    });
+
     // Browser automation tools
     tools.push(BuiltinToolInfo {
         id: browser_constants::BROWSER_OPEN_NAME.to_string(),

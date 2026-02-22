@@ -135,6 +135,8 @@
             :value="inputMessage"
             @input="onInput"
             @keydown="onKeydown"
+            @click="onCaretChanged"
+            @keyup="onCaretChanged"
             @compositionstart="onCompositionStart"
             @compositionend="onCompositionEnd"
             :disabled="isLoading && !allowTakeover"
@@ -142,6 +144,31 @@
             class="w-full bg-transparent outline-none resize-none leading-relaxed text-sm placeholder:text-base-content/50 max-h-40"
             rows="1"
           />
+        </div>
+        <div v-if="slashOpen" class="slash-popover border border-base-300 bg-base-100 rounded-xl shadow-xl">
+          <div class="px-3 py-2 border-b border-base-300/60 text-xs text-base-content/60">
+            Slash Commands
+          </div>
+          <div v-if="filteredSlashCommands.length === 0" class="px-3 py-2 text-sm text-base-content/60">
+            无匹配命令
+          </div>
+          <div v-else class="py-1 max-h-64 overflow-y-auto">
+            <button
+              v-for="(cmd, idx) in filteredSlashCommands"
+              :key="cmd.id"
+              class="w-full text-left px-3 py-2 transition-colors"
+              :class="idx === slashActiveIndex ? 'bg-primary/15 text-primary' : 'hover:bg-base-200 text-base-content'"
+              @mousedown.prevent="applySlashCommand(cmd)"
+            >
+              <div class="flex items-center gap-4">
+                <span class="font-semibold text-base whitespace-nowrap min-w-28">/{{ cmd.name }}</span>
+                <div class="text-sm opacity-75 truncate flex-1">
+                  {{ cmd.description || (cmd.type === 'action' ? getActionLabel(cmd.action) : '自定义提示词命令') }}
+                </div>
+                <span class="text-xs opacity-70 whitespace-nowrap">{{ cmd.type === 'action' ? '功能' : '提示词' }}</span>
+              </div>
+            </button>
+          </div>
         </div>
 
         <!-- Toolbar: left actions and right send/stop -->
@@ -160,7 +187,7 @@
               <i class="fas fa-brain"></i>
             </button>
             <button class="icon-btn " title="@ 引用"><i class="fas fa-at"></i></button>
-            <button class="icon-btn" title="快速指令"><i class="fas fa-bolt"></i></button>
+            <button class="icon-btn" title="快速指令" @click="openSlashManager"><i class="fas fa-bolt"></i></button>
             <button class="icon-btn" title="选择"><i class="fas fa-border-all"></i></button>
             <button class="icon-btn" title="清空会话" @click="clearConversation"><i class="fas fa-eraser"></i></button>
           </div>
@@ -178,6 +205,24 @@
               <span class="opacity-70">·</span>
               <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
+            </div>
+            <div class="assistant-model-switch">
+              <SearchableSelect
+                :model-value="localSelectedModel"
+                :options="availableModelOptions"
+                :placeholder="modelLoading ? '加载模型中...' : '选择模型'"
+                search-placeholder="搜索模型..."
+                no-results-text="无匹配模型"
+                :disabled="modelLoading || availableModelOptions.length === 0"
+                size="sm"
+                direction="up"
+                variant="toolbar"
+                :auto-width="true"
+                align="right"
+                group-by="description"
+                @update:model-value="localSelectedModel = $event"
+                @change="onModelChanged"
+              />
             </div>
             <button class="icon-btn" title="语言 / 翻译"><i class="fas fa-language"></i></button>
             <button
@@ -210,7 +255,156 @@
         accept="*/*"
         @change="onFilesSelected"
       />
-      
+
+      <dialog class="modal" :class="{ 'modal-open': showSlashManager }">
+        <div class="modal-box max-w-3xl">
+          <h3 class="font-bold text-lg">Slash Commands</h3>
+          <p class="text-sm text-base-content/70 mt-1">输入框中键入 <code>/</code> 可调用命令</p>
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <select v-model="slashManagerScope" class="select select-bordered select-sm w-40">
+              <option value="global">全局命令</option>
+              <option value="conversation" :disabled="!conversationScopeEnabled">会话命令</option>
+            </select>
+            <button type="button" class="btn btn-outline btn-sm" @click="exportSlashCommands">导出 JSON</button>
+            <button type="button" class="btn btn-outline btn-sm" @click="triggerImportSlashCommands">导入 JSON</button>
+            <span v-if="slashManagerScope === 'conversation' && conversationScopeEnabled" class="text-xs text-base-content/70">
+              当前会话：{{ conversationScopeKey }}
+            </span>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+            <div class="border border-base-300 rounded-lg p-3 max-h-80 overflow-y-auto">
+              <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">命令列表</div>
+              <div v-if="managerBuiltinCommands.length > 0" class="space-y-2 mb-2">
+                <div
+                  v-for="cmd in managerBuiltinCommands"
+                  :key="cmd.id"
+                  class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <div>
+                      <div class="font-medium">/{{ cmd.name }} <span class="text-xs opacity-60">(内置)</span></div>
+                      <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+                    </div>
+                    <span class="badge badge-ghost badge-sm">只读</span>
+                  </div>
+                </div>
+              </div>
+
+              <draggable
+                v-model="managerCustomCommands"
+                item-key="id"
+                handle=".drag-handle"
+                :animation="150"
+                class="space-y-2"
+                @end="onDragSortEnd"
+              >
+                <template #item="{ element: cmd }">
+                  <div class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <button type="button" class="btn btn-ghost btn-xs drag-handle cursor-grab" title="拖拽排序">
+                          <i class="fas fa-grip-vertical"></i>
+                        </button>
+                        <div class="min-w-0">
+                          <div class="font-medium">/{{ cmd.name }} <span v-if="cmd.scope" class="text-xs opacity-60">({{ getScopeLabel(cmd.scope) }})</span></div>
+                          <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <button type="button" class="btn btn-ghost btn-xs" @click="startEditCommand(cmd)" title="编辑">编辑</button>
+                        <button type="button" class="btn btn-ghost btn-xs text-error" @click="deleteSlashCommand(cmd.id)">删除</button>
+                      </div>
+                    </div>
+                    <label class="label py-1">
+                      <span class="label-text text-xs">启用</span>
+                      <input
+                        type="checkbox"
+                        class="toggle toggle-xs"
+                        :checked="cmd.enabled"
+                        @change="onCommandEnabledChange(cmd, $event)"
+                      />
+                    </label>
+                  </div>
+                </template>
+              </draggable>
+              <div v-if="managerCustomCommands.length === 0" class="text-xs text-base-content/60 px-1 py-2">
+                当前作用域暂无自定义命令
+              </div>
+            </div>
+
+            <div class="border border-base-300 rounded-lg p-3">
+              <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">
+                {{ editingSlashId ? '编辑命令' : '新增自定义命令' }}
+              </div>
+              <div class="space-y-3">
+                <label class="form-control">
+                  <span class="label-text text-xs">命令名</span>
+                  <input v-model.trim="newSlashCommand.name" class="input input-bordered input-sm" placeholder="review" />
+                </label>
+                <label class="form-control">
+                  <span class="label-text text-xs">描述</span>
+                  <input v-model.trim="newSlashCommand.description" class="input input-bordered input-sm" placeholder="审查当前改动" />
+                </label>
+                <label class="form-control">
+                  <span class="label-text text-xs">类型</span>
+                  <select v-model="newSlashCommand.type" class="select select-bordered select-sm">
+                    <option value="prompt">提示词</option>
+                    <option value="action">功能</option>
+                  </select>
+                </label>
+                <label class="form-control">
+                  <span class="label-text text-xs">作用域</span>
+                  <select v-model="newSlashCommand.scope" class="select select-bordered select-sm">
+                    <option value="global">全局</option>
+                    <option value="conversation" :disabled="!conversationScopeEnabled">会话</option>
+                  </select>
+                </label>
+                <label v-if="newSlashCommand.type === 'prompt'" class="form-control">
+                  <span class="label-text text-xs">提示词模板</span>
+                  <textarea v-model="newSlashCommand.template" class="textarea textarea-bordered textarea-sm h-24" placeholder="请审查当前改动：{{input}}"></textarea>
+                </label>
+                <label v-else class="form-control">
+                  <span class="label-text text-xs">功能</span>
+                  <select v-model="newSlashCommand.action" class="select select-bordered select-sm">
+                    <option value="new_conversation">新建会话</option>
+                    <option value="clear_conversation">清空会话</option>
+                    <option value="toggle_rag">切换 RAG</option>
+                    <option value="toggle_tools">切换 Tools</option>
+                    <option value="open_tool_config">打开工具配置</option>
+                  </select>
+                </label>
+                <label v-if="newSlashCommand.type === 'prompt'" class="label cursor-pointer justify-start gap-2">
+                  <input type="checkbox" class="checkbox checkbox-sm" v-model="newSlashCommand.auto_send" />
+                  <span class="label-text text-xs">执行后立即发送</span>
+                </label>
+                <div v-if="slashFormError" class="text-xs text-error bg-error/10 border border-error/20 rounded px-2 py-1">
+                  {{ slashFormError }}
+                </div>
+                <button type="button" class="btn btn-primary btn-sm w-full" @click="editingSlashId ? saveEditedSlashCommand() : addCustomSlashCommand()">
+                  {{ editingSlashId ? '保存修改' : '添加命令' }}
+                </button>
+                <button v-if="editingSlashId" type="button" class="btn btn-ghost btn-sm w-full" @click="cancelEditCommand">取消编辑</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-action">
+            <button type="button" class="btn" @click="closeSlashManager">关闭</button>
+          </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+          <button @click.prevent="closeSlashManager">close</button>
+        </form>
+      </dialog>
+      <input
+        ref="importSlashInputRef"
+        type="file"
+        class="hidden"
+        accept="application/json,.json"
+        @change="onImportSlashFileChange"
+      />
+
     </div>
   </div>
 </template>
@@ -221,6 +415,8 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import type { UnlistenFn } from '@tauri-apps/api/event'
+import draggable from 'vuedraggable'
+import SearchableSelect from '@/components/SearchableSelect.vue'
 import type { PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 import { dialog } from '@/composables/useDialog'
 
@@ -255,6 +451,35 @@ interface ContextUsageInfo {
   summarySegmentCount: number
 }
 
+interface ModelOption {
+  value: string
+  label: string
+  description?: string
+}
+
+type SlashCommandType = 'prompt' | 'action'
+type SlashCommandScope = 'global' | 'conversation'
+type SlashActionType =
+  | 'new_conversation'
+  | 'clear_conversation'
+  | 'toggle_rag'
+  | 'toggle_tools'
+  | 'open_tool_config'
+
+interface SlashCommandItem {
+  id: string
+  name: string
+  description?: string
+  type: SlashCommandType
+  template?: string
+  action?: SlashActionType
+  auto_send?: boolean
+  enabled: boolean
+  scope?: SlashCommandScope
+  sort?: number
+  is_builtin?: boolean
+}
+
 const props = defineProps<{
   inputMessage: string
   conversationId?: string | null
@@ -268,6 +493,9 @@ const props = defineProps<{
   processedDocuments?: ProcessedDocumentResult[]
   referencedTraffic?: ReferencedTraffic[]
   contextUsage?: ContextUsageInfo | null
+  availableModels?: ModelOption[]
+  selectedModel?: string
+  modelLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -287,6 +515,7 @@ const emit = defineEmits<{
   (e: 'document-processed', result: ProcessedDocumentResult): void
   (e: 'remove-traffic', index: number): void
   (e: 'clear-traffic'): void
+  (e: 'change-model', value: string): void
 }>()
 
 // removed architecture utilities
@@ -303,6 +532,9 @@ const STORAGE_KEYS = {
   rag: 'sentinel:input:ragEnabled',
   tools: 'sentinel:input:toolsEnabled',
 } as const
+
+const SLASH_COMMANDS_CATEGORY = 'agent'
+const SLASH_COMMANDS_KEY = 'slash_commands'
 
 const getBool = (key: string, fallback = false) => {
   try {
@@ -325,9 +557,208 @@ const setBool = (key: string, value: boolean) => {
 // Feature states (controlled by parent via props, with persistence)
 const localRagEnabled = ref<boolean>(!!props.ragEnabled)
 const localToolsEnabled = ref<boolean>(!!props.toolsEnabled)
+const localSelectedModel = ref(props.selectedModel || '')
+const availableModelOptions = computed(() => props.availableModels || [])
 
 // init guard
 const initialized = ref(false)
+
+// Slash commands
+const slashOpen = ref(false)
+const slashActiveIndex = ref(0)
+const slashQuery = ref('')
+const slashRange = ref<{ start: number; end: number } | null>(null)
+const showSlashManager = ref(false)
+const editingSlashId = ref<string | null>(null)
+const slashFormError = ref('')
+const slashManagerScope = ref<SlashCommandScope>('global')
+const globalSlashCommands = ref<SlashCommandItem[]>([])
+const conversationSlashCommands = ref<Record<string, SlashCommandItem[]>>({})
+const importSlashInputRef = ref<HTMLInputElement | null>(null)
+const conversationScopeEnabled = computed(() => !!props.conversationId)
+const conversationScopeKey = computed(() => props.conversationId || '__no_conversation__')
+
+const builtinSlashCommands = computed<SlashCommandItem[]>(() => [
+  {
+    id: 'builtin-new',
+    name: 'new',
+    description: '新建会话',
+    type: 'action',
+    action: 'new_conversation',
+    enabled: true,
+    is_builtin: true,
+  },
+  {
+    id: 'builtin-clear',
+    name: 'clear',
+    description: '清空当前会话',
+    type: 'action',
+    action: 'clear_conversation',
+    enabled: true,
+    is_builtin: true,
+  },
+  {
+    id: 'builtin-rag',
+    name: 'rag',
+    description: '切换 RAG',
+    type: 'action',
+    action: 'toggle_rag',
+    enabled: true,
+    is_builtin: true,
+  },
+  {
+    id: 'builtin-tools',
+    name: 'tools',
+    description: '切换 Tools',
+    type: 'action',
+    action: 'toggle_tools',
+    enabled: true,
+    is_builtin: true,
+  },
+  {
+    id: 'builtin-toolcfg',
+    name: 'toolcfg',
+    description: '打开工具配置',
+    type: 'action',
+    action: 'open_tool_config',
+    enabled: true,
+    is_builtin: true,
+  },
+])
+
+const sortByOrder = (a: SlashCommandItem, b: SlashCommandItem) => (a.sort ?? 0) - (b.sort ?? 0)
+
+const currentConversationCommands = computed(() => {
+  const key = conversationScopeKey.value
+  return (conversationSlashCommands.value[key] || []).slice().sort(sortByOrder)
+})
+
+const runtimeCustomCommands = computed(() => {
+  const map = new Map<string, SlashCommandItem>()
+  globalSlashCommands.value
+    .filter((c) => c.enabled !== false)
+    .slice()
+    .sort(sortByOrder)
+    .forEach((cmd) => map.set(cmd.name.toLowerCase(), cmd))
+  currentConversationCommands.value
+    .filter((c) => c.enabled !== false)
+    .forEach((cmd) => map.set(cmd.name.toLowerCase(), cmd))
+  return [...map.values()]
+})
+
+const slashCommands = computed(() => {
+  return [...builtinSlashCommands.value, ...runtimeCustomCommands.value]
+})
+
+const filteredSlashCommands = computed(() => {
+  const q = slashQuery.value.trim().toLowerCase()
+  const list = slashCommands.value.filter((cmd) => {
+    if (!q) return true
+    const text = `${cmd.name} ${cmd.description || ''}`.toLowerCase()
+    return text.includes(q)
+  })
+  return list.slice(0, 20)
+})
+
+const scopeCommandsForManager = computed(() => {
+  if (slashManagerScope.value === 'conversation') {
+    return currentConversationCommands.value
+  }
+  return globalSlashCommands.value.slice().sort(sortByOrder)
+})
+
+const managerBuiltinCommands = computed(() => {
+  return slashManagerScope.value === 'global' ? builtinSlashCommands.value : []
+})
+
+const managerCustomCommands = computed<SlashCommandItem[]>({
+  get: () => scopeCommandsForManager.value,
+  set: (value) => {
+    if (slashManagerScope.value === 'conversation') {
+      const key = conversationScopeKey.value
+      conversationSlashCommands.value = {
+        ...conversationSlashCommands.value,
+        [key]: value,
+      }
+    } else {
+      globalSlashCommands.value = value
+    }
+  },
+})
+
+const newSlashCommand = ref<SlashCommandItem>({
+  id: '',
+  name: '',
+  description: '',
+  type: 'prompt',
+  template: '{{input}}',
+  action: 'new_conversation',
+  auto_send: false,
+  enabled: true,
+  scope: 'global',
+  sort: 0,
+})
+
+const getActionLabel = (action?: SlashActionType) => {
+  switch (action) {
+    case 'new_conversation':
+      return '新建会话'
+    case 'clear_conversation':
+      return '清空会话'
+    case 'toggle_rag':
+      return '切换 RAG'
+    case 'toggle_tools':
+      return '切换 Tools'
+    case 'open_tool_config':
+      return '打开工具配置'
+    default:
+      return ''
+  }
+}
+
+const getScopeCommandsMutable = (scope: SlashCommandScope): SlashCommandItem[] => {
+  if (scope === 'conversation') {
+    const key = conversationScopeKey.value
+    if (!conversationSlashCommands.value[key]) {
+      conversationSlashCommands.value[key] = []
+    }
+    return conversationSlashCommands.value[key]
+  }
+  return globalSlashCommands.value
+}
+
+const getScopeLabel = (scope?: SlashCommandScope) => (scope === 'conversation' ? '会话' : '全局')
+
+const normalizeSlashCommand = (
+  item: Partial<SlashCommandItem>,
+  fallbackScope: SlashCommandScope,
+  fallbackSort: number,
+): SlashCommandItem => {
+  const scope: SlashCommandScope = item.scope === 'conversation' ? 'conversation' : fallbackScope
+  return {
+    id: item.id || generateCommandId(),
+    name: String(item.name || '').replace(/^\//, ''),
+    description: typeof item.description === 'string' ? item.description : '',
+    type: item.type === 'action' ? 'action' : 'prompt',
+    template: typeof item.template === 'string' ? item.template : '',
+    action: item.action,
+    auto_send: !!item.auto_send,
+    enabled: item.enabled !== false,
+    scope,
+    sort: typeof item.sort === 'number' ? item.sort : fallbackSort,
+  }
+}
+
+const generateCommandId = (): string => {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+  } catch {
+    // ignore and fallback
+  }
+  return `slash_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
 
 // popover positioning (fixed)
 const popoverStyle = ref<Record<string, string>>({})
@@ -356,7 +787,487 @@ const autoResize = () => {
 const onInput = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
   emit('update:input-message', target.value)
+  updateSlashState(target.value, target.selectionStart || 0)
   autoResize()
+}
+
+const onCaretChanged = (e: Event) => {
+  const target = e.target as HTMLTextAreaElement
+  updateSlashState(target.value, target.selectionStart || 0)
+}
+
+const closeSlashPopover = () => {
+  slashOpen.value = false
+  slashActiveIndex.value = 0
+  slashQuery.value = ''
+  slashRange.value = null
+}
+
+const findSlashRange = (text: string, caret: number): { start: number; end: number; query: string } | null => {
+  if (caret < 0 || caret > text.length) return null
+  let idx = caret - 1
+  while (idx >= 0 && text[idx] !== '\n') {
+    if (text[idx] === '/') {
+      const prev = idx === 0 ? ' ' : text[idx - 1]
+      if (idx === 0 || /\s/.test(prev)) {
+        const segment = text.slice(idx + 1, caret)
+        if (!/\s/.test(segment)) {
+          return { start: idx, end: caret, query: segment }
+        }
+      }
+      return null
+    }
+    if (/\s/.test(text[idx])) {
+      break
+    }
+    idx -= 1
+  }
+  return null
+}
+
+const updateSlashState = (text: string, caret: number) => {
+  const range = findSlashRange(text, caret)
+  if (!range) {
+    closeSlashPopover()
+    return
+  }
+  const previousQuery = slashQuery.value
+  const wasOpen = slashOpen.value
+  slashRange.value = { start: range.start, end: range.end }
+  slashQuery.value = range.query
+  slashOpen.value = true
+  if (!wasOpen || range.query !== previousQuery) {
+    slashActiveIndex.value = 0
+  } else {
+    const maxIndex = Math.max(0, filteredSlashCommands.value.length - 1)
+    slashActiveIndex.value = Math.min(slashActiveIndex.value, maxIndex)
+  }
+}
+
+const setInputValueAtCaret = (newValue: string, caret: number) => {
+  emit('update:input-message', newValue)
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(caret, caret)
+    updateSlashState(newValue, caret)
+    autoResize()
+  })
+}
+
+const executeSlashAction = (action?: SlashActionType) => {
+  if (!action) return
+  switch (action) {
+    case 'new_conversation':
+      createNewConversation()
+      break
+    case 'clear_conversation':
+      clearConversation()
+      break
+    case 'toggle_rag':
+      toggleRAG()
+      break
+    case 'toggle_tools':
+      toggleTools()
+      break
+    case 'open_tool_config':
+      emit('open-tool-config')
+      break
+  }
+}
+
+const applySlashCommand = (cmd: SlashCommandItem) => {
+  const range = slashRange.value
+  const original = props.inputMessage || ''
+  if (!range) return
+
+  if (cmd.type === 'action') {
+    const before = original.slice(0, range.start)
+    const after = original.slice(range.end)
+    const newValue = `${before}${after}`.replace(/^\s+/, '')
+    setInputValueAtCaret(newValue, Math.max(0, range.start))
+    executeSlashAction(cmd.action)
+    closeSlashPopover()
+    return
+  }
+
+  const afterSlash = original.slice(range.end).trimStart()
+  const template = cmd.template || ''
+  const rendered = template.includes('{{input}}')
+    ? template.split('{{input}}').join(afterSlash)
+    : [template, afterSlash].filter(Boolean).join(' ')
+  const before = original.slice(0, range.start)
+  const newValue = `${before}${rendered}`
+  setInputValueAtCaret(newValue, newValue.length)
+  closeSlashPopover()
+  if (cmd.auto_send) {
+    nextTick(() => emitSend())
+  }
+}
+
+const loadSlashCommands = async () => {
+  try {
+    const items = await invoke<Array<{ key: string; value: string }>>('get_config', {
+      request: { category: SLASH_COMMANDS_CATEGORY, key: SLASH_COMMANDS_KEY },
+    })
+    if (!items || items.length === 0 || !items[0]?.value) {
+      globalSlashCommands.value = []
+      conversationSlashCommands.value = {}
+      return
+    }
+    const parsed = JSON.parse(items[0].value)
+    if (Array.isArray(parsed)) {
+      globalSlashCommands.value = parsed
+        .filter((item) => item && typeof item.name === 'string')
+        .map((item, idx) => normalizeSlashCommand(item, 'global', idx))
+      conversationSlashCommands.value = {}
+      return
+    }
+    const rawGlobal = Array.isArray(parsed?.global) ? parsed.global : []
+    const rawConversations = parsed?.conversations && typeof parsed.conversations === 'object'
+      ? parsed.conversations
+      : {}
+    globalSlashCommands.value = rawGlobal
+      .filter((item: any) => item && typeof item.name === 'string')
+      .map((item: any, idx: number) => normalizeSlashCommand(item, 'global', idx))
+    const convStore: Record<string, SlashCommandItem[]> = {}
+    Object.entries(rawConversations).forEach(([key, list]) => {
+      if (!Array.isArray(list)) return
+      convStore[key] = list
+        .filter((item: any) => item && typeof item.name === 'string')
+        .map((item: any, idx: number) => normalizeSlashCommand(item, 'conversation', idx))
+    })
+    conversationSlashCommands.value = convStore
+  } catch (e) {
+    console.warn('[InputArea] Failed to load slash commands:', e)
+    globalSlashCommands.value = []
+    conversationSlashCommands.value = {}
+  }
+}
+
+const saveSlashCommands = async () => {
+  try {
+    const value = JSON.stringify({
+      version: 2,
+      global: globalSlashCommands.value,
+      conversations: conversationSlashCommands.value,
+    })
+    await invoke('set_config', {
+      category: SLASH_COMMANDS_CATEGORY,
+      key: SLASH_COMMANDS_KEY,
+      value,
+    })
+  } catch (e) {
+    console.error('[InputArea] Failed to save slash commands:', e)
+    dialog.toast.error('保存 Slash 命令失败')
+  }
+}
+
+const addCustomSlashCommand = async () => {
+  try {
+    slashFormError.value = ''
+    const name = newSlashCommand.value.name.trim().replace(/^\//, '')
+    if (!name) {
+      slashFormError.value = '命令名不能为空'
+      dialog.toast.error('命令名不能为空')
+      return
+    }
+    const scope = newSlashCommand.value.scope === 'conversation' ? 'conversation' : 'global'
+    if (scope === 'conversation' && !conversationScopeEnabled.value) {
+      slashFormError.value = '当前没有会话，无法创建会话级命令'
+      dialog.toast.error('当前没有会话，无法创建会话级命令')
+      return
+    }
+
+    const targetList = getScopeCommandsMutable(scope)
+    const exists = [
+      ...builtinSlashCommands.value,
+      ...targetList,
+    ].some((cmd) => cmd.name.toLowerCase() === name.toLowerCase())
+    if (exists) {
+      slashFormError.value = `命令 /${name} 已存在`
+      dialog.toast.error(`命令 /${name} 已存在`)
+      return
+    }
+    if (newSlashCommand.value.type === 'prompt' && !newSlashCommand.value.template?.trim()) {
+      slashFormError.value = '提示词模板不能为空'
+      dialog.toast.error('提示词模板不能为空')
+      return
+    }
+    if (newSlashCommand.value.type === 'action' && !newSlashCommand.value.action) {
+      slashFormError.value = '请选择功能动作'
+      dialog.toast.error('请选择功能动作')
+      return
+    }
+
+    targetList.push({
+      id: generateCommandId(),
+      name,
+      description: newSlashCommand.value.description?.trim() || '',
+      type: newSlashCommand.value.type,
+      template: newSlashCommand.value.type === 'prompt' ? newSlashCommand.value.template || '' : '',
+      action: newSlashCommand.value.type === 'action' ? newSlashCommand.value.action : undefined,
+      auto_send: !!newSlashCommand.value.auto_send,
+      enabled: true,
+      scope,
+      sort: targetList.length,
+    })
+    await saveSlashCommands()
+    resetSlashForm()
+    dialog.toast.success('Slash 命令已添加')
+  } catch (err: any) {
+    const message = `添加命令失败: ${String(err)}`
+    slashFormError.value = message
+    dialog.toast.error(message)
+    console.error('[InputArea] addCustomSlashCommand failed:', err)
+  }
+}
+
+const startEditCommand = (cmd: SlashCommandItem) => {
+  if (cmd.is_builtin) return
+  editingSlashId.value = cmd.id
+  newSlashCommand.value = {
+    id: cmd.id,
+    name: cmd.name,
+    description: cmd.description || '',
+    type: cmd.type,
+    template: cmd.template || '',
+    action: cmd.action || 'new_conversation',
+    auto_send: !!cmd.auto_send,
+    enabled: cmd.enabled !== false,
+    scope: cmd.scope || slashManagerScope.value,
+    sort: cmd.sort ?? 0,
+  }
+}
+
+const saveEditedSlashCommand = async () => {
+  try {
+    slashFormError.value = ''
+    const editId = editingSlashId.value
+    if (!editId) return
+    const name = newSlashCommand.value.name.trim().replace(/^\//, '')
+    if (!name) {
+      slashFormError.value = '命令名不能为空'
+      dialog.toast.error('命令名不能为空')
+      return
+    }
+    const targetScope = newSlashCommand.value.scope === 'conversation' ? 'conversation' : 'global'
+    if (targetScope === 'conversation' && !conversationScopeEnabled.value) {
+      slashFormError.value = '当前没有会话，无法保存会话级命令'
+      dialog.toast.error('当前没有会话，无法保存会话级命令')
+      return
+    }
+    const targetListForConflict = getScopeCommandsMutable(targetScope)
+    const existingConflict = [...builtinSlashCommands.value, ...targetListForConflict].some((cmd) => {
+      if (cmd.id === editId) return false
+      return cmd.name.toLowerCase() === name.toLowerCase()
+    })
+    if (existingConflict) {
+      slashFormError.value = `命令 /${name} 已存在`
+      dialog.toast.error(`命令 /${name} 已存在`)
+      return
+    }
+    const removeFromAllScopes = () => {
+      globalSlashCommands.value = globalSlashCommands.value.filter((cmd) => cmd.id !== editId)
+      Object.keys(conversationSlashCommands.value).forEach((key) => {
+        conversationSlashCommands.value[key] = (conversationSlashCommands.value[key] || []).filter((cmd) => cmd.id !== editId)
+      })
+    }
+    removeFromAllScopes()
+    const targetList = getScopeCommandsMutable(targetScope)
+    targetList.push({
+      id: editId,
+      name,
+      description: newSlashCommand.value.description?.trim() || '',
+      type: newSlashCommand.value.type,
+      template: newSlashCommand.value.type === 'prompt' ? newSlashCommand.value.template || '' : '',
+      action: newSlashCommand.value.type === 'action' ? newSlashCommand.value.action : undefined,
+      auto_send: !!newSlashCommand.value.auto_send,
+      enabled: newSlashCommand.value.enabled !== false,
+      scope: targetScope,
+      sort: targetList.length,
+    })
+    normalizeSortForScope(targetScope)
+    await saveSlashCommands()
+    resetSlashForm()
+    dialog.toast.success('Slash 命令已更新')
+  } catch (err: any) {
+    const message = `保存命令失败: ${String(err)}`
+    slashFormError.value = message
+    dialog.toast.error(message)
+    console.error('[InputArea] saveEditedSlashCommand failed:', err)
+  }
+}
+
+const cancelEditCommand = () => {
+  resetSlashForm()
+}
+
+const resetSlashForm = () => {
+  editingSlashId.value = null
+  slashFormError.value = ''
+  newSlashCommand.value = {
+    id: '',
+    name: '',
+    description: '',
+    type: 'prompt',
+    template: '{{input}}',
+    action: 'new_conversation',
+    auto_send: false,
+    enabled: true,
+    scope: slashManagerScope.value,
+    sort: 0,
+  }
+}
+
+const deleteSlashCommand = async (id: string) => {
+  if (editingSlashId.value === id) {
+    resetSlashForm()
+  }
+  if (slashManagerScope.value === 'conversation') {
+    const key = conversationScopeKey.value
+    conversationSlashCommands.value[key] = (conversationSlashCommands.value[key] || []).filter((cmd) => cmd.id !== id)
+  } else {
+    globalSlashCommands.value = globalSlashCommands.value.filter((cmd) => cmd.id !== id)
+  }
+  normalizeSortForScope(slashManagerScope.value)
+  await saveSlashCommands()
+}
+
+const toggleCommandEnabled = async (cmd: SlashCommandItem, enabled: boolean) => {
+  if (cmd.is_builtin) return
+  const target = getScopeCommandsMutable(slashManagerScope.value).find((item) => item.id === cmd.id)
+  if (!target) return
+  target.enabled = enabled
+  await saveSlashCommands()
+}
+
+const onCommandEnabledChange = async (cmd: SlashCommandItem, event: Event) => {
+  const target = event.target as HTMLInputElement | null
+  await toggleCommandEnabled(cmd, !!target?.checked)
+}
+
+const normalizeSortForScope = (scope: SlashCommandScope) => {
+  const list = getScopeCommandsMutable(scope)
+  list.sort(sortByOrder)
+  list.forEach((item, idx) => {
+    item.sort = idx
+  })
+}
+
+const onDragSortEnd = async () => {
+  normalizeSortForScope(slashManagerScope.value)
+  await saveSlashCommands()
+}
+
+const exportSlashCommands = () => {
+  const scope = slashManagerScope.value
+  const payload = {
+    version: 1,
+    scope,
+    commands: scopeCommandsForManager.value.filter((c) => !c.is_builtin),
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `slash-commands-${scope}-${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const triggerImportSlashCommands = () => {
+  importSlashInputRef.value?.click()
+}
+
+const onImportSlashFileChange = async (e: Event) => {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text)
+    const importedRaw = Array.isArray(parsed) ? parsed : parsed?.commands
+    if (!Array.isArray(importedRaw)) {
+      dialog.toast.error('导入文件格式无效')
+      return
+    }
+    const scope = slashManagerScope.value
+    const list = getScopeCommandsMutable(scope)
+    const byName = new Map<string, SlashCommandItem>()
+    list.forEach((item) => byName.set(item.name.toLowerCase(), item))
+    const plan = importedRaw.map((item: any, idx: number) => {
+      if (!item || typeof item.name !== 'string') return
+      const normalized = normalizeSlashCommand(item, scope, list.length + idx)
+      normalized.scope = scope
+      normalized.is_builtin = false
+      return normalized
+    }).filter(Boolean) as SlashCommandItem[]
+
+    const toAdd: string[] = []
+    const toUpdate: string[] = []
+    plan.forEach((cmd) => {
+      const existing = byName.get(cmd.name.toLowerCase())
+      if (existing) toUpdate.push(`/${cmd.name}`)
+      else toAdd.push(`/${cmd.name}`)
+    })
+
+    const previewParts: string[] = [
+      `作用域: ${scope === 'conversation' ? '会话' : '全局'}`,
+      `新增: ${toAdd.length}`,
+      `覆盖: ${toUpdate.length}`,
+    ]
+    if (toAdd.length > 0) {
+      previewParts.push(`新增命令: ${toAdd.slice(0, 8).join(', ')}${toAdd.length > 8 ? ' ...' : ''}`)
+    }
+    if (toUpdate.length > 0) {
+      previewParts.push(`覆盖命令: ${toUpdate.slice(0, 8).join(', ')}${toUpdate.length > 8 ? ' ...' : ''}`)
+    }
+
+    const confirmed = await dialog.confirm({
+      title: '导入 Slash 命令',
+      message: `${previewParts.join('\n')}\n\n确认执行导入？`,
+      variant: 'warning',
+    })
+    if (!confirmed) return
+
+    plan.forEach((normalized) => {
+      const existing = byName.get(normalized.name.toLowerCase())
+      if (existing) {
+        existing.description = normalized.description
+        existing.type = normalized.type
+        existing.template = normalized.template
+        existing.action = normalized.action
+        existing.auto_send = normalized.auto_send
+        existing.enabled = normalized.enabled
+      } else {
+        list.push(normalized)
+        byName.set(normalized.name.toLowerCase(), normalized)
+      }
+    })
+    normalizeSortForScope(scope)
+    await saveSlashCommands()
+    dialog.toast.success(`Slash 命令导入完成（新增 ${toAdd.length}，覆盖 ${toUpdate.length}）`)
+  } catch (err) {
+    console.error('[InputArea] Failed to import slash commands:', err)
+    dialog.toast.error('导入 Slash 命令失败')
+  } finally {
+    input.value = ''
+  }
+}
+
+const openSlashManager = async () => {
+  await loadSlashCommands()
+  if (slashManagerScope.value === 'conversation' && !conversationScopeEnabled.value) {
+    slashManagerScope.value = 'global'
+  }
+  resetSlashForm()
+  showSlashManager.value = true
+}
+
+const closeSlashManager = () => {
+  showSlashManager.value = false
 }
 
 // Context usage computed properties
@@ -493,7 +1404,36 @@ const onKeydown = (e: KeyboardEvent) => {
   if (isComposing.value && e.key === 'Enter') {
     return
   }
-  
+
+  if (slashOpen.value) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (filteredSlashCommands.value.length > 0) {
+        slashActiveIndex.value = (slashActiveIndex.value + 1) % filteredSlashCommands.value.length
+      }
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (filteredSlashCommands.value.length > 0) {
+        slashActiveIndex.value =
+          (slashActiveIndex.value - 1 + filteredSlashCommands.value.length) % filteredSlashCommands.value.length
+      }
+      return
+    }
+    if ((e.key === 'Enter' || e.key === 'Tab') && filteredSlashCommands.value.length > 0) {
+      e.preventDefault()
+      const cmd = filteredSlashCommands.value[Math.max(0, slashActiveIndex.value)]
+      if (cmd) applySlashCommand(cmd)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeSlashPopover()
+      return
+    }
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     emitSend()
@@ -539,8 +1479,21 @@ const toggleTools = () => {
   emit('toggle-tools', localToolsEnabled.value)
 }
 
+const onModelChanged = (value: string) => {
+  if (!value) return
+  localSelectedModel.value = value
+  emit('change-model', value)
+}
+
 // 点击外部区域关闭弹层
-const handleClickOutside = (_e: MouseEvent) => {}
+const handleClickOutside = (e: MouseEvent) => {
+  const target = e.target as Node | null
+  const container = containerRef.value
+  if (!target || !container) return
+  if (!container.contains(target)) {
+    closeSlashPopover()
+  }
+}
 
 const triggerFileSelect = async () => {
   try {
@@ -869,6 +1822,7 @@ const runSecurityAnalysis = async (doc: PendingDocumentAttachment) => {
 
 onMounted(async () => {
   autoResize()
+  await loadSlashCommands()
   // 同步父组件传入的初始值
   // Initialize persistent states (persisted values take precedence)
   try {
@@ -936,6 +1890,72 @@ watch(
   }
 )
 
+watch(
+  () => props.selectedModel,
+  (val) => {
+    if (typeof val === 'string') {
+      localSelectedModel.value = val
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.inputMessage,
+  (val) => {
+    if (!val || !val.includes('/')) {
+      closeSlashPopover()
+    }
+  }
+)
+
+watch(
+  () => filteredSlashCommands.value.length,
+  (len) => {
+    if (len <= 0) {
+      slashActiveIndex.value = 0
+      return
+    }
+    if (slashActiveIndex.value >= len) {
+      slashActiveIndex.value = len - 1
+    }
+  },
+)
+
+watch(slashManagerScope, (scope) => {
+  if (scope === 'conversation' && !conversationScopeEnabled.value) {
+    slashManagerScope.value = 'global'
+    return
+  }
+  slashFormError.value = ''
+  newSlashCommand.value.scope = scope
+})
+
+watch(
+  () => [
+    newSlashCommand.value.name,
+    newSlashCommand.value.description,
+    newSlashCommand.value.type,
+    newSlashCommand.value.template,
+    newSlashCommand.value.action,
+    newSlashCommand.value.scope,
+  ],
+  () => {
+    if (slashFormError.value) {
+      slashFormError.value = ''
+    }
+  },
+)
+
+watch(
+  () => props.conversationId,
+  () => {
+    if (slashManagerScope.value === 'conversation' && !conversationScopeEnabled.value) {
+      slashManagerScope.value = 'global'
+    }
+  },
+)
+
 // 暴露方法供父组件调用
 defineExpose({
   focusInput,
@@ -953,6 +1973,15 @@ defineExpose({
 
 .chat-input { 
   position: relative; 
+}
+
+.slash-popover {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: calc(100% + 6px);
+  z-index: 70;
+  backdrop-filter: blur(8px);
 }
 
 .icon-btn { 
@@ -974,6 +2003,23 @@ defineExpose({
   background: hsl(var(--p)); 
   color: hsl(var(--pc)); 
   box-shadow:0 2px 4px rgba(0,0,0,.15); 
+}
+
+.assistant-model-switch {
+  min-width: 6rem;
+  max-width: 14rem;
+  flex-shrink: 1;
+}
+
+.assistant-model-switch :deep(.input) {
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1024px) {
+  .assistant-model-switch {
+    max-width: 10rem;
+  }
 }
 
 .send-btn { 

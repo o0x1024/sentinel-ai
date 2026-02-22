@@ -11,9 +11,12 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
-    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    TaintSliceLiteTool,
-    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
+    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
+    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool, TaintSliceLiteTool,
+    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool,
+    WebSearchTool, OcrTool, SkillsTool,
+    ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
+    CrossFileTaintTool, AuditReportTool,
 };
 
 use crate::terminal::server::TerminalServer;
@@ -514,9 +517,291 @@ impl ToolServer {
 
         self.registry.register(taint_slice_lite_def).await;
 
+        // Register read_file tool
+        let read_file_def = DynamicToolBuilder::new(ReadFileTool::NAME.to_string())
+            .description(ReadFileTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory path to read"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Start line number (1-indexed)",
+                        "default": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum lines to return",
+                        "default": 200
+                    }
+                },
+                "required": ["path"]
+            }))
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_advanced::ReadFileArgs;
+                use rig::tool::Tool;
+
+                let tool_args: ReadFileArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = ReadFileTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Read file failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build read_file tool");
+
+        self.registry.register(read_file_def).await;
+
+        // Register project_overview tool
+        let project_overview_def = DynamicToolBuilder::new(ProjectOverviewTool::NAME.to_string())
+            .description(ProjectOverviewTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Project root path",
+                        "default": "."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Max directory depth to scan",
+                        "default": 4
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_advanced::ProjectOverviewArgs;
+                use rig::tool::Tool;
+
+                let tool_args: ProjectOverviewArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = ProjectOverviewTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Project overview failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build project_overview tool");
+
+        self.registry.register(project_overview_def).await;
+
+        // Register audit_coverage tool
+        let audit_coverage_def = DynamicToolBuilder::new(AuditCoverageTool::NAME.to_string())
+            .description(AuditCoverageTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session identifier (typically conversation_id)"
+                    },
+                    "operation": {
+                        "type": "string",
+                        "description": "Operation to perform",
+                        "enum": ["mark_audited", "mark_todo", "list", "summary", "reset"]
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "File or module paths for mark operations"
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Optional note attached to each path"
+                    }
+                },
+                "required": ["session_id", "operation"]
+            }))
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_advanced::AuditCoverageArgs;
+                use rig::tool::Tool;
+
+                let tool_args: AuditCoverageArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = AuditCoverageTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Audit coverage failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build audit_coverage tool");
+
+        self.registry.register(audit_coverage_def).await;
+
+        // Register dependency_audit tool
+        let dependency_audit_def = DynamicToolBuilder::new(DependencyAuditTool::NAME.to_string())
+            .description(DependencyAuditTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Root path to scan for dependency manifests",
+                        "default": "."
+                    },
+                    "run_scanners": {
+                        "type": "boolean",
+                        "description": "Run security scanner tools if available",
+                        "default": true
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_advanced::DependencyAuditArgs;
+                use rig::tool::Tool;
+
+                let tool_args: DependencyAuditArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = DependencyAuditTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Dependency audit failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build dependency_audit tool");
+
+        self.registry.register(dependency_audit_def).await;
+
+        // Register cross_file_taint tool
+        let cross_file_taint_def = DynamicToolBuilder::new(CrossFileTaintTool::NAME.to_string())
+            .description(CrossFileTaintTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Search root path",
+                        "default": "."
+                    },
+                    "file_glob": {
+                        "type": "string",
+                        "description": "Optional file glob filter"
+                    },
+                    "source_patterns": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Source patterns (user-controlled input)"
+                    },
+                    "sink_patterns": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Sink patterns (dangerous operations)"
+                    },
+                    "max_traces": {
+                        "type": "integer",
+                        "description": "Max cross-file traces to return",
+                        "default": 40
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_advanced::CrossFileTaintArgs;
+                use rig::tool::Tool;
+
+                let tool_args: CrossFileTaintArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = CrossFileTaintTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Cross file taint failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build cross_file_taint tool");
+
+        self.registry.register(cross_file_taint_def).await;
+
+        // Register audit_report tool
+        let audit_report_def = DynamicToolBuilder::new(AuditReportTool::NAME.to_string())
+            .description(AuditReportTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Report title",
+                        "default": "Security Audit Report"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Output format",
+                        "enum": ["markdown", "sarif"],
+                        "default": "markdown"
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Target system or repository name"
+                    },
+                    "findings": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "Findings to include (same schema as audit_finding_upsert)"
+                    },
+                    "auditor": {
+                        "type": "string",
+                        "description": "Auditor name or team name"
+                    }
+                },
+                "required": ["findings"]
+            }))
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_advanced::AuditReportArgs;
+                use rig::tool::Tool;
+
+                let tool_args: AuditReportArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = AuditReportTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Audit report failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build audit_report tool");
+
+        self.registry.register(audit_report_def).await;
+
         // Register shell tool
+        let shell_desc = {
+            use rig::tool::Tool;
+            let tool = ShellTool::new();
+            tool.definition("".to_string()).await.description
+        };
         let shell_def = DynamicToolBuilder::new(ShellTool::NAME.to_string())
-            .description(ShellTool::DESCRIPTION.to_string())
+            .description(shell_desc)
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -713,8 +998,8 @@ impl ToolServer {
 
         self.registry.register(skills_def).await;
 
-        // Register memory_manager tool
-        let memory_manager_def = DynamicToolBuilder::new(MemoryManagerTool::NAME.to_string())
+        // Register memory tool
+        let memory_def = DynamicToolBuilder::new(MemoryManagerTool::NAME.to_string())
             .description(MemoryManagerTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
@@ -757,9 +1042,9 @@ impl ToolServer {
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
             .build()
-            .expect("Failed to build memory_manager tool");
+            .expect("Failed to build memory tool");
 
-        self.registry.register(memory_manager_def).await;
+        self.registry.register(memory_def).await;
 
         // Register web_search tool
         let web_search_def = DynamicToolBuilder::new(WebSearchTool::NAME.to_string())
@@ -916,8 +1201,18 @@ impl ToolServer {
         self.registry.register(tenth_man_def).await;
 
         // Register interactive_shell tool
+        let interactive_shell_desc = {
+            let config = crate::buildin_tools::shell::get_shell_config().await;
+            let mut desc = TerminalServer::DESCRIPTION.to_string();
+            if config.default_execution_mode == crate::buildin_tools::shell::ShellExecutionMode::Docker {
+                desc.push_str(" [ENVIRONMENT: This interactive shell runs in a Kali Linux docker sandbox with pre-installed cybersecurity tools like nmap, sqlmap, msfconsole, masscan, dirb, etc. Do not hesitate to use these tools directly.]");
+            } else {
+                desc.push_str(" [ENVIRONMENT: This interactive shell runs on the Host OS.]");
+            }
+            desc
+        };
         let interactive_shell_def = DynamicToolBuilder::new(TerminalServer::NAME.to_string())
-            .description(TerminalServer::DESCRIPTION.to_string())
+            .description(interactive_shell_desc)
             .input_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1067,7 +1362,7 @@ impl ToolServer {
                         shell: "bash".to_string(),
                         initial_command: None,
                         reuse_container: true,
-                        container_name: Some("sentinel-terminal-main".to_string()),
+                        container_name: Some("sentinel-sandbox-main".to_string()),
                     };
                     
                     let (id, rx) = TERMINAL_MANAGER.create_session(config).await?;

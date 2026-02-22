@@ -82,4 +82,33 @@ impl ContextPolicy {
             },
         }
     }
+
+    /// Audit mode: larger budgets to accommodate long multi-phase code analysis.
+    /// - More tool digests (many audit tools active simultaneously)
+    /// - Larger run state (tracks phase progress, coverage, found patterns)
+    /// - Larger context window (long code snippets and file content)
+    /// - Larger system budget (three-phase audit instruction is verbose)
+    pub fn audit() -> Self {
+        Self {
+            scope: ContextScope::Agent,
+            include_working_dir: true,
+            include_context_storage: true,
+            include_task_mainline: true,
+            include_run_state: true,
+            include_document_attachments: true,
+            include_skill_instructions: true,
+            run_state_max_digests: 12,
+            run_state_max_chars: 4800,
+            task_brief_max_chars: 800,
+            layer_max_chars: 20000,
+            feature_context_packet_v2: true,
+            budget: ContextBudgetPolicy {
+                system_max_tokens: 7000,
+                run_state_max_tokens: 3600,
+                window_max_tokens: 20000,
+                retrieval_max_tokens: 3600,
+                tool_digest_max_tokens: 3200,
+            },
+        }
+    }
 }

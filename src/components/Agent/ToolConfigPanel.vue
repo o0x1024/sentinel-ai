@@ -648,11 +648,25 @@ const hasPluginTools = computed(() => {
 const mandatoryAuditTools = [
   'todos',
   'skills',
+  'read_file',
+  'project_overview',
+  'audit_coverage',
+  'git_clone_repo',
   'code_search',
   'git_diff_scope',
-  'git_clone_repo',
+  'call_graph_lite',
+  'taint_slice_lite',
+  'cross_file_taint',
+  'dependency_audit',
+  'audit_report',
+  'dependency_audit',
   'tenth_man_review',
+  'audit_report',
   'audit_finding_upsert',
+  'build_cpg',
+  'query_cpg',
+  'cpg_taint_analysis',
+  'cpg_security_scan',
 ]
 
 const selectedAuditExtraTools = computed(() => {

@@ -63,7 +63,8 @@ static PARENT_SEMAPHORES: Lazy<Arc<RwLock<HashMap<String, Arc<Semaphore>>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 const MAX_SUBAGENTS_PER_PARENT: usize = 3;
-const MAX_RECURSION_DEPTH: usize = 3;
+const MAX_EVENTS_PER_CHANNEL: usize = 500;
+const SUBAGENT_TOOL_IDS: [&str; 3] = ["subagent_execute", "subagent_await", "subagent_channel"];
 
 // ============================================================================
 // Types
@@ -131,12 +132,47 @@ pub async fn set_parent_context(execution_id: String, context: SubagentParentCon
 }
 
 pub async fn clear_parent_context(execution_id: &str) {
-    let mut contexts = PARENT_CONTEXTS.write().await;
-    contexts.remove(execution_id);
+    {
+        let mut contexts = PARENT_CONTEXTS.write().await;
+        contexts.remove(execution_id);
+    }
 
-    // Keep running/pending tasks alive to avoid premature abort.
-    // They carry an immutable parent context snapshot in pending_data.
+    // Abort all active tasks spawned by this parent
+    abort_parent_tasks(execution_id).await;
+
     cleanup_parent_resources_if_idle(execution_id).await;
+}
+
+/// Abort all pending/running tasks belonging to a parent and mark them as failed.
+async fn abort_parent_tasks(parent_id: &str) {
+    let task_ids: Vec<String> = {
+        let tasks = TASK_REGISTRY.read().await;
+        tasks
+            .values()
+            .filter(|e| {
+                e.info.parent_execution_id == parent_id
+                    && matches!(e.info.status, SubagentStatus::Pending | SubagentStatus::Running)
+            })
+            .map(|e| {
+                if let Some(handle) = &e.abort_handle {
+                    handle.abort();
+                }
+                e.info.task_id.clone()
+            })
+            .collect()
+    };
+
+    for task_id in &task_ids {
+        mark_task_terminal(
+            task_id,
+            TaskCompletion {
+                success: false,
+                output: None,
+                error: Some("Parent agent terminated".to_string()),
+            },
+        )
+        .await;
+    }
 }
 
 // ============================================================================
@@ -144,25 +180,35 @@ pub async fn clear_parent_context(execution_id: &str) {
 // ============================================================================
 
 fn default_subagent_tool_config() -> ToolConfig {
-    ToolConfig {
+    normalize_tool_config(ToolConfig {
         enabled: true,
         selection_strategy: ToolSelectionStrategy::All,
         max_tools: 50,
         fixed_tools: vec![],
         disabled_tools: vec![],
         allowed_tools: vec![],
-    }
+    })
 }
 
-fn normalize_tool_config(mut config: ToolConfig, allow_subagents: bool) -> ToolConfig {
-    if !allow_subagents {
-        // Disable subagent tools if recursion limit reached
-        for tool in ["subagent_execute", "subagent_await", "subagent_channel"] {
-            if !config.disabled_tools.contains(&tool.to_string()) {
-                config.disabled_tools.push(tool.to_string());
-            }
+fn normalize_tool_config(mut config: ToolConfig) -> ToolConfig {
+    // Subagents must never be able to spawn or orchestrate other subagents.
+    config
+        .fixed_tools
+        .retain(|tool| !SUBAGENT_TOOL_IDS.contains(&tool.as_str()));
+    config
+        .allowed_tools
+        .retain(|tool| !SUBAGENT_TOOL_IDS.contains(&tool.as_str()));
+
+    if let ToolSelectionStrategy::Manual(ref mut tools) = config.selection_strategy {
+        tools.retain(|tool| !SUBAGENT_TOOL_IDS.contains(&tool.as_str()));
+    }
+
+    for tool in SUBAGENT_TOOL_IDS {
+        if !config.disabled_tools.iter().any(|t| t == tool) {
+            config.disabled_tools.push(tool.to_string());
         }
     }
+
     config
 }
 
@@ -213,12 +259,18 @@ async fn get_or_create_parent_semaphore(parent_id: &str) -> Arc<Semaphore> {
 }
 
 async fn cleanup_parent_resources_if_idle(parent_id: &str) {
+    // Atomically check for active tasks and remove terminal ones under write lock
     let has_active_tasks = {
-        let tasks = TASK_REGISTRY.read().await;
-        tasks.values().any(|entry| {
+        let mut tasks = TASK_REGISTRY.write().await;
+        let active = tasks.values().any(|entry| {
             entry.info.parent_execution_id == parent_id
                 && matches!(entry.info.status, SubagentStatus::Pending | SubagentStatus::Running)
-        })
+        });
+
+        if !active {
+            tasks.retain(|_, entry| entry.info.parent_execution_id != parent_id);
+        }
+        active
     };
 
     if has_active_tasks {
@@ -341,68 +393,71 @@ async fn mark_task_terminal(task_id: &str, completion: TaskCompletion) {
     }
 }
 
-async fn wait_for_dependencies(task_id: &str) -> Result<(), String> {
-    loop {
-        let (parent_id, deps) = {
-            let tasks = TASK_REGISTRY.read().await;
+async fn wait_for_dependencies(task_id: &str, timeout: tokio::time::Duration) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    let (parent_id, deps) = {
+        let tasks = TASK_REGISTRY.read().await;
+        let entry = tasks
+            .get(task_id)
+            .ok_or_else(|| format!("Task {} not found", task_id))?;
+        (
+            entry.info.parent_execution_id.clone(),
+            entry.info.depends_on_task_ids.clone(),
+        )
+    };
+
+    if deps.is_empty() {
+        return Ok(());
+    }
+
+    // Collect watch receivers and validate ownership upfront
+    let dep_receivers: Vec<(String, watch::Receiver<Option<TaskCompletion>>)> = {
+        let tasks = TASK_REGISTRY.read().await;
+        let mut receivers = Vec::with_capacity(deps.len());
+        for dep_id in &deps {
             let entry = tasks
-                .get(task_id)
-                .ok_or_else(|| format!("Task {} not found", task_id))?;
-            (
-                entry.info.parent_execution_id.clone(),
-                entry.info.depends_on_task_ids.clone(),
-            )
-        };
-
-        if deps.is_empty() {
-            return Ok(());
-        }
-
-        let mut all_done = true;
-        for dep_id in deps {
-            let dep_snapshot = {
-                let tasks = TASK_REGISTRY.read().await;
-                tasks.get(&dep_id).map(|e| {
-                    (
-                        e.info.parent_execution_id.clone(),
-                        e.info.status.clone(),
-                        e.info.error.clone(),
-                    )
-                })
-            };
-
-            let Some((dep_parent, dep_status, dep_error)) = dep_snapshot else {
-                return Err(format!("Dependency task not found: {}", dep_id));
-            };
-
-            if dep_parent != parent_id {
+                .get(dep_id)
+                .ok_or_else(|| format!("Dependency task not found: {}", dep_id))?;
+            if entry.info.parent_execution_id != parent_id {
                 return Err(format!(
                     "Dependency {} belongs to different parent execution",
                     dep_id
                 ));
             }
+            receivers.push((dep_id.clone(), entry.completion_rx.clone()));
+        }
+        receivers
+    };
 
-            match dep_status {
-                SubagentStatus::Completed => {}
-                SubagentStatus::Failed => {
+    // Wait for each dependency via watch notification
+    for (dep_id, mut rx) in dep_receivers {
+        loop {
+            if let Some(completion) = rx.borrow().as_ref() {
+                if !completion.success {
                     return Err(format!(
                         "Dependency {} failed: {}",
                         dep_id,
-                        dep_error.unwrap_or_else(|| "unknown error".to_string())
-                    ))
+                        completion.error.as_deref().unwrap_or("unknown error")
+                    ));
                 }
-                SubagentStatus::Pending | SubagentStatus::Running => {
-                    all_done = false;
-                }
+                break;
+            }
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(format!("Timeout waiting for dependency {}", dep_id));
+            }
+
+            match tokio::time::timeout(remaining, rx.changed()).await {
+                Ok(Ok(())) => continue,
+                Ok(Err(_)) => return Err(format!("Dependency {} channel closed", dep_id)),
+                Err(_) => return Err(format!("Timeout waiting for dependency {}", dep_id)),
             }
         }
-
-        if all_done {
-            return Ok(());
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
     }
+
+    Ok(())
 }
 
 async fn resolve_context_dir() -> (String, bool) {
@@ -485,7 +540,24 @@ async fn run_task(task_id: String) {
         }
     };
 
-    if let Err(err) = wait_for_dependencies(&task_id).await {
+    let (parent_execution_id, dep_timeout) = {
+        let tasks = TASK_REGISTRY.read().await;
+        match tasks.get(&task_id) {
+            Some(entry) => {
+                let timeout_secs = entry
+                    .pending_data
+                    .timeout_secs
+                    .unwrap_or(entry.pending_data.parent.timeout_secs);
+                (
+                    entry.info.parent_execution_id.clone(),
+                    tokio::time::Duration::from_secs(timeout_secs),
+                )
+            }
+            None => return,
+        }
+    };
+
+    if let Err(err) = wait_for_dependencies(&task_id, dep_timeout).await {
         let _ = app_handle.emit(
             "subagent:error",
             &json!({"task_id": task_id, "execution_id": task_id, "error": err}),
@@ -501,14 +573,6 @@ async fn run_task(task_id: String) {
         .await;
         return;
     }
-
-    let parent_execution_id = {
-        let tasks = TASK_REGISTRY.read().await;
-        match tasks.get(&task_id) {
-            Some(entry) => entry.info.parent_execution_id.clone(),
-            None => return,
-        }
-    };
 
     let global_permit = match GLOBAL_SEMAPHORE.clone().acquire_owned().await {
         Ok(p) => p,
@@ -573,18 +637,16 @@ async fn run_task(task_id: String) {
 
     create_subagent_message(&app_handle, &task_id, "user", &task_with_context).await;
 
-    let allow_subagents = pending_data.recursion_depth < MAX_RECURSION_DEPTH;
-
     let tool_config = if let Some(raw) = pending_data.tool_config {
         match serde_json::from_value::<ToolConfig>(raw) {
-            Ok(parsed) => normalize_tool_config(parsed, allow_subagents),
+            Ok(parsed) => normalize_tool_config(parsed),
             Err(e) => {
                 tracing::error!("Invalid tool_config: {}", e);
                 default_subagent_tool_config()
             }
         }
     } else if pending_data.inherit_parent_tools {
-        normalize_tool_config(pending_data.parent.tool_config.clone(), allow_subagents)
+        normalize_tool_config(pending_data.parent.tool_config.clone())
     } else {
         default_subagent_tool_config()
     };
@@ -945,30 +1007,20 @@ async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOu
     }
 
     let timeout = tokio::time::Duration::from_secs(args.timeout_secs);
-    let deadline = tokio::time::Instant::now() + timeout;
 
-    loop {
-        let mut completed = Vec::new();
-        let mut pending_task_ids = Vec::new();
+    // First pass: check already-completed and collect watch receivers for pending
+    let mut completed = Vec::new();
+    let mut pending_info: Vec<(String, Option<String>, watch::Receiver<Option<TaskCompletion>>)> = Vec::new();
 
+    {
+        let tasks = TASK_REGISTRY.read().await;
         for task_id in &args.task_ids {
-            let snapshot = {
-                let tasks = TASK_REGISTRY.read().await;
-                tasks.get(task_id).map(|entry| {
-                    (
-                        entry.info.parent_execution_id.clone(),
-                        entry.info.role.clone(),
-                        entry.completion_rx.borrow().clone(),
-                    )
-                })
-            };
-
-            match snapshot {
-                Some((task_parent, role, maybe_completion)) => {
-                    if task_parent != args.parent_execution_id {
+            match tasks.get(task_id) {
+                Some(entry) => {
+                    if entry.info.parent_execution_id != args.parent_execution_id {
                         completed.push(SubagentTaskResult {
                             task_id: task_id.clone(),
-                            role,
+                            role: entry.info.role.clone(),
                             success: false,
                             output: None,
                             error: Some(format!(
@@ -979,16 +1031,20 @@ async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOu
                         continue;
                     }
 
-                    if let Some(completion) = maybe_completion {
+                    if let Some(completion) = entry.completion_rx.borrow().clone() {
                         completed.push(SubagentTaskResult {
                             task_id: task_id.clone(),
-                            role,
+                            role: entry.info.role.clone(),
                             success: completion.success,
                             output: completion.output,
                             error: completion.error,
                         });
                     } else {
-                        pending_task_ids.push(task_id.clone());
+                        pending_info.push((
+                            task_id.clone(),
+                            entry.info.role.clone(),
+                            entry.completion_rx.clone(),
+                        ));
                     }
                 }
                 None => completed.push(SubagentTaskResult {
@@ -1000,19 +1056,84 @@ async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOu
                 }),
             }
         }
+    }
 
-        if !completed.is_empty() {
-            return Ok(SubagentWaitAnyOutput {
+    if !completed.is_empty() {
+        let pending_task_ids = pending_info.iter().map(|(id, _, _)| id.clone()).collect();
+        return Ok(SubagentWaitAnyOutput {
+            completed,
+            pending_task_ids,
+        });
+    }
+
+    if pending_info.is_empty() {
+        return Err(SubagentToolError::InvalidArguments(
+            "No tasks to wait for".to_string(),
+        ));
+    }
+
+    // Use mpsc to get notified when any watcher sees a completion
+    let (notify_tx, mut notify_rx) =
+        tokio::sync::mpsc::channel::<usize>(pending_info.len().max(1));
+
+    let watcher_handles: Vec<_> = pending_info
+        .iter()
+        .enumerate()
+        .map(|(idx, (_, _, rx))| {
+            let tx = notify_tx.clone();
+            let mut rx = rx.clone();
+            tokio::spawn(async move {
+                loop {
+                    if rx.borrow().is_some() {
+                        let _ = tx.send(idx).await;
+                        return;
+                    }
+                    if rx.changed().await.is_err() {
+                        let _ = tx.send(idx).await;
+                        return;
+                    }
+                }
+            })
+        })
+        .collect();
+    drop(notify_tx);
+
+    let wait_result = tokio::time::timeout(timeout, notify_rx.recv()).await;
+
+    for h in &watcher_handles {
+        h.abort();
+    }
+
+    match wait_result {
+        Ok(Some(completed_idx)) => {
+            let (task_id, role, rx) = &pending_info[completed_idx];
+            let completion = rx.borrow().clone().unwrap_or(TaskCompletion {
+                success: false,
+                output: None,
+                error: Some("Task channel closed".to_string()),
+            });
+            completed.push(SubagentTaskResult {
+                task_id: task_id.clone(),
+                role: role.clone(),
+                success: completion.success,
+                output: completion.output,
+                error: completion.error,
+            });
+
+            let pending_task_ids = pending_info
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| *idx != completed_idx)
+                .map(|(_, (id, _, _))| id.clone())
+                .collect();
+
+            Ok(SubagentWaitAnyOutput {
                 completed,
                 pending_task_ids,
-            });
+            })
         }
-
-        if tokio::time::Instant::now() >= deadline {
-            return Err(SubagentToolError::Timeout);
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        Ok(None) => Err(SubagentToolError::Timeout),
+        Err(_) => Err(SubagentToolError::Timeout),
     }
 }
 
@@ -1150,8 +1271,10 @@ async fn execute_workflow_run(args: SubagentWorkflowRunArgs) -> Result<SubagentW
 // Executor: run (legacy, blocking)
 // ============================================================================
 
+const WAIT_TIMEOUT_BUFFER_SECS: u64 = 30;
+
 async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, SubagentToolError> {
-    let wait_timeout = args.timeout_secs;
+    let execution_timeout = args.timeout_secs;
     let parent_execution_id = args.parent_execution_id.clone();
 
     let spawn_args = SubagentSpawnArgs {
@@ -1163,17 +1286,22 @@ async fn execute_run(args: SubagentRunArgs) -> Result<SubagentRunOutput, Subagen
         tool_config: args.tool_config,
         system_prompt: args.system_prompt,
         max_iterations: args.max_iterations,
-        timeout_secs: wait_timeout,
+        timeout_secs: execution_timeout,
         depends_on_task_ids: args.depends_on_task_ids,
     };
 
     let spawn_output = execute_spawn(spawn_args).await?;
     let task_id = spawn_output.task_id;
 
+    // Wait timeout = execution timeout + buffer for cleanup/transition
+    let base_timeout = execution_timeout
+        .unwrap_or_else(sentinel_tools::buildin_tools::subagent_tool::get_default_subagent_timeout);
+    let wait_timeout_secs = base_timeout.saturating_add(WAIT_TIMEOUT_BUFFER_SECS);
+
     let wait_args = SubagentWaitArgs {
         parent_execution_id: args.parent_execution_id,
         task_ids: vec![task_id.clone()],
-        timeout_secs: wait_timeout.unwrap_or_else(sentinel_tools::buildin_tools::subagent_tool::get_default_subagent_timeout),
+        timeout_secs: wait_timeout_secs,
     };
 
     let wait_output = execute_wait(wait_args).await?;
@@ -1307,6 +1435,12 @@ async fn execute_event_publish(
         timestamp: chrono::Utc::now().timestamp(),
         payload: args.payload,
     });
+
+    // Evict oldest events when exceeding capacity
+    if channel_events.len() > MAX_EVENTS_PER_CHANNEL {
+        let drain_count = channel_events.len() - MAX_EVENTS_PER_CHANNEL;
+        channel_events.drain(..drain_count);
+    }
 
     Ok(SubagentEventPublishOutput {
         channel: args.channel,

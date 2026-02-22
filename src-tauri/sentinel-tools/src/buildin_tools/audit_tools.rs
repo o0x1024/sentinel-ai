@@ -994,30 +994,8 @@ pub(crate) async fn run_audit_command(
                 program,
                 build_shell_command(program, args)
             );
-            let (mut stdout, mut stderr, mut exit_code) =
+            let (stdout, stderr, exit_code) =
                 execute_in_docker(&docker_cfg, &cmd, timeout_secs).await?;
-
-            // Terminal and audit use different persistent containers by design.
-            // If audit container still misses required binaries/paths, try terminal container once.
-            let still_missing_binary = exit_code == 127
-                && (stderr.contains(&format!("{} not found in PATH=", program))
-                    || stderr.contains(&format!("{}: command not found", program)));
-            if still_missing_binary
-                && docker_cfg.container_name.as_deref() != Some("sentinel-terminal-main")
-            {
-                let mut terminal_cfg = docker_cfg.clone();
-                terminal_cfg.reuse_container = true;
-                terminal_cfg.container_name = Some("sentinel-terminal-main".to_string());
-                tracing::warn!(
-                    "Audit command falling back to terminal container '{}'",
-                    terminal_cfg.container_name.as_deref().unwrap_or("sentinel-terminal-main")
-                );
-                let (retry_stdout, retry_stderr, retry_exit_code) =
-                    execute_in_docker(&terminal_cfg, &cmd, timeout_secs).await?;
-                stdout = retry_stdout;
-                stderr = retry_stderr;
-                exit_code = retry_exit_code;
-            }
 
             if exit_code == 1 && allow_exit_code_1 {
                 return Ok(CommandOutput {

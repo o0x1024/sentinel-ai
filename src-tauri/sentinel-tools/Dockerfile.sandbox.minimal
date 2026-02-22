@@ -243,14 +243,16 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends  --fix-missing\
     masscan \
     john \
-    hydra &&\
+    hydra \
+    dirb \
+    wordlists &&\
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
 COPY --from=go-builder /tmp/go/bin/* /usr/local/bin/
 
 RUN apt-get update && \
-    apt-get install -y net-tools iproute2  ripgrep&& \
+    apt-get install -y net-tools iproute2 ripgrep maven && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

@@ -171,7 +171,18 @@ impl DatabaseService {
                 .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query(
+                let name = request.name.clone();
+                let description = request.description.clone();
+                let status_json_for_sqlite = status_json.clone();
+                let progress = request.progress;
+                let current_stage = request.current_stage.clone();
+                let total_stages = request.total_stages;
+                let completed_stages = request.completed_stages;
+                let results_summary_for_sqlite = results_summary_json.clone();
+                let error_message = request.error_message.clone();
+                let id = session_id.to_string();
+
+                let update_with_updated_at = sqlx::query(
                     r#"UPDATE scan_sessions SET
                            updated_at = CURRENT_TIMESTAMP,
                            name = COALESCE(?, name),
@@ -185,18 +196,50 @@ impl DatabaseService {
                            error_message = COALESCE(?, error_message)
                        WHERE id = ?"#,
                 )
-                .bind(request.name)
-                .bind(request.description)
-                .bind(status_json)
-                .bind(request.progress)
-                .bind(request.current_stage)
-                .bind(request.total_stages)
-                .bind(request.completed_stages)
-                .bind(results_summary_json)
-                .bind(request.error_message)
-                .bind(session_id.to_string())
-                .execute(pool)
-                .await?;
+                .bind(name.clone())
+                .bind(description.clone())
+                .bind(status_json_for_sqlite.clone())
+                .bind(progress)
+                .bind(current_stage.clone())
+                .bind(total_stages)
+                .bind(completed_stages)
+                .bind(results_summary_for_sqlite.clone())
+                .bind(error_message.clone())
+                .bind(id.clone());
+
+                if let Err(e) = update_with_updated_at.execute(pool).await {
+                    let err_text = e.to_string().to_lowercase();
+                    if err_text.contains("no such column") && err_text.contains("updated_at") {
+                        // Backward-compatible fallback for old SQLite schema without `updated_at`.
+                        sqlx::query(
+                            r#"UPDATE scan_sessions SET
+                                   name = COALESCE(?, name),
+                                   description = COALESCE(?, description),
+                                   status = COALESCE(?, status),
+                                   progress = COALESCE(?, progress),
+                                   current_stage = COALESCE(?, current_stage),
+                                   total_stages = COALESCE(?, total_stages),
+                                   completed_stages = COALESCE(?, completed_stages),
+                                   results_summary = COALESCE(?, results_summary),
+                                   error_message = COALESCE(?, error_message)
+                               WHERE id = ?"#,
+                        )
+                        .bind(name)
+                        .bind(description)
+                        .bind(status_json_for_sqlite)
+                        .bind(progress)
+                        .bind(current_stage)
+                        .bind(total_stages)
+                        .bind(completed_stages)
+                        .bind(results_summary_for_sqlite)
+                        .bind(error_message)
+                        .bind(id)
+                        .execute(pool)
+                        .await?;
+                    } else {
+                        return Err(e.into());
+                    }
+                }
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(

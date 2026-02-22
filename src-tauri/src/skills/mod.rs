@@ -122,6 +122,9 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
     fs::create_dir_all(&root)
         .with_context(|| format!("Failed to create skills root: {}", root.display()))?;
 
+    // Install built-in skills (Phase 4: CPG audit workflow)
+    install_builtin_skills(&root);
+
     let mut count = 0usize;
     let entries = fs::read_dir(&root)
         .with_context(|| format!("Failed to read skills root: {}", root.display()))?;
@@ -210,4 +213,44 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
     }
 
     Ok(count)
+}
+
+// ── Built-in Skills ─────────────────────────────────────────────────────────
+
+/// Embedded built-in skills that ship with the binary.
+const BUILTIN_SKILLS: &[(&str, &str)] = &[
+    (
+        "cpg-code-audit",
+        include_str!("../../skills/cpg-code-audit/SKILL.md"),
+    ),
+];
+
+/// Install built-in skills to the skills directory if not already present.
+fn install_builtin_skills(skills_root: &Path) {
+    for (skill_id, content) in BUILTIN_SKILLS {
+        let skill_dir = skills_root.join(skill_id);
+        let skill_md = skill_dir.join("SKILL.md");
+
+        // Only write if the skill doesn't exist yet or content has changed
+        let should_write = if skill_md.exists() {
+            match fs::read_to_string(&skill_md) {
+                Ok(existing) => existing.trim() != content.trim(),
+                Err(_) => true,
+            }
+        } else {
+            true
+        };
+
+        if should_write {
+            if let Err(e) = fs::create_dir_all(&skill_dir) {
+                tracing::warn!("Failed to create built-in skill dir '{}': {}", skill_id, e);
+                continue;
+            }
+            if let Err(e) = fs::write(&skill_md, content) {
+                tracing::warn!("Failed to write built-in skill '{}': {}", skill_id, e);
+                continue;
+            }
+            tracing::info!("Installed built-in skill: {}", skill_id);
+        }
+    }
 }

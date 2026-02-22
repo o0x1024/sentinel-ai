@@ -27,6 +27,7 @@ import notifications from './notifications/zh'
 import aiAssistant from './aiAssistant/zh'
 import agent from './agent/zh'
 import bugBounty from './bugBounty/zh'
+import llmSecurity from './llmSecurity/zh'
 
 // Import other modules as needed
 // For now, we'll include the basic structure and add more as we extract them
@@ -64,6 +65,7 @@ export default {
   aiAssistant,
   agent,
   bugBounty,
+  llmSecurity,
 
   // Top-level aliases for sidebar navigation
   rag: {
@@ -80,6 +82,7 @@ export default {
       vulnerabilities: '漏洞',
       scanTasks: '扫描任务',
       codeAudit: '代码审计',
+      llmSecurity: 'LLM安全测试',
       assets: '资产',
     },
   },

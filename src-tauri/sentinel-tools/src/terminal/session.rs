@@ -52,7 +52,7 @@ impl Default for TerminalSessionConfig {
             initial_command: None,
             reuse_container: true,
             // Keep terminal container isolated from one-shot shell sandbox container.
-            container_name: Some("sentinel-terminal-main".to_string()),
+            container_name: Some("sentinel-sandbox-main".to_string()),
         }
     }
 }

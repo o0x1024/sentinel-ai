@@ -142,11 +142,23 @@ fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
     const REQUIRED: &[&str] = &[
         "todos",
         "skills",
+        "read_file",
+        "project_overview",
+        "audit_coverage",
         "git_clone_repo",
         "code_search",
         "git_diff_scope",
+        "call_graph_lite",
+        "taint_slice_lite",
+        "cross_file_taint",
+        "dependency_audit",
         "tenth_man_review",
+        "audit_report",
         AUDIT_FINDING_UPSERT_TOOL,
+        "build_cpg",
+        "query_cpg",
+        "cpg_taint_analysis",
+        "cpg_security_scan",
     ];
     let mut seen = tool_ids
         .iter()
@@ -326,7 +338,14 @@ pub async fn execute_agent_with_tools(
     let mut current_tool_ids = selected_tool_ids.clone();
 
     // 4. Build context via Context Engineering
-    let context_policy = params.context_policy.clone().unwrap_or_default();
+    // Audit mode needs larger budgets for multi-phase analysis with many active tools.
+    let context_policy = params.context_policy.clone().unwrap_or_else(|| {
+        if params.audit_mode {
+            crate::agents::ContextPolicy::audit()
+        } else {
+            crate::agents::ContextPolicy::default()
+        }
+    });
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
@@ -351,6 +370,25 @@ pub async fn execute_agent_with_tools(
              - Final assistant message must contain only a concise summary and instruct users to view details in Security Center > Code Audit.\n\
              </audit_persistence_rules>\n",
         );
+
+        // Phase 3: Auto-inject CPG code structure context
+        // If a CPG is already cached, inject the project briefing into the system prompt.
+        // This gives the AI a "bird's eye view" of the project from turn 1.
+        if let Some(cpg_context) = sentinel_tools::buildin_tools::try_get_cpg_audit_context().await {
+            final_system_prompt.push_str("\n\n");
+            final_system_prompt.push_str(&cpg_context);
+            tracing::info!("Injected CPG audit context into system prompt ({} chars)", cpg_context.len());
+        } else {
+            // No cached CPG — add a hint so the AI knows to build one
+            final_system_prompt.push_str(
+                "\n\n<cpg_hint>\n\
+                 No Code Property Graph is cached yet. For structural code analysis, \
+                 call `build_cpg` first to build the project structure graph, then use \
+                 `cpg_security_scan` for baseline assessment and `cpg_taint_analysis` \
+                 for targeted vulnerability tracing.\n\
+                 </cpg_hint>\n",
+            );
+        }
     }
     let final_system_prompt_content = Some(final_system_prompt);
     let mut history_chat_messages = context_result.history_messages;
@@ -384,6 +422,10 @@ pub async fn execute_agent_with_tools(
     let tool_seq: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
     let tool_call_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    // Track how many assistant text segments have been flushed (persisted) to the database
+    // at tool-call boundaries. When > 0, the final save_assistant_message should only save
+    // the last turn's response to avoid duplicating earlier segments.
+    let persisted_segment_count: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let reasoning_content_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let pending_tool_digests: Arc<Mutex<Vec<crate::agents::ToolDigest>>> =
         Arc::new(Mutex::new(Vec::new()));
@@ -396,6 +438,7 @@ pub async fn execute_agent_with_tools(
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
     let pending_digests = pending_tool_digests.clone();
+    let persisted_seg_count = persisted_segment_count.clone();
 
     // Ensure skills tool enforces per-skill enable flags at execution time.
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
@@ -820,6 +863,7 @@ pub async fn execute_agent_with_tools(
                                     .unwrap_or_default();
                                 let seg_trimmed = seg.trim().to_string();
                                 if !seg_trimmed.trim().is_empty() {
+                                    persisted_seg_count.fetch_add(1, Ordering::SeqCst);
                                     // Ensure segment timestamp is slightly before tool call timestamp.
                                     let seg_ts_ms = chrono::Utc::now().timestamp_millis() - 1;
                                     let seg_ts = chrono::Utc
@@ -1196,6 +1240,11 @@ pub async fn execute_agent_with_tools(
                             let mut next_tools = vec![
                                 "skills".to_string(),
                                 "todos".to_string(),
+                                "http_request".to_string(),
+                                "subagent_execute".to_string(),
+                                "subagent_await".to_string(),
+                                "subagent_channel".to_string(),
+                                "tenth_man_review".to_string(),
                             ];
                             if !tool_config.disabled_tools.contains(&ShellTool::NAME.to_string()) {
                                 next_tools.push(ShellTool::NAME.to_string());
@@ -1291,7 +1340,7 @@ pub async fn execute_agent_with_tools(
         match result {
             Ok(response) => {
                 // 合并最终输出和累积的输出
-                let final_response = if let Ok(acc) = accumulated_assistant_output.lock() {
+                let full_response = if let Ok(acc) = accumulated_assistant_output.lock() {
                     if !acc.is_empty() && !response.is_empty() {
                         format!("{}\n\n{}", acc, response)
                     } else if !acc.is_empty() {
@@ -1302,12 +1351,27 @@ pub async fn execute_agent_with_tools(
                 } else {
                     response.clone()
                 };
+
+                // If assistant text segments were already persisted at tool-call boundaries,
+                // only save the last turn's response text to avoid duplicating earlier segments
+                // in the database. The full_response is still used for memory/logging.
+                let seg_count = persisted_segment_count.load(Ordering::SeqCst);
+                let final_response = if seg_count > 0 && !response.is_empty() {
+                    tracing::info!(
+                        "Segments already persisted: {}, saving only last turn response ({} chars) instead of full ({} chars)",
+                        seg_count, response.len(), full_response.len()
+                    );
+                    response.clone()
+                } else {
+                    full_response.clone()
+                };
                 
                 tracing::info!(
-                    "Agent with tools completed - execution_id: {}, response_length: {}, accumulated_length: {}",
+                    "Agent with tools completed - execution_id: {}, final_save_length: {}, full_response_length: {}, persisted_segments: {}",
                     params.execution_id,
                     final_response.len(),
-                    accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0)
+                    full_response.len(),
+                    seg_count
                 );
 
                 // 合并所有工具调用记录（包括累积的和当前的）
@@ -1343,7 +1407,7 @@ pub async fn execute_agent_with_tools(
                         tool_calls: tool_summaries,
                         success: true,
                         error: None,
-                        response_excerpt: Some(truncate_for_memory(&response, 400)),
+                        response_excerpt: Some(truncate_for_memory(&full_response, 400)),
                         created_at: chrono::Utc::now().timestamp(),
                     })
                     .await

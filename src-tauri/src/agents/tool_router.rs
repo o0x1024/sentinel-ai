@@ -16,11 +16,13 @@ use tokio::sync::RwLock;
 
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    TaintSliceLiteTool,
+    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
+    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool, TaintSliceLiteTool,
     browser::constants as browser_constants, TenthManTool, SubagentAwaitTool, SubagentChannelTool,
-    SubagentExecuteTool, TodosTool,
-    MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
+    SubagentExecuteTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
+    ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
+    CrossFileTaintTool, AuditReportTool, BuildCpgTool, QueryCpgTool,
+    CpgTaintAnalysisTool, CpgSecurityScanTool,
 };
 
 use crate::engines::web_explorer::WebExplorerTool;
@@ -405,6 +407,167 @@ impl ToolRouter {
                     "security-center".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: ReadFileTool::NAME.to_string(),
+                name: ReadFileTool::NAME.to_string(),
+                description: ReadFileTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "read".to_string(),
+                    "file".to_string(),
+                    "code".to_string(),
+                    "audit".to_string(),
+                    "directory".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: ProjectOverviewTool::NAME.to_string(),
+                name: ProjectOverviewTool::NAME.to_string(),
+                description: ProjectOverviewTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "project".to_string(),
+                    "overview".to_string(),
+                    "framework".to_string(),
+                    "language".to_string(),
+                    "audit".to_string(),
+                    "entry-point".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: AuditCoverageTool::NAME.to_string(),
+                name: AuditCoverageTool::NAME.to_string(),
+                description: AuditCoverageTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "audit".to_string(),
+                    "coverage".to_string(),
+                    "tracking".to_string(),
+                    "progress".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: DependencyAuditTool::NAME.to_string(),
+                name: DependencyAuditTool::NAME.to_string(),
+                description: DependencyAuditTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "dependency".to_string(),
+                    "vulnerability".to_string(),
+                    "cve".to_string(),
+                    "supply-chain".to_string(),
+                    "audit".to_string(),
+                    "npm".to_string(),
+                    "cargo".to_string(),
+                    "pip".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: CrossFileTaintTool::NAME.to_string(),
+                name: CrossFileTaintTool::NAME.to_string(),
+                description: CrossFileTaintTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "taint".to_string(),
+                    "cross-file".to_string(),
+                    "dataflow".to_string(),
+                    "source".to_string(),
+                    "sink".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: AuditReportTool::NAME.to_string(),
+                name: AuditReportTool::NAME.to_string(),
+                description: AuditReportTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "report".to_string(),
+                    "export".to_string(),
+                    "markdown".to_string(),
+                    "sarif".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            // Code Property Graph (CPG) tools
+            ToolMetadata {
+                id: BuildCpgTool::NAME.to_string(),
+                name: BuildCpgTool::NAME.to_string(),
+                description: BuildCpgTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "cpg".to_string(),
+                    "build".to_string(),
+                    "ast".to_string(),
+                    "code-structure".to_string(),
+                    "audit".to_string(),
+                    "tree-sitter".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: QueryCpgTool::NAME.to_string(),
+                name: QueryCpgTool::NAME.to_string(),
+                description: QueryCpgTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "cpg".to_string(),
+                    "query".to_string(),
+                    "callgraph".to_string(),
+                    "function".to_string(),
+                    "class".to_string(),
+                    "audit".to_string(),
+                    "code-structure".to_string(),
+                ],
+                cost_estimate: ToolCost::Low,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: CpgTaintAnalysisTool::NAME.to_string(),
+                name: CpgTaintAnalysisTool::NAME.to_string(),
+                description: CpgTaintAnalysisTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "cpg".to_string(),
+                    "taint".to_string(),
+                    "source".to_string(),
+                    "sink".to_string(),
+                    "dataflow".to_string(),
+                    "vulnerability".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: CpgSecurityScanTool::NAME.to_string(),
+                name: CpgSecurityScanTool::NAME.to_string(),
+                description: CpgSecurityScanTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Security,
+                tags: vec![
+                    "cpg".to_string(),
+                    "scan".to_string(),
+                    "security".to_string(),
+                    "baseline".to_string(),
+                    "vulnerability".to_string(),
+                    "audit".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
                 always_available: false,
             },
             // 系统工具
@@ -879,11 +1042,22 @@ impl ToolRouter {
                     tracing::info!("Skills tool disabled via config; returning no tools.");
                     return Ok(self.merge_always_available_tools(vec![]));
                 }
-                // Claude-style Skills mode: expose full toolset and let model call skills tool
+                // Skills mode default toolset
                 let mut base_tools = vec![
                     SkillsTool::NAME.to_string(),
                     ShellTool::NAME.to_string(),
+                    HttpRequestTool::NAME.to_string(),
+                    SubagentExecuteTool::NAME.to_string(),
+                    SubagentAwaitTool::NAME.to_string(),
+                    SubagentChannelTool::NAME.to_string(),
+                    TenthManTool::NAME.to_string(),
                 ];
+                if !config
+                    .disabled_tools
+                    .contains(&MemoryManagerTool::NAME.to_string())
+                {
+                    base_tools.push(MemoryManagerTool::NAME.to_string());
+                }
                 if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
                     base_tools.push(TodosTool::NAME.to_string());
                 }
@@ -919,11 +1093,22 @@ impl ToolRouter {
                         selected_skill: None,
                     });
                 }
-                // Claude-style Skills mode: no skill pre-selection or injection
+                // Skills mode default toolset
                 let mut all = vec![
                     SkillsTool::NAME.to_string(),
                     ShellTool::NAME.to_string(),
+                    HttpRequestTool::NAME.to_string(),
+                    SubagentExecuteTool::NAME.to_string(),
+                    SubagentAwaitTool::NAME.to_string(),
+                    SubagentChannelTool::NAME.to_string(),
+                    TenthManTool::NAME.to_string(),
                 ];
+                if !config
+                    .disabled_tools
+                    .contains(&MemoryManagerTool::NAME.to_string())
+                {
+                    all.push(MemoryManagerTool::NAME.to_string());
+                }
                 if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
                     all.push(TodosTool::NAME.to_string());
                 }
@@ -1190,7 +1375,7 @@ impl ToolRouter {
                 || task_lower.contains("recall")
                 || task_lower.contains("store")
                 || task_lower.contains("save"))
-                && tool.id == "memory_manager" {
+                && tool.id == MemoryManagerTool::NAME {
                     score += 25; // High priority for memory operations
                 }
             if (task_lower.contains("ocr")
