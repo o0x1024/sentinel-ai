@@ -1742,30 +1742,6 @@ const loadConversationHistory = async (convId: string) => {
           return
         }
 
-        const messageType = row.role === 'user' ? 'user' : 'final'
-        const displayContent =
-          row.role === 'user' && parsedStructured?.display_content
-            ? parsedStructured.display_content
-            : row.content
-        
-        // Extract document_attachments from metadata or structured_data
-        let finalMetadata = parsedMetadata || {}
-        if (row.role === 'user') {
-          // Try to get document_attachments from metadata first, then structured_data
-          const docAttachments = parsedMetadata?.document_attachments || parsedStructured?.document_attachments
-          if (docAttachments && Array.isArray(docAttachments) && docAttachments.length > 0) {
-            finalMetadata = { ...finalMetadata, document_attachments: docAttachments }
-          }
-        }
-        
-        timeline.push({
-          id: row.id,
-          type: messageType as any,
-          content: displayContent,
-          timestamp: ts,
-          metadata: finalMetadata,
-        })
-
         // Legacy fallback: assistant rows may contain tool_calls (older data).
         // Skip if the tool_call already exists as a standalone role=tool message.
         if (row.role === 'assistant' && row.tool_calls) {
@@ -1803,6 +1779,30 @@ const loadConversationHistory = async (convId: string) => {
             console.warn('[AgentView] Failed to parse legacy tool_calls:', e)
           }
         }
+
+        const messageType = row.role === 'user' ? 'user' : 'final'
+        const displayContent =
+          row.role === 'user' && parsedStructured?.display_content
+            ? parsedStructured.display_content
+            : row.content
+
+        // Extract document_attachments from metadata or structured_data
+        let finalMetadata = parsedMetadata || {}
+        if (row.role === 'user') {
+          // Try to get document_attachments from metadata first, then structured_data
+          const docAttachments = parsedMetadata?.document_attachments || parsedStructured?.document_attachments
+          if (docAttachments && Array.isArray(docAttachments) && docAttachments.length > 0) {
+            finalMetadata = { ...finalMetadata, document_attachments: docAttachments }
+          }
+        }
+
+        timeline.push({
+          id: row.id,
+          type: messageType as any,
+          content: displayContent,
+          timestamp: ts,
+          metadata: finalMetadata,
+        })
       })
 
       agentEvents.messages.value = timeline
