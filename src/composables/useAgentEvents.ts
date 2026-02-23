@@ -245,13 +245,19 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
 
   const unlisteners: UnlistenFn[] = []
 
+  const hasExplicitTarget = executionId !== undefined
+
   const getTargetId = (): string | undefined => {
-    if (!executionId) return undefined
-    return typeof executionId === 'string' ? executionId : executionId.value
+    if (!hasExplicitTarget) return undefined
+    const raw = typeof executionId === 'string' ? executionId : executionId.value
+    return typeof raw === 'string' && raw.trim().length > 0 ? raw : undefined
   }
 
   const matchesTarget = (eventExecId: string): boolean => {
     const targetId = getTargetId()
+    // If caller provided an explicit target but it's currently empty (e.g. session switching),
+    // reject all events to avoid cross-session message bleed.
+    if (hasExplicitTarget && !targetId) return false
     return !targetId || eventExecId === targetId
   }
 

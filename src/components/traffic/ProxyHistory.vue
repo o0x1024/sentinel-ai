@@ -3373,6 +3373,9 @@ function setupMainContainerResizeObserver() {
 
 // 键盘快捷键处理
 function handleKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.repeat) return;
+  if (!mainContainer.value || mainContainer.value.offsetParent === null) return;
+
   // Cmd/Ctrl + R 发送到 Repeater
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') {
     // 如果有选中的请求，发送到 Repeater

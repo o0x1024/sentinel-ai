@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-full bg-base-100" @contextmenu.prevent>
+  <div ref="repeaterRoot" class="flex flex-col h-full bg-base-100" @contextmenu.prevent>
     <!-- 右键菜单 -->
     <div 
       v-if="contextMenu.visible"
@@ -432,6 +432,7 @@ interface RepeaterTab {
 const tabs = ref<RepeaterTab[]>([]);
 const activeTabIndex = ref(0);
 const showTargetDialog = ref(false);
+const repeaterRoot = ref<HTMLElement | null>(null);
 const requestEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 const responseEditor = ref<InstanceType<typeof HttpCodeEditor> | null>(null);
 
@@ -1442,6 +1443,9 @@ watch(() => currentTab.value?.rawRequest, (newRequest, oldRequest) => {
 
 // 键盘快捷键处理
 function handleKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.repeat) return;
+  if (!repeaterRoot.value || repeaterRoot.value.offsetParent === null) return;
+
   // Cmd/Ctrl + R 发送当前请求到新标签（Send to Repeater）
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'r') {
     if (currentTab.value && currentTab.value.rawRequest.trim()) {
