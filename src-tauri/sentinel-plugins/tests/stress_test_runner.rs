@@ -314,7 +314,7 @@ impl TestSuiteReport {
             let status = if result.passed { "PASS ✓" } else { "FAIL ✗" };
             println!(
                 "  {:<40} {:<10} {:<15?} {:<15.2}",
-                &result.test_name[..result.test_name.len().min(40)],
+                result.test_name.chars().take(40).collect::<String>(),
                 status,
                 result.duration,
                 result.throughput_per_sec

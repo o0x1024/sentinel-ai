@@ -9,6 +9,31 @@ pub struct ContextBudgetPolicy {
     pub tool_digest_max_tokens: usize,
 }
 
+impl ContextBudgetPolicy {
+    /// Scale budget proportionally based on the actual model context window.
+    /// The default budget is calibrated for 128K; this scales linearly with a
+    /// reasonable per-section cap so tiny models aren't over-allocated and huge
+    /// models (Gemini 1M) don't get absurdly large budgets.
+    pub fn scale_to_context(&self, max_context_tokens: usize) -> Self {
+        if max_context_tokens == 0 {
+            return self.clone();
+        }
+        let ratio = (max_context_tokens as f64 / 128_000.0).max(1.0);
+        let safe = (max_context_tokens as f64 * 0.85) as usize;
+        Self {
+            system_max_tokens: scale_value(self.system_max_tokens, ratio, safe / 4),
+            run_state_max_tokens: scale_value(self.run_state_max_tokens, ratio, safe / 8),
+            window_max_tokens: scale_value(self.window_max_tokens, ratio, (safe as f64 * 0.55) as usize),
+            retrieval_max_tokens: scale_value(self.retrieval_max_tokens, ratio, safe / 8),
+            tool_digest_max_tokens: scale_value(self.tool_digest_max_tokens, ratio, safe / 10),
+        }
+    }
+}
+
+fn scale_value(base: usize, ratio: f64, cap: usize) -> usize {
+    ((base as f64 * ratio) as usize).min(cap)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextScope {
     Agent,

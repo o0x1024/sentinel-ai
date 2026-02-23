@@ -293,7 +293,7 @@ impl ReActEngine {
         
         // Log snapshot tree for debugging
         if !snapshot.tree.is_empty() {
-            debug!("Snapshot tree (first 500 chars): {}", &snapshot.tree[..snapshot.tree.len().min(500)]);
+            debug!("Snapshot tree (first 500 chars): {}", snapshot.tree.chars().take(500).collect::<String>());
         } else {
             warn!("Snapshot tree is empty - LLM may not have element refs");
         }

@@ -103,22 +103,34 @@ pub fn trim_history_preserve_tool_pairs(
 
     let mut trimmed = history.to_vec();
     while history_tokens > available_for_history && !trimmed.is_empty() {
-        if trimmed.len() >= 2
-            && trimmed[0].role == "assistant"
-            && trimmed[0].tool_calls.is_some()
-            && trimmed[1].role == "tool"
-        {
-            history_tokens = history_tokens
-                .saturating_sub(estimate_message_tokens(&trimmed[0]))
-                .saturating_sub(estimate_message_tokens(&trimmed[1]));
-            trimmed.drain(0..2);
+        // Assistant with tool_calls followed by one or more tool responses → remove as group
+        if trimmed[0].role == "assistant" && trimmed[0].tool_calls.is_some() {
+            let mut tool_count = 0;
+            while tool_count + 1 < trimmed.len() && trimmed[tool_count + 1].role == "tool" {
+                tool_count += 1;
+            }
+            if tool_count > 0 {
+                for i in 0..=tool_count {
+                    history_tokens =
+                        history_tokens.saturating_sub(estimate_message_tokens(&trimmed[i]));
+                }
+                trimmed.drain(0..=tool_count);
+                continue;
+            }
+        }
+
+        // Orphaned tool message at front → remove it
+        if trimmed[0].role == "tool" {
+            history_tokens =
+                history_tokens.saturating_sub(estimate_message_tokens(&trimmed[0]));
+            trimmed.remove(0);
             continue;
         }
 
-        if let Some(first) = trimmed.first() {
-            history_tokens = history_tokens.saturating_sub(estimate_message_tokens(first));
-            trimmed.remove(0);
-        }
+        // Regular message (user / assistant without tool_calls)
+        history_tokens =
+            history_tokens.saturating_sub(estimate_message_tokens(&trimmed[0]));
+        trimmed.remove(0);
     }
 
     trimmed

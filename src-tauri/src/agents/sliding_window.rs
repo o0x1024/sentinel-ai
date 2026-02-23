@@ -7,8 +7,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, Emitter};
 use tracing::{info}; // Removed warn
 
-use sentinel_db::Database; // Added Database trait
+use sentinel_db::Database;
 use sentinel_llm::{ChatMessage, LlmClient, LlmConfig};
+use crate::agents::context_engineering::token_utils::estimate_tokens;
 use crate::agents::context_engineering::tool_digest::condense_text;
 
 /// Configuration for sliding window manager
@@ -372,11 +373,12 @@ impl SlidingWindowManager {
             &prompt
         ).await?;
 
+        let new_summary_tokens = estimate_tokens(&new_summary_text) as i32;
         let new_summary = GlobalSummary {
             id: uuid::Uuid::new_v4().to_string(),
             conversation_id: self.conversation_id.clone(),
             summary: new_summary_text,
-            summary_tokens: 0, // Recalc later if needed
+            summary_tokens: new_summary_tokens,
             covers_up_to_index: new_covers_up_to,
             updated_at: Utc::now().timestamp(),
         };
@@ -486,26 +488,6 @@ impl SlidingWindowManager {
         
         Ok(content)
     }
-}
-
-/// Estimate token count for text (improved heuristic)
-/// Uses a more conservative estimate to avoid context overflow
-fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-    let mut total: f64 = 0.0;
-    for c in text.chars() {
-        if c.is_ascii() {
-            // More conservative: ~0.4 tokens per ASCII char
-            total += 0.4;
-        } else {
-            // CJK and other non-ASCII: ~1.6 tokens per char
-            total += 1.6;
-        }
-    }
-    // Add 20% safety margin
-    (total * 1.2).ceil() as usize
 }
 
 fn condense_tool_output(raw: &str) -> Option<String> {

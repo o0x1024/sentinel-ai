@@ -2,12 +2,25 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Manager};
+use tokio::sync::Mutex as TokioMutex;
 use sentinel_db::Database;
 
 use crate::agents::context_engineering::policy::ContextPolicy;
 use crate::agents::context_engineering::tool_digest::ToolDigest;
+
+/// Per-execution-id lock to prevent concurrent read-modify-write races on RunState.
+fn get_state_lock(execution_id: &str) -> Arc<TokioMutex<()>> {
+    static LOCKS: std::sync::LazyLock<StdMutex<HashMap<String, Arc<TokioMutex<()>>>>> =
+        std::sync::LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+    let mut map = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    map.entry(execution_id.to_string())
+        .or_insert_with(|| Arc::new(TokioMutex::new(())))
+        .clone()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextMemoryItem {
@@ -74,6 +87,9 @@ pub async fn load_or_init_run_state(
     execution_id: &str,
     init_state: ContextRunState,
 ) -> Result<ContextRunState> {
+    let lock = get_state_lock(execution_id);
+    let _guard = lock.lock().await;
+
     if let Some(existing) = load_run_state(app_handle, execution_id).await? {
         return Ok(existing);
     }
@@ -87,6 +103,9 @@ pub async fn append_tool_digest(
     digest: ToolDigest,
     policy: &ContextPolicy,
 ) -> Result<()> {
+    let lock = get_state_lock(execution_id);
+    let _guard = lock.lock().await;
+
     let mut state = load_run_state(app_handle, execution_id)
         .await?
         .unwrap_or_default();
@@ -110,6 +129,9 @@ pub async fn append_tool_digests(
     if digests.is_empty() {
         return Ok(());
     }
+    let lock = get_state_lock(execution_id);
+    let _guard = lock.lock().await;
+
     let mut state = load_run_state(app_handle, execution_id)
         .await?
         .unwrap_or_default();

@@ -740,7 +740,7 @@ async fn execute_case_with_adapter(
 
                 if !is_retryable_status(status) || attempt == max_retries {
                     let body_text = response.text().await.unwrap_or_default();
-                    log::warn!("execute_case_with_adapter: case {} non-retryable error {}: {}", case_id, status, &body_text[..body_text.len().min(200)]);
+                    log::warn!("execute_case_with_adapter: case {} non-retryable error {}: {}", case_id, status, body_text.chars().take(200).collect::<String>());
                     last_error = Some(anyhow!(
                         "目标应用返回错误 {}: {}",
                         status,

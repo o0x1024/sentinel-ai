@@ -8,12 +8,16 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{ChatMessage, LlmConfig};
 use sentinel_tools::output_storage::{get_host_context_dir, get_history_path, CONTAINER_CONTEXT_DIR};
-use sentinel_tools::shell::{get_shell_config, ShellExecutionMode};
+use sentinel_tools::shell::ShellExecutionMode;
 
 use crate::agents::context_engineering::checkpoint::{load_or_init_run_state, save_run_state, ContextRunState};
-use crate::agents::context_engineering::memory_index::{ingest_memory_items, retrieve_memory_items, MemoryQuery};
+use crate::agents::context_engineering::memory_index::{
+    ingest_memory_items_persistent,
+    retrieve_memory_items_hybrid, evict_low_value_items, MemoryQuery,
+};
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
+use crate::agents::context_engineering::token_utils::{estimate_tokens, estimate_message_tokens, SYSTEM_MESSAGE_OVERHEAD_TOKENS};
 use crate::agents::context_engineering::tool_digest::condense_text;
 use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
 use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
@@ -48,13 +52,14 @@ struct ExecutionContext {
     env: ExecutionEnvironment,
     os_name: String,
     context_dir: String,
+    docker_config: Option<sentinel_tools::DockerSandboxConfig>,
 }
 
 async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
     let shell_config = if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
         crate::commands::tool_commands::agent_config::load_shell_config_from_db(&db).await
     } else {
-        get_shell_config().await
+        sentinel_tools::shell::get_shell_config().await
     };
 
     let docker_available = sentinel_tools::DockerSandbox::is_docker_available().await;
@@ -67,12 +72,14 @@ async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
             env: ExecutionEnvironment::Docker,
             os_name: "linux".to_string(),
             context_dir: CONTAINER_CONTEXT_DIR.to_string(),
+            docker_config: shell_config.docker_config,
         }
     } else {
         ExecutionContext {
             env: ExecutionEnvironment::Host,
             os_name: std::env::consts::OS.to_string(),
             context_dir: get_host_context_dir().display().to_string(),
+            docker_config: None,
         }
     }
 }
@@ -110,6 +117,11 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         input.execution_id
     ));
 
+    system_prompt.push_str(
+        "\n\n[Stuck Resolution Rule]\n\
+        If you have tried multiple approaches and failed, or if you feel you are stuck in a loop, you MUST immediately call the `tenth_man_review` tool with `mode: 'full_history'` to break your cognitive bias and get an adversarial critique of your current approach. Do NOT continue guessing if you are stuck."
+    );
+
     if policy.include_task_mainline {
         system_prompt = inject_task_mainline_summary(system_prompt, &input.task);
     }
@@ -139,8 +151,13 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             state.goals.push(state.task_brief.clone());
         }
         state.goals.truncate(8);
-        if let Some(todos) = load_execution_todos(&input.app_handle, &input.execution_id).await {
-            state.open_todos = todos
+        state.constraints.truncate(12);
+        state.decisions.truncate(16);
+        state.user_preferences.truncate(10);
+
+        let todos = load_execution_todos(&input.app_handle, &input.execution_id).await;
+        if let Some(ref items) = todos {
+            state.open_todos = items
                 .iter()
                 .filter(|item| item.status.to_lowercase() != "done")
                 .map(|item| item.description.trim().to_string())
@@ -151,7 +168,15 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         let memory_facts = vec![state.task_brief.clone()];
         let memory_decisions = state.decisions.clone();
         let memory_todos = state.open_todos.clone();
-        ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
+        ingest_memory_items_persistent(
+            &input.app_handle,
+            &mut state,
+            &memory_facts,
+            &memory_decisions,
+            &memory_todos,
+        )
+        .await;
+        evict_low_value_items(&mut state);
         run_state_digests = state.last_tool_digests.clone();
         if policy.feature_context_packet_v2 {
             let query = MemoryQuery {
@@ -159,7 +184,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 query: format!("{}\n{}", state.task_brief, input.task),
                 top_k: 8,
             };
-            let retrieved = retrieve_memory_items(&mut state, &query);
+            let retrieved =
+                retrieve_memory_items_hybrid(&input.app_handle, &mut state, &query).await;
             retrieved_memory_ids = retrieved.iter().map(|item| item.id.clone()).collect();
             let retrieved_text = retrieved
                 .iter()
@@ -174,13 +200,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
         state.last_updated_at_ms = chrono::Utc::now().timestamp_millis();
         save_run_state(&input.app_handle, &input.execution_id, &state).await?;
-        let todos = load_execution_todos(&input.app_handle, &input.execution_id).await;
+
         if let Some(ref items) = todos {
             if !items.is_empty() {
                 run_state_block.push_str(&build_todos_context(items, policy.run_state_max_chars));
             }
         }
-        run_state_block.push_str(&render_run_state(&state, &policy, todos.as_deref()));
+        // Pass None for todos to avoid duplicating what build_todos_context already rendered
+        run_state_block.push_str(&render_run_state(&state, &policy, None));
         if !retrieved_memory_lines.is_empty() {
             run_state_block.push_str("\nRetrieved Memory:\n");
             for item in &retrieved_memory_lines {
@@ -288,7 +315,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let max_context_length =
         get_provider_max_context_length(&input.app_handle, &input.rig_provider).await?;
     let max_tokens = max_context_length as usize;
-    let budget = &policy.budget;
+    let budget = policy.budget.scale_to_context(max_tokens);
 
     let mut packet = ContextPacket::new(system_prompt);
     packet.run_state = condense_text(
@@ -299,7 +326,6 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         packet.retrieved_memories = retrieved_memory_lines;
     }
     packet.set_tool_digests(&run_state_digests);
-    packet.system_instructions = trim_system_prompt_to_budget(packet.system_instructions, max_context_length);
 
     let sw_config = SlidingWindowConfig {
         max_context_tokens: max_context_length as usize,
@@ -319,13 +345,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if policy.scope == ContextScope::Agent {
         if let Ok(history_content) = sliding_window.export_history().await {
-            // Store history based on execution environment with execution_id isolation
             match execution_context.env {
                 ExecutionEnvironment::Docker => {
-                    use sentinel_tools::shell::get_shell_config;
-                    let shell_config = get_shell_config().await;
-                    if let Some(docker_config) = shell_config.docker_config {
-                        let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
+                    if let Some(ref docker_config) = execution_context.docker_config {
+                        let sandbox = sentinel_tools::DockerSandbox::new(docker_config.clone());
                         let history_path = get_history_path(CONTAINER_CONTEXT_DIR, Some(&input.execution_id));
                         if let Err(e) = sentinel_tools::output_storage::store_history_in_container_with_id(
                             &sandbox,
@@ -364,7 +387,6 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         &packet.system_instructions,
         context_messages,
     );
-    system_prompt_content = trim_system_prompt_to_budget(system_prompt_content, max_context_length);
 
     if history_messages.is_empty() {
         if let Some(fallback) = load_fallback_history(&input.app_handle, &input.execution_id, 6).await {
@@ -375,10 +397,19 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let safe_limit = (max_context_length as f64 * 0.85) as usize;
     let mut trim_trace = Vec::new();
 
+    // Single system prompt trim pass (after sliding window summaries are included)
+    let summary_stats = sliding_window.summary_stats();
+    let summary_overhead = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
+    let effective_system_budget = budget.system_max_tokens + summary_overhead;
+    let system_budget_cap = (safe_limit as f64 * 0.55) as usize;
+    let final_system_budget = effective_system_budget.min(system_budget_cap);
+
     let mut system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
-    if system_tokens > budget.system_max_tokens {
-        let target_chars = run_state_block_target_chars(max_tokens, budget.system_max_tokens);
-        system_prompt_content = condense_text(&system_prompt_content, target_chars);
+    if system_tokens > final_system_budget {
+        let current_chars = system_prompt_content.chars().count().max(1);
+        let ratio = final_system_budget as f64 / system_tokens as f64;
+        let target_chars = ((current_chars as f64) * ratio).floor() as usize;
+        system_prompt_content = condense_text(&system_prompt_content, target_chars.max(200));
         system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
         trim_trace.push("trimmed_system".to_string());
     }
@@ -449,7 +480,6 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     packet.window_messages = history_messages.clone();
 
     let system_prompt_tokens = estimate_tokens(&packet.render_system_prompt()) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
-    let summary_stats = sliding_window.summary_stats();
     let summary_tokens = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
     let history_tokens: usize = packet.window_messages.iter().map(estimate_message_tokens).sum();
     let used_tokens = system_prompt_tokens + history_tokens;
@@ -605,24 +635,9 @@ fn render_run_state(
             state.selected_tools.join(", ")
         ));
     }
-    if !state.last_tool_digests.is_empty() {
-        out.push_str("Recent Tool Digests:\n");
-        for digest in state.last_tool_digests.iter().rev().take(policy.run_state_max_digests) {
-            if let Some(artifact_id) = digest.artifact_id.as_ref() {
-                out.push_str(&format!(
-                    "- [{}] {}: {} (artifact_id: {})\n",
-                    digest.status, digest.tool_name, digest.summary, artifact_id
-                ));
-            } else {
-                out.push_str(&format!(
-                    "- [{}] {}: {}\n",
-                    digest.status, digest.tool_name, digest.summary
-                ));
-            }
-        }
-    }
-    let trimmed = condense_text(&out, policy.run_state_max_chars);
-    trimmed
+    // Tool digests are rendered separately in ContextPacket::render_system_prompt
+    // to avoid duplication.
+    condense_text(&out, policy.run_state_max_chars)
 }
 
 fn build_todos_context(items: &[AgentTodoItem], max_chars: usize) -> String {
@@ -718,21 +733,6 @@ fn inject_task_mainline_summary(mut system_prompt: String, task: &str) -> String
     system_prompt
 }
 
-fn trim_system_prompt_to_budget(system_prompt: String, max_context_length: u32) -> String {
-    let safe_limit = (max_context_length as f64 * 0.85) as usize;
-    let max_system_tokens = (safe_limit as f64 * 0.55) as usize;
-    let system_tokens = estimate_tokens(&system_prompt);
-    if system_tokens <= max_system_tokens {
-        return system_prompt;
-    }
-
-    let current_chars = system_prompt.chars().count().max(1);
-    let ratio = max_system_tokens as f64 / system_tokens as f64;
-    let target_chars = ((current_chars as f64) * ratio).floor() as usize;
-    let target_chars = target_chars.max(200);
-    condense_text(&system_prompt, target_chars)
-}
-
 fn run_state_block_target_chars(max_tokens: usize, target_tokens: usize) -> usize {
     if max_tokens == 0 || target_tokens == 0 {
         return 400;
@@ -740,48 +740,6 @@ fn run_state_block_target_chars(max_tokens: usize, target_tokens: usize) -> usiz
     let ratio = target_tokens as f64 / max_tokens as f64;
     let chars = ((max_tokens as f64 * ratio) / 0.45).round() as usize;
     chars.max(200)
-}
-
-const SYSTEM_MESSAGE_OVERHEAD_TOKENS: usize = 10;
-const MESSAGE_OVERHEAD_TOKENS: usize = 12;
-const TOOL_CALLS_OVERHEAD_TOKENS: usize = 16;
-
-fn estimate_message_tokens(msg: &ChatMessage) -> usize {
-    let mut tokens = estimate_tokens(&msg.content);
-    tokens += MESSAGE_OVERHEAD_TOKENS;
-
-    if let Some(ref tc) = msg.tool_calls {
-        tokens += estimate_tokens(tc);
-        tokens += TOOL_CALLS_OVERHEAD_TOKENS;
-    }
-    if let Some(ref rc) = msg.reasoning_content {
-        tokens += estimate_tokens(rc);
-    }
-    if let Some(ref tid) = msg.tool_call_id {
-        tokens += estimate_tokens(tid);
-    }
-
-    tokens
-}
-
-/// Estimate token count for text (improved heuristic)
-/// Uses a more conservative estimate to avoid context overflow
-fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-    let mut total: f64 = 0.0;
-    for c in text.chars() {
-        if c.is_ascii() {
-            // More conservative: ~0.4 tokens per ASCII char (accounts for subword tokenization)
-            total += 0.4;
-        } else {
-            // CJK and other non-ASCII: ~1.6 tokens per char (more conservative)
-            total += 1.6;
-        }
-    }
-    // Add 20% safety margin
-    (total * 1.2).ceil() as usize
 }
 
 async fn get_provider_max_context_length(

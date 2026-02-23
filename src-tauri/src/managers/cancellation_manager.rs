@@ -43,6 +43,21 @@ pub async fn cancel_execution(execution_id: &str) -> bool {
     }
 }
 
+/// Cancel without warning when token is absent (used when the local cancellation
+/// system is the primary mechanism and the global manager is a best-effort fallback).
+pub async fn cancel_execution_silent(execution_id: &str) -> bool {
+    let tokens_store = get_tokens().await;
+    let tokens = tokens_store.read().await;
+    if let Some(token) = tokens.get(execution_id) {
+        token.cancel();
+        tracing::info!("Cancelled execution via global token: {}", execution_id);
+        true
+    } else {
+        tracing::debug!("No global cancellation token for execution (expected): {}", execution_id);
+        false
+    }
+}
+
 /// 检查执行是否被取消
 pub async fn is_cancelled(execution_id: &str) -> bool {
     let tokens_store = get_tokens().await;

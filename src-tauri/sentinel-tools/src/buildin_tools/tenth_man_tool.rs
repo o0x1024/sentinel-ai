@@ -109,7 +109,8 @@ impl TenthManTool {
     
     pub const NAME: &'static str = "tenth_man_review";
     pub const DESCRIPTION: &'static str = "Run a structured adversarial review (\"10th Man\") on the current work. \
-        \n\nThis tool challenges prevailing assumptions and stress-tests the plan, analysis, or conclusion against alternatives, uncertainty, and failure modes.\
+        \n\n[CRITICAL RULE]: If you find yourself stuck in a loop, repeatedly failing tasks, or lacking progress after multiple attempts, you MUST proactively call this tool to break your cognitive bias and gain a new perspective.\n\n\
+        This tool challenges prevailing assumptions and stress-tests the plan, analysis, or conclusion against alternatives, uncertainty, and failure modes.\
         \n\nIt can review complete conversation history (not just the latest message) to surface:\
         \n- Hidden assumptions and weak evidence\
         \n- Logical gaps, contradictions, and blind spots\

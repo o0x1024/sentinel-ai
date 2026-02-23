@@ -12749,7 +12749,7 @@ dependencies = [
  "libc",
  "oar-ocr",
  "once_cell",
- "petgraph 0.6.5",
+ "petgraph 0.8.3",
  "portable-pty",
  "rand 0.8.5",
  "regex",

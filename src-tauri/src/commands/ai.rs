@@ -58,35 +58,42 @@ impl From<CommandAiConfig> for AiConfig {
     }
 }
 
-// 全局取消令牌管理器
-static CANCELLATION_TOKENS: std::sync::LazyLock<Mutex<HashMap<String, CancellationToken>>> =
+// 全局取消令牌管理器: maps conversation_id -> (token, generation counter)
+static CANCELLATION_TOKENS: std::sync::LazyLock<Mutex<HashMap<String, (CancellationToken, u64)>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// 辅助函数：创建取消令牌
-fn create_cancellation_token(conversation_id: &str) -> CancellationToken {
+static CANCELLATION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+// 辅助函数：创建取消令牌，返回 (token, generation)
+fn create_cancellation_token(conversation_id: &str) -> (CancellationToken, u64) {
     let token = CancellationToken::new();
+    let gen = CANCELLATION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if let Ok(mut tokens) = CANCELLATION_TOKENS.lock() {
-        if let Some(old) = tokens.remove(conversation_id) {
-            old.cancel();
+        if let Some((old_token, _)) = tokens.remove(conversation_id) {
+            old_token.cancel();
         }
-        tokens.insert(conversation_id.to_string(), token.clone());
+        tokens.insert(conversation_id.to_string(), (token.clone(), gen));
     }
-    token
+    (token, gen)
 }
 
 // 辅助函数：获取取消令牌
 fn get_cancellation_token(conversation_id: &str) -> Option<CancellationToken> {
     if let Ok(tokens) = CANCELLATION_TOKENS.lock() {
-        tokens.get(conversation_id).cloned()
+        tokens.get(conversation_id).map(|(t, _)| t.clone())
     } else {
         None
     }
 }
 
-// 辅助函数：移除取消令牌
-fn remove_cancellation_token(conversation_id: &str) {
+// 辅助函数：移除取消令牌（仅当 generation 匹配时才移除，避免竞态条件）
+fn remove_cancellation_token(conversation_id: &str, generation: u64) {
     if let Ok(mut tokens) = CANCELLATION_TOKENS.lock() {
-        tokens.remove(conversation_id);
+        if let Some((_, gen)) = tokens.get(conversation_id) {
+            if *gen == generation {
+                tokens.remove(conversation_id);
+            }
+        }
     }
 }
 
@@ -105,12 +112,13 @@ pub fn is_conversation_cancelled(conversation_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 辅助结构：用于在任务结束时自动移除取消令牌
-pub struct CancellationGuard(pub String);
+/// Guard that auto-removes its cancellation token on drop, only if the generation matches.
+/// Prevents a stale task from removing a newer task's token.
+pub struct CancellationGuard(pub String, pub u64);
 
 impl Drop for CancellationGuard {
     fn drop(&mut self) {
-        remove_cancellation_token(&self.0);
+        remove_cancellation_token(&self.0, self.1);
     }
 }
 
@@ -816,7 +824,7 @@ pub async fn generate_plugin_stream(
     let user_message = request.message.clone();
     let system_prompt = request.system_prompt.clone();
 
-    let _cancellation_token = create_cancellation_token(&stream_id);
+    let (_cancellation_token, cancel_gen) = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
     let history = request.history.unwrap_or_default();
@@ -830,7 +838,7 @@ pub async fn generate_plugin_stream(
     llm_config = llm_config.with_model(&model_to_use);
 
     tokio::spawn(async move {
-        let _guard = CancellationGuard(sid.clone());
+        let _guard = CancellationGuard(sid.clone(), cancel_gen);
         // Start event
         let _ = app_clone.emit("plugin_gen_start", &serde_json::json!({ "stream_id": sid }));
 
@@ -1016,7 +1024,7 @@ pub async fn plugin_assistant_chat_stream(
     let user_message = request.message.clone();
     let system_prompt = request.system_prompt.clone();
 
-    let _cancellation_token = create_cancellation_token(&stream_id);
+    let (_cancellation_token, cancel_gen) = create_cancellation_token(&stream_id);
     let app_clone = app_handle.clone();
     let sid = stream_id.clone();
     let history = request.history.unwrap_or_default();
@@ -1028,7 +1036,7 @@ pub async fn plugin_assistant_chat_stream(
     };
 
     tokio::spawn(async move {
-        let _guard = CancellationGuard(sid.clone());
+        let _guard = CancellationGuard(sid.clone(), cancel_gen);
         // Start event
         let _ = app_clone.emit("plugin_assistant_start", &serde_json::json!({ "stream_id": sid }));
 
@@ -1514,6 +1522,16 @@ pub async fn delete_ai_messages_after(
     // Resend semantics delete tail messages; clear run_state to avoid stale "Recent Tool Digests".
     if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
         tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
+    }
+
+    // Clear sliding window summaries to prevent stale LONG-TERM MEMORY / RECENT ACTIVITY SUMMARY
+    // from being injected into the system prompt after message editing/resending.
+    if let Err(e) = db_service.delete_sliding_window_summaries(&conversation_id).await {
+        tracing::warn!(
+            "Failed to clear sliding window summaries for {}: {}",
+            conversation_id,
+            e
+        );
     }
 
     Ok(deleted)
@@ -2515,7 +2533,7 @@ pub async fn agent_execute(
     }
 
     // 创建取消令牌
-    let _cancellation_token = create_cancellation_token(&conversation_id);
+    let (_cancellation_token, cancel_gen) = create_cancellation_token(&conversation_id);
 
     let service_clone = service.clone();
     let conv_id = conversation_id.clone();
@@ -2536,7 +2554,7 @@ pub async fn agent_execute(
     let provider_config_for_closure = provider_config.clone();
 
     tokio::spawn(async move {
-        let _guard = CancellationGuard(conv_id.clone());
+        let _guard = CancellationGuard(conv_id.clone(), cancel_gen);
         // 确保会话存在并保存用户消息
         if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
         {
@@ -2960,7 +2978,6 @@ For each queued module/directory:
                     }
                 }
 
-                remove_cancellation_token(&conv_id);
                 return;
             }
         }
@@ -2986,7 +3003,7 @@ For each queued module/directory:
             }
         }
 
-        remove_cancellation_token(&conv_id);
+        // CancellationGuard drop handles token cleanup automatically
     });
 
     Ok(message_id)

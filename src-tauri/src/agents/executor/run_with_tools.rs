@@ -14,6 +14,7 @@ use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
 use sentinel_db::DatabaseService;
 
 use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
+use crate::agents::context_engineering::reflection::{record_execution_reflection, ExecutionOutcome};
 use crate::agents::executor::message_store::save_assistant_message;
 use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
@@ -525,6 +526,19 @@ pub async fn execute_agent_with_tools(
 
     let mut force_history_with_tools = false;
     while retries <= max_retries {
+        // Early exit if cancelled before starting a new stream turn
+        if crate::commands::ai::is_conversation_cancelled(&params.execution_id) {
+            tracing::info!("Execution cancelled before new stream turn: {}", params.execution_id);
+            let _ = app_handle.emit(
+                "agent:complete",
+                &serde_json::json!({
+                    "execution_id": params.execution_id,
+                    "cancelled": true,
+                }),
+            );
+            return Ok(String::new());
+        }
+
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
 
         if current_tool_ids.iter().any(|id| id == AUDIT_FINDING_UPSERT_TOOL) {
@@ -1399,6 +1413,13 @@ pub async fn execute_agent_with_tools(
                     tool_calls_collector.lock().map(|c| c.len()).unwrap_or(0)
                 );
 
+                let tool_names_for_reflection: Vec<String> = all_tool_calls
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+
                 if let Err(e) = get_global_memory()
                     .record_execution(ExecutionRecord {
                         id: params.execution_id.clone(),
@@ -1414,6 +1435,19 @@ pub async fn execute_agent_with_tools(
                 {
                     tracing::warn!("Failed to store memory record: {}", e);
                 }
+
+                record_execution_reflection(
+                    app_handle,
+                    &ExecutionOutcome {
+                        execution_id: params.execution_id.clone(),
+                        task: params.task.clone(),
+                        success: true,
+                        error: None,
+                        tool_names_used: tool_names_for_reflection,
+                        response_excerpt: Some(truncate_for_memory(&full_response, 200)),
+                    },
+                )
+                .await;
 
                 let reasoning_content = reasoning_content_buf
                     .lock()
@@ -1606,6 +1640,14 @@ pub async fn execute_agent_with_tools(
                         })
                         .unwrap_or_default();
 
+                    let fail_tool_names: Vec<String> = tool_summaries
+                        .iter()
+                        .map(|t| t.name.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    let err_msg_clone = err_msg.clone();
+
                     if let Err(err) = get_global_memory()
                         .record_execution(ExecutionRecord {
                             id: params.execution_id.clone(),
@@ -1621,6 +1663,20 @@ pub async fn execute_agent_with_tools(
                     {
                         tracing::warn!("Failed to store memory record: {}", err);
                     }
+
+                    record_execution_reflection(
+                        app_handle,
+                        &ExecutionOutcome {
+                            execution_id: params.execution_id.clone(),
+                            task: params.task.clone(),
+                            success: false,
+                            error: Some(err_msg_clone),
+                            tool_names_used: fail_tool_names,
+                            response_excerpt: None,
+                        },
+                    )
+                    .await;
+
                     return Err(friendly_err);
                 }
             }
