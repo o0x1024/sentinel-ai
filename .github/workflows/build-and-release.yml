@@ -100,10 +100,13 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri 'https://npcap.com/dist/npcap-sdk-1.16.zip' -OutFile npcap-sdk.zip -UseBasicParsing
-          Expand-Archive -Path npcap-sdk.zip -DestinationPath C:\ -Force
-          $libPath = 'C:\npcap-sdk-1.16\Lib\x64'
+          Expand-Archive -Path npcap-sdk.zip -DestinationPath C:\npcap-sdk -Force
+          $packetLib = Get-ChildItem -Path C:\npcap-sdk -Recurse -Filter 'Packet.lib' | Where-Object { $_.DirectoryName -match 'x64' } | Select-Object -First 1
+          if (-not $packetLib) { throw 'Packet.lib (x64) not found after extracting Npcap SDK' }
+          $libPath = $packetLib.DirectoryName
           $existingLib = [Environment]::GetEnvironmentVariable('LIB', 'Process')
           Add-Content -Path $env:GITHUB_ENV -Value "LIB=$libPath;$existingLib"
+          Add-Content -Path $env:GITHUB_ENV -Value "NPCAP_LIB=$libPath"
 
       - name: Install Frontend Dependencies
         run: yarn install
@@ -135,6 +138,7 @@ jobs:
           OPENSSL_STATIC: ${{ env.OPENSSL_STATIC }}
           OPENSSL_NO_VENDOR: ${{ env.OPENSSL_NO_VENDOR }}
           VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+          LIB: ${{ env.LIB }}
           CFLAGS: ${{ env.CFLAGS }}
           LDFLAGS: ${{ env.LDFLAGS }}
           CPPFLAGS: ${{ env.CPPFLAGS }}
