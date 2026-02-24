@@ -1,3 +1,5 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,28 @@ use tokio::fs;
 use tokio::process::Command;
 use crate::buildin_tools::shell::{get_shell_config, ShellExecutionMode};
 use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
+
+// ── Cached regex patterns ───────────────────────────────────────────────────
+
+static RE_HUNK: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").unwrap()
+});
+
+static RE_FN_RUST: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:pub(?:\(\w+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
+});
+
+static RE_FN_JS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:export\s+)?(?:async\s+)?function\s*\*?\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
+});
+
+static RE_FN_PY_RB: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
+});
+
+static RE_FN_GO: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"func\s+(?:\([^)]*\)\s+)?([A-Za-z_][A-Za-z0-9_]*)").unwrap()
+});
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct CodeSearchArgs {
@@ -539,7 +563,14 @@ impl Tool for CallGraphLiteTool {
         let runtime = load_audit_runtime().await;
         let path = resolve_effective_path(args.path.as_deref(), &runtime.mode);
         let max_nodes = args.max_nodes.clamp(10, 500);
-        let def_pattern = r"^\s*(?:pub\s+)?(?:async\s+)?(?:fn|function)\s+([A-Za-z_][A-Za-z0-9_]*)";
+        // Match function definitions across multiple languages:
+        // Rust: pub fn, async fn, pub(crate) fn, etc.
+        // JS/TS: function, async function, export function
+        // Python: def, async def
+        // Go: func
+        // Ruby: def
+        // Java/C#/C++: public void foo, private static int bar, etc.
+        let def_pattern = r"^\s*(?:(?:pub(?:\(\w+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)|(?:export\s+)?(?:async\s+)?function\s*\*?\s+([A-Za-z_][A-Za-z0-9_]*)|(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)|func\s+(?:\([^)]*\)\s+)?([A-Za-z_][A-Za-z0-9_]*)|(?:(?:public|private|protected|internal|static|final|abstract|override|virtual|synchronized)\s+)*(?:[A-Za-z_][A-Za-z0-9_<>\[\]]*\s+)([A-Za-z_][A-Za-z0-9_]*)\s*\()";
 
         let mut defs_args = vec![
             "--line-number".to_string(),
@@ -667,162 +698,7 @@ impl Tool for CallGraphLiteTool {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct TaintSliceLiteArgs {
-    #[serde(default)]
-    pub path: Option<String>,
-    #[serde(default)]
-    pub file_glob: Option<String>,
-    #[serde(default)]
-    pub source_patterns: Option<Vec<String>>,
-    #[serde(default)]
-    pub sink_patterns: Option<Vec<String>>,
-    #[serde(default = "default_taint_slice_max_traces")]
-    pub max_traces: usize,
-    #[serde(default = "default_taint_slice_line_window")]
-    pub line_window: usize,
-}
 
-fn default_taint_slice_max_traces() -> usize {
-    80
-}
-
-fn default_taint_slice_line_window() -> usize {
-    300
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TaintPoint {
-    pub kind: String,
-    pub pattern: String,
-    pub file: String,
-    pub line: usize,
-    pub column: usize,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TaintTrace {
-    pub source: TaintPoint,
-    pub sink: TaintPoint,
-    pub distance_lines: usize,
-    pub confidence: f64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TaintSliceLiteOutput {
-    pub path: String,
-    pub total_sources: usize,
-    pub total_sinks: usize,
-    pub traces: Vec<TaintTrace>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum TaintSliceLiteError {
-    #[error("invalid arguments: {0}")]
-    InvalidArgs(String),
-    #[error("command failed: {0}")]
-    CommandFailed(String),
-    #[error("tool timeout after {0} seconds")]
-    Timeout(u64),
-}
-
-#[derive(Debug, Clone)]
-pub struct TaintSliceLiteTool;
-
-impl TaintSliceLiteTool {
-    pub const NAME: &'static str = "taint_slice_lite";
-    pub const DESCRIPTION: &'static str = "Find lightweight source-to-sink taint traces in the same file using line-distance heuristics.";
-}
-
-impl Tool for TaintSliceLiteTool {
-    const NAME: &'static str = Self::NAME;
-    type Args = TaintSliceLiteArgs;
-    type Output = TaintSliceLiteOutput;
-    type Error = TaintSliceLiteError;
-
-    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
-        rig::completion::ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: Self::DESCRIPTION.to_string(),
-            parameters: serde_json::to_value(schemars::schema_for!(TaintSliceLiteArgs))
-                .unwrap_or_default(),
-        }
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let runtime = load_audit_runtime().await;
-        let path = resolve_effective_path(args.path.as_deref(), &runtime.mode);
-        let max_traces = args.max_traces.clamp(1, 500);
-        let line_window = args.line_window.clamp(10, 2000);
-        let source_patterns = args.source_patterns.unwrap_or_else(default_source_patterns);
-        let sink_patterns = args.sink_patterns.unwrap_or_else(default_sink_patterns);
-
-        if source_patterns.is_empty() || sink_patterns.is_empty() {
-            return Err(TaintSliceLiteError::InvalidArgs(
-                "source_patterns and sink_patterns must not be empty".to_string(),
-            ));
-        }
-
-        let sources = search_taint_points(
-            &path,
-            args.file_glob.as_deref(),
-            &source_patterns,
-            "source",
-            &runtime,
-        )
-        .await?;
-        let sinks = search_taint_points(
-            &path,
-            args.file_glob.as_deref(),
-            &sink_patterns,
-            "sink",
-            &runtime,
-        )
-        .await?;
-
-        let mut traces = Vec::new();
-        for source in &sources {
-            for sink in &sinks {
-                if source.file != sink.file {
-                    continue;
-                }
-                if sink.line < source.line {
-                    continue;
-                }
-                let distance = sink.line - source.line;
-                if distance > line_window {
-                    continue;
-                }
-                let confidence = ((line_window - distance) as f64 / line_window as f64).clamp(0.05, 1.0);
-                traces.push(TaintTrace {
-                    source: source.clone(),
-                    sink: sink.clone(),
-                    distance_lines: distance,
-                    confidence,
-                });
-            }
-        }
-
-        traces.sort_by(|a, b| {
-            a.distance_lines
-                .cmp(&b.distance_lines)
-                .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
-        });
-
-        let truncated = traces.len() > max_traces;
-        traces.truncate(max_traces);
-
-        Ok(TaintSliceLiteOutput {
-            path,
-            total_sources: sources.len(),
-            total_sinks: sinks.len(),
-            traces,
-            truncated,
-        })
-    }
-}
 
 pub(crate) fn resolve_effective_path(input: Option<&str>, mode: &ShellExecutionMode) -> String {
     if *mode == ShellExecutionMode::Docker {
@@ -1145,14 +1021,13 @@ fn parse_numstat(output: &str) -> Vec<(String, (usize, usize))> {
 fn parse_hunks(output: &str) -> HashMap<String, Vec<DiffHunk>> {
     let mut current_file: Option<String> = None;
     let mut hunks_by_file: HashMap<String, Vec<DiffHunk>> = HashMap::new();
-    let hunk_re = regex::Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").unwrap();
 
     for line in output.lines() {
         if let Some(rest) = line.strip_prefix("+++ b/") {
             current_file = Some(rest.to_string());
             continue;
         }
-        if let Some(caps) = hunk_re.captures(line) {
+        if let Some(caps) = RE_HUNK.captures(line) {
             if let Some(path) = current_file.clone() {
                 let old_start = caps.get(1).and_then(|v| v.as_str().parse::<usize>().ok()).unwrap_or(0);
                 let old_count = caps.get(2).and_then(|v| v.as_str().parse::<usize>().ok()).unwrap_or(1);
@@ -1172,9 +1047,15 @@ fn parse_hunks(output: &str) -> HashMap<String, Vec<DiffHunk>> {
 }
 
 fn extract_function_name(line: &str) -> Option<String> {
-    let re = regex::Regex::new(r"(?:fn|function)\s+([A-Za-z_][A-Za-z0-9_]*)").ok()?;
-    re.captures(line)
-        .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+    // Use cached regexes for each language family
+    for re in [&*RE_FN_RUST, &*RE_FN_JS, &*RE_FN_PY_RB, &*RE_FN_GO] {
+        if let Some(caps) = re.captures(line) {
+            if let Some(m) = caps.get(1) {
+                return Some(m.as_str().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn extract_called_name(line: &str, focus_names: &[String]) -> Option<String> {
@@ -1204,66 +1085,7 @@ fn nearest_function_for_line(
     result
 }
 
-fn default_source_patterns() -> Vec<String> {
-    vec![
-        "req\\.params".to_string(),
-        "req\\.query".to_string(),
-        "req\\.body".to_string(),
-        "request\\.getParameter".to_string(),
-        "ctx\\.query".to_string(),
-    ]
-}
 
-fn default_sink_patterns() -> Vec<String> {
-    vec![
-        "db\\.".to_string(),
-        "execute\\(".to_string(),
-        "query\\(".to_string(),
-        "eval\\(".to_string(),
-        "innerHTML".to_string(),
-    ]
-}
-
-async fn search_taint_points(
-    path: &str,
-    file_glob: Option<&str>,
-    patterns: &[String],
-    kind: &str,
-    runtime: &AuditRuntime,
-) -> Result<Vec<TaintPoint>, TaintSliceLiteError> {
-    let mut points = Vec::new();
-    for pattern in patterns {
-        let mut command_args = vec![
-            "--line-number".to_string(),
-            "--column".to_string(),
-            "--no-heading".to_string(),
-            "--color".to_string(),
-            "never".to_string(),
-            "--pcre2".to_string(),
-            pattern.clone(),
-        ];
-        if let Some(glob) = file_glob.filter(|v| !v.trim().is_empty()) {
-            command_args.push("--glob".to_string());
-            command_args.push(glob.to_string());
-        }
-        command_args.push(path.to_string());
-
-        let output = run_command_for_taint("rg", &command_args, 20, runtime).await?;
-        for line in output.stdout.lines() {
-            if let Some(parsed) = parse_rg_line(line) {
-                points.push(TaintPoint {
-                    kind: kind.to_string(),
-                    pattern: pattern.clone(),
-                    file: parsed.file,
-                    line: parsed.line,
-                    column: parsed.column,
-                    text: parsed.text,
-                });
-            }
-        }
-    }
-    Ok(points)
-}
 
 async fn run_command_for_call_graph(
     program: &str,
@@ -1283,20 +1105,4 @@ async fn run_command_for_call_graph(
     }
 }
 
-async fn run_command_for_taint(
-    program: &str,
-    args: &[String],
-    timeout_secs: u64,
-    runtime: &AuditRuntime,
-) -> Result<CommandOutput, TaintSliceLiteError> {
-    match run_audit_command(program, args, timeout_secs, runtime, true).await {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            if e.starts_with("tool timeout after ") {
-                Err(TaintSliceLiteError::Timeout(timeout_secs))
-            } else {
-                Err(TaintSliceLiteError::CommandFailed(e))
-            }
-        }
-    }
-}
+

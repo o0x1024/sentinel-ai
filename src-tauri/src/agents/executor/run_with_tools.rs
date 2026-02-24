@@ -150,7 +150,6 @@ fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
         "code_search",
         "git_diff_scope",
         "call_graph_lite",
-        "taint_slice_lite",
         "cross_file_taint",
         "dependency_audit",
         "tenth_man_review",
@@ -171,6 +170,35 @@ fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
         }
     }
     tool_ids
+}
+
+async fn ensure_audit_tools_available(
+    tool_server: &ToolServer,
+    selected_tool_ids: &[String],
+) -> Result<()> {
+    let registered_names = tool_server
+        .list_tools()
+        .await
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect::<std::collections::HashSet<_>>();
+
+    // This tool is injected at runtime and does not need to exist in ToolServer registry.
+    let missing = selected_tool_ids
+        .iter()
+        .filter(|name| name.as_str() != AUDIT_FINDING_UPSERT_TOOL)
+        .filter(|name| !registered_names.contains(name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "Audit mode required tools missing from ToolServer registry: {}",
+            missing.join(", ")
+        );
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -303,6 +331,7 @@ pub async fn execute_agent_with_tools(
 
     if params.audit_mode {
         selected_tool_ids = enforce_audit_required_tools(selected_tool_ids);
+        ensure_audit_tools_available(tool_server, &selected_tool_ids).await?;
     }
     
     tracing::info!(
@@ -593,6 +622,14 @@ pub async fn execute_agent_with_tools(
                                     "title": { "type": "string" },
                                     "severity": { "type": "string" },
                                     "severity_raw": { "type": "string" },
+                                    "lifecycle_stage": {
+                                        "type": "string",
+                                        "description": "candidate|triaged|verified|confirmed|rejected|archived"
+                                    },
+                                    "verification_status": {
+                                        "type": "string",
+                                        "description": "unverified|pending|passed|failed|needs_more_evidence"
+                                    },
                                     "confidence": { "type": "number" },
                                     "status": { "type": "string" },
                                     "cwe": { "type": "string" },
@@ -601,6 +638,10 @@ pub async fn execute_agent_with_tools(
                                     "sink": { "type": "object" },
                                     "trace_path": { "type": "array", "items": { "type": "object" } },
                                     "evidence": { "type": "array", "items": { "type": "string" } },
+                                    "required_evidence": { "type": "array", "items": { "type": "string" } },
+                                    "verifier": { "type": "object" },
+                                    "judge": { "type": "object" },
+                                    "provenance": { "type": "object" },
                                     "fix": { "type": "string" },
                                     "description": { "type": "string" }
                                 },

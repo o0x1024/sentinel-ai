@@ -123,6 +123,10 @@ pub fn all_rules() -> Vec<SecurityRule> {
         open_redirect_rule(),
         log_injection_rule(),
         hardcoded_secrets_rule(),
+        crypto_misuse_rule(),
+        auth_bypass_rule(),
+        insecure_random_rule(),
+        config_security_rule(),
     ]
 }
 
@@ -589,5 +593,216 @@ fn hardcoded_secrets_rule() -> SecurityRule {
         sources: vec![],  // Not taint-based — pattern-only
         sinks: vec![],
         sanitizers: vec![],
+    }
+}
+
+// ── New rules: Cryptographic Misuse ──────────────────────────────────────────
+
+fn crypto_misuse_rule() -> SecurityRule {
+    SecurityRule {
+        id: "crypto_misuse".to_string(),
+        name: "Cryptographic Misuse".to_string(),
+        cwe: "CWE-327".to_string(),
+        severity: Severity::High,
+        description: "Use of weak/broken cryptographic algorithms or insecure configurations (MD5/SHA1 for passwords, ECB mode, hardcoded IVs, etc.)".to_string(),
+        sources: vec![
+            // Any user data flowing into crypto is interesting
+            PatternSpec::new("req.body").langs(&["javascript", "typescript"]),
+            PatternSpec::new("request.data").langs(&["python"]),
+            PatternSpec::new("getParameter").langs(&["java"]),
+            PatternSpec::new("$_POST").langs(&["php"]),
+            // Password fields
+            PatternSpec::new("password").desc("Password variable flowing to crypto"),
+            PatternSpec::new("passwd").desc("Password variable flowing to crypto"),
+            PatternSpec::new("secret").desc("Secret variable flowing to crypto"),
+        ],
+        sinks: vec![
+            // Weak hash algorithms (not suitable for password storage)
+            PatternSpec::new("MD5").desc("MD5 is cryptographically broken"),
+            PatternSpec::new("md5").desc("MD5 is cryptographically broken"),
+            PatternSpec::new("SHA1").desc("SHA-1 is deprecated for security use"),
+            PatternSpec::new("sha1").desc("SHA-1 is deprecated for security use"),
+            PatternSpec::new("createHash").langs(&["javascript", "typescript"]).desc("Check algorithm parameter"),
+            PatternSpec::new("hashlib.md5").langs(&["python"]),
+            PatternSpec::new("hashlib.sha1").langs(&["python"]),
+            PatternSpec::new("Digest::MD5").langs(&["ruby"]),
+            PatternSpec::new("MessageDigest.getInstance").langs(&["java"]).desc("Check algorithm string"),
+            // Insecure cipher modes
+            PatternSpec::new("ECB").desc("ECB mode does not provide semantic security"),
+            PatternSpec::new("DES").desc("DES has 56-bit key, easily brute-forced"),
+            PatternSpec::new("RC4").desc("RC4 has known biases"),
+            PatternSpec::new("Blowfish").desc("Blowfish has 64-bit block, vulnerable to birthday attacks"),
+            // Hardcoded IV / Key in code
+            PatternSpec::new("createCipheriv").langs(&["javascript", "typescript"]).desc("Check for hardcoded IV"),
+            PatternSpec::new("Cipher.getInstance").langs(&["java"]).desc("Check cipher transformation string"),
+            PatternSpec::new("AES.new").langs(&["python"]).desc("Check for AES.MODE_ECB"),
+            // PHP weak crypto
+            PatternSpec::new("mcrypt_encrypt").langs(&["php"]).desc("mcrypt is deprecated"),
+            PatternSpec::new("crypt(").langs(&["php"]).desc("Check algorithm used"),
+        ],
+        sanitizers: vec![
+            PatternSpec::new("bcrypt"),
+            PatternSpec::new("scrypt"),
+            PatternSpec::new("argon2"),
+            PatternSpec::new("pbkdf2"),
+            PatternSpec::new("PBKDF2"),
+            PatternSpec::new("SHA256"),
+            PatternSpec::new("SHA512"),
+            PatternSpec::new("sha256"),
+            PatternSpec::new("sha512"),
+        ],
+    }
+}
+
+// ── New rules: Authentication/Authorization Bypass ───────────────────────────
+
+fn auth_bypass_rule() -> SecurityRule {
+    SecurityRule {
+        id: "auth_bypass".to_string(),
+        name: "Authentication / Authorization Bypass".to_string(),
+        cwe: "CWE-862".to_string(),
+        severity: Severity::Critical,
+        description: "Missing authentication or authorization checks on sensitive operations. User-controlled IDs used to access resources without ownership verification (IDOR).".to_string(),
+        sources: vec![
+            // User-supplied identifiers
+            PatternSpec::new("req.params.id").langs(&["javascript", "typescript"]).desc("Direct object reference from URL"),
+            PatternSpec::new("req.params.userId").langs(&["javascript", "typescript"]),
+            PatternSpec::new("req.query.id").langs(&["javascript", "typescript"]),
+            PatternSpec::new("req.body.user_id").langs(&["javascript", "typescript"]),
+            PatternSpec::new("getParameter").langs(&["java"]).desc("User-controlled parameter"),
+            PatternSpec::new("@PathVariable").langs(&["java"]),
+            PatternSpec::new("request.args.get").langs(&["python"]),
+            PatternSpec::new("$_GET").langs(&["php"]),
+            PatternSpec::new("params").langs(&["ruby"]),
+            PatternSpec::new("c.Param").langs(&["go"]),
+        ],
+        sinks: vec![
+            // Database lookups by ID (IDOR)
+            PatternSpec::new("findById").desc("Direct DB lookup by user-supplied ID"),
+            PatternSpec::new("findOne").desc("Direct DB lookup without ownership check"),
+            PatternSpec::new("find_by_id").desc("Direct DB lookup by user-supplied ID"),
+            PatternSpec::new("get_object_or_404").langs(&["python"]).desc("Django object lookup"),
+            PatternSpec::new("deleteById").desc("Delete by ID without ownership"),
+            PatternSpec::new("delete_by_id"),
+            PatternSpec::new("updateById").desc("Update by ID without ownership"),
+            PatternSpec::new("update_by_id"),
+            // File access by user-supplied path
+            PatternSpec::new("sendFile").langs(&["javascript", "typescript"]),
+            PatternSpec::new("send_file").langs(&["python"]),
+            // Admin operations
+            PatternSpec::new("setRole").desc("Role modification"),
+            PatternSpec::new("set_role"),
+            PatternSpec::new("grant"),
+            PatternSpec::new("promote"),
+        ],
+        sanitizers: vec![
+            PatternSpec::new("authenticate"),
+            PatternSpec::new("authorize"),
+            PatternSpec::new("isAuthorized"),
+            PatternSpec::new("checkPermission"),
+            PatternSpec::new("check_permission"),
+            PatternSpec::new("requireAuth"),
+            PatternSpec::new("isOwner"),
+            PatternSpec::new("is_owner"),
+            PatternSpec::new("verifyToken"),
+            PatternSpec::new("verify_token"),
+            PatternSpec::new("@PreAuthorize").langs(&["java"]),
+            PatternSpec::new("@Secured").langs(&["java"]),
+            PatternSpec::new("@login_required").langs(&["python"]),
+            PatternSpec::new("permission_required").langs(&["python"]),
+            PatternSpec::new("before_action :authenticate").langs(&["ruby"]),
+        ],
+    }
+}
+
+// ── New rules: Insecure Randomness ───────────────────────────────────────────
+
+fn insecure_random_rule() -> SecurityRule {
+    SecurityRule {
+        id: "insecure_random".to_string(),
+        name: "Insecure Randomness".to_string(),
+        cwe: "CWE-330".to_string(),
+        severity: Severity::Medium,
+        description: "Use of predictable pseudo-random number generators in security-sensitive contexts (token generation, session IDs, cryptographic keys)".to_string(),
+        sources: vec![],  // Pattern-based + taint: any data that feeds into security contexts
+        sinks: vec![
+            // JavaScript
+            PatternSpec::new("Math.random").langs(&["javascript", "typescript"]).desc("Not cryptographically secure"),
+            // Python
+            PatternSpec::new("random.random").langs(&["python"]).desc("Not cryptographically secure"),
+            PatternSpec::new("random.randint").langs(&["python"]).desc("Not cryptographically secure"),
+            PatternSpec::new("random.choice").langs(&["python"]).desc("Not cryptographically secure"),
+            PatternSpec::new("random.randrange").langs(&["python"]).desc("Not cryptographically secure"),
+            // Java
+            PatternSpec::new("java.util.Random").langs(&["java"]).desc("Use SecureRandom instead"),
+            PatternSpec::new("new Random(").langs(&["java"]).desc("Use SecureRandom instead"),
+            PatternSpec::new("ThreadLocalRandom").langs(&["java"]).desc("Not suitable for crypto"),
+            // PHP
+            PatternSpec::new("rand(").langs(&["php"]).desc("Use random_int() instead"),
+            PatternSpec::new("mt_rand").langs(&["php"]).desc("Use random_int() instead"),
+            PatternSpec::new("array_rand").langs(&["php"]).desc("Predictable"),
+            // Go
+            PatternSpec::new("math/rand").langs(&["go"]).desc("Use crypto/rand instead"),
+            PatternSpec::new("rand.Intn").langs(&["go"]).desc("Use crypto/rand instead"),
+            // Ruby
+            PatternSpec::new("rand(").langs(&["ruby"]).desc("Use SecureRandom instead"),
+            // C/C++
+            PatternSpec::new("rand(").langs(&["c", "cpp"]).desc("Use platform CSPRNG"),
+            PatternSpec::new("srand(").langs(&["c", "cpp"]).desc("Predictable seed"),
+            // Rust (less common but still possible)
+            PatternSpec::new("thread_rng").langs(&["rust"]).desc("Check if used for security-critical values"),
+        ],
+        sanitizers: vec![
+            PatternSpec::new("crypto.randomBytes"),
+            PatternSpec::new("crypto.getRandomValues"),
+            PatternSpec::new("SecureRandom"),
+            PatternSpec::new("secrets.").langs(&["python"]),
+            PatternSpec::new("os.urandom").langs(&["python"]),
+            PatternSpec::new("crypto/rand").langs(&["go"]),
+            PatternSpec::new("random_int").langs(&["php"]),
+            PatternSpec::new("random_bytes").langs(&["php"]),
+            PatternSpec::new("SecureRandom").langs(&["ruby"]),
+            PatternSpec::new("OsRng").langs(&["rust"]),
+        ],
+    }
+}
+
+// ── New rules: Configuration Security ────────────────────────────────────────
+
+fn config_security_rule() -> SecurityRule {
+    SecurityRule {
+        id: "config_security".to_string(),
+        name: "Security Misconfiguration".to_string(),
+        cwe: "CWE-16".to_string(),
+        severity: Severity::Medium,
+        description: "Insecure configuration: debug mode enabled, permissive CORS, missing security headers, verbose error exposure, default credentials".to_string(),
+        sources: vec![],  // Pattern-based — not taint-flow
+        sinks: vec![
+            // Debug mode
+            PatternSpec::new("DEBUG = True").langs(&["python"]).desc("Django debug mode in production"),
+            PatternSpec::new("app.debug = True").langs(&["python"]).desc("Flask debug mode"),
+            PatternSpec::new("NODE_ENV").langs(&["javascript", "typescript"]).desc("Check env value"),
+            // CORS misconfig
+            PatternSpec::new("Access-Control-Allow-Origin: *").desc("Wildcard CORS"),
+            PatternSpec::new("cors({ origin: true })").langs(&["javascript", "typescript"]).desc("Allow all origins"),
+            PatternSpec::new("CORS(app, resources=\"").langs(&["python"]).desc("Check CORS scope"),
+            PatternSpec::new("@CrossOrigin").langs(&["java"]).desc("Check allowed origins"),
+            // Verbose error exposure
+            PatternSpec::new("stack").desc("Stack trace exposure"),
+            PatternSpec::new("stackTrace").desc("Stack trace exposure"),
+            PatternSpec::new("printStackTrace").langs(&["java"]).desc("Stack trace leakage"),
+            PatternSpec::new("DISPLAY_ERRORS").langs(&["php"]).desc("Error display in production"),
+            PatternSpec::new("display_errors").langs(&["php"]),
+            // Session insecurity
+            PatternSpec::new("httpOnly: false").langs(&["javascript", "typescript"]).desc("Cookie accessible to JS"),
+            PatternSpec::new("secure: false").langs(&["javascript", "typescript"]).desc("Cookie sent over HTTP"),
+            PatternSpec::new("SESSION_COOKIE_SECURE = False").langs(&["python"]).desc("Django insecure session"),
+            PatternSpec::new("SESSION_COOKIE_HTTPONLY = False").langs(&["python"]),
+        ],
+        sanitizers: vec![
+            PatternSpec::new("helmet").langs(&["javascript", "typescript"]),
+            PatternSpec::new("SecurityMiddleware").langs(&["python"]),
+            PatternSpec::new("production"),
+        ],
     }
 }

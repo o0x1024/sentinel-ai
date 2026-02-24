@@ -43,6 +43,8 @@ pub struct AgentAuditFindingInput {
     pub title: Option<String>,
     pub severity: Option<String>,
     pub severity_raw: Option<String>,
+    pub lifecycle_stage: Option<String>,
+    pub verification_status: Option<String>,
     pub confidence: Option<f64>,
     pub files: Option<Vec<String>>,
     pub fix: Option<String>,
@@ -53,6 +55,10 @@ pub struct AgentAuditFindingInput {
     pub sink: Option<serde_json::Value>,
     pub trace_path: Option<Vec<serde_json::Value>>,
     pub evidence: Option<Vec<String>>,
+    pub required_evidence: Option<Vec<String>>,
+    pub verifier: Option<serde_json::Value>,
+    pub judge: Option<serde_json::Value>,
+    pub provenance: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +82,8 @@ pub struct AgentAuditFindingView {
     pub title: String,
     pub severity: String,
     pub status: String,
+    pub lifecycle_stage: String,
+    pub verification_status: String,
     pub confidence: Option<f64>,
     pub cwe: Option<String>,
     pub files: Vec<String>,
@@ -83,15 +91,55 @@ pub struct AgentAuditFindingView {
     pub sink: Option<serde_json::Value>,
     pub trace_path: Vec<serde_json::Value>,
     pub evidence: Vec<String>,
+    pub required_evidence: Vec<String>,
+    pub verifier: Option<serde_json::Value>,
+    pub judge: Option<serde_json::Value>,
+    pub provenance: Option<serde_json::Value>,
     pub fix: Option<String>,
     pub description: String,
     pub severity_raw: Option<String>,
     pub source_message_id: Option<String>,
     pub hit_count: i64,
+    pub last_transition_at: Option<chrono::DateTime<chrono::Utc>>,
     pub first_seen_at: chrono::DateTime<chrono::Utc>,
     pub last_seen_at: chrono::DateTime<chrono::Utc>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionAgentAuditFindingLifecycleRequest {
+    pub finding_id: String,
+    pub lifecycle_stage: String,
+    #[serde(default)]
+    pub verification_status: Option<String>,
+    #[serde(default)]
+    pub judge: Option<serde_json::Value>,
+    #[serde(default)]
+    pub verifier: Option<serde_json::Value>,
+    #[serde(default)]
+    pub provenance: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentAuditQualityGateThresholds {
+    pub min_evidence_rate: f64,
+    pub max_uncertain_rate: f64,
+    pub max_false_positive_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentAuditQualityGateMetrics {
+    pub total_findings: i64,
+    pub with_evidence_count: i64,
+    pub uncertain_count: i64,
+    pub false_positive_or_rejected_count: i64,
+    pub evidence_rate: f64,
+    pub uncertain_rate: f64,
+    pub false_positive_rate: f64,
+    pub thresholds: AgentAuditQualityGateThresholds,
+    pub threshold_source: String,
+    pub gate_passed: bool,
 }
 
 fn map_audit_status_to_traffic_status(status: Option<&str>) -> String {
@@ -101,6 +149,61 @@ fn map_audit_status_to_traffic_status(status: Option<&str>) -> String {
         "fixed" => "fixed".to_string(),
         _ => "open".to_string(),
     }
+}
+
+fn normalize_lifecycle_stage(input: Option<&str>) -> String {
+    match input.unwrap_or("").trim().to_lowercase().as_str() {
+        "candidate" => "candidate".to_string(),
+        "triaged" => "triaged".to_string(),
+        "verified" => "verified".to_string(),
+        "confirmed" => "confirmed".to_string(),
+        "rejected" => "rejected".to_string(),
+        "archived" => "archived".to_string(),
+        _ => "confirmed".to_string(),
+    }
+}
+
+fn normalize_verification_status(input: Option<&str>) -> String {
+    match input.unwrap_or("").trim().to_lowercase().as_str() {
+        "unverified" => "unverified".to_string(),
+        "pending" => "pending".to_string(),
+        "passed" => "passed".to_string(),
+        "failed" => "failed".to_string(),
+        "needs_more_evidence" => "needs_more_evidence".to_string(),
+        _ => "unverified".to_string(),
+    }
+}
+
+fn infer_lifecycle_from_status(status: Option<&str>) -> Option<String> {
+    match status.unwrap_or("").trim().to_lowercase().as_str() {
+        "confirmed" => Some("confirmed".to_string()),
+        "rejected" | "false_positive" => Some("rejected".to_string()),
+        "fixed" => Some("archived".to_string()),
+        _ => None,
+    }
+}
+
+fn is_valid_lifecycle_transition(current: &str, next: &str) -> bool {
+    if current == next {
+        return true;
+    }
+    matches!(
+        (current, next),
+        ("candidate", "triaged")
+            | ("candidate", "rejected")
+            | ("candidate", "verified")
+            | ("candidate", "confirmed")
+            | ("triaged", "verified")
+            | ("triaged", "rejected")
+            | ("triaged", "confirmed")
+            | ("verified", "confirmed")
+            | ("verified", "rejected")
+            | ("confirmed", "archived")
+            | ("confirmed", "rejected")
+            | ("rejected", "candidate")
+            | ("rejected", "triaged")
+            | ("archived", "candidate")
+    )
 }
 
 fn normalize_severity(severity: Option<&str>) -> String {
@@ -205,6 +308,8 @@ fn map_agent_audit_record_to_view(
         title: row.title,
         severity: row.severity,
         status: row.status,
+        lifecycle_stage: row.lifecycle_stage,
+        verification_status: row.verification_status,
         confidence: row.confidence,
         cwe: row.cwe,
         files,
@@ -226,16 +331,170 @@ fn map_agent_audit_record_to_view(
             .as_ref()
             .and_then(|v| serde_json::from_str::<Vec<String>>(v).ok())
             .unwrap_or_default(),
+        required_evidence: row
+            .required_evidence_json
+            .as_ref()
+            .and_then(|v| serde_json::from_str::<Vec<String>>(v).ok())
+            .unwrap_or_default(),
+        verifier: row
+            .verifier_json
+            .as_ref()
+            .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok()),
+        judge: row
+            .judge_json
+            .as_ref()
+            .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok()),
+        provenance: row
+            .provenance_json
+            .as_ref()
+            .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok()),
         fix: row.fix,
         description: row.description,
         severity_raw: row.severity_raw,
         source_message_id: row.source_message_id,
         hit_count: row.hit_count,
+        last_transition_at: row.last_transition_at,
         first_seen_at: row.first_seen_at,
         last_seen_at: row.last_seen_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
     }
+}
+
+fn default_quality_gate_thresholds() -> AgentAuditQualityGateThresholds {
+    AgentAuditQualityGateThresholds {
+        min_evidence_rate: 0.70,
+        max_uncertain_rate: 0.30,
+        max_false_positive_rate: 0.20,
+    }
+}
+
+fn normalize_quality_gate_thresholds(
+    thresholds: AgentAuditQualityGateThresholds,
+) -> AgentAuditQualityGateThresholds {
+    AgentAuditQualityGateThresholds {
+        min_evidence_rate: thresholds.min_evidence_rate.clamp(0.0, 1.0),
+        max_uncertain_rate: thresholds.max_uncertain_rate.clamp(0.0, 1.0),
+        max_false_positive_rate: thresholds.max_false_positive_rate.clamp(0.0, 1.0),
+    }
+}
+
+fn quality_gate_rates(
+    total_findings: i64,
+    with_evidence_count: i64,
+    uncertain_count: i64,
+    false_positive_or_rejected_count: i64,
+) -> (f64, f64, f64) {
+    if total_findings <= 0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let total = total_findings as f64;
+    (
+        (with_evidence_count as f64) / total,
+        (uncertain_count as f64) / total,
+        (false_positive_or_rejected_count as f64) / total,
+    )
+}
+
+fn has_non_empty_string_array_json(raw: Option<&String>) -> bool {
+    let Some(raw) = raw else {
+        return false;
+    };
+    serde_json::from_str::<Vec<String>>(raw)
+        .map(|items| items.iter().any(|v| !v.trim().is_empty()))
+        .unwrap_or(false)
+}
+
+fn build_quality_gate_metrics(
+    records: &[sentinel_db::AgentAuditFindingRecord],
+    thresholds: AgentAuditQualityGateThresholds,
+    threshold_source: String,
+) -> AgentAuditQualityGateMetrics {
+    let thresholds = normalize_quality_gate_thresholds(thresholds);
+    let total_findings = records.len() as i64;
+    let with_evidence_count = records
+        .iter()
+        .filter(|r| has_non_empty_string_array_json(r.evidence_json.as_ref()))
+        .count() as i64;
+    let uncertain_count = records
+        .iter()
+        .filter(|r| {
+            r.verification_status == "needs_more_evidence"
+                || r.lifecycle_stage == "candidate"
+                || r.lifecycle_stage == "triaged"
+                || r.lifecycle_stage == "verified"
+        })
+        .count() as i64;
+    let false_positive_or_rejected_count = records
+        .iter()
+        .filter(|r| r.status == "false_positive" || r.lifecycle_stage == "rejected")
+        .count() as i64;
+    let (evidence_rate, uncertain_rate, false_positive_rate) = quality_gate_rates(
+        total_findings,
+        with_evidence_count,
+        uncertain_count,
+        false_positive_or_rejected_count,
+    );
+
+    let gate_passed = total_findings == 0
+        || (evidence_rate >= thresholds.min_evidence_rate
+            && uncertain_rate <= thresholds.max_uncertain_rate
+            && false_positive_rate <= thresholds.max_false_positive_rate);
+
+    AgentAuditQualityGateMetrics {
+        total_findings,
+        with_evidence_count,
+        uncertain_count,
+        false_positive_or_rejected_count,
+        evidence_rate,
+        uncertain_rate,
+        false_positive_rate,
+        thresholds,
+        threshold_source,
+        gate_passed,
+    }
+}
+
+async fn resolve_quality_gate_thresholds(
+    db_service: &Arc<DatabaseService>,
+    conversation_id: Option<&str>,
+    thresholds_override: Option<AgentAuditQualityGateThresholds>,
+) -> (AgentAuditQualityGateThresholds, String) {
+    if let Some(override_thresholds) = thresholds_override {
+        return (
+            normalize_quality_gate_thresholds(override_thresholds),
+            "runtime_override".to_string(),
+        );
+    }
+
+    if let Some(conversation_id) = conversation_id.filter(|v| !v.trim().is_empty()) {
+        let scoped = db_service
+            .get_config_internal("agent_audit_quality_gate_conversation", conversation_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<AgentAuditQualityGateThresholds>(&raw).ok())
+            .map(normalize_quality_gate_thresholds);
+        if let Some(thresholds) = scoped {
+            return (thresholds, "conversation_override".to_string());
+        }
+    }
+
+    let global = db_service
+        .get_config_internal("agent_audit_quality_gate", "thresholds")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<AgentAuditQualityGateThresholds>(&raw).ok())
+        .map(normalize_quality_gate_thresholds);
+    if let Some(thresholds) = global {
+        return (thresholds, "global_config".to_string());
+    }
+
+    (
+        default_quality_gate_thresholds(),
+        "builtin_default".to_string(),
+    )
 }
 
 pub async fn upsert_agent_audit_findings_with_db(
@@ -266,6 +525,14 @@ pub async fn upsert_agent_audit_findings_with_db(
             severity = inferred_severity;
         }
         let status = map_audit_status_to_traffic_status(finding.status.as_deref());
+        let inferred_lifecycle = infer_lifecycle_from_status(finding.status.as_deref());
+        let lifecycle_stage = normalize_lifecycle_stage(
+            finding
+                .lifecycle_stage
+                .as_deref()
+                .or(inferred_lifecycle.as_deref()),
+        );
+        let verification_status = normalize_verification_status(finding.verification_status.as_deref());
         let confidence = finding.confidence;
         let now = Utc::now();
         if files.is_empty() {
@@ -305,6 +572,22 @@ pub async fn upsert_agent_audit_findings_with_db(
             .evidence
             .as_ref()
             .and_then(|v| serde_json::to_string(v).ok());
+        let required_evidence_json = finding
+            .required_evidence
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok());
+        let verifier_json = finding
+            .verifier
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok());
+        let judge_json = finding
+            .judge
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok());
+        let provenance_json = finding
+            .provenance
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok());
 
         let mut description = finding.description.clone().unwrap_or_default();
         if description.trim().is_empty() {
@@ -330,6 +613,8 @@ pub async fn upsert_agent_audit_findings_with_db(
             title,
             severity,
             status,
+            lifecycle_stage: lifecycle_stage.clone(),
+            verification_status,
             confidence,
             cwe: finding.cwe.clone(),
             files_json,
@@ -337,11 +622,16 @@ pub async fn upsert_agent_audit_findings_with_db(
             sink_json,
             trace_path_json,
             evidence_json,
+            required_evidence_json,
+            verifier_json,
+            judge_json,
+            provenance_json,
             fix: finding.fix.clone(),
             description,
             severity_raw,
             source_message_id: None,
             hit_count: 1,
+            last_transition_at: Some(now),
             first_seen_at: now,
             last_seen_at: now,
             created_at: now,
@@ -354,6 +644,18 @@ pub async fn upsert_agent_audit_findings_with_db(
             .map_err(|e| format!("Failed checking finding signature: {}", e))?;
 
         if exists {
+            if let Some(existing) = db_service
+                .get_agent_audit_finding_by_signature(&signature)
+                .await
+                .map_err(|e| format!("Failed loading existing finding by signature: {}", e))?
+            {
+                if !is_valid_lifecycle_transition(&existing.lifecycle_stage, &lifecycle_stage) {
+                    return Err(format!(
+                        "Invalid lifecycle transition for finding {}: {} -> {}",
+                        finding.id, existing.lifecycle_stage, lifecycle_stage
+                    ));
+                }
+            }
             db_service
                 .update_agent_audit_finding_hit(&signature, &audit_finding)
                 .await
@@ -393,13 +695,15 @@ pub async fn list_agent_audit_findings(
     offset: Option<i64>,
     severity_filter: Option<String>,
     status_filter: Option<String>,
+    lifecycle_stage_filter: Option<String>,
     conversation_id: Option<String>,
     search: Option<String>,
 ) -> Result<CommandResponse<Vec<AgentAuditFindingView>>, String> {
     let filters = sentinel_db::AgentAuditFindingFilters {
-        conversation_id,
+        conversation_id: conversation_id.clone(),
         severity: severity_filter,
         status: status_filter,
+        lifecycle_stage: lifecycle_stage_filter,
         search,
         limit: Some(limit.unwrap_or(10)),
         offset,
@@ -425,13 +729,15 @@ pub async fn count_agent_audit_findings(
     db_service: State<'_, Arc<DatabaseService>>,
     severity_filter: Option<String>,
     status_filter: Option<String>,
+    lifecycle_stage_filter: Option<String>,
     conversation_id: Option<String>,
     search: Option<String>,
 ) -> Result<CommandResponse<i64>, String> {
     let filters = sentinel_db::AgentAuditFindingFilters {
-        conversation_id,
+        conversation_id: conversation_id.clone(),
         severity: severity_filter,
         status: status_filter,
+        lifecycle_stage: lifecycle_stage_filter,
         search,
         ..Default::default()
     };
@@ -443,6 +749,93 @@ pub async fn count_agent_audit_findings(
             Ok(CommandResponse::err(format!("Database error: {}", e)))
         }
     }
+}
+
+/// 获取 Agent 代码审计质量门禁指标
+#[tauri::command]
+pub async fn get_agent_audit_quality_gate_metrics(
+    db_service: State<'_, Arc<DatabaseService>>,
+    severity_filter: Option<String>,
+    status_filter: Option<String>,
+    lifecycle_stage_filter: Option<String>,
+    conversation_id: Option<String>,
+    search: Option<String>,
+    thresholds_override: Option<AgentAuditQualityGateThresholds>,
+) -> Result<CommandResponse<AgentAuditQualityGateMetrics>, String> {
+    let filters = sentinel_db::AgentAuditFindingFilters {
+        conversation_id: conversation_id.clone(),
+        severity: severity_filter,
+        status: status_filter,
+        lifecycle_stage: lifecycle_stage_filter,
+        search,
+        limit: None,
+        offset: None,
+    };
+
+    let (thresholds, threshold_source) = resolve_quality_gate_thresholds(
+        db_service.inner(),
+        conversation_id.as_deref(),
+        thresholds_override,
+    )
+    .await;
+
+    match db_service.list_agent_audit_findings(filters).await {
+        Ok(records) => Ok(CommandResponse::ok(build_quality_gate_metrics(
+            &records,
+            thresholds,
+            threshold_source,
+        ))),
+        Err(e) => {
+            tracing::error!("Failed to build audit quality gate metrics: {}", e);
+            Ok(CommandResponse::err(format!("Database error: {}", e)))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_agent_audit_quality_gate_thresholds(
+    db_service: State<'_, Arc<DatabaseService>>,
+    conversation_id: Option<String>,
+) -> Result<CommandResponse<AgentAuditQualityGateThresholds>, String> {
+    let (thresholds, _source) =
+        resolve_quality_gate_thresholds(db_service.inner(), conversation_id.as_deref(), None).await;
+    Ok(CommandResponse::ok(thresholds))
+}
+
+#[tauri::command]
+pub async fn save_agent_audit_quality_gate_thresholds(
+    db_service: State<'_, Arc<DatabaseService>>,
+    thresholds: AgentAuditQualityGateThresholds,
+    conversation_id: Option<String>,
+) -> Result<CommandResponse<AgentAuditQualityGateThresholds>, String> {
+    let normalized = normalize_quality_gate_thresholds(thresholds);
+    let payload = serde_json::to_string(&normalized)
+        .map_err(|e| format!("Failed to serialize thresholds: {}", e))?;
+    let (category, key, description) = if let Some(conversation_id) =
+        conversation_id.filter(|v| !v.trim().is_empty())
+    {
+        (
+            "agent_audit_quality_gate_conversation",
+            conversation_id,
+            "Conversation scoped audit quality gate thresholds",
+        )
+    } else {
+        (
+            "agent_audit_quality_gate",
+            "thresholds".to_string(),
+            "Audit quality gate thresholds",
+        )
+    };
+    db_service
+        .set_config_internal(
+            category,
+            &key,
+            &payload,
+            Some(description),
+        )
+        .await
+        .map_err(|e| format!("Failed to save audit quality gate thresholds: {}", e))?;
+    Ok(CommandResponse::ok(normalized))
 }
 
 /// 获取 Agent 代码审计发现详情
@@ -528,4 +921,153 @@ pub async fn delete_all_agent_audit_findings(
         .await
         .map_err(|e| format!("Failed to delete all agent audit findings: {}", e))?;
     Ok(CommandResponse::ok(()))
+}
+
+#[tauri::command]
+pub async fn transition_agent_audit_finding_lifecycle(
+    db_service: State<'_, Arc<DatabaseService>>,
+    request: TransitionAgentAuditFindingLifecycleRequest,
+) -> Result<CommandResponse<String>, String> {
+    let target_stage = normalize_lifecycle_stage(Some(&request.lifecycle_stage));
+    let current = db_service
+        .get_agent_audit_finding_by_id(&request.finding_id)
+        .await
+        .map_err(|e| format!("Failed loading finding: {}", e))?
+        .ok_or_else(|| format!("Finding not found: {}", request.finding_id))?;
+
+    if !is_valid_lifecycle_transition(&current.lifecycle_stage, &target_stage) {
+        return Ok(CommandResponse::err(format!(
+            "Invalid lifecycle transition: {} -> {}",
+            current.lifecycle_stage, target_stage
+        )));
+    }
+
+    let verification_status = request
+        .verification_status
+        .as_deref()
+        .map(|v| normalize_verification_status(Some(v)));
+    let judge_json = request.judge.and_then(|v| serde_json::to_string(&v).ok());
+    let verifier_json = request.verifier.and_then(|v| serde_json::to_string(&v).ok());
+    let provenance_json = request.provenance.and_then(|v| serde_json::to_string(&v).ok());
+
+    db_service
+        .update_agent_audit_finding_lifecycle(
+            &request.finding_id,
+            &target_stage,
+            verification_status.as_deref(),
+            judge_json.as_deref(),
+            verifier_json.as_deref(),
+            provenance_json.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("Failed to transition lifecycle: {}", e))?;
+
+    Ok(CommandResponse::ok(format!(
+        "Lifecycle transitioned: {} -> {}",
+        current.lifecycle_stage, target_stage
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        infer_lifecycle_from_status, is_valid_lifecycle_transition, normalize_lifecycle_stage,
+        normalize_quality_gate_thresholds, normalize_verification_status, resolve_quality_gate_thresholds,
+        quality_gate_rates,
+    };
+    use sentinel_db::DatabaseService;
+    use std::sync::Arc;
+
+    #[test]
+    fn normalize_lifecycle_stage_defaults_to_confirmed() {
+        assert_eq!(normalize_lifecycle_stage(None), "confirmed");
+        assert_eq!(normalize_lifecycle_stage(Some("unknown_stage")), "confirmed");
+        assert_eq!(normalize_lifecycle_stage(Some("Triaged")), "triaged");
+    }
+
+    #[test]
+    fn normalize_verification_status_defaults_to_unverified() {
+        assert_eq!(normalize_verification_status(None), "unverified");
+        assert_eq!(
+            normalize_verification_status(Some("not_exist")),
+            "unverified"
+        );
+        assert_eq!(normalize_verification_status(Some("PASSED")), "passed");
+    }
+
+    #[test]
+    fn lifecycle_transition_state_machine_is_enforced() {
+        assert!(is_valid_lifecycle_transition("candidate", "triaged"));
+        assert!(is_valid_lifecycle_transition("verified", "confirmed"));
+        assert!(is_valid_lifecycle_transition("confirmed", "archived"));
+
+        assert!(!is_valid_lifecycle_transition("candidate", "archived"));
+        assert!(!is_valid_lifecycle_transition("archived", "confirmed"));
+        assert!(!is_valid_lifecycle_transition("verified", "candidate"));
+    }
+
+    #[test]
+    fn lifecycle_progression_candidate_to_archived_requires_confirmation_step() {
+        let mut stage = "candidate".to_string();
+
+        assert!(is_valid_lifecycle_transition(&stage, "confirmed"));
+        stage = "confirmed".to_string();
+
+        assert!(is_valid_lifecycle_transition(&stage, "archived"));
+        assert!(!is_valid_lifecycle_transition("candidate", "archived"));
+    }
+
+    #[test]
+    fn status_to_lifecycle_inference_matches_expected_mapping() {
+        assert_eq!(
+            infer_lifecycle_from_status(Some("confirmed")),
+            Some("confirmed".to_string())
+        );
+        assert_eq!(
+            infer_lifecycle_from_status(Some("false_positive")),
+            Some("rejected".to_string())
+        );
+        assert_eq!(
+            infer_lifecycle_from_status(Some("fixed")),
+            Some("archived".to_string())
+        );
+        assert_eq!(infer_lifecycle_from_status(Some("open")), None);
+    }
+
+    #[test]
+    fn quality_gate_rate_calculation_is_correct() {
+        let (evidence_rate, uncertain_rate, false_positive_rate) = quality_gate_rates(10, 7, 2, 1);
+        assert!((evidence_rate - 0.7).abs() < f64::EPSILON);
+        assert!((uncertain_rate - 0.2).abs() < f64::EPSILON);
+        assert!((false_positive_rate - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn quality_gate_thresholds_are_clamped_to_0_1() {
+        let normalized = normalize_quality_gate_thresholds(super::AgentAuditQualityGateThresholds {
+            min_evidence_rate: 2.0,
+            max_uncertain_rate: -0.2,
+            max_false_positive_rate: 1.5,
+        });
+        assert!((normalized.min_evidence_rate - 1.0).abs() < f64::EPSILON);
+        assert!((normalized.max_uncertain_rate - 0.0).abs() < f64::EPSILON);
+        assert!((normalized.max_false_positive_rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn runtime_override_thresholds_have_highest_priority() {
+        let db = Arc::new(DatabaseService::new());
+        let (resolved, source) = resolve_quality_gate_thresholds(
+            &db,
+            Some("conv-1"),
+            Some(super::AgentAuditQualityGateThresholds {
+                min_evidence_rate: 0.55,
+                max_uncertain_rate: 0.22,
+                max_false_positive_rate: 0.11,
+            }),
+        )
+        .await;
+        assert_eq!(source, "runtime_override");
+        assert!((resolved.min_evidence_rate - 0.55).abs() < f64::EPSILON);
+    }
 }

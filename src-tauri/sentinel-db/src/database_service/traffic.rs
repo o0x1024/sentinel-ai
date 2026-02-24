@@ -2212,6 +2212,7 @@ pub struct AgentAuditFindingFilters {
     pub conversation_id: Option<String>,
     pub severity: Option<String>,
     pub status: Option<String>,
+    pub lifecycle_stage: Option<String>,
     pub search: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
@@ -2227,6 +2228,8 @@ pub struct AgentAuditFindingRecord {
     pub title: String,
     pub severity: String,
     pub status: String,
+    pub lifecycle_stage: String,
+    pub verification_status: String,
     pub confidence: Option<f64>,
     pub cwe: Option<String>,
     pub files_json: Option<String>,
@@ -2234,11 +2237,16 @@ pub struct AgentAuditFindingRecord {
     pub sink_json: Option<String>,
     pub trace_path_json: Option<String>,
     pub evidence_json: Option<String>,
+    pub required_evidence_json: Option<String>,
+    pub verifier_json: Option<String>,
+    pub judge_json: Option<String>,
+    pub provenance_json: Option<String>,
     pub fix: Option<String>,
     pub description: String,
     pub severity_raw: Option<String>,
     pub source_message_id: Option<String>,
     pub hit_count: i64,
+    pub last_transition_at: Option<DateTime<Utc>>,
     pub first_seen_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -2276,6 +2284,150 @@ impl DatabaseService {
         Ok(count > 0)
     }
 
+    pub async fn get_agent_audit_finding_by_signature(
+        &self,
+        signature: &str,
+    ) -> Result<Option<AgentAuditFindingRecord>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE signature = $1
+                    "#,
+                )
+                .bind(signature)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE signature = ?
+                    "#,
+                )
+                .bind(signature)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE signature = ?
+                    "#,
+                )
+                .bind(signature)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+        }
+    }
+
+    pub async fn get_agent_audit_finding_by_conversation_finding_id(
+        &self,
+        conversation_id: &str,
+        finding_id: &str,
+    ) -> Result<Option<AgentAuditFindingRecord>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE conversation_id = $1 AND finding_id = $2
+                    ORDER BY last_seen_at DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(conversation_id)
+                .bind(finding_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE conversation_id = ? AND finding_id = ?
+                    ORDER BY last_seen_at DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(conversation_id)
+                .bind(finding_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as::<_, AgentAuditFindingRecord>(
+                    r#"
+                    SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
+                           confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
+                           fix, description, severity_raw, source_message_id,
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
+                    FROM agent_audit_findings
+                    WHERE conversation_id = ? AND finding_id = ?
+                    ORDER BY last_seen_at DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(conversation_id)
+                .bind(finding_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(Into::into)
+            }
+        }
+    }
+
     pub async fn insert_agent_audit_finding(&self, finding: &AgentAuditFindingRecord) -> Result<()> {
         let runtime = self
             .runtime_pool
@@ -2288,13 +2440,18 @@ impl DatabaseService {
                     r#"
                     INSERT INTO agent_audit_findings (
                         id, conversation_id, finding_id, signature, title, severity, status,
+                        lifecycle_stage, verification_status,
                         confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
-                        fix, description, severity_raw, source_message_id, hit_count, first_seen_at,
-                        last_seen_at, created_at, updated_at
+                        required_evidence_json, verifier_json, judge_json, provenance_json,
+                        fix, description, severity_raw, source_message_id, hit_count, last_transition_at,
+                        first_seen_at, last_seen_at, created_at, updated_at
                     ) VALUES (
                         $1, $2, $3, $4, $5, $6, $7,
-                        $8, $9, $10, $11, $12, $13, $14,
-                        $15, $16, $17, $18, $19, $20, $21, $22, $23
+                        $8, $9,
+                        $10, $11, $12, $13, $14, $15, $16,
+                        $17, $18, $19, $20,
+                        $21, $22, $23, $24, $25, $26,
+                        $27, $28, $29, $30
                     )
                     "#,
                 )
@@ -2305,6 +2462,8 @@ impl DatabaseService {
                 .bind(&finding.title)
                 .bind(&finding.severity)
                 .bind(&finding.status)
+                .bind(&finding.lifecycle_stage)
+                .bind(&finding.verification_status)
                 .bind(finding.confidence)
                 .bind(&finding.cwe)
                 .bind(&finding.files_json)
@@ -2312,11 +2471,16 @@ impl DatabaseService {
                 .bind(&finding.sink_json)
                 .bind(&finding.trace_path_json)
                 .bind(&finding.evidence_json)
+                .bind(&finding.required_evidence_json)
+                .bind(&finding.verifier_json)
+                .bind(&finding.judge_json)
+                .bind(&finding.provenance_json)
                 .bind(&finding.fix)
                 .bind(&finding.description)
                 .bind(&finding.severity_raw)
                 .bind(&finding.source_message_id)
                 .bind(finding.hit_count)
+                .bind(finding.last_transition_at)
                 .bind(finding.first_seen_at)
                 .bind(finding.last_seen_at)
                 .bind(finding.created_at)
@@ -2329,13 +2493,18 @@ impl DatabaseService {
                     r#"
                     INSERT INTO agent_audit_findings (
                         id, conversation_id, finding_id, signature, title, severity, status,
+                        lifecycle_stage, verification_status,
                         confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
-                        fix, description, severity_raw, source_message_id, hit_count, first_seen_at,
-                        last_seen_at, created_at, updated_at
+                        required_evidence_json, verifier_json, judge_json, provenance_json,
+                        fix, description, severity_raw, source_message_id, hit_count, last_transition_at,
+                        first_seen_at, last_seen_at, created_at, updated_at
                     ) VALUES (
                         ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?,
                         ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?
                     )
                     "#,
                 )
@@ -2346,6 +2515,8 @@ impl DatabaseService {
                 .bind(&finding.title)
                 .bind(&finding.severity)
                 .bind(&finding.status)
+                .bind(&finding.lifecycle_stage)
+                .bind(&finding.verification_status)
                 .bind(finding.confidence)
                 .bind(&finding.cwe)
                 .bind(&finding.files_json)
@@ -2353,11 +2524,16 @@ impl DatabaseService {
                 .bind(&finding.sink_json)
                 .bind(&finding.trace_path_json)
                 .bind(&finding.evidence_json)
+                .bind(&finding.required_evidence_json)
+                .bind(&finding.verifier_json)
+                .bind(&finding.judge_json)
+                .bind(&finding.provenance_json)
                 .bind(&finding.fix)
                 .bind(&finding.description)
                 .bind(&finding.severity_raw)
                 .bind(&finding.source_message_id)
                 .bind(finding.hit_count)
+                .bind(finding.last_transition_at)
                 .bind(finding.first_seen_at)
                 .bind(finding.last_seen_at)
                 .bind(finding.created_at)
@@ -2370,13 +2546,18 @@ impl DatabaseService {
                     r#"
                     INSERT INTO agent_audit_findings (
                         id, conversation_id, finding_id, signature, title, severity, status,
+                        lifecycle_stage, verification_status,
                         confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
-                        fix, description, severity_raw, source_message_id, hit_count, first_seen_at,
-                        last_seen_at, created_at, updated_at
+                        required_evidence_json, verifier_json, judge_json, provenance_json,
+                        fix, description, severity_raw, source_message_id, hit_count, last_transition_at,
+                        first_seen_at, last_seen_at, created_at, updated_at
                     ) VALUES (
                         ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?,
                         ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?
                     )
                     "#,
                 )
@@ -2387,6 +2568,8 @@ impl DatabaseService {
                 .bind(&finding.title)
                 .bind(&finding.severity)
                 .bind(&finding.status)
+                .bind(&finding.lifecycle_stage)
+                .bind(&finding.verification_status)
                 .bind(finding.confidence)
                 .bind(&finding.cwe)
                 .bind(&finding.files_json)
@@ -2394,11 +2577,16 @@ impl DatabaseService {
                 .bind(&finding.sink_json)
                 .bind(&finding.trace_path_json)
                 .bind(&finding.evidence_json)
+                .bind(&finding.required_evidence_json)
+                .bind(&finding.verifier_json)
+                .bind(&finding.judge_json)
+                .bind(&finding.provenance_json)
                 .bind(&finding.fix)
                 .bind(&finding.description)
                 .bind(&finding.severity_raw)
                 .bind(&finding.source_message_id)
                 .bind(finding.hit_count)
+                .bind(finding.last_transition_at)
                 .bind(finding.first_seen_at)
                 .bind(finding.last_seen_at)
                 .bind(finding.created_at)
@@ -2431,21 +2619,28 @@ impl DatabaseService {
                         title = $3,
                         severity = $4,
                         status = $5,
-                        confidence = $6,
-                        cwe = $7,
-                        files_json = $8,
-                        source_json = $9,
-                        sink_json = $10,
-                        trace_path_json = $11,
-                        evidence_json = $12,
-                        fix = $13,
-                        description = $14,
-                        severity_raw = $15,
-                        source_message_id = $16,
+                        lifecycle_stage = $6,
+                        verification_status = $7,
+                        confidence = $8,
+                        cwe = $9,
+                        files_json = $10,
+                        source_json = $11,
+                        sink_json = $12,
+                        trace_path_json = $13,
+                        evidence_json = $14,
+                        required_evidence_json = $15,
+                        verifier_json = $16,
+                        judge_json = $17,
+                        provenance_json = $18,
+                        fix = $19,
+                        description = $20,
+                        severity_raw = $21,
+                        source_message_id = $22,
+                        last_transition_at = $23,
                         hit_count = hit_count + 1,
-                        last_seen_at = $17,
-                        updated_at = $18
-                    WHERE signature = $19
+                        last_seen_at = $24,
+                        updated_at = $25
+                    WHERE signature = $26
                     "#,
                 )
                 .bind(&finding.conversation_id)
@@ -2453,6 +2648,8 @@ impl DatabaseService {
                 .bind(&finding.title)
                 .bind(&finding.severity)
                 .bind(&finding.status)
+                .bind(&finding.lifecycle_stage)
+                .bind(&finding.verification_status)
                 .bind(finding.confidence)
                 .bind(&finding.cwe)
                 .bind(&finding.files_json)
@@ -2460,10 +2657,15 @@ impl DatabaseService {
                 .bind(&finding.sink_json)
                 .bind(&finding.trace_path_json)
                 .bind(&finding.evidence_json)
+                .bind(&finding.required_evidence_json)
+                .bind(&finding.verifier_json)
+                .bind(&finding.judge_json)
+                .bind(&finding.provenance_json)
                 .bind(&finding.fix)
                 .bind(&finding.description)
                 .bind(&finding.severity_raw)
                 .bind(&finding.source_message_id)
+                .bind(finding.last_transition_at)
                 .bind(finding.last_seen_at)
                 .bind(finding.updated_at)
                 .bind(signature)
@@ -2479,6 +2681,8 @@ impl DatabaseService {
                         title = ?,
                         severity = ?,
                         status = ?,
+                        lifecycle_stage = ?,
+                        verification_status = ?,
                         confidence = ?,
                         cwe = ?,
                         files_json = ?,
@@ -2486,10 +2690,15 @@ impl DatabaseService {
                         sink_json = ?,
                         trace_path_json = ?,
                         evidence_json = ?,
+                        required_evidence_json = ?,
+                        verifier_json = ?,
+                        judge_json = ?,
+                        provenance_json = ?,
                         fix = ?,
                         description = ?,
                         severity_raw = ?,
                         source_message_id = ?,
+                        last_transition_at = ?,
                         hit_count = hit_count + 1,
                         last_seen_at = ?,
                         updated_at = ?
@@ -2501,6 +2710,8 @@ impl DatabaseService {
                 .bind(&finding.title)
                 .bind(&finding.severity)
                 .bind(&finding.status)
+                .bind(&finding.lifecycle_stage)
+                .bind(&finding.verification_status)
                 .bind(finding.confidence)
                 .bind(&finding.cwe)
                 .bind(&finding.files_json)
@@ -2508,10 +2719,15 @@ impl DatabaseService {
                 .bind(&finding.sink_json)
                 .bind(&finding.trace_path_json)
                 .bind(&finding.evidence_json)
+                .bind(&finding.required_evidence_json)
+                .bind(&finding.verifier_json)
+                .bind(&finding.judge_json)
+                .bind(&finding.provenance_json)
                 .bind(&finding.fix)
                 .bind(&finding.description)
                 .bind(&finding.severity_raw)
                 .bind(&finding.source_message_id)
+                .bind(finding.last_transition_at)
                 .bind(finding.last_seen_at)
                 .bind(finding.updated_at)
                 .bind(signature)
@@ -2527,6 +2743,8 @@ impl DatabaseService {
                         title = ?,
                         severity = ?,
                         status = ?,
+                        lifecycle_stage = ?,
+                        verification_status = ?,
                         confidence = ?,
                         cwe = ?,
                         files_json = ?,
@@ -2534,10 +2752,15 @@ impl DatabaseService {
                         sink_json = ?,
                         trace_path_json = ?,
                         evidence_json = ?,
+                        required_evidence_json = ?,
+                        verifier_json = ?,
+                        judge_json = ?,
+                        provenance_json = ?,
                         fix = ?,
                         description = ?,
                         severity_raw = ?,
                         source_message_id = ?,
+                        last_transition_at = ?,
                         hit_count = hit_count + 1,
                         last_seen_at = ?,
                         updated_at = ?
@@ -2549,6 +2772,8 @@ impl DatabaseService {
                 .bind(&finding.title)
                 .bind(&finding.severity)
                 .bind(&finding.status)
+                .bind(&finding.lifecycle_stage)
+                .bind(&finding.verification_status)
                 .bind(finding.confidence)
                 .bind(&finding.cwe)
                 .bind(&finding.files_json)
@@ -2556,10 +2781,15 @@ impl DatabaseService {
                 .bind(&finding.sink_json)
                 .bind(&finding.trace_path_json)
                 .bind(&finding.evidence_json)
+                .bind(&finding.required_evidence_json)
+                .bind(&finding.verifier_json)
+                .bind(&finding.judge_json)
+                .bind(&finding.provenance_json)
                 .bind(&finding.fix)
                 .bind(&finding.description)
                 .bind(&finding.severity_raw)
                 .bind(&finding.source_message_id)
+                .bind(finding.last_transition_at)
                 .bind(finding.last_seen_at)
                 .bind(finding.updated_at)
                 .bind(signature)
@@ -2585,9 +2815,11 @@ impl DatabaseService {
                 let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
                            confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
                            fix, description, severity_raw, source_message_id,
-                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
                     FROM agent_audit_findings
                     WHERE 1=1
                     "#,
@@ -2600,6 +2832,9 @@ impl DatabaseService {
                 }
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
+                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
                 }
                 if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
                     query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
@@ -2624,9 +2859,11 @@ impl DatabaseService {
                 let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
                            confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
                            fix, description, severity_raw, source_message_id,
-                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
                     FROM agent_audit_findings
                     WHERE 1=1
                     "#,
@@ -2639,6 +2876,9 @@ impl DatabaseService {
                 }
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
+                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
                 }
                 if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
                     query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
@@ -2663,9 +2903,11 @@ impl DatabaseService {
                 let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
                            confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
                            fix, description, severity_raw, source_message_id,
-                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
                     FROM agent_audit_findings
                     WHERE 1=1
                     "#,
@@ -2678,6 +2920,9 @@ impl DatabaseService {
                 }
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
+                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
                 }
                 if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
                     query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
@@ -2721,6 +2966,9 @@ impl DatabaseService {
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
+                if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
+                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                }
                 if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
                     query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
                     query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
@@ -2742,6 +2990,9 @@ impl DatabaseService {
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
+                if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
+                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                }
                 if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
                     query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
                     query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
@@ -2762,6 +3013,9 @@ impl DatabaseService {
                 }
                 if let Some(ref status) = filters.status {
                     query_builder.push(" AND status = ").push_bind(status);
+                }
+                if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
+                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
                 }
                 if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
                     query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
@@ -2786,9 +3040,11 @@ impl DatabaseService {
                 sqlx::query_as::<_, AgentAuditFindingRecord>(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
                            confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
                            fix, description, severity_raw, source_message_id,
-                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
                     FROM agent_audit_findings
                     WHERE id = $1
                     "#,
@@ -2802,9 +3058,11 @@ impl DatabaseService {
                 sqlx::query_as::<_, AgentAuditFindingRecord>(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
                            confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
                            fix, description, severity_raw, source_message_id,
-                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
                     FROM agent_audit_findings
                     WHERE id = ?
                     "#,
@@ -2818,9 +3076,11 @@ impl DatabaseService {
                 sqlx::query_as::<_, AgentAuditFindingRecord>(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
+                           lifecycle_stage, verification_status,
                            confidence, cwe, files_json, source_json, sink_json, trace_path_json, evidence_json,
+                           required_evidence_json, verifier_json, judge_json, provenance_json,
                            fix, description, severity_raw, source_message_id,
-                           hit_count, first_seen_at, last_seen_at, created_at, updated_at
+                           hit_count, last_transition_at, first_seen_at, last_seen_at, created_at, updated_at
                     FROM agent_audit_findings
                     WHERE id = ?
                     "#,
@@ -2831,6 +3091,102 @@ impl DatabaseService {
                 .map_err(Into::into)
             }
         }
+    }
+
+    pub async fn update_agent_audit_finding_lifecycle(
+        &self,
+        finding_id: &str,
+        lifecycle_stage: &str,
+        verification_status: Option<&str>,
+        judge_json: Option<&str>,
+        verifier_json: Option<&str>,
+        provenance_json: Option<&str>,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let now = Utc::now();
+        let rows_affected = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query(
+                    "UPDATE agent_audit_findings
+                     SET lifecycle_stage = $1,
+                         verification_status = COALESCE($2, verification_status),
+                         judge_json = COALESCE($3, judge_json),
+                         verifier_json = COALESCE($4, verifier_json),
+                         provenance_json = COALESCE($5, provenance_json),
+                         last_transition_at = $6,
+                         updated_at = $7
+                     WHERE id = $8",
+                )
+                .bind(lifecycle_stage)
+                .bind(verification_status)
+                .bind(judge_json)
+                .bind(verifier_json)
+                .bind(provenance_json)
+                .bind(now)
+                .bind(now)
+                .bind(finding_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query(
+                    "UPDATE agent_audit_findings
+                     SET lifecycle_stage = ?,
+                         verification_status = COALESCE(?, verification_status),
+                         judge_json = COALESCE(?, judge_json),
+                         verifier_json = COALESCE(?, verifier_json),
+                         provenance_json = COALESCE(?, provenance_json),
+                         last_transition_at = ?,
+                         updated_at = ?
+                     WHERE id = ?",
+                )
+                .bind(lifecycle_stage)
+                .bind(verification_status)
+                .bind(judge_json)
+                .bind(verifier_json)
+                .bind(provenance_json)
+                .bind(now)
+                .bind(now)
+                .bind(finding_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query(
+                    "UPDATE agent_audit_findings
+                     SET lifecycle_stage = ?,
+                         verification_status = COALESCE(?, verification_status),
+                         judge_json = COALESCE(?, judge_json),
+                         verifier_json = COALESCE(?, verifier_json),
+                         provenance_json = COALESCE(?, provenance_json),
+                         last_transition_at = ?,
+                         updated_at = ?
+                     WHERE id = ?",
+                )
+                .bind(lifecycle_stage)
+                .bind(verification_status)
+                .bind(judge_json)
+                .bind(verifier_json)
+                .bind(provenance_json)
+                .bind(now)
+                .bind(now)
+                .bind(finding_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+        };
+
+        if rows_affected == 0 {
+            return Err(anyhow::anyhow!("Agent audit finding not found: {}", finding_id));
+        }
+        Ok(())
     }
 
     pub async fn update_agent_audit_finding_status(&self, finding_id: &str, status: &str) -> Result<()> {

@@ -208,14 +208,6 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
         // Pass None for todos to avoid duplicating what build_todos_context already rendered
         run_state_block.push_str(&render_run_state(&state, &policy, None));
-        if !retrieved_memory_lines.is_empty() {
-            run_state_block.push_str("\nRetrieved Memory:\n");
-            for item in &retrieved_memory_lines {
-                run_state_block.push_str("- ");
-                run_state_block.push_str(item);
-                run_state_block.push('\n');
-            }
-        }
     }
 
     if policy.include_working_dir {

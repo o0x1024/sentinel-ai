@@ -139,6 +139,7 @@
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
+import { appDataDir, homeDir, join } from '@tauri-apps/api/path'
 import { dialog } from '@/composables/useDialog'
 import AISettings from '@/components/Settings/AISettings.vue'
 import RAGSettings from '@/components/Settings/RAGSettings.vue'
@@ -1115,9 +1116,22 @@ const loadDatabaseStatus = async () => {
 const selectDatabasePath = async () => {
   try {
     const { open } = await import('@tauri-apps/plugin-dialog')
+    let defaultPath: string | undefined
+    try {
+      const isMacOS = navigator.userAgent.includes('Mac')
+      if (isMacOS) {
+        const userHome = await homeDir()
+        defaultPath = await join(userHome, 'Library', 'Application Support', 'sentinel-ai')
+      } else {
+        defaultPath = await appDataDir()
+      }
+    } catch (pathError) {
+      console.warn('Failed to resolve app data directory:', pathError)
+    }
     const selected = await open({
       directory: false,
       multiple: false,
+      defaultPath,
       filters: [{ name: 'Database', extensions: ['db', 'sqlite', 'sqlite3'] }]
     })
     if (selected) {

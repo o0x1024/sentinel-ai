@@ -101,7 +101,15 @@ fn build_skill_markdown(name: &str, description: &str, content: &str) -> String 
     let mut md = String::new();
     md.push_str("---\n");
     md.push_str(&format!("name: {}\n", name));
-    md.push_str(&format!("description: {}\n", description));
+    if description.contains('\n') {
+        // Use YAML block scalar syntax for multi-line descriptions
+        md.push_str("description: |\n");
+        for line in description.lines() {
+            md.push_str(&format!("  {}\n", line));
+        }
+    } else {
+        md.push_str(&format!("description: {}\n", description));
+    }
     md.push_str("---\n\n");
     md.push_str(content.trim());
     md.push('\n');
@@ -744,6 +752,7 @@ pub async fn install_skills_from_path(
     }
 
     let mut installed = Vec::new();
+    let mut install_errors = Vec::new();
     for skill_id in target_ids.iter() {
         let candidate = candidates
             .iter()
@@ -757,10 +766,37 @@ pub async fn install_skills_from_path(
         }
         copy_dir_all(src_dir, &dest_dir)?;
         normalize_skill_name_to_id(&dest_dir, skill_id)?;
+
+        // Verify the installed SKILL.md can be parsed correctly
+        let skill_md_path = dest_dir.join("SKILL.md");
+        if skill_md_path.exists() {
+            match fs::read_to_string(&skill_md_path) {
+                Ok(content) => match parse_skill_markdown(&content) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        let msg = format!("Skill '{}' SKILL.md parse error: {}", skill_id, e);
+                        tracing::warn!("{}", msg);
+                        install_errors.push(msg);
+                    }
+                },
+                Err(e) => {
+                    let msg = format!("Skill '{}' SKILL.md read error: {}", skill_id, e);
+                    tracing::warn!("{}", msg);
+                    install_errors.push(msg);
+                }
+            }
+        }
+
         installed.push(skill_id.clone());
     }
 
     let _ = scan_and_upsert_skills(&db_service).await;
+
+    let (status, message) = if install_errors.is_empty() {
+        ("success".to_string(), None)
+    } else {
+        ("error".to_string(), Some(install_errors.join("; ")))
+    };
 
     let record = SkillInstallHistory {
         id: Uuid::new_v4().to_string(),
@@ -768,10 +804,15 @@ pub async fn install_skills_from_path(
         source_type,
         source: source_path,
         skills: installed.clone(),
-        status: "success".to_string(),
-        message: None,
+        status: status.clone(),
+        message: message.clone(),
     };
     let _ = append_install_history(&root, record);
+
+    // If there were parse errors, return an error so the frontend knows
+    if let Some(err_msg) = message {
+        return Err(err_msg);
+    }
 
     Ok(installed)
 }

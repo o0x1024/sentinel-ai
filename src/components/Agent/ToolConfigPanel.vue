@@ -58,23 +58,17 @@
         <div class="form-control">
           <label class="label">
             <span class="label-text font-medium">{{ t('agent.maxTools') }}</span>
-            <span class="label-text-alt">{{ localConfig.max_tools }}</span>
           </label>
           <input 
-            type="range" 
+            type="number" 
             v-model.number="localConfig.max_tools" 
             min="1" 
-            max="20" 
-            class="range range-primary range-sm"
+            class="input input-bordered input-sm w-full"
             @change="emitUpdate"
           />
-          <div class="w-full flex justify-between text-xs px-2 text-base-content/60">
-            <span>1</span>
-            <span>5</span>
-            <span>10</span>
-            <span>15</span>
-            <span>20</span>
-          </div>
+          <label class="label">
+            <span class="label-text-alt text-base-content/60">{{ t('agent.maxToolsHint') || '每轮对话最多可使用的工具数量，最小为 1' }}</span>
+          </label>
         </div>
 
         <!-- Audit Mode -->
@@ -655,13 +649,10 @@ const mandatoryAuditTools = [
   'code_search',
   'git_diff_scope',
   'call_graph_lite',
-  'taint_slice_lite',
   'cross_file_taint',
   'dependency_audit',
   'audit_report',
-  'dependency_audit',
   'tenth_man_review',
-  'audit_report',
   'audit_finding_upsert',
   'build_cpg',
   'query_cpg',

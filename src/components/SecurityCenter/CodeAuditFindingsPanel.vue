@@ -21,11 +21,31 @@
             <option value="fixed">fixed</option>
           </select>
         </div>
+        <div class="form-control">
+          <select v-model="filters.lifecycleStage" class="select select-bordered select-sm" @change="applyFilters">
+            <option value="">全部生命周期</option>
+            <option value="candidate">candidate</option>
+            <option value="triaged">triaged</option>
+            <option value="verified">verified</option>
+            <option value="confirmed">confirmed</option>
+            <option value="rejected">rejected</option>
+            <option value="archived">archived</option>
+          </select>
+        </div>
         <div class="form-control flex-1 min-w-[220px]">
           <input
             v-model="filters.search"
             type="text"
             placeholder="搜索标题/描述/CWE"
+            class="input input-bordered input-sm"
+            @input="applyFilters"
+          />
+        </div>
+        <div class="form-control min-w-[240px]">
+          <input
+            v-model="filters.conversationId"
+            type="text"
+            placeholder="按会话ID过滤（可选）"
             class="input input-bordered input-sm"
             @input="applyFilters"
           />
@@ -45,6 +65,81 @@
         >
           删除全部
         </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+        <div class="stats shadow bg-base-200/60">
+          <div class="stat p-3">
+            <div class="stat-title text-xs">证据率</div>
+            <div class="stat-value text-lg">{{ formatPct(qualityGateMetrics?.evidence_rate) }}</div>
+            <div class="stat-desc text-xs">阈值 ≥ {{ formatPct(qualityGateMetrics?.thresholds?.min_evidence_rate) }}</div>
+          </div>
+        </div>
+        <div class="stats shadow bg-base-200/60">
+          <div class="stat p-3">
+            <div class="stat-title text-xs">不确定占比</div>
+            <div class="stat-value text-lg">{{ formatPct(qualityGateMetrics?.uncertain_rate) }}</div>
+            <div class="stat-desc text-xs">阈值 ≤ {{ formatPct(qualityGateMetrics?.thresholds?.max_uncertain_rate) }}</div>
+          </div>
+        </div>
+        <div class="stats shadow bg-base-200/60">
+          <div class="stat p-3">
+            <div class="stat-title text-xs">误报回退率</div>
+            <div class="stat-value text-lg">{{ formatPct(qualityGateMetrics?.false_positive_rate) }}</div>
+            <div class="stat-desc text-xs">阈值 ≤ {{ formatPct(qualityGateMetrics?.thresholds?.max_false_positive_rate) }}</div>
+          </div>
+        </div>
+        <div class="stats shadow" :class="qualityGateMetrics?.gate_passed ? 'bg-success/10' : 'bg-error/10'">
+          <div class="stat p-3">
+            <div class="stat-title text-xs">质量门禁</div>
+            <div class="stat-value text-lg">
+              <span v-if="isLoadingQualityGate" class="loading loading-spinner loading-sm"></span>
+              <span v-else>{{ qualityGateMetrics?.gate_passed ? 'PASS' : 'FAIL' }}</span>
+            </div>
+            <div class="stat-desc text-xs">样本 {{ qualityGateMetrics?.total_findings ?? 0 }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4 p-3 rounded-lg border border-base-300 bg-base-200/40">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm font-medium">质量门禁阈值配置</p>
+          <div class="flex gap-2">
+            <button class="btn btn-xs btn-ghost" @click="loadThresholdDraft">加载阈值</button>
+            <button class="btn btn-xs btn-ghost" @click="resetThresholdDraft">重置</button>
+            <button class="btn btn-xs btn-primary" :disabled="isSavingThresholds" @click="saveThresholds">
+              <span v-if="isSavingThresholds" class="loading loading-spinner loading-xs"></span>
+              保存阈值
+            </button>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <label class="form-control">
+            <span class="label-text text-xs">阈值作用域</span>
+            <select v-model="thresholdScope" class="select select-bordered select-sm">
+              <option value="global">全局默认</option>
+              <option value="conversation">会话覆盖</option>
+            </select>
+          </label>
+          <label class="form-control" v-if="thresholdScope === 'conversation'">
+            <span class="label-text text-xs">阈值会话ID</span>
+            <input v-model="thresholdConversationId" type="text" class="input input-bordered input-sm" placeholder="输入会话ID" />
+          </label>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label class="form-control">
+            <span class="label-text text-xs">最小证据率 (0-1)</span>
+            <input v-model.number="thresholdDraft.min_evidence_rate" type="number" min="0" max="1" step="0.01" class="input input-bordered input-sm" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs">最大不确定占比 (0-1)</span>
+            <input v-model.number="thresholdDraft.max_uncertain_rate" type="number" min="0" max="1" step="0.01" class="input input-bordered input-sm" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs">最大误报回退率 (0-1)</span>
+            <input v-model.number="thresholdDraft.max_false_positive_rate" type="number" min="0" max="1" step="0.01" class="input input-bordered input-sm" />
+          </label>
+        </div>
       </div>
     </div>
 
@@ -70,6 +165,7 @@
               <th>标题</th>
               <th>CWE</th>
               <th>状态</th>
+              <th>生命周期</th>
               <th>会话</th>
               <th>命中</th>
               <th>最后发现</th>
@@ -90,6 +186,7 @@
               <td class="font-medium max-w-xs"><div class="line-clamp-2">{{ finding.title }}</div></td>
               <td><span class="badge badge-outline badge-xs">{{ finding.cwe || '-' }}</span></td>
               <td><span class="badge badge-ghost badge-sm">{{ finding.status }}</span></td>
+              <td><span class="badge badge-warning badge-sm">{{ finding.lifecycle_stage }}</span></td>
               <td class="font-mono text-xs max-w-[180px]"><div class="line-clamp-1">{{ finding.conversation_id }}</div></td>
               <td><span class="badge badge-primary badge-xs">{{ finding.hit_count || 0 }}</span></td>
               <td class="text-xs opacity-70">{{ formatTime(finding.last_seen_at) }}</td>
@@ -142,6 +239,14 @@
               <div>
                 <p class="text-sm text-base-content/70 mb-1">状态</p>
                 <span class="badge badge-ghost">{{ selectedFinding.status }}</span>
+              </div>
+              <div>
+                <p class="text-sm text-base-content/70 mb-1">生命周期</p>
+                <span class="badge badge-warning">{{ selectedFinding.lifecycle_stage }}</span>
+              </div>
+              <div>
+                <p class="text-sm text-base-content/70 mb-1">验证状态</p>
+                <span class="badge badge-info">{{ selectedFinding.verification_status }}</span>
               </div>
               <div>
                 <p class="text-sm text-base-content/70 mb-1">命中次数</p>
@@ -220,6 +325,67 @@
                 </div>
               </div>
             </div>
+
+            <div v-if="selectedFinding.required_evidence?.length">
+              <p class="text-sm text-base-content/70 mb-2">要求证据</p>
+              <div class="space-y-2">
+                <div
+                  v-for="(item, idx) in selectedFinding.required_evidence"
+                  :key="`${selectedFinding.id}-required-ev-${idx}`"
+                  class="bg-warning/10 border border-warning/20 p-3 rounded-lg text-sm whitespace-pre-wrap break-words"
+                >
+                  {{ item }}
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <p class="text-sm text-base-content/70 mb-1">审计者上下文</p>
+                <div class="bg-base-200 p-3 rounded-lg">
+                  <pre class="text-xs whitespace-pre-wrap break-words">{{ toJsonText(selectedFinding.verifier) }}</pre>
+                </div>
+              </div>
+              <div>
+                <p class="text-sm text-base-content/70 mb-1">Judge 上下文</p>
+                <div class="bg-base-200 p-3 rounded-lg">
+                  <pre class="text-xs whitespace-pre-wrap break-words">{{ toJsonText(selectedFinding.judge) }}</pre>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p class="text-sm text-base-content/70 mb-1">生命周期流转</p>
+              <div class="flex flex-wrap items-center gap-2">
+                <select v-model="lifecycleTargetStage" class="select select-bordered select-sm min-w-[180px]">
+                  <option value="candidate">candidate</option>
+                  <option value="triaged">triaged</option>
+                  <option value="verified">verified</option>
+                  <option value="confirmed">confirmed</option>
+                  <option value="rejected">rejected</option>
+                  <option value="archived">archived</option>
+                </select>
+                <select v-model="lifecycleTargetVerification" class="select select-bordered select-sm min-w-[180px]">
+                  <option value="">保持当前验证状态</option>
+                  <option value="unverified">unverified</option>
+                  <option value="pending">pending</option>
+                  <option value="passed">passed</option>
+                  <option value="failed">failed</option>
+                  <option value="needs_more_evidence">needs_more_evidence</option>
+                </select>
+                <button
+                  class="btn btn-sm btn-primary"
+                  :disabled="isTransitioningLifecycle || !hasLifecycleTransitionPermission"
+                  @click="transitionLifecycle"
+                >
+                  <span v-if="isTransitioningLifecycle" class="loading loading-spinner loading-xs"></span>
+                  更新生命周期
+                </button>
+              </div>
+              <p v-if="!hasLifecycleTransitionPermission" class="text-xs text-warning mt-2">
+                当前角色无生命周期流转权限。请为当前角色配置 capability `audit.lifecycle.transition`，或设置 localStorage `security:auditLifecycleTransitionEnabled=true` 临时放行。
+              </p>
+            </div>
           </div>
         </div>
 
@@ -248,6 +414,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { useRoleManagement } from '@/composables/useRoleManagement';
+import { canOperateAuditLifecycle } from '@/utils/auditLifecycleAccess';
+
+const emit = defineEmits<{
+  (e: 'count-updated', count: number): void;
+}>();
 
 interface AgentAuditFinding {
   id: string;
@@ -257,6 +429,8 @@ interface AgentAuditFinding {
   severity: string;
   severity_raw?: string;
   status: string;
+  lifecycle_stage: string;
+  verification_status: string;
   confidence?: number;
   cwe?: string;
   files: string[];
@@ -264,6 +438,10 @@ interface AgentAuditFinding {
   sink?: Record<string, any> | null;
   trace_path?: Array<Record<string, any>>;
   evidence?: string[];
+  required_evidence?: string[];
+  verifier?: Record<string, any> | null;
+  judge?: Record<string, any> | null;
+  provenance?: Record<string, any> | null;
   fix?: string;
   description: string;
   source_message_id?: string;
@@ -272,6 +450,23 @@ interface AgentAuditFinding {
   last_seen_at: string;
   created_at: string;
   updated_at: string;
+  last_transition_at?: string | null;
+}
+
+interface AgentAuditQualityGateMetrics {
+  total_findings: number;
+  with_evidence_count: number;
+  uncertain_count: number;
+  false_positive_or_rejected_count: number;
+  evidence_rate: number;
+  uncertain_rate: number;
+  false_positive_rate: number;
+  thresholds: {
+    min_evidence_rate: number;
+    max_uncertain_rate: number;
+    max_false_positive_rate: number;
+  };
+  gate_passed: boolean;
 }
 
 const findings = ref<AgentAuditFinding[]>([]);
@@ -280,6 +475,17 @@ const showDetailsModal = ref(false);
 const selectedFinding = ref<AgentAuditFinding | null>(null);
 const selectedIds = ref<string[]>([]);
 const isDeleting = ref(false);
+const isTransitioningLifecycle = ref(false);
+const isLoadingQualityGate = ref(false);
+const isSavingThresholds = ref(false);
+const qualityGateMetrics = ref<AgentAuditQualityGateMetrics | null>(null);
+const thresholdDraft = ref({
+  min_evidence_rate: 0.7,
+  max_uncertain_rate: 0.3,
+  max_false_positive_rate: 0.2,
+});
+const thresholdScope = ref<'global' | 'conversation'>('global');
+const thresholdConversationId = ref('');
 
 const showDeleteModal = ref(false);
 const deleteModalMessage = ref('');
@@ -293,7 +499,18 @@ const totalCount = ref(0);
 const filters = ref({
   severity: '',
   status: '',
+  lifecycleStage: '',
+  conversationId: '',
   search: '',
+});
+
+const lifecycleTargetStage = ref('confirmed');
+const lifecycleTargetVerification = ref('');
+const lifecycleAccessOverride = ref(false);
+const { selectedRole, loadRoles } = useRoleManagement();
+
+const hasLifecycleTransitionPermission = computed(() => {
+  return canOperateAuditLifecycle(selectedRole.value, lifecycleAccessOverride.value);
 });
 
 const totalPages = computed(() => {
@@ -307,16 +524,35 @@ const isAllCurrentPageSelected = computed(() => {
 
 const refreshFindings = async () => {
   isLoading.value = true;
+  isLoadingQualityGate.value = true;
   try {
     const countResponse = await invoke<any>('count_agent_audit_findings', {
       severityFilter: filters.value.severity || null,
       statusFilter: filters.value.status || null,
-      conversationId: null,
+      lifecycleStageFilter: filters.value.lifecycleStage || null,
+      conversationId: filters.value.conversationId || null,
       search: filters.value.search || null,
     });
 
     if (countResponse.success) {
       totalCount.value = countResponse.data;
+      emit('count-updated', countResponse.data);
+    }
+
+    const qualityResp = await invoke<any>('get_agent_audit_quality_gate_metrics', {
+      severityFilter: filters.value.severity || null,
+      statusFilter: filters.value.status || null,
+      lifecycleStageFilter: filters.value.lifecycleStage || null,
+      conversationId: filters.value.conversationId || null,
+      search: filters.value.search || null,
+    });
+    if (qualityResp?.success) {
+      qualityGateMetrics.value = qualityResp.data || null;
+      if (qualityResp.data?.thresholds) {
+        thresholdDraft.value = { ...qualityResp.data.thresholds };
+      }
+    } else {
+      qualityGateMetrics.value = null;
     }
 
     const offset = (currentPage.value - 1) * pageSize;
@@ -325,7 +561,8 @@ const refreshFindings = async () => {
       offset,
       severityFilter: filters.value.severity || null,
       statusFilter: filters.value.status || null,
-      conversationId: null,
+      lifecycleStageFilter: filters.value.lifecycleStage || null,
+      conversationId: filters.value.conversationId || null,
       search: filters.value.search || null,
     });
 
@@ -338,8 +575,10 @@ const refreshFindings = async () => {
     console.error('Failed to refresh code audit findings:', error);
     findings.value = [];
     totalCount.value = 0;
+    qualityGateMetrics.value = null;
   } finally {
     isLoading.value = false;
+    isLoadingQualityGate.value = false;
   }
 };
 
@@ -350,6 +589,8 @@ const applyFilters = () => {
 
 const openDetails = (finding: AgentAuditFinding) => {
   selectedFinding.value = finding;
+  lifecycleTargetStage.value = finding.lifecycle_stage || 'confirmed';
+  lifecycleTargetVerification.value = '';
   showDetailsModal.value = true;
 };
 
@@ -472,6 +713,41 @@ const executeDeleteAll = async () => {
   }
 };
 
+const transitionLifecycle = async () => {
+  if (!selectedFinding.value) return;
+  if (!hasLifecycleTransitionPermission.value) return;
+  isTransitioningLifecycle.value = true;
+  try {
+    const resp = await invoke<any>('transition_agent_audit_finding_lifecycle', {
+      request: {
+        finding_id: selectedFinding.value.id,
+        lifecycle_stage: lifecycleTargetStage.value,
+        verification_status: lifecycleTargetVerification.value || null,
+        provenance: {
+          source: 'security_center_ui',
+          at: new Date().toISOString(),
+        },
+      },
+    });
+
+    if (!resp?.success) {
+      throw new Error(resp?.error || 'transition_agent_audit_finding_lifecycle failed');
+    }
+
+    await refreshFindings();
+    if (selectedFinding.value) {
+      const updated = findings.value.find((item) => item.id === selectedFinding.value?.id);
+      if (updated) {
+        selectedFinding.value = updated;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to transition finding lifecycle:', error);
+  } finally {
+    isTransitioningLifecycle.value = false;
+  }
+};
+
 const toJsonText = (value: unknown) => {
   try {
     return JSON.stringify(value, null, 2);
@@ -532,6 +808,71 @@ const formatTime = (time?: string) => {
   }
 };
 
+const formatPct = (value?: number | null) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '-';
+  return `${(value * 100).toFixed(1)}%`;
+};
+
+const clamp01 = (value: number) => {
+  if (Number.isNaN(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+};
+
+const resetThresholdDraft = () => {
+  if (qualityGateMetrics.value?.thresholds) {
+    thresholdDraft.value = { ...qualityGateMetrics.value.thresholds };
+    return;
+  }
+  thresholdDraft.value = {
+    min_evidence_rate: 0.7,
+    max_uncertain_rate: 0.3,
+    max_false_positive_rate: 0.2,
+  };
+};
+
+const resolveThresholdConversationId = () => {
+  if (thresholdScope.value !== 'conversation') return null;
+  const cid = thresholdConversationId.value.trim();
+  return cid.length ? cid : null;
+};
+
+const loadThresholdDraft = async () => {
+  try {
+    const resp = await invoke<any>('get_agent_audit_quality_gate_thresholds', {
+      conversationId: resolveThresholdConversationId(),
+    });
+    if (resp?.success && resp?.data) {
+      thresholdDraft.value = { ...resp.data };
+    }
+  } catch (error) {
+    console.error('Failed to load quality gate thresholds:', error);
+  }
+};
+
+const saveThresholds = async () => {
+  isSavingThresholds.value = true;
+  try {
+    const payload = {
+      min_evidence_rate: clamp01(Number(thresholdDraft.value.min_evidence_rate)),
+      max_uncertain_rate: clamp01(Number(thresholdDraft.value.max_uncertain_rate)),
+      max_false_positive_rate: clamp01(Number(thresholdDraft.value.max_false_positive_rate)),
+    };
+    const resp = await invoke<any>('save_agent_audit_quality_gate_thresholds', {
+      thresholds: payload,
+      conversationId: resolveThresholdConversationId(),
+    });
+    if (!resp?.success) {
+      throw new Error(resp?.error || 'save_agent_audit_quality_gate_thresholds failed');
+    }
+    thresholdDraft.value = { ...resp.data };
+    await refreshFindings();
+  } catch (error) {
+    console.error('Failed to save quality gate thresholds:', error);
+  } finally {
+    isSavingThresholds.value = false;
+  }
+};
+
 const handleRefresh = () => {
   refreshFindings();
 };
@@ -540,8 +881,17 @@ watch(currentPage, () => {
   refreshFindings();
 });
 
+watch([thresholdScope, thresholdConversationId], () => {
+  loadThresholdDraft();
+});
+
 onMounted(() => {
+  lifecycleAccessOverride.value = localStorage.getItem('security:auditLifecycleTransitionEnabled') === 'true';
+  loadRoles().catch((error) => {
+    console.warn('Failed to load roles for lifecycle permission check:', error);
+  });
   refreshFindings();
+  loadThresholdDraft();
   window.addEventListener('security-center-refresh', handleRefresh);
 });
 

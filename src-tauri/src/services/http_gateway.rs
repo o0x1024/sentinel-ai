@@ -338,6 +338,8 @@ struct GatewayAuditExecuteConfig {
     #[serde(default)]
     enabled: bool,
     #[serde(default)]
+    verification_level: Option<String>,
+    #[serde(default)]
     required_tools: Option<Vec<String>>,
 }
 
@@ -1734,6 +1736,9 @@ async fn run_agent_execution(
         context_policy: None,
         recursion_depth: 0,
         audit_mode,
+        audit_verification_level: audit_config
+            .as_ref()
+            .and_then(|v| v.verification_level.clone()),
     };
 
     crate::agents::execute_agent(&state.app_handle, params)
@@ -2156,6 +2161,18 @@ async fn bridge_invoke(
             let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
             let description = payload.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
             let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let capabilities = payload
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             if title.is_empty() {
                 Err("create_ai_role missing title".to_string())
             } else {
@@ -2165,6 +2182,7 @@ async fn bridge_invoke(
                     title,
                     description,
                     prompt,
+                    capabilities,
                     is_system: false,
                     created_at: now,
                     updated_at: now,
@@ -2181,6 +2199,17 @@ async fn bridge_invoke(
             let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
             let description = payload.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
             let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let capabilities = payload
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                        .collect::<Vec<_>>()
+                });
             if id.is_empty() {
                 Err("update_ai_role missing id".to_string())
             } else {
@@ -2193,6 +2222,8 @@ async fn bridge_invoke(
                             title,
                             description,
                             prompt,
+                            capabilities: capabilities
+                                .unwrap_or_else(|| existing.map(|r| r.capabilities.clone()).unwrap_or_default()),
                             is_system: existing.map(|r| r.is_system).unwrap_or(false),
                             created_at: existing.map(|r| r.created_at).unwrap_or_else(Utc::now),
                             updated_at: Utc::now(),
@@ -2372,7 +2403,144 @@ async fn bridge_invoke(
                 Err(e) => Err(e),
             }
         }
-        "save_audit_policy_gate" => Ok(json!(null)),
+        "save_audit_policy_gate" => {
+            let conversation_id = req
+                .payload
+                .get("conversationId")
+                .or_else(|| req.payload.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let gate = req.payload.get("gate").cloned().unwrap_or_default();
+            if conversation_id.is_empty() {
+                Err("save_audit_policy_gate missing conversation_id".to_string())
+            } else {
+                let payload = serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "passed": gate.get("passed").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "reason": gate.get("reason"),
+                    "profile": gate.get("profile"),
+                    "summary": gate.get("summary"),
+                    "generated_at": gate
+                        .get("generated_at")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| Utc::now().to_rfc3339()),
+                });
+                match state
+                    .db
+                    .set_config(
+                        "agent_audit_policy_gate",
+                        &conversation_id,
+                        &payload.to_string(),
+                        Some("Conversation level policy gate state for audit mode"),
+                    )
+                    .await
+                {
+                    Ok(_) => Ok(json!(null)),
+                    Err(e) => Err(format!("save_audit_policy_gate failed: {}", e)),
+                }
+            }
+        },
+        "get_agent_audit_quality_gate_thresholds" => {
+            let conversation_id = req
+                .payload
+                .get("conversationId")
+                .or_else(|| req.payload.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            let (category, key) = if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
+                ("agent_audit_quality_gate_conversation", cid.as_str())
+            } else {
+                ("agent_audit_quality_gate", "thresholds")
+            };
+            match state
+                .db
+                .get_config(category, key)
+                .await
+            {
+                Ok(raw) => {
+                    let defaults = serde_json::json!({
+                        "min_evidence_rate": 0.7,
+                        "max_uncertain_rate": 0.3,
+                        "max_false_positive_rate": 0.2
+                    });
+                    match raw {
+                        Some(v) => {
+                            let parsed: serde_json::Value = serde_json::from_str(&v).unwrap_or(defaults);
+                            Ok(parsed)
+                        }
+                        None => Ok(defaults),
+                    }
+                }
+                Err(e) => Err(format!(
+                    "get_agent_audit_quality_gate_thresholds failed: {}",
+                    e
+                )),
+            }
+        },
+        "save_agent_audit_quality_gate_thresholds" => {
+            let conversation_id = req
+                .payload
+                .get("conversationId")
+                .or_else(|| req.payload.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            let thresholds = req
+                .payload
+                .get("thresholds")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let min_evidence_rate = thresholds
+                .get("min_evidence_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.7)
+                .clamp(0.0, 1.0);
+            let max_uncertain_rate = thresholds
+                .get("max_uncertain_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.3)
+                .clamp(0.0, 1.0);
+            let max_false_positive_rate = thresholds
+                .get("max_false_positive_rate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.2)
+                .clamp(0.0, 1.0);
+            let normalized = serde_json::json!({
+                "min_evidence_rate": min_evidence_rate,
+                "max_uncertain_rate": max_uncertain_rate,
+                "max_false_positive_rate": max_false_positive_rate
+            });
+            let (category, key, description) = if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
+                (
+                    "agent_audit_quality_gate_conversation",
+                    cid.as_str(),
+                    "Conversation scoped audit quality gate thresholds",
+                )
+            } else {
+                (
+                    "agent_audit_quality_gate",
+                    "thresholds",
+                    "Audit quality gate thresholds",
+                )
+            };
+            match state
+                .db
+                .set_config(
+                    category,
+                    key,
+                    &normalized.to_string(),
+                    Some(description),
+                )
+                .await
+            {
+                Ok(_) => Ok(normalized),
+                Err(e) => Err(format!(
+                    "save_agent_audit_quality_gate_thresholds failed: {}",
+                    e
+                )),
+            }
+        },
         "get_subagent_runs" => {
             let parent_id = req
                 .payload
@@ -2389,7 +2557,7 @@ async fn bridge_invoke(
                     Err(e) => Err(format!("get_subagent_runs failed: {}", e)),
                 }
             }
-        }
+        },
         "start_terminal_server" => {
             let cfg = req
                 .payload

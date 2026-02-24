@@ -15,6 +15,8 @@ pub struct CreateAiRolePayload {
     title: String,
     description: String,
     prompt: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
 }
 
 #[tauri::command]
@@ -28,6 +30,7 @@ pub async fn create_ai_role(
         title: payload.title,
         description: payload.description,
         prompt: payload.prompt,
+        capabilities: payload.capabilities,
         is_system: false,
         created_at: now,
         updated_at: now,
@@ -42,6 +45,8 @@ pub struct UpdateAiRolePayload {
     title: String,
     description: String,
     prompt: String,
+    #[serde(default)]
+    capabilities: Option<Vec<String>>,
 }
 
 #[tauri::command]
@@ -66,6 +71,9 @@ pub async fn update_ai_role(
         title: payload.title,
         description: payload.description,
         prompt: payload.prompt,
+        capabilities: payload
+            .capabilities
+            .unwrap_or_else(|| existing_role.map(|r| r.capabilities.clone()).unwrap_or_default()),
         is_system, // 保留原有的 is_system 值
         created_at: existing_role.map(|r| r.created_at).unwrap_or_else(Utc::now),
         updated_at: Utc::now(),

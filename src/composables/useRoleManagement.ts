@@ -9,13 +9,18 @@ const isLoading = ref(false)
 // 持久化选中角色的key
 const SELECTED_ROLE_KEY = 'ai:selectedRoleId'
 
+const normalizeRole = (role: Role): Role => ({
+  ...role,
+  capabilities: Array.isArray(role.capabilities) ? role.capabilities : [],
+})
+
 export function useRoleManagement() {
   // 加载所有角色
   const loadRoles = async () => {
     isLoading.value = true
     try {
       const result = await invoke<Role[]>('get_ai_roles')
-      roles.value = result || []
+      roles.value = (result || []).map(normalizeRole)
       
       // 尝试恢复之前选中的角色
       await restoreSelectedRole()
@@ -31,8 +36,9 @@ export function useRoleManagement() {
   const createRole = async (request: CreateRoleRequest): Promise<Role> => {
     try {
       const newRole = await invoke<Role>('create_ai_role', { payload: request })
-      roles.value.push(newRole)
-      return newRole
+      const normalized = normalizeRole(newRole)
+      roles.value.push(normalized)
+      return normalized
     } catch (error) {
       console.error('Failed to create role:', error)
       throw error
@@ -45,7 +51,7 @@ export function useRoleManagement() {
       await invoke('update_ai_role', { payload: request })
       const index = roles.value.findIndex(r => r.id === request.id)
       if (index !== -1) {
-        roles.value[index] = { ...roles.value[index], ...request, updated_at: new Date() }
+        roles.value[index] = normalizeRole({ ...roles.value[index], ...request, updated_at: new Date() } as Role)
       }
     } catch (error) {
       console.error('Failed to update role:', error)
@@ -77,11 +83,11 @@ export function useRoleManagement() {
       await invoke('set_current_ai_role', { roleId: role?.id || null })
       
       // 更新本地状态
-      selectedRole.value = role
+      selectedRole.value = role ? normalizeRole(role) : null
       
       // 同步到localStorage（用于UI状态恢复）
-      if (role) {
-        localStorage.setItem(SELECTED_ROLE_KEY, role.id)
+      if (selectedRole.value) {
+        localStorage.setItem(SELECTED_ROLE_KEY, selectedRole.value.id)
       } else {
         localStorage.removeItem(SELECTED_ROLE_KEY)
       }
@@ -95,7 +101,7 @@ export function useRoleManagement() {
   const restoreSelectedRole = async () => {
     try {
       const currentRole = await invoke<Role | null>('get_current_ai_role')
-      selectedRole.value = currentRole
+      selectedRole.value = currentRole ? normalizeRole(currentRole) : null
       
       // 同步到localStorage
       if (currentRole) {
@@ -111,7 +117,7 @@ export function useRoleManagement() {
         if (savedId && roles.value.length > 0) {
           const found = roles.value.find(r => r.id === savedId)
           if (found) {
-            selectedRole.value = found
+            selectedRole.value = normalizeRole(found)
           }
         }
       } catch (fallbackError) {

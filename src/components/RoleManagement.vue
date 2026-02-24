@@ -188,6 +188,47 @@
                   
                   <div class="form-control flex-1 flex flex-col min-h-[300px]">
                     <label class="label">
+                      <span class="label-text font-bold text-base-content/70">Capabilities</span>
+                    </label>
+                    <input
+                      v-model="formData.capabilitiesText"
+                      type="text"
+                      placeholder="例如: audit.lifecycle.transition, audit.findings.write"
+                      class="input input-bordered w-full focus:input-primary transition-all"
+                    />
+                    <label class="label">
+                      <span class="label-text-alt text-base-content/60">
+                        逗号分隔的能力标识。建议为审计角色添加 `audit.lifecycle.transition`。
+                      </span>
+                    </label>
+                    <div class="flex flex-wrap gap-2 mt-2">
+                      <button
+                        v-for="cap in CAPABILITY_TEMPLATES"
+                        :key="cap"
+                        type="button"
+                        class="btn btn-xs"
+                        :class="selectedCapabilities.includes(cap) ? 'btn-primary' : 'btn-outline'"
+                        @click="toggleCapability(cap)"
+                      >
+                        {{ cap }}
+                      </button>
+                    </div>
+                    <div v-if="selectedCapabilities.length > 0" class="flex flex-wrap gap-2 mt-3">
+                      <span
+                        v-for="cap in selectedCapabilities"
+                        :key="`selected-${cap}`"
+                        class="badge badge-primary badge-outline gap-1"
+                      >
+                        {{ cap }}
+                        <button type="button" class="btn btn-ghost btn-xs btn-circle" @click="removeCapability(cap)">
+                          <i class="fas fa-times text-[10px]"></i>
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="form-control flex-1 flex flex-col min-h-[300px]">
+                    <label class="label">
                       <span class="label-text font-bold text-base-content/70">{{ t('roles.rolePrompt') }} <span class="text-error">*</span></span>
                     </label>
                     <textarea 
@@ -344,7 +385,15 @@ const formData = reactive({
   title: '',
   description: '',
   prompt: '',
+  capabilitiesText: '',
 })
+
+const CAPABILITY_TEMPLATES = [
+  'audit.lifecycle.transition',
+  'audit.findings.write',
+  'audit.report.read',
+  'audit.rules.manage',
+]
 
 // 表单错误
 const formErrors = reactive({
@@ -392,9 +441,41 @@ const resetForm = () => {
   formData.title = ''
   formData.description = ''
   formData.prompt = ''
+  formData.capabilitiesText = ''
   formErrors.title = ''
   formErrors.description = ''
   formErrors.prompt = ''
+}
+
+const parseCapabilities = (input: string): string[] => {
+  const seen = new Set<string>()
+  return input
+    .split(',')
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0)
+    .filter((v) => {
+      const key = v.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+const selectedCapabilities = computed(() => parseCapabilities(formData.capabilitiesText))
+
+const toggleCapability = (capability: string) => {
+  const current = new Set(selectedCapabilities.value)
+  if (current.has(capability)) {
+    current.delete(capability)
+  } else {
+    current.add(capability)
+  }
+  formData.capabilitiesText = Array.from(current).join(', ')
+}
+
+const removeCapability = (capability: string) => {
+  const current = selectedCapabilities.value.filter((cap) => cap !== capability)
+  formData.capabilitiesText = current.join(', ')
 }
 
 // 编辑角色
@@ -403,6 +484,7 @@ const editRole = (role: Role) => {
   formData.title = role.title
   formData.description = role.description
   formData.prompt = role.prompt
+  formData.capabilitiesText = (role.capabilities || []).join(', ')
   showCreateForm.value = false
   showAiGenerateForm.value = false
 }
@@ -433,6 +515,7 @@ const handleAiGenerate = async () => {
     formData.title = generated.title
     formData.description = generated.description
     formData.prompt = generated.prompt
+    formData.capabilitiesText = (generated.capabilities || []).join(', ')
     showAiGenerateForm.value = false
     showCreateForm.value = true
   } catch (error) {
@@ -457,6 +540,7 @@ const handleSubmit = async () => {
   isSubmitting.value = true
   
   try {
+    const capabilities = parseCapabilities(formData.capabilitiesText)
     if (editingRole.value) {
       // 更新角色
       await updateRole({
@@ -464,6 +548,7 @@ const handleSubmit = async () => {
         title: formData.title.trim(),
         description: formData.description.trim(),
         prompt: formData.prompt.trim(),
+        capabilities,
       })
     } else {
       // 创建角色
@@ -471,6 +556,7 @@ const handleSubmit = async () => {
         title: formData.title.trim(),
         description: formData.description.trim(),
         prompt: formData.prompt.trim(),
+        capabilities,
       })
     }
     

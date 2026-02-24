@@ -800,7 +800,7 @@ mod tests {
         
         // Denied by default rule
         assert!(matches!(
-            tool.check_permission("rm -rf /").await,
+            tool.check_permission("rm -rf /", None).await,
             Err(ShellError::PermissionDenied(_))
         ));
     }

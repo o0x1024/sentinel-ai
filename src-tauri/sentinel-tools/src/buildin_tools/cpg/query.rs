@@ -437,7 +437,7 @@ impl CodePropertyGraph {
 
     // ── Private helpers ─────────────────────────────────────────────────
 
-    fn get_parameter_names(&self, func_idx: petgraph::graph::NodeIndex) -> Vec<String> {
+    pub fn get_parameter_names(&self, func_idx: petgraph::graph::NodeIndex) -> Vec<String> {
         let mut params: Vec<(usize, String)> = Vec::new();
         for child in self.graph.neighbors_directed(func_idx, Direction::Outgoing) {
             if let Some(edge) = self.graph.find_edge(func_idx, child) {

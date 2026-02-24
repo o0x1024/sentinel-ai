@@ -25,6 +25,7 @@ pub mod db_config;
 pub mod connection_manager;
 pub mod migration;
 pub mod bounty;
+pub mod security_rules;
 
 #[allow(unused_imports)]
 pub use agent::*;
@@ -74,3 +75,5 @@ pub use connection_manager::*;
 pub use migration::*;
 #[allow(unused_imports)]
 pub use bounty::*;
+#[allow(unused_imports)]
+pub use security_rules::*;

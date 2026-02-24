@@ -12,11 +12,13 @@ use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
     CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
-    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool, TaintSliceLiteTool,
-    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool,
+    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
+    browser::constants as browser_constants, TenthManTool, TodosTool, SubagentAwaitTool, SubagentChannelTool, MemoryManagerTool,
     WebSearchTool, OcrTool, SkillsTool,
     ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
-    CrossFileTaintTool, AuditReportTool,
+    CrossFileTaintTool, AuditReportTool, BuildCpgTool, QueryCpgTool, CpgTaintAnalysisTool,
+    CpgSecurityScanTool,
+    GetFunctionDetailTool, GetAttackSurfaceTool, SmartFileSummaryTool, TraceDataFlowTool,
 };
 
 use crate::terminal::server::TerminalServer;
@@ -459,64 +461,6 @@ impl ToolServer {
 
         self.registry.register(call_graph_lite_def).await;
 
-        // Register taint_slice_lite tool
-        let taint_slice_lite_def = DynamicToolBuilder::new(TaintSliceLiteTool::NAME.to_string())
-            .description(TaintSliceLiteTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Search root path",
-                        "default": "."
-                    },
-                    "file_glob": {
-                        "type": "string",
-                        "description": "Optional file glob filter"
-                    },
-                    "source_patterns": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Regex patterns for taint sources"
-                    },
-                    "sink_patterns": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Regex patterns for taint sinks"
-                    },
-                    "max_traces": {
-                        "type": "integer",
-                        "description": "Maximum traces returned",
-                        "default": 80
-                    },
-                    "line_window": {
-                        "type": "integer",
-                        "description": "Maximum source-to-sink line distance",
-                        "default": 300
-                    }
-                }
-            }))
-            .source(ToolSource::Builtin)
-            .category("security")
-            .executor(|args| async move {
-                use crate::buildin_tools::audit_tools::TaintSliceLiteArgs;
-                use rig::tool::Tool;
-
-                let tool_args: TaintSliceLiteArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-                let tool = TaintSliceLiteTool;
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("Taint slice lite failed: {}", e))?;
-
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build taint_slice_lite tool");
-
-        self.registry.register(taint_slice_lite_def).await;
-
         // Register read_file tool
         let read_file_def = DynamicToolBuilder::new(ReadFileTool::NAME.to_string())
             .description(ReadFileTool::DESCRIPTION.to_string())
@@ -793,6 +737,224 @@ impl ToolServer {
             .expect("Failed to build audit_report tool");
 
         self.registry.register(audit_report_def).await;
+
+        // Register build_cpg tool
+        let build_cpg_def = DynamicToolBuilder::new(BuildCpgTool::NAME.to_string())
+            .description(BuildCpgTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::cpg::tools::BuildCpgArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::cpg::tools::BuildCpgArgs;
+                use rig::tool::Tool;
+
+                let tool_args: BuildCpgArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = BuildCpgTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Build CPG failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build build_cpg tool");
+
+        self.registry.register(build_cpg_def).await;
+
+        // Register query_cpg tool
+        let query_cpg_def = DynamicToolBuilder::new(QueryCpgTool::NAME.to_string())
+            .description(QueryCpgTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::cpg::tools::QueryCpgArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::cpg::tools::QueryCpgArgs;
+                use rig::tool::Tool;
+
+                let tool_args: QueryCpgArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = QueryCpgTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("Query CPG failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build query_cpg tool");
+
+        self.registry.register(query_cpg_def).await;
+
+        // Register cpg_taint_analysis tool
+        let cpg_taint_analysis_def = DynamicToolBuilder::new(CpgTaintAnalysisTool::NAME.to_string())
+            .description(CpgTaintAnalysisTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::cpg::tools::CpgTaintAnalysisArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::cpg::tools::CpgTaintAnalysisArgs;
+                use rig::tool::Tool;
+
+                let tool_args: CpgTaintAnalysisArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = CpgTaintAnalysisTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("CPG taint analysis failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build cpg_taint_analysis tool");
+
+        self.registry.register(cpg_taint_analysis_def).await;
+
+        // Register cpg_security_scan tool
+        let cpg_security_scan_def = DynamicToolBuilder::new(CpgSecurityScanTool::NAME.to_string())
+            .description(CpgSecurityScanTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::cpg::tools::CpgSecurityScanArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::cpg::tools::CpgSecurityScanArgs;
+                use rig::tool::Tool;
+
+                let tool_args: CpgSecurityScanArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = CpgSecurityScanTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("CPG security scan failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build cpg_security_scan tool");
+
+        self.registry.register(cpg_security_scan_def).await;
+
+        // ── V2 Audit Tools ──────────────────────────────────────────────────
+
+        // Register get_function_detail tool
+        let get_function_detail_def = DynamicToolBuilder::new(GetFunctionDetailTool::NAME.to_string())
+            .description(GetFunctionDetailTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::audit_tools_v2::GetFunctionDetailArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_v2::GetFunctionDetailArgs;
+                use rig::tool::Tool;
+
+                let tool_args: GetFunctionDetailArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = GetFunctionDetailTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("get_function_detail failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build get_function_detail tool");
+
+        self.registry.register(get_function_detail_def).await;
+
+        // Register get_attack_surface tool
+        let get_attack_surface_def = DynamicToolBuilder::new(GetAttackSurfaceTool::NAME.to_string())
+            .description(GetAttackSurfaceTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::audit_tools_v2::GetAttackSurfaceArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_v2::GetAttackSurfaceArgs;
+                use rig::tool::Tool;
+
+                let tool_args: GetAttackSurfaceArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = GetAttackSurfaceTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("get_attack_surface failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build get_attack_surface tool");
+
+        self.registry.register(get_attack_surface_def).await;
+
+        // Register smart_file_summary tool
+        let smart_file_summary_def = DynamicToolBuilder::new(SmartFileSummaryTool::NAME.to_string())
+            .description(SmartFileSummaryTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::audit_tools_v2::SmartFileSummaryArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_v2::SmartFileSummaryArgs;
+                use rig::tool::Tool;
+
+                let tool_args: SmartFileSummaryArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = SmartFileSummaryTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("smart_file_summary failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build smart_file_summary tool");
+
+        self.registry.register(smart_file_summary_def).await;
+
+        // Register trace_data_flow tool
+        let trace_data_flow_def = DynamicToolBuilder::new(TraceDataFlowTool::NAME.to_string())
+            .description(TraceDataFlowTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::to_value(schemars::schema_for!(
+                crate::buildin_tools::audit_tools_v2::TraceDataFlowArgs
+            )).unwrap_or_default())
+            .source(ToolSource::Builtin)
+            .category("security")
+            .executor(|args| async move {
+                use crate::buildin_tools::audit_tools_v2::TraceDataFlowArgs;
+                use rig::tool::Tool;
+
+                let tool_args: TraceDataFlowArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = TraceDataFlowTool;
+                let result = tool.call(tool_args).await
+                    .map_err(|e| format!("trace_data_flow failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build trace_data_flow tool");
+
+        self.registry.register(trace_data_flow_def).await;
 
         // Register shell tool
         let shell_desc = {

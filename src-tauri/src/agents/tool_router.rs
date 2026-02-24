@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
     CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
-    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool, TaintSliceLiteTool,
+    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
     browser::constants as browser_constants, TenthManTool, SubagentAwaitTool, SubagentChannelTool,
     SubagentExecuteTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
     ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
@@ -375,21 +375,6 @@ impl ToolRouter {
                     "function".to_string(),
                     "graph".to_string(),
                     "trace".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: TaintSliceLiteTool::NAME.to_string(),
-                name: TaintSliceLiteTool::NAME.to_string(),
-                description: TaintSliceLiteTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "taint".to_string(),
-                    "source".to_string(),
-                    "sink".to_string(),
-                    "dataflow".to_string(),
                     "audit".to_string(),
                 ],
                 cost_estimate: ToolCost::Low,
@@ -1112,69 +1097,7 @@ impl ToolRouter {
                 if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
                     all.push(TodosTool::NAME.to_string());
                 }
-                let injected = if let Some(db_service) = &self.db_service {
-                    let root = db_service.get_skills_root_dir();
-                    let mut summaries = Vec::new();
-                    if let Ok(entries) = std::fs::read_dir(&root) {
-                        for entry in entries.flatten() {
-                            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                                continue;
-                            }
-                            let skill_dir = entry.path();
-                            let skill_id = entry.file_name().to_string_lossy().to_string();
-                            if !self.is_skill_enabled(&skill_id).await {
-                                continue;
-                            }
-                            let skill_md = skill_dir.join("SKILL.md");
-                            if !skill_md.exists() {
-                                continue;
-                            }
-                            let content = match std::fs::read_to_string(&skill_md) {
-                                Ok(c) => c,
-                                Err(_) => continue,
-                            };
-                            let doc = match crate::skills::parse_skill_markdown(&content) {
-                                Ok(doc) => doc,
-                                Err(_) => continue,
-                            };
-                            if doc.frontmatter.description.trim().is_empty()
-                                && doc.frontmatter.when_to_use.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
-                            {
-                                continue;
-                            }
-                            let name = doc.frontmatter.name.trim().to_string();
-                            if name.is_empty() {
-                                continue;
-                            }
-                            let description = if let Some(when) = doc.frontmatter.when_to_use.as_ref() {
-                                if when.trim().is_empty() {
-                                    doc.frontmatter.description.trim().to_string()
-                                } else {
-                                    format!(
-                                        "{} - {}",
-                                        doc.frontmatter.description.trim(),
-                                        when.trim()
-                                    )
-                                }
-                            } else {
-                                doc.frontmatter.description.trim().to_string()
-                            };
-                            summaries.push(format!("\"{}\": {}", name, description));
-                        }
-                    }
-                    summaries.sort();
-                    let skills_block = if summaries.is_empty() {
-                        "No skills available.".to_string()
-                    } else {
-                        summaries.join("\n")
-                    };
-                    Some(format!(
-                        "<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
-                        skills_block
-                    ))
-                } else {
-                    Some("When a task requires specialized workflows, use the `skills` tool. If <available_skills> is provided, you can call action=load directly; otherwise call action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.".to_string())
-                };
+                let injected = self.build_skills_prompt_injection().await;
                 Ok(ToolSelectionPlan {
                     tool_ids: self.merge_always_available_tools(all),
                     injected_system_prompt: injected,
@@ -1184,12 +1107,86 @@ impl ToolRouter {
             _ => {
                 // For non-Skills strategies, just wrap select_tools result
                 let tool_ids = self.select_tools(task, config, llm_config).await?;
+                let injected_system_prompt = if tool_ids.iter().any(|id| id == SkillsTool::NAME)
+                    && self.is_skills_enabled().await
+                {
+                    self.build_skills_prompt_injection().await
+                } else {
+                    None
+                };
                 Ok(ToolSelectionPlan {
                     tool_ids,
-                    injected_system_prompt: None,
+                    injected_system_prompt,
                     selected_skill: None,
                 })
             }
+        }
+    }
+
+    async fn build_skills_prompt_injection(&self) -> Option<String> {
+        if let Some(db_service) = &self.db_service {
+            let root = db_service.get_skills_root_dir();
+            let mut summaries = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&root) {
+                for entry in entries.flatten() {
+                    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        continue;
+                    }
+                    let skill_dir = entry.path();
+                    let skill_id = entry.file_name().to_string_lossy().to_string();
+                    if !self.is_skill_enabled(&skill_id).await {
+                        continue;
+                    }
+                    let skill_md = skill_dir.join("SKILL.md");
+                    if !skill_md.exists() {
+                        continue;
+                    }
+                    let content = match std::fs::read_to_string(&skill_md) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+                    let doc = match crate::skills::parse_skill_markdown(&content) {
+                        Ok(doc) => doc,
+                        Err(_) => continue,
+                    };
+                    if doc.frontmatter.description.trim().is_empty()
+                        && doc
+                            .frontmatter
+                            .when_to_use
+                            .as_ref()
+                            .map(|s| s.trim().is_empty())
+                            .unwrap_or(true)
+                    {
+                        continue;
+                    }
+                    let name = doc.frontmatter.name.trim().to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let description = if let Some(when) = doc.frontmatter.when_to_use.as_ref() {
+                        if when.trim().is_empty() {
+                            doc.frontmatter.description.trim().to_string()
+                        } else {
+                            format!("{} - {}", doc.frontmatter.description.trim(), when.trim())
+                        }
+                    } else {
+                        doc.frontmatter.description.trim().to_string()
+                    };
+                    summaries.push(format!("\"{}\": {}", name, description));
+                }
+            }
+            summaries.sort();
+            let skills_block = if summaries.is_empty() {
+                "No skills available.".to_string()
+            } else {
+                summaries.join("\n")
+            };
+            Some(format!(
+                "<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
+                skills_block
+            ))
+        } else {
+            Some("When a task requires specialized workflows, use the `skills` tool. If <available_skills> is provided, you can call action=load directly; otherwise call action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.".to_string())
         }
     }
 

@@ -635,6 +635,16 @@ impl DatabaseService {
                 architecture_meta TEXT,
                 structured_data TEXT
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS ai_roles (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                prompt TEXT NOT NULL,
+                capabilities_json TEXT NOT NULL DEFAULT '[]',
+                is_system BOOLEAN DEFAULT FALSE,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS scan_tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT,
@@ -782,6 +792,8 @@ impl DatabaseService {
                 title TEXT NOT NULL,
                 severity TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
+                lifecycle_stage TEXT NOT NULL DEFAULT 'confirmed',
+                verification_status TEXT NOT NULL DEFAULT 'unverified',
                 confidence DOUBLE,
                 cwe TEXT,
                 files_json TEXT,
@@ -789,11 +801,16 @@ impl DatabaseService {
                 sink_json TEXT,
                 trace_path_json TEXT,
                 evidence_json TEXT,
+                required_evidence_json TEXT,
+                verifier_json TEXT,
+                judge_json TEXT,
+                provenance_json TEXT,
                 fix TEXT,
                 description TEXT NOT NULL,
                 severity_raw TEXT,
                 source_message_id TEXT,
                 hit_count INTEGER NOT NULL DEFAULT 1,
+                last_transition_at DATETIME,
                 first_seen_at DATETIME NOT NULL,
                 last_seen_at DATETIME NOT NULL,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -818,6 +835,20 @@ impl DatabaseService {
                 vuln_id TEXT NOT NULL,
                 first_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_hit DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS cpg_security_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                cwe TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'medium',
+                description TEXT NOT NULL DEFAULT '',
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                sinks_json TEXT NOT NULL DEFAULT '[]',
+                sanitizers_json TEXT NOT NULL DEFAULT '[]',
+                is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#,
             r#"CREATE TABLE IF NOT EXISTS mcp_server_configs (
                 id TEXT PRIMARY KEY,
@@ -983,6 +1014,39 @@ impl DatabaseService {
             .ok();
         self.execute_runtime_ddl(
             runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'confirmed'",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified'",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN required_evidence_json TEXT")
+            .await
+            .ok();
+        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN verifier_json TEXT")
+            .await
+            .ok();
+        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN judge_json TEXT")
+            .await
+            .ok();
+        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN provenance_json TEXT")
+            .await
+            .ok();
+        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN last_transition_at DATETIME")
+            .await
+            .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
             "CREATE INDEX IF NOT EXISTS idx_agent_audit_findings_signature ON agent_audit_findings(signature)",
         )
         .await?;
@@ -994,6 +1058,11 @@ impl DatabaseService {
         self.execute_runtime_ddl(
             runtime,
             "CREATE INDEX IF NOT EXISTS idx_agent_audit_findings_last_seen ON agent_audit_findings(last_seen_at)",
+        )
+        .await?;
+        self.execute_runtime_ddl(
+            runtime,
+            "CREATE INDEX IF NOT EXISTS idx_agent_audit_findings_lifecycle ON agent_audit_findings(lifecycle_stage)",
         )
         .await?;
         self.execute_runtime_ddl(

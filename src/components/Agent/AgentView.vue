@@ -402,6 +402,7 @@ const conversationId = ref<string | null>(props.executionId ?? null)
 const showConversations = ref(false) // Default hidden
 const showToolConfig = ref(false)
 const currentConversationTitle = ref(t('agent.newConversationTitle'))
+const historyLoadToken = ref(0)
 
 // Feature toggles
 const ragEnabled = ref(false)
@@ -681,11 +682,17 @@ type SubagentRunRecord = {
   updated_at: string
 }
 
-const loadSubagentRuns = async (parentExecutionId: string) => {
+const loadSubagentRuns = async (parentExecutionId: string, loadToken?: number) => {
   try {
     const runs = await invoke<SubagentRunRecord[]>('get_subagent_runs', {
       parentExecutionId,
     })
+    if (
+      (typeof loadToken === 'number' && loadToken !== historyLoadToken.value) ||
+      conversationId.value !== parentExecutionId
+    ) {
+      return
+    }
 
     const toMillis = (v: any) => {
       const ms = new Date(v).getTime()
@@ -1647,17 +1654,26 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
 // Load conversation history
 const loadConversationHistory = async (convId: string) => {
   console.log('[AgentView] Loading conversation history for:', convId)
+  const currentLoadToken = ++historyLoadToken.value
   try {
     const messages = await invoke<any[]>('get_ai_messages_by_conversation', {
       conversationId: convId
     })
+    if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+      console.log('[AgentView] Skip stale conversation history load for:', convId)
+      return
+    }
     
     console.log('[AgentView] Received messages:', messages)
     
     // Clear current messages
     agentEvents.clearMessages()
     // Restore subagent list from persistent storage
-    await loadSubagentRuns(convId)
+    await loadSubagentRuns(convId, currentLoadToken)
+    if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+      console.log('[AgentView] Skip stale conversation history apply for:', convId)
+      return
+    }
 
     if (messages && messages.length > 0) {
       // DB already returns messages ordered by timestamp ASC.
@@ -1805,6 +1821,11 @@ const loadConversationHistory = async (convId: string) => {
         })
       })
 
+      if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+        console.log('[AgentView] Skip stale conversation timeline apply for:', convId)
+        return
+      }
+
       agentEvents.messages.value = timeline
 
       console.log('[AgentView] Loaded', messages.length, 'messages from conversation:', convId)
@@ -1825,6 +1846,9 @@ const loadConversationHistory = async (convId: string) => {
 const handleSelectConversation = async (convId: string) => {
   conversationId.value = convId
   await loadConversationHistory(convId)
+  if (conversationId.value !== convId) {
+    return
+  }
   
   // Reset terminal session when switching conversations
   terminalComposable.resetTerminal()
@@ -1838,6 +1862,9 @@ const handleSelectConversation = async (convId: string) => {
     }
   } catch (e) {
     console.error('[AgentView] Failed to get conversation title:', e)
+  }
+  if (conversationId.value !== convId) {
+    return
   }
   
   // Auto close drawer after selecting conversation

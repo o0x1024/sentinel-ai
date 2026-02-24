@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use once_cell::sync::{Lazy, OnceCell};
 use serde_json::json;
+use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri::Manager;
 use tokio::sync::{watch, RwLock, Semaphore};
@@ -64,6 +65,7 @@ static PARENT_SEMAPHORES: Lazy<Arc<RwLock<HashMap<String, Arc<Semaphore>>>>> =
 
 const MAX_SUBAGENTS_PER_PARENT: usize = 3;
 const MAX_EVENTS_PER_CHANNEL: usize = 500;
+const MAX_SUBAGENT_RECURSION_DEPTH: usize = 4;
 const SUBAGENT_TOOL_IDS: [&str; 3] = ["subagent_execute", "subagent_await", "subagent_channel"];
 
 // ============================================================================
@@ -82,6 +84,8 @@ pub struct SubagentParentContext {
     pub timeout_secs: u64,
     pub task_context: String,
     pub recursion_depth: usize,
+    pub audit_mode: bool,
+    pub audit_verification_level: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +98,7 @@ struct PendingExecutionData {
     timeout_secs: Option<u64>,
     inherit_parent_tools: bool,
     recursion_depth: usize,
+    role: Option<String>,
 }
 
 /// Internal task entry with completion channel
@@ -212,6 +217,155 @@ fn normalize_tool_config(mut config: ToolConfig) -> ToolConfig {
     config
 }
 
+fn allowed_tools_for_role(role: &str) -> Option<&'static [&'static str]> {
+    match role.trim().to_lowercase().as_str() {
+        "planner" => Some(&[
+            "todos",
+            "skills",
+            "read_file",
+            "project_overview",
+            "audit_coverage",
+            "git_diff_scope",
+            "audit_report",
+        ]),
+        "access" | "access_control" => Some(&[
+            "read_file",
+            "project_overview",
+            "code_search",
+            "git_diff_scope",
+            "call_graph_lite",
+            "cross_file_taint",
+            "build_cpg",
+            "query_cpg",
+            "cpg_taint_analysis",
+            "audit_finding_upsert",
+        ]),
+        "auth" | "auth_jwt" | "jwt" => Some(&[
+            "read_file",
+            "project_overview",
+            "code_search",
+            "git_diff_scope",
+            "call_graph_lite",
+            "cross_file_taint",
+            "dependency_audit",
+            "build_cpg",
+            "query_cpg",
+            "cpg_security_scan",
+            "audit_finding_upsert",
+        ]),
+        "state" | "state_concurrency" | "concurrency" => Some(&[
+            "read_file",
+            "project_overview",
+            "code_search",
+            "git_diff_scope",
+            "call_graph_lite",
+            "cross_file_taint",
+            "build_cpg",
+            "query_cpg",
+            "cpg_taint_analysis",
+            "cpg_security_scan",
+            "audit_finding_upsert",
+        ]),
+        "payment" => Some(&[
+            "read_file",
+            "project_overview",
+            "code_search",
+            "git_diff_scope",
+            "call_graph_lite",
+            "cross_file_taint",
+            "dependency_audit",
+            "build_cpg",
+            "query_cpg",
+            "cpg_taint_analysis",
+            "cpg_security_scan",
+            "audit_finding_upsert",
+            "audit_report",
+        ]),
+        "judge" | "reviewer" => Some(&[
+            "read_file",
+            "project_overview",
+            "code_search",
+            "git_diff_scope",
+            "call_graph_lite",
+            "build_cpg",
+            "query_cpg",
+            "cpg_taint_analysis",
+            "cpg_security_scan",
+            "dependency_audit",
+            "tenth_man_review",
+            "audit_report",
+            "audit_finding_upsert",
+        ]),
+        _ => None,
+    }
+}
+
+fn apply_role_tool_policy(mut config: ToolConfig, role: Option<&str>) -> ToolConfig {
+    let Some(role_name) = role.filter(|v| !v.trim().is_empty()) else {
+        return config;
+    };
+    let Some(allowed_for_role) = allowed_tools_for_role(role_name) else {
+        return config;
+    };
+
+    let role_allowed = allowed_for_role
+        .iter()
+        .map(|v| (*v).to_string())
+        .collect::<std::collections::HashSet<_>>();
+
+    if config.allowed_tools.is_empty() {
+        config.allowed_tools = role_allowed.iter().cloned().collect();
+        config.allowed_tools.sort();
+    } else {
+        config.allowed_tools.retain(|tool| role_allowed.contains(tool));
+    }
+
+    config.fixed_tools.retain(|tool| role_allowed.contains(tool));
+
+    if let ToolSelectionStrategy::Manual(ref mut tools) = config.selection_strategy {
+        tools.retain(|tool| role_allowed.contains(tool));
+    }
+
+    config
+}
+
+fn subagent_context_policy(audit_mode: bool, verification_level: Option<&str>) -> ContextPolicy {
+    if !audit_mode {
+        return ContextPolicy::subagent();
+    }
+    match verification_level
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_lowercase())
+        .as_deref()
+    {
+        Some("low") => ContextPolicy::subagent(),
+        _ => ContextPolicy::subagent_audit(),
+    }
+}
+
+fn max_iterations_for_verification_level(
+    requested: usize,
+    audit_mode: bool,
+    verification_level: Option<&str>,
+) -> usize {
+    if !audit_mode {
+        return requested.clamp(1, 500);
+    }
+
+    let cap = match verification_level
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_lowercase())
+        .as_deref()
+    {
+        Some("low") => 120,
+        Some("medium") => 260,
+        _ => 500,
+    };
+    requested.clamp(1, cap)
+}
+
 /// Build subagent task with parent context reference
 fn build_subagent_task(
     parent_task: &str,
@@ -249,6 +403,219 @@ fn build_subagent_task(
         {}",
         brief, parent_history_path, parent_history_path, subagent
     )
+}
+
+fn role_instruction_block(role: &str) -> Option<&'static str> {
+    match role.trim().to_lowercase().as_str() {
+        "planner" => Some(
+            "Role: Planner\n- Break work into explicit phases.\n- Define evidence needed before drawing conclusions.\n- Assign concrete, verifiable sub-tasks.",
+        ),
+        "access" | "access_control" => Some(
+            "Role: Access Control Auditor\n- Focus on authentication, authorization, tenant isolation, and object ownership checks.\n- Prioritize IDOR, privilege escalation, and policy bypass paths.",
+        ),
+        "auth" | "auth_jwt" | "jwt" => Some(
+            "Role: Authentication Auditor\n- Focus on session lifecycle, token validation, refresh/revocation, and MFA downgrade paths.\n- Treat missing claim validation or weak verification as high risk.",
+        ),
+        "state" | "state_concurrency" | "concurrency" => Some(
+            "Role: State and Concurrency Auditor\n- Focus on state transitions, idempotency, race conditions, and replay handling.\n- Explicitly check duplicate side-effects and ordering assumptions.",
+        ),
+        "payment" => Some(
+            "Role: Payment Auditor\n- Focus on amount integrity, signature/verification flow, callback idempotency, and settlement consistency.\n- Validate money and order-state invariants before concluding.",
+        ),
+        "judge" | "reviewer" => Some(
+            "Role: Judge\n- Challenge unsupported claims.\n- Mark findings as confirmed only with concrete evidence and reproducible steps.\n- Output a structured verdict with fields: finding_id, verdict (confirmed|probable|uncertain|rejected), confidence (0-1), evidence_refs (array), rationale.",
+        ),
+        _ => None,
+    }
+}
+
+fn build_subagent_system_prompt(
+    base_prompt: String,
+    role: Option<&str>,
+    audit_mode: bool,
+) -> String {
+    let mut prompt = base_prompt;
+    if let Some(role_name) = role.filter(|v| !v.trim().is_empty()) {
+        if let Some(block) = role_instruction_block(role_name) {
+            prompt.push_str("\n\n");
+            prompt.push_str(block);
+        }
+    }
+    if audit_mode {
+        prompt.push_str(
+            "\n\nAudit mode requirements:\n- Prefer evidence-backed findings over broad claims.\n- If evidence is insufficient, state uncertainty explicitly.\n- Include file/line references whenever possible.",
+        );
+    }
+    prompt
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum JudgeVerdictKind {
+    Confirmed,
+    Probable,
+    Uncertain,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JudgeVerdictPayload {
+    #[serde(default)]
+    finding_id: Option<String>,
+    verdict: JudgeVerdictKind,
+    confidence: f64,
+    evidence_refs: Vec<String>,
+    rationale: String,
+}
+
+fn normalize_judge_output(output: String) -> String {
+    let raw_excerpt: String = output.chars().take(600).collect();
+    let parsed = serde_json::from_str::<JudgeVerdictPayload>(&output);
+    let Ok(mut payload) = parsed else {
+        return serde_json::json!({
+            "verdict": "uncertain",
+            "confidence": 0.2,
+            "evidence_refs": [],
+            "rationale": "Judge output failed strict schema validation; downgraded to uncertain.",
+            "raw_excerpt": raw_excerpt,
+        })
+        .to_string();
+    };
+
+    payload.confidence = payload.confidence.clamp(0.0, 1.0);
+    payload.evidence_refs = payload
+        .evidence_refs
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(20)
+        .collect();
+    payload.rationale = payload.rationale.trim().to_string();
+
+    if payload.rationale.is_empty() {
+        payload.rationale = "No rationale provided.".to_string();
+    }
+
+    if matches!(payload.verdict, JudgeVerdictKind::Confirmed | JudgeVerdictKind::Probable)
+        && payload.evidence_refs.is_empty()
+    {
+        payload.verdict = JudgeVerdictKind::Uncertain;
+        payload.confidence = payload.confidence.min(0.4);
+        payload.rationale = format!(
+            "Downgraded to uncertain because evidence_refs is empty. {}",
+            payload.rationale
+        );
+    }
+
+    serde_json::to_string(&payload).unwrap_or_else(|_| {
+        serde_json::json!({
+            "verdict": "uncertain",
+            "confidence": 0.2,
+            "evidence_refs": [],
+            "rationale": "Judge output serialization failed; downgraded to uncertain.",
+            "raw_excerpt": raw_excerpt,
+        })
+        .to_string()
+    })
+}
+
+fn normalize_output_for_role(role: Option<&str>, output: String) -> String {
+    let Some(role_name) = role.map(str::trim).filter(|v| !v.is_empty()) else {
+        return output;
+    };
+    match role_name.to_lowercase().as_str() {
+        "judge" | "reviewer" => normalize_judge_output(output),
+        _ => output,
+    }
+}
+
+async fn persist_judge_lifecycle_decision(
+    app_handle: &tauri::AppHandle,
+    conversation_id: &str,
+    output_json: &str,
+) {
+    let Some(db) = app_handle
+        .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+        .map(|s| s.inner().clone())
+    else {
+        return;
+    };
+
+    let Ok(payload) = serde_json::from_str::<JudgeVerdictPayload>(output_json) else {
+        return;
+    };
+    let Some(finding_id) = payload
+        .finding_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        return;
+    };
+
+    let stage = match payload.verdict {
+        JudgeVerdictKind::Confirmed => "confirmed",
+        JudgeVerdictKind::Probable => "verified",
+        JudgeVerdictKind::Uncertain => "triaged",
+        JudgeVerdictKind::Rejected => "rejected",
+    };
+    let verification_status = match payload.verdict {
+        JudgeVerdictKind::Confirmed => "passed",
+        JudgeVerdictKind::Probable => "pending",
+        JudgeVerdictKind::Uncertain => "needs_more_evidence",
+        JudgeVerdictKind::Rejected => "failed",
+    };
+
+    let judge_json = serde_json::to_string(&payload).ok();
+    let provenance = serde_json::json!({
+        "source": "judge_subagent",
+        "conversation_id": conversation_id,
+    });
+    let provenance_json = serde_json::to_string(&provenance).ok();
+
+    let finding = match db
+        .get_agent_audit_finding_by_conversation_finding_id(conversation_id, finding_id)
+        .await
+    {
+        Ok(item) => item,
+        Err(e) => {
+            tracing::warn!(
+                "Failed loading finding for judge transition (conv={}, finding_id={}): {}",
+                conversation_id,
+                finding_id,
+                e
+            );
+            return;
+        }
+    };
+
+    let Some(finding) = finding else {
+        tracing::debug!(
+            "Judge output references unknown finding_id={} for conversation={}",
+            finding_id,
+            conversation_id
+        );
+        return;
+    };
+
+    if let Err(e) = db
+        .update_agent_audit_finding_lifecycle(
+            &finding.id,
+            stage,
+            Some(verification_status),
+            judge_json.as_deref(),
+            None,
+            provenance_json.as_deref(),
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed applying judge lifecycle transition for finding {}: {}",
+            finding.id,
+            e
+        );
+    }
 }
 
 async fn get_or_create_parent_semaphore(parent_id: &str) -> Arc<Semaphore> {
@@ -637,7 +1004,7 @@ async fn run_task(task_id: String) {
 
     create_subagent_message(&app_handle, &task_id, "user", &task_with_context).await;
 
-    let tool_config = if let Some(raw) = pending_data.tool_config {
+    let tool_config_base = if let Some(raw) = pending_data.tool_config {
         match serde_json::from_value::<ToolConfig>(raw) {
             Ok(parsed) => normalize_tool_config(parsed),
             Err(e) => {
@@ -650,11 +1017,21 @@ async fn run_task(task_id: String) {
     } else {
         default_subagent_tool_config()
     };
+    let tool_config = apply_role_tool_policy(tool_config_base, pending_data.role.as_deref());
 
-    let system_prompt = pending_data
+    let system_prompt_base = pending_data
         .system_prompt
         .unwrap_or_else(|| pending_data.parent.system_prompt.clone());
-    let max_iterations = pending_data.max_iterations.clamp(1, 500);
+    let system_prompt = build_subagent_system_prompt(
+        system_prompt_base,
+        pending_data.role.as_deref(),
+        pending_data.parent.audit_mode,
+    );
+    let max_iterations = max_iterations_for_verification_level(
+        pending_data.max_iterations,
+        pending_data.parent.audit_mode,
+        pending_data.parent.audit_verification_level.as_deref(),
+    );
     let timeout_secs = pending_data
         .timeout_secs
         .unwrap_or(pending_data.parent.timeout_secs);
@@ -689,15 +1066,33 @@ async fn run_task(task_id: String) {
         image_attachments: None,
         persist_messages: false,
         subagent_run_id: Some(task_id.clone()),
-        context_policy: Some(ContextPolicy::subagent()),
+        context_policy: Some(subagent_context_policy(
+            pending_data.parent.audit_mode,
+            pending_data.parent.audit_verification_level.as_deref(),
+        )),
         recursion_depth: pending_data.recursion_depth,
-        audit_mode: false,
+        audit_mode: pending_data.parent.audit_mode,
+        audit_verification_level: pending_data.parent.audit_verification_level.clone(),
     };
 
     let result = execute_agent(&app_handle, params).await;
 
     match result {
         Ok(output) => {
+            let output = normalize_output_for_role(pending_data.role.as_deref(), output);
+            if pending_data.parent.audit_mode
+                && matches!(
+                    pending_data.role.as_deref().map(|v| v.trim().to_lowercase()),
+                    Some(ref role) if role == "judge" || role == "reviewer"
+                )
+            {
+                persist_judge_lifecycle_decision(
+                    &app_handle,
+                    &parent_execution_id,
+                    &output,
+                )
+                .await;
+            }
             let completed_at = chrono::Utc::now();
             let _ = app_handle.emit(
                 "subagent:done",
@@ -793,6 +1188,12 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
     let recursion_depth = parent.recursion_depth + 1;
+    if recursion_depth > MAX_SUBAGENT_RECURSION_DEPTH {
+        return Err(SubagentToolError::InvalidArguments(format!(
+            "subagent recursion depth exceeded: {} (max {})",
+            recursion_depth, MAX_SUBAGENT_RECURSION_DEPTH
+        )));
+    }
 
     let (tx, rx) = watch::channel(None);
 
@@ -818,6 +1219,7 @@ async fn execute_spawn(args: SubagentSpawnArgs) -> Result<SubagentSpawnOutput, S
         timeout_secs: args.timeout_secs,
         inherit_parent_tools: args.inherit_parent_tools,
         recursion_depth,
+        role: args.role.clone(),
     };
 
     {

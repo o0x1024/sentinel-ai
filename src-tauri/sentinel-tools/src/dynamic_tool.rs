@@ -13,7 +13,6 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-const TOOL_TIMEOUT_PARAM: &str = "tool_timeout_secs";
 const TOOL_TIMEOUT_FLOOR_SECS: u64 = 30 * 60;
 
 /// Tool execution function type
@@ -132,13 +131,13 @@ impl Tool for DynamicTool {
                 .map_err(DynamicToolError::InvalidArguments)?;
         }
 
-        let timeout_secs = extract_timeout_secs_with_floor(&args);
+        let timeout_secs = TOOL_TIMEOUT_FLOOR_SECS;
         let result = timeout(Duration::from_secs(timeout_secs), executor(args))
             .await
             .map_err(|_| {
                 DynamicToolError::ExecutionFailed(format!(
-                    "Tool execution timed out after {} seconds (minimum floor: {} seconds)",
-                    timeout_secs, TOOL_TIMEOUT_FLOOR_SECS
+                    "Tool execution timed out after {} seconds",
+                    timeout_secs
                 ))
             })?
             .map_err(DynamicToolError::ExecutionFailed)?;
@@ -168,9 +167,8 @@ impl ToolRegistry {
     }
 
     /// Register a tool
-    pub async fn register(&self, mut def: DynamicToolDef) {
+    pub async fn register(&self, def: DynamicToolDef) {
         let mut tools = self.tools.write().await;
-        inject_timeout_param_into_schema(&mut def.input_schema);
         tracing::info!("Registering tool: {} (source: {:?})", def.name, def.source);
         tools.insert(def.name.clone(), def);
     }
@@ -404,46 +402,6 @@ fn validate_schema(schema: &Value, instance: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn extract_timeout_secs_with_floor(args: &Value) -> u64 {
-    args.get(TOOL_TIMEOUT_PARAM)
-        .and_then(Value::as_u64)
-        .map(|secs| secs.max(TOOL_TIMEOUT_FLOOR_SECS))
-        .unwrap_or(TOOL_TIMEOUT_FLOOR_SECS)
-}
-
-fn inject_timeout_param_into_schema(schema: &mut Value) {
-    let Some(schema_obj) = schema.as_object_mut() else {
-        return;
-    };
-
-    let properties = schema_obj
-        .entry("properties".to_string())
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-
-    let Some(properties_obj) = properties.as_object_mut() else {
-        return;
-    };
-
-    let timeout_prop = properties_obj
-        .entry(TOOL_TIMEOUT_PARAM.to_string())
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-
-    let Some(timeout_obj) = timeout_prop.as_object_mut() else {
-        return;
-    };
-
-    timeout_obj.insert("type".to_string(), Value::String("integer".to_string()));
-    timeout_obj.insert(
-        "description".to_string(),
-        Value::String(
-            "Global tool execution timeout in seconds. Can be set by LLM; minimum 1800 seconds (30 minutes)."
-                .to_string(),
-        ),
-    );
-    timeout_obj.insert("default".to_string(), Value::from(TOOL_TIMEOUT_FLOOR_SECS));
-    timeout_obj.insert("minimum".to_string(), Value::from(TOOL_TIMEOUT_FLOOR_SECS));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,47 +439,4 @@ mod tests {
         assert!(result.get("result").is_some());
     }
 
-    #[test]
-    fn test_extract_timeout_secs_with_floor() {
-        assert_eq!(
-            extract_timeout_secs_with_floor(&serde_json::json!({})),
-            TOOL_TIMEOUT_FLOOR_SECS
-        );
-        assert_eq!(
-            extract_timeout_secs_with_floor(&serde_json::json!({ "tool_timeout_secs": 10 })),
-            TOOL_TIMEOUT_FLOOR_SECS
-        );
-        assert_eq!(
-            extract_timeout_secs_with_floor(&serde_json::json!({ "tool_timeout_secs": 3600 })),
-            3600
-        );
-    }
-
-    #[test]
-    fn test_inject_timeout_param_into_schema() {
-        let mut schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "foo": { "type": "string" }
-            }
-        });
-
-        inject_timeout_param_into_schema(&mut schema);
-
-        let timeout = schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .and_then(|p| p.get(TOOL_TIMEOUT_PARAM))
-            .and_then(Value::as_object)
-            .expect("timeout schema should exist");
-
-        assert_eq!(
-            timeout.get("default").and_then(Value::as_u64),
-            Some(TOOL_TIMEOUT_FLOOR_SECS)
-        );
-        assert_eq!(
-            timeout.get("minimum").and_then(Value::as_u64),
-            Some(TOOL_TIMEOUT_FLOOR_SECS)
-        );
-    }
 }

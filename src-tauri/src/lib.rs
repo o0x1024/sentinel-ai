@@ -33,6 +33,7 @@ use commands::{
     get_cache, set_cache, delete_cache, cleanup_expired_cache, get_all_cache_keys,
     traffic_analysis_commands::{self, TrafficAnalysisState},
     code_audit_commands,
+    security_rule_commands,
     llm_test_commands,
     performance,
     proxifier_commands::{self, ProxifierState},
@@ -274,6 +275,22 @@ pub fn run() {
 
                 if let Err(e) = scan_and_upsert_skills(&db_service).await {
                     tracing::warn!("Skills scan warning: {}", e);
+                }
+
+                // Auto-seed built-in CPG security rules
+                match db_service.has_cpg_security_rules().await {
+                    Ok(false) => {
+                        tracing::info!("Seeding built-in CPG security rules...");
+                        if let Err(e) = security_rule_commands::seed_builtin_rules_impl(&db_service).await {
+                            tracing::warn!("Failed to seed CPG security rules: {}", e);
+                        }
+                    }
+                    Ok(true) => {
+                        tracing::debug!("CPG security rules already exist, skipping seed");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to check CPG security rules: {}", e);
+                    }
                 }
 
                 if let Err(e) =
@@ -970,11 +987,23 @@ pub fn run() {
             code_audit_commands::upsert_agent_audit_findings,
             code_audit_commands::list_agent_audit_findings,
             code_audit_commands::count_agent_audit_findings,
+            code_audit_commands::get_agent_audit_quality_gate_metrics,
+            code_audit_commands::get_agent_audit_quality_gate_thresholds,
+            code_audit_commands::save_agent_audit_quality_gate_thresholds,
             code_audit_commands::get_agent_audit_finding,
             code_audit_commands::update_agent_audit_finding_status,
+            code_audit_commands::transition_agent_audit_finding_lifecycle,
             code_audit_commands::delete_agent_audit_finding,
             code_audit_commands::delete_agent_audit_findings_batch,
             code_audit_commands::delete_all_agent_audit_findings,
+            // CPG security rule commands
+            security_rule_commands::list_cpg_security_rules,
+            security_rule_commands::count_cpg_security_rules,
+            security_rule_commands::get_cpg_security_rule,
+            security_rule_commands::save_cpg_security_rule,
+            security_rule_commands::toggle_cpg_security_rule,
+            security_rule_commands::delete_cpg_security_rule,
+            security_rule_commands::seed_builtin_cpg_rules,
             // Traffic scan commands
             traffic_analysis_commands::start_traffic_analysis,
             traffic_analysis_commands::stop_traffic_analysis,

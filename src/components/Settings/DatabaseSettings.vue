@@ -67,7 +67,7 @@
               </label>
               <div class="input-group">
                 <input type="text" class="input input-bordered flex-1" 
-                       v-model="settings.database.path" readonly>
+                       v-model="settings.database.path">
                 <button class="btn btn-outline" @click="selectDatabasePath">
                   <i class="fas fa-folder-open"></i>
                   {{ t('settings.database.browse') }}

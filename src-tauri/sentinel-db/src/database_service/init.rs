@@ -432,11 +432,13 @@ impl DatabaseService {
                 title TEXT NOT NULL,
                 description TEXT,
                 prompt TEXT NOT NULL,
+                capabilities_json TEXT NOT NULL DEFAULT '[]',
                 is_system BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
             )"#
         ).execute(pool).await?;
+        let _ = sqlx::query("ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'").execute(pool).await;
 
         // Fix for migration issues where created_at/updated_at might be TEXT in PostgreSQL
         let _ = sqlx::query("ALTER TABLE ai_roles ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
@@ -999,6 +1001,35 @@ impl DatabaseService {
                 .await?;
         }
 
+        // CPG Security Rules table (user-defined audit rules)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS cpg_security_rules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                cwe TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'medium',
+                description TEXT NOT NULL DEFAULT '',
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                sinks_json TEXT NOT NULL DEFAULT '[]',
+                sanitizers_json TEXT NOT NULL DEFAULT '[]',
+                is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        let cpg_rule_indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_cpg_rules_severity ON cpg_security_rules(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_cpg_rules_enabled ON cpg_security_rules(enabled)",
+            "CREATE INDEX IF NOT EXISTS idx_cpg_rules_builtin ON cpg_security_rules(is_builtin)",
+        ];
+        for idx_sql in cpg_rule_indices {
+            sqlx::query(idx_sql).execute(pool).await?;
+        }
+
         // Bug Bounty tables
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_programs (
@@ -1435,19 +1466,32 @@ impl DatabaseService {
 
     pub async fn initialize_default_roles(&self, pool: &PgPool) -> Result<()> {
         let roles = vec![
-            ("security-analyst", "安全分析师", "分析安全漏洞和威胁", "你是一个专业的安全分析师..."),
-            ("penetration-tester", "渗透测试专家", "模拟黑客攻击", "你是一个资深的渗透测试专家..."),
+            (
+                "security-analyst",
+                "安全分析师",
+                "分析安全漏洞和威胁",
+                "你是一个专业的安全分析师...",
+                r#"["audit.lifecycle.transition","audit.findings.write","audit.report.read"]"#,
+            ),
+            (
+                "penetration-tester",
+                "渗透测试专家",
+                "模拟黑客攻击",
+                "你是一个资深的渗透测试专家...",
+                r#"["audit.lifecycle.transition","audit.findings.write"]"#,
+            ),
         ];
 
-        for (id, title, description, prompt) in roles {
+        for (id, title, description, prompt, capabilities_json) in roles {
             let now = Utc::now();
             sqlx::query(
-                "INSERT INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES ($1, $2, $3, $4, true, $5, $6) ON CONFLICT (id) DO NOTHING"
+                "INSERT INTO ai_roles (id, title, description, prompt, capabilities_json, is_system, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, true, $6, $7) ON CONFLICT (id) DO NOTHING"
             )
             .bind(id)
             .bind(title)
             .bind(description)
             .bind(prompt)
+            .bind(capabilities_json)
             .bind(now)
             .bind(now)
             .execute(pool)

@@ -1,42 +1,54 @@
-//! Agent-callable CPG tools: `build_cpg` and `query_cpg`.
-//!
-//! These are registered as `rig::tool::Tool` implementations and exposed to
-//! the AI assistant for structural code analysis during security audits.
-
 use once_cell::sync::Lazy;
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::builder;
 use super::types::CodePropertyGraph;
 
-// ── Global CPG cache (one per project root) ─────────────────────────────────
+// ── Global CPG cache (multiple projects) ────────────────────────────────────
 
-static CPG_CACHE: Lazy<Arc<RwLock<Option<CachedCpg>>>> =
-    Lazy::new(|| Arc::new(RwLock::new(None)));
+/// Maximum number of CPGs to keep cached simultaneously.
+/// When exceeded, the oldest entry is evicted.
+const MAX_CACHE_ENTRIES: usize = 5;
+
+static CPG_CACHE: Lazy<Arc<RwLock<HashMap<String, CachedCpg>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 struct CachedCpg {
-    root: String,
     cpg: Arc<CodePropertyGraph>,
+    /// Monotonically increasing access counter for LRU eviction.
+    access_order: u64,
 }
 
-async fn get_or_build_cpg(root: &str, max_files: usize) -> Result<Arc<CodePropertyGraph>, String> {
-    // Check cache
+/// Global counter for LRU ordering.
+static ACCESS_COUNTER: Lazy<std::sync::atomic::AtomicU64> =
+    Lazy::new(|| std::sync::atomic::AtomicU64::new(0));
+
+fn next_access_order() -> u64 {
+    ACCESS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+pub async fn get_or_build_cpg(root: &str, max_files: usize) -> Result<Arc<CodePropertyGraph>, String> {
+    // Check cache (use original path as key for consistency)
     {
-        let cache = CPG_CACHE.read().await;
-        if let Some(cached) = cache.as_ref() {
-            if cached.root == root {
-                return Ok(cached.cpg.clone());
-            }
+        let mut cache = CPG_CACHE.write().await;
+        if let Some(cached) = cache.get_mut(root) {
+            cached.access_order = next_access_order();
+            return Ok(cached.cpg.clone());
         }
     }
 
+    // Resolve path: in Docker mode, /workspace/xxx in the container maps to
+    // a host-side volume mount (typically /tmp/workspace/xxx).
+    // The CPG builder runs on the host, so we need the host path.
+    let resolved_root = resolve_host_path(root).await;
+
     // Build (CPU-intensive, use spawn_blocking)
-    let root_owned = root.to_string();
-    let cpg = tokio::task::spawn_blocking(move || builder::build_cpg(&root_owned, max_files))
+    let cpg = tokio::task::spawn_blocking(move || builder::build_cpg(&resolved_root, max_files))
         .await
         .map_err(|e| format!("CPG build task failed: {}", e))??;
 
@@ -45,10 +57,25 @@ async fn get_or_build_cpg(root: &str, max_files: usize) -> Result<Arc<CodeProper
     // Update cache
     {
         let mut cache = CPG_CACHE.write().await;
-        *cache = Some(CachedCpg {
-            root: root.to_string(),
-            cpg: cpg.clone(),
-        });
+
+        // Evict oldest if at capacity
+        if cache.len() >= MAX_CACHE_ENTRIES && !cache.contains_key(root) {
+            if let Some(oldest_key) = cache
+                .iter()
+                .min_by_key(|(_, v)| v.access_order)
+                .map(|(k, _)| k.clone())
+            {
+                cache.remove(&oldest_key);
+            }
+        }
+
+        cache.insert(
+            root.to_string(),
+            CachedCpg {
+                cpg: cpg.clone(),
+                access_order: next_access_order(),
+            },
+        );
     }
 
     Ok(cpg)
@@ -56,8 +83,8 @@ async fn get_or_build_cpg(root: &str, max_files: usize) -> Result<Arc<CodeProper
 
 /// Force-rebuild the cache (used when `force` is set).
 async fn rebuild_cpg(root: &str, max_files: usize) -> Result<Arc<CodePropertyGraph>, String> {
-    let root_owned = root.to_string();
-    let cpg = tokio::task::spawn_blocking(move || builder::build_cpg(&root_owned, max_files))
+    let resolved_root = resolve_host_path(root).await;
+    let cpg = tokio::task::spawn_blocking(move || builder::build_cpg(&resolved_root, max_files))
         .await
         .map_err(|e| format!("CPG build task failed: {}", e))??;
 
@@ -65,10 +92,13 @@ async fn rebuild_cpg(root: &str, max_files: usize) -> Result<Arc<CodePropertyGra
 
     {
         let mut cache = CPG_CACHE.write().await;
-        *cache = Some(CachedCpg {
-            root: root.to_string(),
-            cpg: cpg.clone(),
-        });
+        cache.insert(
+            root.to_string(),
+            CachedCpg {
+                cpg: cpg.clone(),
+                access_order: next_access_order(),
+            },
+        );
     }
 
     Ok(cpg)
@@ -76,12 +106,14 @@ async fn rebuild_cpg(root: &str, max_files: usize) -> Result<Arc<CodePropertyGra
 
 /// Try to get audit context from a cached CPG (non-blocking).
 /// Returns None if no CPG is cached — the AI can always build one later.
+/// If multiple CPGs are cached, returns context for the most recently accessed one.
 pub async fn try_get_cpg_audit_context() -> Option<String> {
     let cache = CPG_CACHE.read().await;
-    if let Some(cached) = cache.as_ref() {
+    // Return the most recently accessed CPG
+    if let Some((root, cached)) = cache.iter().max_by_key(|(_, v)| v.access_order) {
         let cpg = cached.cpg.clone();
         let context = super::context::generate_audit_context(&cpg);
-        let notice = super::context::cpg_availability_notice(&cached.root);
+        let notice = super::context::cpg_availability_notice(root);
         Some(format!("{}\n{}", context, notice))
     } else {
         None
@@ -94,13 +126,11 @@ pub async fn try_auto_build_cpg(path: &str) -> Option<String> {
     // Check if already cached
     {
         let cache = CPG_CACHE.read().await;
-        if let Some(cached) = cache.as_ref() {
-            if cached.root == path {
-                let cpg = cached.cpg.clone();
-                let context = super::context::generate_audit_context(&cpg);
-                let notice = super::context::cpg_availability_notice(&cached.root);
-                return Some(format!("{}\n{}", context, notice));
-            }
+        if let Some(cached) = cache.get(path) {
+            let cpg = cached.cpg.clone();
+            let context = super::context::generate_audit_context(&cpg);
+            let notice = super::context::cpg_availability_notice(path);
+            return Some(format!("{}\n{}", context, notice));
         }
     }
 
@@ -487,13 +517,14 @@ pub struct CpgTaintAnalysisTool;
 impl CpgTaintAnalysisTool {
     pub const NAME: &'static str = "cpg_taint_analysis";
     pub const DESCRIPTION: &'static str =
-        "Run graph-based taint analysis on a project using the Code Property Graph. \
-         Traces data flow from user-input sources (req.params, getParameter, request.args, etc.) \
-         to dangerous sinks (execute, query, eval, innerHTML, etc.) through the actual call graph. \
-         Detects sanitizers on the path. Supports 10 vulnerability classes: \
-         sql_injection, xss, command_injection, path_traversal, ssrf, deserialization, \
-         ldap_injection, xxe, open_redirect, log_injection. \
-         Requires `build_cpg` to be called first (auto-builds if not cached).";
+         "Run graph-based taint analysis on a project using the Code Property Graph. \
+          Traces data flow from user-input sources (req.params, getParameter, request.args, etc.) \
+          to dangerous sinks (execute, query, eval, innerHTML, etc.) through the actual call graph. \
+          Detects sanitizers on the path. Supports 15 vulnerability classes: \
+          sql_injection, xss, command_injection, path_traversal, ssrf, deserialization, \
+          ldap_injection, xxe, open_redirect, log_injection, hardcoded_secrets, \
+          crypto_misuse, auth_bypass, insecure_random, config_security. \
+          Requires `build_cpg` to be called first (auto-builds if not cached).";
 }
 
 impl Tool for CpgTaintAnalysisTool {
@@ -671,4 +702,90 @@ impl Tool for CpgSecurityScanTool {
             message: Some(msg),
         })
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Docker path resolution
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Resolve a container path to a host path.
+///
+/// When running in Docker mode, paths like `/workspace/xxx` exist inside the
+/// container but not on the host. The CPG builder runs directly on the host
+/// and needs the actual filesystem path. This function reads the Docker volume
+/// mount configuration and remaps accordingly.
+///
+/// For example:
+///   container path: `/workspace/fastgpt-be`
+///   volume mount:   `/tmp/workspace` → `/workspace`
+///   host path:      `/tmp/workspace/fastgpt-be`
+async fn resolve_host_path(path: &str) -> String {
+    let path_buf = std::path::PathBuf::from(path);
+
+    // If the path already exists on the host filesystem, use it as-is
+    if path_buf.is_dir() {
+        return path.to_string();
+    }
+
+    // Load shell config to see if we're in Docker mode
+    let shell_cfg = crate::buildin_tools::shell::get_shell_config().await;
+    if shell_cfg.default_execution_mode != crate::buildin_tools::shell::ShellExecutionMode::Docker {
+        // Not Docker mode, return the path as-is
+        return path.to_string();
+    }
+
+    // In Docker mode: try to map container path to host path using volumes
+    if let Some(docker_cfg) = &shell_cfg.docker_config {
+        for (host_mount, container_mount) in &docker_cfg.volumes {
+            // container_mount: "/workspace", host_mount: "/tmp/workspace"
+            let container_prefix = container_mount.trim_end_matches('/');
+
+            if path == container_prefix || path.starts_with(&format!("{}/", container_prefix)) {
+                // Map: replace container_mount prefix with host_mount
+                let relative = path
+                    .strip_prefix(container_prefix)
+                    .unwrap_or("")
+                    .trim_start_matches('/');
+
+                let host_path = if relative.is_empty() {
+                    host_mount.clone()
+                } else {
+                    format!("{}/{}", host_mount.trim_end_matches('/'), relative)
+                };
+
+                tracing::info!(
+                    "CPG path remapped: {} -> {} (Docker volume: {} -> {})",
+                    path,
+                    host_path,
+                    host_mount,
+                    container_mount
+                );
+
+                // Verify the host path exists
+                if std::path::Path::new(&host_path).is_dir() {
+                    return host_path;
+                }
+
+                tracing::warn!(
+                    "Remapped host path '{}' does not exist. Docker container may not have synced yet.",
+                    host_path
+                );
+                // Return it anyway — the builder will give a better error
+                return host_path;
+            }
+        }
+    }
+
+    // Fallback: no matching volume mount found.
+    // Try common default: /workspace -> /tmp/workspace  
+    if path.starts_with("/workspace") {
+        let host_fallback = format!("/tmp{}", path);
+        if std::path::Path::new(&host_fallback).is_dir() {
+            tracing::info!("CPG path remapped (fallback): {} -> {}", path, host_fallback);
+            return host_fallback;
+        }
+    }
+
+    // Return original path
+    path.to_string()
 }

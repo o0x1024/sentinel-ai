@@ -147,6 +147,8 @@ pub struct AiRole {
     pub title: String,
     pub description: String,
     pub prompt: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
     pub is_system: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -261,5 +263,4 @@ impl AiConversation {
 pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
     HashMap::new()
 }
-
 

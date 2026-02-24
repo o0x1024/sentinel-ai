@@ -120,11 +120,17 @@ where
     for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
     for<'r> bool: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
 {
+    let capabilities_json: Option<String> = row.try_get("capabilities_json").ok();
+    let capabilities = capabilities_json
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+        .unwrap_or_default();
+
     AiRole {
         id: row.get("id"),
         title: row.get("title"),
         description: row.get("description"),
         prompt: row.get("prompt"),
+        capabilities,
         is_system: row.get("is_system"),
         created_at: ts_from_row(row, "created_at"),
         updated_at: ts_from_row(row, "updated_at"),
@@ -1536,19 +1542,19 @@ impl DatabaseService {
         let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let rows = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
+                let rows = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
                     .fetch_all(pool)
                     .await?;
                 Ok(rows.into_iter().map(|row| ai_role_from_row(&row)).collect())
             }
             DatabasePool::SQLite(pool) => {
-                let rows = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
+                let rows = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
                     .fetch_all(pool)
                     .await?;
                 Ok(rows.into_iter().map(|row| ai_role_from_row(&row)).collect())
             }
             DatabasePool::MySQL(pool) => {
-                let rows = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
+                let rows = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
                     .fetch_all(pool)
                     .await?;
                 Ok(rows.into_iter().map(|row| ai_role_from_row(&row)).collect())
@@ -1558,13 +1564,15 @@ impl DatabaseService {
 
     pub async fn create_ai_role_internal(&self, role: &AiRole) -> Result<()> {
         let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let capabilities_json = serde_json::to_string(&role.capabilities).unwrap_or_else(|_| "[]".to_string());
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+                sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, capabilities_json, is_system, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
                     .bind(&role.id)
                     .bind(&role.title)
                     .bind(&role.description)
                     .bind(&role.prompt)
+                    .bind(&capabilities_json)
                     .bind(role.is_system)
                     .bind(role.created_at)
                     .bind(role.updated_at)
@@ -1572,11 +1580,12 @@ impl DatabaseService {
                     .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, capabilities_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&role.id)
                     .bind(&role.title)
                     .bind(&role.description)
                     .bind(&role.prompt)
+                    .bind(&capabilities_json)
                     .bind(role.is_system)
                     .bind(role.created_at)
                     .bind(role.updated_at)
@@ -1584,11 +1593,12 @@ impl DatabaseService {
                     .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, capabilities_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&role.id)
                     .bind(&role.title)
                     .bind(&role.description)
                     .bind(&role.prompt)
+                    .bind(&capabilities_json)
                     .bind(role.is_system)
                     .bind(role.created_at)
                     .bind(role.updated_at)
@@ -1601,32 +1611,36 @@ impl DatabaseService {
 
     pub async fn update_ai_role_internal(&self, role: &AiRole) -> Result<()> {
         let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let capabilities_json = serde_json::to_string(&role.capabilities).unwrap_or_else(|_| "[]".to_string());
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("UPDATE ai_roles SET title = $1, description = $2, prompt = $3, updated_at = $4 WHERE id = $5")
+                sqlx::query("UPDATE ai_roles SET title = $1, description = $2, prompt = $3, capabilities_json = $4, updated_at = $5 WHERE id = $6")
                     .bind(&role.title)
                     .bind(&role.description)
                     .bind(&role.prompt)
+                    .bind(&capabilities_json)
                     .bind(Utc::now())
                     .bind(&role.id)
                     .execute(pool)
                     .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("UPDATE ai_roles SET title = ?, description = ?, prompt = ?, updated_at = ? WHERE id = ?")
+                sqlx::query("UPDATE ai_roles SET title = ?, description = ?, prompt = ?, capabilities_json = ?, updated_at = ? WHERE id = ?")
                     .bind(&role.title)
                     .bind(&role.description)
                     .bind(&role.prompt)
+                    .bind(&capabilities_json)
                     .bind(Utc::now())
                     .bind(&role.id)
                     .execute(pool)
                     .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("UPDATE ai_roles SET title = ?, description = ?, prompt = ?, updated_at = ? WHERE id = ?")
+                sqlx::query("UPDATE ai_roles SET title = ?, description = ?, prompt = ?, capabilities_json = ?, updated_at = ? WHERE id = ?")
                     .bind(&role.title)
                     .bind(&role.description)
                     .bind(&role.prompt)
+                    .bind(&capabilities_json)
                     .bind(Utc::now())
                     .bind(&role.id)
                     .execute(pool)
@@ -1693,21 +1707,21 @@ impl DatabaseService {
             let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
             match runtime {
                 DatabasePool::PostgreSQL(pool) => {
-                    let row = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles WHERE id = $1")
+                    let row = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles WHERE id = $1")
                         .bind(rid)
                         .fetch_optional(pool)
                         .await?;
                     Ok(row.map(|r| ai_role_from_row(&r)))
                 }
                 DatabasePool::SQLite(pool) => {
-                    let row = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles WHERE id = ?")
+                    let row = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles WHERE id = ?")
                         .bind(rid)
                         .fetch_optional(pool)
                         .await?;
                     Ok(row.map(|r| ai_role_from_row(&r)))
                 }
                 DatabasePool::MySQL(pool) => {
-                    let row = sqlx::query("SELECT id, title, description, prompt, is_system, created_at, updated_at FROM ai_roles WHERE id = ?")
+                    let row = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles WHERE id = ?")
                         .bind(rid)
                         .fetch_optional(pool)
                         .await?;

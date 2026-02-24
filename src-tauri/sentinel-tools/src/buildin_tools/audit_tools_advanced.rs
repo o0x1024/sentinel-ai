@@ -124,12 +124,82 @@ async fn is_dir_docker(path: &str, runtime: &AuditRuntime) -> bool {
         .unwrap_or(false)
 }
 
+async fn path_exists_docker(path: &str, runtime: &AuditRuntime) -> bool {
+    let script = format!("[ -e {} ] && echo EXISTS || echo MISSING", shell_escape(path));
+    let args = vec!["-c".to_string(), script];
+    run_audit_command("bash", &args, 5, runtime, false)
+        .await
+        .map(|o| o.stdout.trim() == "EXISTS")
+        .unwrap_or(false)
+}
+
+async fn workspace_top_entries_docker(runtime: &AuditRuntime) -> Vec<String> {
+    let args = vec!["-1".to_string(), "/workspace".to_string()];
+    let out = run_audit_command("ls", &args, 8, runtime, true).await;
+    match out {
+        Ok(v) => v
+            .stdout
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .take(20)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+async fn find_same_name_candidates_docker(path: &str, runtime: &AuditRuntime) -> Vec<String> {
+    let Some(file_name) = Path::new(path).file_name().and_then(|v| v.to_str()) else {
+        return Vec::new();
+    };
+    if file_name.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let script = format!(
+        "find /workspace -type f -name {} 2>/dev/null | head -n 20",
+        shell_escape(file_name)
+    );
+    let args = vec!["-lc".to_string(), script];
+    let out = run_audit_command("bash", &args, 20, runtime, true).await;
+    match out {
+        Ok(v) => v
+            .stdout
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 async fn read_file_docker(
     path: &str,
     offset: usize,
     limit: usize,
     runtime: &AuditRuntime,
 ) -> Result<ReadFileOutput, ReadFileError> {
+    if !path_exists_docker(path, runtime).await {
+        let workspace_entries = workspace_top_entries_docker(runtime).await;
+        let candidates = find_same_name_candidates_docker(path, runtime).await;
+        let mut hints = Vec::new();
+        hints.push("path not found in docker workspace".to_string());
+        if !workspace_entries.is_empty() {
+            hints.push(format!(
+                "top-level /workspace entries: {}",
+                workspace_entries.join(", ")
+            ));
+        }
+        if !candidates.is_empty() {
+            hints.push(format!(
+                "same-name file candidates: {}",
+                candidates.join(", ")
+            ));
+        }
+        hints.push("tip: call read_file with path='/workspace' first to discover mounted project roots".to_string());
+        return Err(ReadFileError::Io(format!("{} ({})", path, hints.join("; "))));
+    }
+
     if is_dir_docker(path, runtime).await {
         let args = vec!["--color=never".to_string(), "-la".to_string(), path.to_string()];
         let out = run_audit_command("ls", &args, 10, runtime, false)
@@ -1075,26 +1145,92 @@ fn parse_npm_deps(content: &str) -> Vec<DepInfo> {
 fn parse_cargo_deps(content: &str) -> Vec<DepInfo> {
     let mut deps = Vec::new();
     let mut in_deps = false;
+    // Track table-style deps like [dependencies.serde]
+    let mut table_dep_name: Option<String> = None;
+
+    static RE_INLINE_VERSION: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r#"version\s*=\s*"([^"]+)""#).unwrap()
+    });
+
     for line in content.lines() {
         let trimmed = line.trim();
+
+        // Check for [dependencies.name] style
+        if let Some(rest) = trimmed.strip_prefix("[dependencies.") {
+            if let Some(name) = rest.strip_suffix(']') {
+                table_dep_name = Some(name.to_string());
+                in_deps = false;
+                continue;
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("[dev-dependencies.") {
+            if let Some(name) = rest.strip_suffix(']') {
+                table_dep_name = Some(name.to_string());
+                in_deps = false;
+                continue;
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("[build-dependencies.") {
+            if let Some(name) = rest.strip_suffix(']') {
+                table_dep_name = Some(name.to_string());
+                in_deps = false;
+                continue;
+            }
+        }
+
+        // Standard dependency sections
         if trimmed.starts_with("[dependencies]")
             || trimmed.starts_with("[dev-dependencies]")
             || trimmed.starts_with("[build-dependencies]")
         {
             in_deps = true;
+            table_dep_name = None;
             continue;
         }
+
+        // Any other section header terminates
         if trimmed.starts_with('[') {
             in_deps = false;
+            table_dep_name = None;
+            continue;
         }
+
+        // Handle table-style dep: extract version = "..."
+        if let Some(ref dep_name) = table_dep_name {
+            if trimmed.starts_with("version") {
+                if let Some(caps) = RE_INLINE_VERSION.captures(trimmed) {
+                    deps.push(DepInfo {
+                        name: dep_name.clone(),
+                        version: caps[1].to_string(),
+                    });
+                }
+                table_dep_name = None;
+            }
+            continue;
+        }
+
         if in_deps && !trimmed.starts_with('#') && trimmed.contains('=') {
             let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
             if parts.len() == 2 {
                 let name = parts[0].trim().to_string();
-                let ver = parts[1].trim().trim_matches('"').trim_matches('\'').to_string();
-                if !name.is_empty() {
-                    deps.push(DepInfo { name, version: ver });
+                let rhs = parts[1].trim();
+
+                if name.is_empty() {
+                    continue;
                 }
+
+                let ver = if rhs.starts_with('{') {
+                    // Inline table: serde = { version = "1.0", features = ["derive"] }
+                    RE_INLINE_VERSION
+                        .captures(rhs)
+                        .map(|caps| caps[1].to_string())
+                        .unwrap_or_else(|| "*".to_string())
+                } else {
+                    // Simple: serde = "1.0"
+                    rhs.trim_matches('"').trim_matches('\'').to_string()
+                };
+
+                deps.push(DepInfo { name, version: ver });
             }
         }
     }
@@ -1448,7 +1584,7 @@ pub struct CrossFileTaintOutput {
     pub total_sources: usize,
     pub total_sinks: usize,
     pub cross_file_traces: Vec<CrossFileTrace>,
-    /// Same-file traces count (covered by taint_slice_lite)
+    /// Same-file traces count (handled by other methods)
     pub same_file_trace_count: usize,
     pub truncated: bool,
 }
@@ -1472,7 +1608,7 @@ impl CrossFileTaintTool {
         "Find cross-file source-to-sink taint traces using function call heuristics. \
          Identifies user-controlled data (source) in one file flowing into dangerous \
          operations (sink) in another file via function call chains. Complements \
-         taint_slice_lite which only covers same-file traces.";
+         other analysis methods which only cover same-file traces.";
 }
 
 impl Tool for CrossFileTaintTool {
@@ -1535,7 +1671,7 @@ impl Tool for CrossFileTaintTool {
         'outer: for (src_file, src_points) in &sources_by_file {
             for (sink_file, sink_points) in &sinks_by_file {
                 if src_file == sink_file {
-                    continue; // same-file handled by taint_slice_lite
+                    continue; // same-file handled separately
                 }
                 // Find if source function is called in sink file, or vice versa
                 for src_pt in src_points {
@@ -1657,21 +1793,25 @@ fn extract_tainted_ident(text: &str) -> Option<String> {
     // e.g., "request.getParameter("foo")" → "foo"
     let text = text.trim();
 
+    static RE_GET_PARAM: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r#"get\w*\(\s*["'](\w+)["']"#).unwrap()
+    });
+    static RE_DOT_FIELD: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r"(?:req|request|ctx|context|params|query|body|input|args?)\.\w+\.(\w+)").unwrap()
+    });
+    static RE_DOT_SINGLE: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r"(?:req|request|ctx|context)\.\w+\b").unwrap()
+    });
+
     // Named parameter in function call: getParameter("name"), get("key"), etc.
-    if let Some(cap) = regex::Regex::new(r#"get\w*\(\s*["'](\w+)["']"#)
-        .ok()
-        .and_then(|re| re.captures(text))
-    {
+    if let Some(cap) = RE_GET_PARAM.captures(text) {
         if let Some(m) = cap.get(1) {
             return Some(m.as_str().to_string());
         }
     }
 
     // Dot notation: req.body.fieldName → fieldName
-    if let Some(cap) = regex::Regex::new(r"(?:req|request|ctx|context|params|query|body|input|args?)\.\w+\.(\w+)")
-        .ok()
-        .and_then(|re| re.captures(text))
-    {
+    if let Some(cap) = RE_DOT_FIELD.captures(text) {
         if let Some(m) = cap.get(1) {
             let ident = m.as_str();
             // Avoid overly generic names
@@ -1682,11 +1822,7 @@ fn extract_tainted_ident(text: &str) -> Option<String> {
     }
 
     // req.params.id or similar single level
-    if let Some(cap) =
-        regex::Regex::new(r"(?:req|request|ctx|context)\.\w+\b")
-            .ok()
-            .and_then(|re| re.captures(text))
-    {
+    if let Some(cap) = RE_DOT_SINGLE.captures(text) {
         let matched = cap.get(0)?.as_str();
         let parts: Vec<&str> = matched.splitn(3, '.').collect();
         if parts.len() >= 2 {
@@ -1702,38 +1838,107 @@ fn extract_tainted_ident(text: &str) -> Option<String> {
 
 fn default_cross_source_patterns() -> Vec<String> {
     vec![
+        // JavaScript/TypeScript (Express, Koa)
         r"req\.params\.\w+".to_string(),
         r"req\.query\.\w+".to_string(),
         r"req\.body\.\w+".to_string(),
-        r"request\.getParameter\(".to_string(),
         r"ctx\.query\.\w+".to_string(),
         r"ctx\.params\.\w+".to_string(),
-        r"c\.Param\(".to_string(),
-        r"c\.Query\(".to_string(),
+        r"ctx\.request\.body".to_string(),
+        // Java (Servlet, Spring)
+        r"request\.getParameter\(".to_string(),
+        r"request\.getHeader\(".to_string(),
+        r"@RequestParam".to_string(),
+        r"@PathVariable".to_string(),
+        r"@RequestBody".to_string(),
+        // Python (Flask, Django)
+        r"request\.form\[".to_string(),
+        r"request\.args\.get\(".to_string(),
+        r"request\.json".to_string(),
+        r"request\.data".to_string(),
+        r"request\.GET\.get".to_string(),
+        r"request\.POST\.get".to_string(),
+        // PHP
         r"\$_GET\[".to_string(),
         r"\$_POST\[".to_string(),
         r"\$_REQUEST\[".to_string(),
-        r"request\.form\[".to_string(),
-        r"request\.args\.get\(".to_string(),
+        r"\$_COOKIE\[".to_string(),
+        r"\$_SERVER\[".to_string(),
+        // Go (net/http, Gin)
+        r"c\.Param\(".to_string(),
+        r"c\.Query\(".to_string(),
+        r"c\.PostForm\(".to_string(),
+        r"r\.FormValue\(".to_string(),
+        r"r\.URL\.Query".to_string(),
+        // Ruby (Rails)
+        r"params\[:\w+\]".to_string(),
+        // Rust (Actix, Axum)
+        r"web::Query".to_string(),
+        r"web::Json".to_string(),
+        r"web::Path".to_string(),
+        // C/C++ input functions
+        r"gets\(".to_string(),
+        r"scanf\(".to_string(),
+        r"fgets\(".to_string(),
+        r"getenv\(".to_string(),
+        r"argv".to_string(),
     ]
 }
 
 fn default_cross_sink_patterns() -> Vec<String> {
     vec![
+        // SQL / Database
         r"execute\s*\(".to_string(),
         r"query\s*\(".to_string(),
         r"exec\s*\(".to_string(),
+        r"rawQuery\s*\(".to_string(),
+        r"db\.run\(".to_string(),
+        r"\.raw\s*\(".to_string(),
+        r"createConnection\(".to_string(),
+        r"cursor\.execute".to_string(),
+        r"\.exec\(".to_string(),
+        // Eval / Code Injection
         r"eval\s*\(".to_string(),
+        r"Function\s*\(".to_string(),
+        // XSS
         r"innerHTML\s*=".to_string(),
+        r"outerHTML\s*=".to_string(),
+        r"document\.write".to_string(),
+        r"dangerouslySetInnerHTML".to_string(),
+        r"render_template_string".to_string(),
+        // Command Injection
         r"subprocess\.".to_string(),
         r"os\.system\(".to_string(),
         r"os\.popen\(".to_string(),
+        r"child_process".to_string(),
+        r"Command::new".to_string(),
+        r"exec\.Command".to_string(),
+        r"system\(".to_string(),
+        r"shell_exec\(".to_string(),
+        r"Runtime\.exec".to_string(),
+        // File system
         r"open\s*\(".to_string(),
-        r"render_template\(".to_string(),
-        r"\.raw\s*\(".to_string(),
-        r"createConnection\(".to_string(),
-        r"db\.run\(".to_string(),
-        r"\.exec\(".to_string(),
+        r"readFile\(".to_string(),
+        r"writeFile\(".to_string(),
+        r"fopen\(".to_string(),
+        r"std::fs".to_string(),
+        // SSRF
+        r"fetch\(".to_string(),
+        r"requests\.get".to_string(),
+        r"http\.Get".to_string(),
+        r"curl_exec".to_string(),
+        // Deserialization
+        r"pickle\.loads".to_string(),
+        r"yaml\.load\(".to_string(),
+        r"unserialize\(".to_string(),
+        // Redirect
+        r"redirect\(".to_string(),
+        r"sendRedirect".to_string(),
+        // C/C++ memory-unsafe
+        r"strcpy\(".to_string(),
+        r"strcat\(".to_string(),
+        r"sprintf\(".to_string(),
+        r"memcpy\(".to_string(),
     ]
 }
 
@@ -1868,6 +2073,79 @@ fn render_markdown(
         }
     }
     out.push_str(&format!("| **Total** | **{}** |\n\n", findings.len()));
+
+    // Quality gate
+    let total = findings.len() as f64;
+    let with_evidence_count = findings
+        .iter()
+        .filter(|f| {
+            f.get("evidence")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().any(|v| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)))
+                .unwrap_or(false)
+        })
+        .count() as f64;
+    let uncertain_count = findings
+        .iter()
+        .filter(|f| {
+            let verification = f
+                .get("verification_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let lifecycle = f
+                .get("lifecycle_stage")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            verification == "needs_more_evidence"
+                || lifecycle == "candidate"
+                || lifecycle == "triaged"
+                || lifecycle == "verified"
+        })
+        .count() as f64;
+    let false_positive_count = findings
+        .iter()
+        .filter(|f| {
+            let status = f.get("status").and_then(|v| v.as_str()).unwrap_or_default();
+            let lifecycle = f
+                .get("lifecycle_stage")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            status == "false_positive" || lifecycle == "rejected"
+        })
+        .count() as f64;
+
+    let evidence_rate = if total > 0.0 { with_evidence_count / total } else { 0.0 };
+    let uncertain_rate = if total > 0.0 { uncertain_count / total } else { 0.0 };
+    let false_positive_rate = if total > 0.0 { false_positive_count / total } else { 0.0 };
+
+    let min_evidence_rate = 0.70;
+    let max_uncertain_rate = 0.30;
+    let max_false_positive_rate = 0.20;
+    let gate_passed = total == 0.0
+        || (evidence_rate >= min_evidence_rate
+            && uncertain_rate <= max_uncertain_rate
+            && false_positive_rate <= max_false_positive_rate);
+
+    out.push_str("## Quality Gate\n\n");
+    out.push_str(&format!(
+        "- Gate Status: **{}**\n",
+        if gate_passed { "PASS" } else { "FAIL" }
+    ));
+    out.push_str(&format!(
+        "- Evidence Rate: **{:.1}%** (threshold: >= {:.1}%)\n",
+        evidence_rate * 100.0,
+        min_evidence_rate * 100.0
+    ));
+    out.push_str(&format!(
+        "- Uncertain Rate: **{:.1}%** (threshold: <= {:.1}%)\n",
+        uncertain_rate * 100.0,
+        max_uncertain_rate * 100.0
+    ));
+    out.push_str(&format!(
+        "- False Positive/Rejection Rate: **{:.1}%** (threshold: <= {:.1}%)\n\n",
+        false_positive_rate * 100.0,
+        max_false_positive_rate * 100.0
+    ));
 
     // Findings
     out.push_str("## Findings\n\n");

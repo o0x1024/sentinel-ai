@@ -53,7 +53,7 @@
     <!-- 漏洞管理 Tab -->
     <VulnerabilitiesPanel @stats-updated="updateVulnStats" v-if="activeTab === 'vulnerabilities'"/>
     <!-- 代码审计 Tab -->
-    <CodeAuditFindingsPanel v-if="activeTab === 'codeAudit'"/>
+    <CodeAuditPanel v-if="activeTab === 'codeAudit'"/>
     <!-- LLM Security Tab -->
     <LlmSecurityPanel v-if="activeTab === 'llmSecurity'" />
   </div>
@@ -64,7 +64,7 @@ import { ref, onMounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import VulnerabilitiesPanel from '../components/SecurityCenter/VulnerabilitiesPanel.vue';
-import CodeAuditFindingsPanel from '../components/SecurityCenter/CodeAuditFindingsPanel.vue';
+import CodeAuditPanel from '../components/SecurityCenter/CodeAuditPanel.vue';
 import LlmSecurityPanel from '../components/SecurityCenter/LlmSecurityPanel.vue';
 
 

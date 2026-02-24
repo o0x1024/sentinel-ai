@@ -2700,52 +2700,7 @@ pub async fn agent_execute(
             .map(|v| v.enabled)
             .unwrap_or(false)
         {
-            let audit_instruction = r#"[Audit Mode: Three-Phase Workflow]
-
-## Phase 1 — Reconnaissance (Always run first)
-1. If given a remote URL: call `git_clone_repo` first; use the returned `local_path` for all subsequent tools.
-2. Call `project_overview` to identify languages, frameworks, entry points, and dependency manifests.
-3. Call `dependency_audit` to check for known vulnerabilities in dependencies.
-4. Call `git_diff_scope` (if reviewing a PR/diff) or `read_file` on entry points to understand the architecture.
-5. Call `audit_coverage` with operation="mark_todo" to queue key directories and modules.
-
-## Phase 2 — Deep-Dive Analysis
-For each queued module/directory:
-1. Use `read_file` to read source files (use offset+limit for large files; iterate as needed).
-2. Use `code_search` to find dangerous patterns (injection sinks, auth bypass, crypto misuse, etc.).
-3. Use `call_graph_lite` to map function call relationships around suspicious areas.
-4. Use `taint_slice_lite` for same-file source-to-sink traces.
-5. Use `cross_file_taint` for cross-module data flow.
-6. Mark each module done: `audit_coverage` operation="mark_audited".
-7. Persist confirmed findings immediately via `audit_finding_upsert`.
-
-## Phase 3 — Verification and Report
-1. Review all findings; use `read_file` + `code_search` to verify each finding is reachable.
-2. Discard false positives (status="rejected").
-3. Call `audit_report` to generate the final structured report.
-4. Use `tenth_man_review` if conclusions feel uncertain.
-
-## Audit Output Contract
-- Call `audit_finding_upsert` immediately upon confirming a vulnerability (do NOT wait until the end).
-- Final assistant message: concise summary only; direct user to Security Center > Code Audit for details.
-- Every finding MUST include at least one concrete file path in `files`.
-- Use exact severity values: critical | high | medium | low | info
-- Include `source`/`sink`/`trace_path` whenever a data-flow path exists.
-- CWE format: "CWE-89", "CWE-79", etc.
-
-## Tool Selection Guide
-| Goal | Tool |
-|---|---|
-| Read a file or directory listing | `read_file` |
-| Find all usages of a pattern | `code_search` |
-| Understand project structure | `project_overview` |
-| Check dependency CVEs | `dependency_audit` |
-| Same-file data flow | `taint_slice_lite` |
-| Cross-file data flow | `cross_file_taint` |
-| Function call relationships | `call_graph_lite` |
-| Track audit progress | `audit_coverage` |
-| Save a confirmed finding | `audit_finding_upsert` |
-| Export final report | `audit_report` |"#;
+            let audit_instruction = r#""#;
             base_system_prompt = match base_system_prompt {
                 Some(existing) if !existing.trim().is_empty() => {
                     Some(format!("{}\n\n{}", existing, audit_instruction))
@@ -2946,6 +2901,10 @@ For each queued module/directory:
                         .as_ref()
                         .map(|v| v.enabled)
                         .unwrap_or(false),
+                    audit_verification_level: config
+                        .audit_config
+                        .as_ref()
+                        .and_then(|v| v.verification_level.clone()),
                 };
 
                 // 调用工具支持的代理执行器

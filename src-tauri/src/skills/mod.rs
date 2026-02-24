@@ -220,8 +220,8 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
 /// Embedded built-in skills that ship with the binary.
 const BUILTIN_SKILLS: &[(&str, &str)] = &[
     (
-        "cpg-code-audit",
-        include_str!("../../skills/cpg-code-audit/SKILL.md"),
+        "code-audit",
+        include_str!("../../skills/code-audit/SKILL.md"),
     ),
 ];
 

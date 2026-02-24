@@ -1,6 +1,6 @@
 //! Graph-based taint analysis using BFS/DFS on the CPG.
 //!
-//! Instead of the regex+line-distance heuristic in `taint_slice_lite`,
+//! Instead of regex heuristics,
 //! this module uses the actual call graph edges in the CPG to trace
 //! data flow from sources to sinks, with sanitizer detection.
 
