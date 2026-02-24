@@ -23,10 +23,6 @@ jobs:
             platform: 'darwin-aarch64'
             rust_target: 'aarch64-apple-darwin'
             arch_label: 'aarch64'
-          - os: macos-13
-            platform: 'darwin-x86_64'
-            rust_target: 'x86_64-apple-darwin'
-            arch_label: 'x86_64'
           - os: windows-latest
             platform: 'windows-x86_64'
             rust_target: 'x86_64-pc-windows-msvc'
@@ -322,9 +318,6 @@ jobs:
             case "$PLATFORM_NAME" in
               tauri-build-darwin-aarch64)
                 collect_macos "$PLATFORM_PATH" "aarch64"
-                ;;
-              tauri-build-darwin-x86_64)
-                collect_macos "$PLATFORM_PATH" "x86_64"
                 ;;
               tauri-build-windows-x86_64)
                 collect_windows "$PLATFORM_PATH" "x64"
