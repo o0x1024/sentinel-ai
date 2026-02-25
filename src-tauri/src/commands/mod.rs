@@ -1,6 +1,7 @@
 //! Commands module - Tauri commands
 #![allow(ambiguous_glob_reexports)]
 
+pub mod agent_team_commands;
 pub mod ai;
 pub mod aisettings;
 pub mod asset;

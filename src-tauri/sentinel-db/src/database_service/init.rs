@@ -12,6 +12,7 @@ use crate::database_service::migrations::{
     FloatTypeMigration,
     TimestampTypeMigration,
     IntegerTypeMigration,
+    AgentTeamMigration,
 };
 
 impl DatabaseService {
@@ -1498,5 +1499,9 @@ impl DatabaseService {
             .await?;
         }
         Ok(())
+    }
+
+    pub async fn apply_agent_team_migration(&self, pool: &PgPool) -> Result<()> {
+        AgentTeamMigration::apply(pool).await
     }
 }

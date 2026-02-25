@@ -1,5 +1,6 @@
 //! Sentinel AI - Security Analysis Platform
 
+pub mod agent_team;
 pub mod agents;
 pub mod analyzers;
 pub mod commands;
@@ -1304,6 +1305,27 @@ pub fn run() {
             sentinel_workflow::commands::stop_workflow_schedule,
             sentinel_workflow::commands::list_workflow_schedules,
             sentinel_workflow::commands::get_workflow_schedule,
+            // Agent Team commands
+            commands::agent_team_commands::agent_team_create_template,
+            commands::agent_team_commands::agent_team_list_templates,
+            commands::agent_team_commands::agent_team_get_template,
+            commands::agent_team_commands::agent_team_update_template,
+            commands::agent_team_commands::agent_team_delete_template,
+            commands::agent_team_commands::agent_team_create_session,
+            commands::agent_team_commands::agent_team_get_session,
+            commands::agent_team_commands::agent_team_list_sessions,
+            commands::agent_team_commands::agent_team_update_session,
+            commands::agent_team_commands::agent_team_start_run,
+            commands::agent_team_commands::agent_team_get_messages,
+            commands::agent_team_commands::agent_team_submit_message,
+            commands::agent_team_commands::agent_team_get_blackboard,
+            commands::agent_team_commands::agent_team_add_blackboard_entry,
+            commands::agent_team_commands::agent_team_list_artifacts,
+            commands::agent_team_commands::agent_team_get_artifact,
+            commands::agent_team_commands::agent_team_get_run_status,
+            commands::agent_team_commands::agent_team_seed_builtin_templates,
+            commands::agent_team_commands::agent_team_generate_template,
+            commands::agent_team_commands::agent_team_save_generated_template,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

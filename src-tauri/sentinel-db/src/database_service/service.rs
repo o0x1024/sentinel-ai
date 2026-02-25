@@ -9,6 +9,7 @@ use crate::database_service::db_config::{
     db_config_toml_path, load_db_config_from_disk, DatabaseConfig, DatabaseType,
 };
 use crate::database_service::migration::DatabaseMigration;
+use crate::database_service::migrations::AgentTeamMigration;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use std::time::Duration;
@@ -187,14 +188,14 @@ impl DatabaseService {
         // Try to load config from file
         let config: DatabaseConfig = match load_db_config_from_disk() {
             Ok(Some(c)) => c,
-            Ok(None) => self.default_pg_config(),
+            Ok(None) => DatabaseConfig::default(),
             Err(e) => {
                 tracing::warn!(
                     "Failed to parse {}: {}, using default",
                     db_config_toml_path().display(),
                     e
                 );
-                self.default_pg_config()
+                DatabaseConfig::default()
             }
         };
 
@@ -278,22 +279,6 @@ impl DatabaseService {
         self.pool = Some(pool);
         self.ensure_runtime_default_data().await?;
         Ok(())
-    }
-
-    fn default_pg_config(&self) -> DatabaseConfig {
-        DatabaseConfig {
-            db_type: DatabaseType::PostgreSQL,
-            path: None,
-            enable_wal: false,
-            host: Some("localhost".to_string()),
-            port: Some(5432),
-            database: Some("sentinel_ai".to_string()),
-            username: Some("postgres".to_string()),
-            password: Some("postgres".to_string()),
-            enable_ssl: false,
-            max_connections: 50,
-            query_timeout: 30,
-        }
     }
 
     async fn ensure_migrations(&self, pool: &PgPool) -> Result<()> {
@@ -581,6 +566,9 @@ impl DatabaseService {
             ).execute(pool).await?;
             info!("llm_test_suites table created successfully");
         }
+
+        // Agent Team 模块迁移
+        AgentTeamMigration::apply(pool).await?;
 
         Ok(())
     }

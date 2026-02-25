@@ -88,7 +88,7 @@ pub async fn get_database_status(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
 
     let table_count_sql = match db_kind {
         DatabaseType::PostgreSQL => {
@@ -236,7 +236,7 @@ pub async fn optimize_database(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
 
     match db_kind {
         DatabaseType::PostgreSQL | DatabaseType::SQLite => {
@@ -276,7 +276,7 @@ pub async fn rebuild_database_indexes(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
 
     let index_sql = match db_kind {
         DatabaseType::PostgreSQL => {
@@ -329,7 +329,7 @@ pub async fn cleanup_database(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
 
     let (logs_query, sessions_query) = match db_kind {
         DatabaseType::PostgreSQL => (
@@ -487,7 +487,7 @@ pub async fn export_database_json(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
     
     for table in tables {
         let query = match db_kind {
@@ -558,7 +558,7 @@ pub async fn get_database_statistics(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
 
     let table_info_sql = match db_kind {
         DatabaseType::PostgreSQL => {
@@ -610,7 +610,7 @@ pub async fn reset_database(
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
-        .unwrap_or(DatabaseType::PostgreSQL);
+        .unwrap_or(DatabaseType::SQLite);
     
     // 删除所有用户数据表的内容
     let tables_to_clear = vec![

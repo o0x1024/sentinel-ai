@@ -739,6 +739,202 @@ impl IntegerTypeMigration {
     }
 }
 
+/// Database migration for Agent Team module
+/// Creates all agent_team_* tables
+pub struct AgentTeamMigration;
+
+impl AgentTeamMigration {
+    pub async fn apply(pool: &PgPool) -> Result<()> {
+        info!("Applying Agent Team migration...");
+
+        // agent_team_templates - 模板主表
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                domain TEXT NOT NULL DEFAULT 'product',
+                default_rounds_config TEXT,
+                default_tool_policy TEXT,
+                is_system BOOLEAN NOT NULL DEFAULT FALSE,
+                created_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_template_members - 模板角色表
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_template_members (
+                id TEXT PRIMARY KEY,
+                template_id TEXT NOT NULL REFERENCES agent_team_templates(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                responsibility TEXT,
+                system_prompt TEXT,
+                decision_style TEXT DEFAULT 'balanced',
+                risk_preference TEXT DEFAULT 'medium',
+                weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                tool_policy TEXT,
+                output_schema TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_sessions - 会话表
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_sessions (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                template_id TEXT,
+                name TEXT NOT NULL,
+                goal TEXT,
+                state TEXT NOT NULL DEFAULT 'PENDING',
+                state_machine TEXT,
+                current_round INTEGER DEFAULT 0,
+                max_rounds INTEGER DEFAULT 5,
+                blackboard_state TEXT,
+                divergence_scores TEXT,
+                total_tokens BIGINT DEFAULT 0,
+                estimated_cost DOUBLE PRECISION DEFAULT 0.0,
+                suspended_reason TEXT,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                error_message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_members - 会话成员快照（从模板复制）
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_members (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                responsibility TEXT,
+                system_prompt TEXT,
+                decision_style TEXT DEFAULT 'balanced',
+                risk_preference TEXT DEFAULT 'medium',
+                weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                tool_policy TEXT,
+                output_schema TEXT,
+                sort_order INTEGER DEFAULT 0,
+                token_usage BIGINT DEFAULT 0,
+                tool_calls_count INTEGER DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_blackboard_entries - 白板明细表
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_blackboard_entries (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                round_id TEXT,
+                entry_type TEXT NOT NULL CHECK (entry_type IN ('consensus', 'dispute', 'action_item')),
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                contributed_by TEXT,
+                is_resolved BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_rounds - 轮次记录
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_rounds (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                round_number INTEGER NOT NULL,
+                phase TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                divergence_score DOUBLE PRECISION,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_messages - 消息记录（每个角色每轮发言）
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                round_id TEXT REFERENCES agent_team_rounds(id),
+                member_id TEXT,
+                member_name TEXT,
+                role TEXT NOT NULL DEFAULT 'assistant',
+                content TEXT NOT NULL,
+                tool_calls TEXT,
+                token_count INTEGER,
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_decisions - 最终决策记录
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_decisions (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                round_id TEXT,
+                decision_type TEXT NOT NULL DEFAULT 'final',
+                content TEXT NOT NULL,
+                decided_by TEXT,
+                confidence_score DOUBLE PRECISION,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // agent_team_artifacts - 产物文档与版本链
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_artifacts (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                artifact_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                parent_artifact_id TEXT,
+                diff_summary TEXT,
+                created_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#
+        ).execute(pool).await?;
+
+        // 创建关键索引
+        let indices = vec![
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_templates_domain ON agent_team_templates(domain)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_templates_is_system ON agent_team_templates(is_system)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_template_members_template_id ON agent_team_template_members(template_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_state ON agent_team_sessions(state)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_conversation_id ON agent_team_sessions(conversation_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_updated ON agent_team_sessions(updated_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_members_session_id ON agent_team_members(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_blackboard_session_id ON agent_team_blackboard_entries(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_blackboard_entry_type ON agent_team_blackboard_entries(entry_type)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_rounds_session_id ON agent_team_rounds(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_messages_session_id ON agent_team_messages(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_messages_round_id ON agent_team_messages(round_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_messages_timestamp ON agent_team_messages(timestamp ASC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_artifacts_session_id ON agent_team_artifacts(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_artifacts_type ON agent_team_artifacts(artifact_type)",
+        ];
+
+        for index_sql in indices {
+            sqlx::query(index_sql).execute(pool).await?;
+        }
+
+        info!("Agent Team migration completed successfully");
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[tokio::test]
@@ -747,3 +943,4 @@ mod tests {
         // Implementation depends on your test setup
     }
 }
+

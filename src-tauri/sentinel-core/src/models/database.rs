@@ -12,7 +12,7 @@ pub enum DatabaseType {
 
 impl Default for DatabaseType {
     fn default() -> Self {
-        DatabaseType::PostgreSQL
+        DatabaseType::SQLite
     }
 }
 
@@ -36,16 +36,16 @@ pub struct DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            db_type: DatabaseType::PostgreSQL,
+            db_type: DatabaseType::SQLite,
             database_url: None,
             host: Some("localhost".to_string()),
-            port: Some(5432),
-            username: Some("postgres".to_string()),
-            password: Some("postgres".to_string()),
+            port: None,
+            username: None,
+            password: None,
             database: Some("sentinel_ai".to_string()),
             path: None,
             enable_ssl: false,
-            enable_wal: false,
+            enable_wal: true,
             max_connections: 50,
             query_timeout: 30,
         }

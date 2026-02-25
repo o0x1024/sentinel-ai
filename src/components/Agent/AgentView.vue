@@ -69,6 +69,17 @@
             <i class="fas fa-user-secret"></i>
             <span class="text-xs font-medium hidden sm:inline">10th Man</span>
           </button>
+
+          <!-- Team Mode Toggle -->
+          <button
+            @click="handleSwitchMode(executionMode === 'team' ? 'single' : 'team')"
+            class="btn btn-xs gap-1 transition-colors"
+            :class="executionMode === 'team' ? 'btn-primary text-white' : 'btn-ghost text-base-content/50'"
+            title="切换 Team 协作模式"
+          >
+            <i class="fas fa-users"></i>
+            <span class="text-xs font-medium hidden sm:inline">Team</span>
+          </button>
         </div>
         <div class="flex items-center gap-2">
           <!-- Web Explorer History Button - shows when there's exploration history -->
@@ -138,7 +149,7 @@
       </div>
 
       <!-- {{ t('agent.messagesAndTodos') }} -->
-      <div class="flex flex-1 overflow-hidden min-h-0">
+      <div class="flex flex-1 overflow-hidden min-h-0" v-if="executionMode === 'single'">
         <!-- Left: Message flow + Input Area -->
         <div class="message-area flex-1 flex flex-col overflow-hidden min-h-0">
           <SubagentPanel
@@ -258,6 +269,14 @@
         </div>
       </div>
 
+      <!-- Team Mode View -->
+      <AgentTeamView
+        v-else-if="executionMode === 'team'"
+        :conversation-id="conversationId ?? undefined"
+        @switch-mode="handleSwitchMode"
+        class="flex-1"
+      />
+
       <!-- {{ t('agent.errorDisplay') }} -->
       <div v-if="error" class="error-banner flex items-center gap-2 px-4 py-3 bg-error/10 border-t border-error text-error text-sm">
         <span class="error-icon flex-shrink-0">⚠️</span>
@@ -298,6 +317,7 @@ import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import ToolConfigPanel from './ToolConfigPanel.vue'
+import AgentTeamView from './AgentTeamView.vue'
 
 // Traffic reference type
 type TrafficSendType = 'request' | 'response' | 'both'
@@ -408,6 +428,11 @@ const historyLoadToken = ref(0)
 const ragEnabled = ref(false)
 const toolsEnabled = ref(false)
 const tenthManEnabled = ref(false)
+const executionMode = ref<'single' | 'team'>('single')
+
+const handleSwitchMode = (mode: 'single' | 'team') => {
+  executionMode.value = mode
+}
 const pendingAttachments = ref<any[]>([])
 const pendingDocuments = ref<PendingDocumentAttachment[]>([])
 const processedDocuments = ref<ProcessedDocumentResult[]>([])
