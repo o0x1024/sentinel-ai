@@ -238,12 +238,11 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          release_name: 'Sentinel AI v${{ steps.get_version.outputs.VERSION }}'
+          token: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: 'Sentinel AI v${{ steps.get_version.outputs.VERSION }}'
           body: |
             ## Sentinel AI v${{ steps.get_version.outputs.VERSION }}
             
@@ -262,7 +261,7 @@ jobs:
 
       - name: Upload Release Assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN != '' && secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
 
