@@ -222,55 +222,6 @@
                     当前: {{ member.model_override || '默认 LLM（AI Settings）' }}
                   </p>
                 </div>
-                <div class="space-y-1.5">
-                  <div class="flex items-center justify-between">
-                    <label class="text-xs text-base-content/60">可用工具（角色白名单）</label>
-                    <div class="flex items-center gap-1">
-                      <button
-                        class="btn btn-ghost btn-xs text-[11px]"
-                        type="button"
-                        @click="member.allowed_tools = filteredToolNames(member.tool_search)"
-                      >
-                        全选筛选项
-                      </button>
-                      <button
-                        class="btn btn-ghost btn-xs text-[11px]"
-                        type="button"
-                        @click="member.allowed_tools = []"
-                      >
-                        清空
-                      </button>
-                    </div>
-                  </div>
-                  <input
-                    v-model="member.tool_search"
-                    type="text"
-                    class="input input-bordered input-xs w-full"
-                    placeholder="搜索工具名或描述..."
-                  />
-                  <div class="max-h-32 overflow-y-auto border border-base-300 rounded-lg p-1.5 space-y-1 bg-base-50/60">
-                    <label
-                      v-for="tool in filteredTools(member.tool_search)"
-                      :key="tool.name"
-                      class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-base-100 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        class="checkbox checkbox-xs checkbox-primary"
-                        :value="tool.name"
-                        :checked="member.allowed_tools.includes(tool.name)"
-                        @change="toggleMemberTool(member, tool.name, ($event.target as HTMLInputElement).checked)"
-                      />
-                      <span class="text-xs font-mono text-base-content/80 truncate flex-1" :title="tool.name">{{ tool.name }}</span>
-                    </label>
-                    <div v-if="filteredTools(member.tool_search).length === 0" class="text-xs text-base-content/40 px-1.5 py-1">
-                      无匹配工具
-                    </div>
-                  </div>
-                  <p class="text-[11px] text-base-content/45">
-                    已选 {{ member.allowed_tools.length }} 个；未选择时表示该角色不允许使用工具
-                  </p>
-                </div>
               </div>
             </div>
           </TransitionGroup>
@@ -334,8 +285,6 @@ interface MemberForm {
   decision_style: string
   risk_preference: string
   model_override: string
-  allowed_tools: string[]
-  tool_search: string
   weight: number
   sort_order: number
 }
@@ -344,11 +293,6 @@ interface ModelOption {
   value: string
   label: string
   description: string
-}
-
-interface ToolOption {
-  name: string
-  description?: string
 }
 
 const form = ref({
@@ -362,7 +306,6 @@ const form = ref({
 const expandedMember = ref(-1)
 const isSaving = ref(false)
 const modelOptions = ref<ModelOption[]>([])
-const toolOptions = ref<ToolOption[]>([])
 
 const roleColors = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
 
@@ -387,7 +330,6 @@ const memberModelOptions = computed<ModelOption[]>(() => [
 
 onMounted(() => {
   loadModelOptions()
-  loadToolOptions()
   if (props.template) {
     form.value.name = props.template.name
     form.value.description = props.template.description ?? ''
@@ -400,8 +342,6 @@ onMounted(() => {
       decision_style: m.decision_style ?? '',
       risk_preference: m.risk_preference ?? '',
       model_override: parseMemberModelOverride(m.output_schema),
-      allowed_tools: parseMemberAllowedTools(m.tool_policy),
-      tool_search: '',
       weight: m.weight,
       sort_order: m.sort_order,
     }))
@@ -421,8 +361,6 @@ function addMember() {
     decision_style: 'balanced',
     risk_preference: 'medium',
     model_override: '',
-    allowed_tools: [],
-    tool_search: '',
     weight: 1.0,
     sort_order: form.value.members.length,
   })
@@ -453,7 +391,6 @@ async function handleSave() {
       system_prompt: m.system_prompt || undefined,
       decision_style: m.decision_style || undefined,
       risk_preference: m.risk_preference || undefined,
-      tool_policy: buildMemberToolPolicy(m.allowed_tools),
       output_schema: buildMemberOutputSchema(m.model_override),
       weight: m.weight,
       sort_order: i,
@@ -546,55 +483,6 @@ async function loadModelOptions() {
   } catch (e) {
     console.warn('[AgentTeamSettings] Failed to load model options:', e)
     modelOptions.value = []
-  }
-}
-
-async function loadToolOptions() {
-  try {
-    const tools = await invoke<Array<{ name: string; description?: string }>>('list_tool_server_tools')
-    toolOptions.value = (tools || [])
-      .filter((t) => t && typeof t.name === 'string' && t.name.trim().length > 0)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((t) => ({ name: t.name, description: t.description }))
-  } catch (e) {
-    console.warn('[AgentTeamSettings] Failed to load tool options:', e)
-    toolOptions.value = []
-  }
-}
-
-function filteredTools(keyword: string): ToolOption[] {
-  const q = (keyword || '').trim().toLowerCase()
-  if (!q) return toolOptions.value
-  return toolOptions.value.filter((t) =>
-    t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q),
-  )
-}
-
-function filteredToolNames(keyword: string): string[] {
-  return filteredTools(keyword).map((t) => t.name)
-}
-
-function toggleMemberTool(member: MemberForm, toolName: string, checked: boolean) {
-  if (checked) {
-    if (!member.allowed_tools.includes(toolName)) {
-      member.allowed_tools = [...member.allowed_tools, toolName]
-    }
-  } else {
-    member.allowed_tools = member.allowed_tools.filter((n) => n !== toolName)
-  }
-}
-
-function parseMemberAllowedTools(toolPolicy: any): string[] {
-  if (!toolPolicy || typeof toolPolicy !== 'object') return []
-  const allowlist = Array.isArray(toolPolicy.allowlist) ? toolPolicy.allowlist : []
-  return allowlist
-    .filter((x: any) => typeof x === 'string' && x.trim().length > 0)
-    .map((x: string) => x.trim())
-}
-
-function buildMemberToolPolicy(allowedTools: string[]) {
-  return {
-    allowlist: Array.from(new Set((allowedTools || []).filter((x) => typeof x === 'string' && x.trim().length > 0))),
   }
 }
 

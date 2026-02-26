@@ -273,6 +273,40 @@
         </div>
       </div>
 
+      <!-- Working Directory Section -->
+      <div class="card bg-base-100 shadow-sm mb-6">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
+            <i class="fas fa-folder-open"></i>
+            {{ t('settings.ai.workingDirectory') }}
+          </h3>
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ t('settings.ai.workingDirectory') }}</span>
+            </label>
+            <div class="input-group">
+              <input
+                v-model="workingDirectory"
+                type="text"
+                class="input input-bordered flex-1"
+                :placeholder="t('settings.ai.workingDirectoryPlaceholder')"
+              />
+              <button class="btn btn-outline" @click="selectWorkingDirectory">
+                <i class="fas fa-folder-open mr-1"></i>
+                {{ t('settings.ai.selectDirectory') }}
+              </button>
+              <button class="btn btn-primary" @click="saveWorkingDirectory">
+                <i class="fas fa-save mr-1"></i>
+                {{ t('settings.ai.save') }}
+              </button>
+            </div>
+            <label class="label">
+              <span class="label-text-alt">{{ t('settings.ai.workingDirectoryHint') }}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
       <!-- Image Attachments Section -->
       <div class="card bg-base-100 shadow-sm mb-6">
         <div class="card-body">
@@ -593,6 +627,7 @@ const uploadSettings = ref<WorkspaceSettings>({
   max_total_mb: 1024,
   max_files_per_conversation: 100,
 })
+const workingDirectory = ref('')
 
 const newAllowCommand = ref('')
 const newDenyCommand = ref('')
@@ -647,10 +682,68 @@ async function loadConfig() {
         timeout_secs: result.subagent.timeout_secs || 600
       }
     }
+    await loadWorkingDirectory()
   } catch (e) {
     console.error('Failed to load agent config:', e)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadWorkingDirectory() {
+  try {
+    const items = await invoke<Array<{ key: string; value: string }>>('get_config', {
+      request: { category: 'agent', key: null }
+    })
+    const map = new Map(items.map((i) => [i.key, i.value]))
+    let configured = String(map.get('working_directory') || '').trim()
+    // Backward compatibility: read legacy ai.working_directory once.
+    if (!configured) {
+      const aiItems = await invoke<Array<{ key: string; value: string }>>('get_config', {
+        request: { category: 'ai', key: null }
+      })
+      const aiMap = new Map(aiItems.map((i) => [i.key, i.value]))
+      configured = String(aiMap.get('working_directory') || '').trim()
+    }
+    workingDirectory.value = configured
+  } catch (e) {
+    console.error('Failed to load working directory:', e)
+  }
+}
+
+async function saveWorkingDirectory() {
+  try {
+    await invoke('save_config_batch', {
+      configs: [
+        {
+          category: 'agent',
+          key: 'working_directory',
+          value: workingDirectory.value || '',
+          description: 'Agent working directory',
+          is_encrypted: false
+        }
+      ]
+    })
+    dialog.toast.success(t('settings.saveSuccess'))
+  } catch (e) {
+    console.error('Failed to save working directory:', e)
+    dialog.toast.error(String(e))
+  }
+}
+
+async function selectWorkingDirectory() {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: t('settings.ai.selectDirectory')
+    })
+    if (selected) {
+      workingDirectory.value = selected as string
+    }
+  } catch (e) {
+    console.error('Failed to select directory:', e)
   }
 }
 

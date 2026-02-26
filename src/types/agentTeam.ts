@@ -15,6 +15,7 @@ export type TeamSessionState =
     | 'ARTIFACT_GENERATION'
     | 'COMPLETED'
     | 'FAILED'
+    | 'ARCHIVED'
     | 'SUSPENDED_FOR_HUMAN'
 
 // ==================== 模板结构 ====================
@@ -189,6 +190,7 @@ export interface CreateAgentTeamSessionRequest {
     template_id?: string
     conversation_id?: string
     max_rounds?: number
+    state_machine?: any
     members?: CreateAgentTeamTemplateMemberRequest[]
 }
 
@@ -197,6 +199,7 @@ export interface UpdateAgentTeamSessionRequest {
     goal?: string
     state?: string
     max_rounds?: number
+    state_machine?: any
     error_message?: string
 }
 
@@ -213,6 +216,15 @@ export interface SubmitAgentTeamMessageRequest {
     session_id: string
     content: string
     resume: boolean
+}
+
+export interface AppendAgentTeamPartialMessageRequest {
+    session_id: string
+    member_id?: string
+    member_name?: string
+    role: string
+    content: string
+    tool_calls?: any
 }
 
 // ==================== 事件载荷 ====================
@@ -272,6 +284,30 @@ export interface AgentTeamMessageStreamDoneEvent {
     content?: string
     error?: string
     had_delta?: boolean
+}
+
+export interface AgentTeamToolCallEvent {
+    session_id: string
+    stream_id: string
+    member_id?: string
+    member_name?: string
+    phase: string
+    tool_call_id: string
+    name: string
+    arguments: string
+    timestamp?: string
+}
+
+export interface AgentTeamToolResultEvent {
+    session_id: string
+    stream_id: string
+    member_id?: string
+    member_name?: string
+    phase: string
+    tool_call_id: string
+    result: string
+    success?: boolean
+    timestamp?: string
 }
 
 // ==================== 执行模式 ====================

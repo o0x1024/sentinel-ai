@@ -15,6 +15,7 @@ export default {
   securityCenter: '安全中心',
   traffic: '流量分析',
   aiAssistant: 'AI助手',
+  aiTeam: 'AI Team',
   ragManagement: '知识库管理',
   Tools: '应用工具',
   cyberChef: '编码解码',

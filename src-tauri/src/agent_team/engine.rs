@@ -9,7 +9,8 @@ use tracing::{error, info, warn};
 
 use sentinel_llm::{ChatMessage, LlmConfig, StreamContent, StreamingLlmClient};
 use sentinel_db::DatabaseService;
-use sentinel_tools::{buildin_tools::SkillsTool, get_tool_server, DynamicTool};
+use sentinel_tools::{buildin_tools::{ShellTool, SkillsTool}, get_tool_server, DynamicTool};
+use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
 
 use super::blackboard::BlackboardManager;
 use super::models::*;
@@ -18,7 +19,7 @@ use super::role_context::{
     build_challenge_prompt, build_decide_prompt, build_propose_prompt, build_role_context,
     calculate_divergence_score, RoleContextInput,
 };
-use super::scheduler::{DivergenceCalculator, SchedulePlan, ToolGovernance, run_concurrent_layer};
+use super::scheduler::{DivergenceCalculator, ToolGovernance};
 
 /// 引擎配置（可运行时注入）
 #[derive(Debug, Clone)]
@@ -69,6 +70,11 @@ impl AgentTeamEngine {
             .context("DatabaseService not available")?;
         let pool = db.get_runtime_pool().context("Failed to get db pool")?;
 
+        // Keep in-memory shell/terminal runtime aligned with latest Agent settings.
+        if let Err(e) = crate::commands::tool_commands::agent_config::init_agent_config(db.as_ref()).await {
+            warn!("Failed to sync agent config before team run: {}", e);
+        }
+
         // 获取会话信息
         let session = repo_rt::get_agent_team_session(&pool, session_id)
             .await?
@@ -102,9 +108,9 @@ impl AgentTeamEngine {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("tool governance lock poisoned"))?;
             *tool_governance = ToolGovernance::new();
-            for member in &session.members {
-                if let Some(policy) = &member.tool_policy {
-                    tool_governance.load_member_policy(&member.id, policy);
+            if let Some(state_machine) = &session.state_machine {
+                if let Some(policy) = state_machine.get("tool_policy") {
+                    tool_governance.load_session_policy(policy);
                 }
             }
         }
@@ -113,7 +119,7 @@ impl AgentTeamEngine {
         self.run_propose_phase(session_id, &session).await?;
 
         // 执行 Challenge 阶段（并发多角色，可迭代多轮）
-        let mut divergence = 0.0;
+        let mut divergence;
         let mut challenge_round = 1;
         loop {
             let (round_divergence, suspended) = self
@@ -223,7 +229,7 @@ impl AgentTeamEngine {
         })
         .await?;
 
-        let proposal = self
+        let (proposal, proposal_tool_calls) = self
             .invoke_llm_streaming(
                 session_id,
                 Some(proposer),
@@ -235,7 +241,7 @@ impl AgentTeamEngine {
             .await?;
 
         // 保存提案消息
-        repo_rt::create_message(
+        let proposal_msg = repo_rt::create_message(
             &pool,
             session_id,
             Some(&round.id),
@@ -246,6 +252,9 @@ impl AgentTeamEngine {
             None,
         )
         .await?;
+        if let Some(tc) = proposal_tool_calls {
+            repo_rt::update_message_tool_calls(&pool, &proposal_msg.id, &tc).await?;
+        }
 
         // 更新白板：记录提案要点
         self.blackboard
@@ -369,7 +378,7 @@ impl AgentTeamEngine {
             })
             .await?;
 
-            let review = self
+            let (review, review_tool_calls) = self
                 .invoke_llm_streaming(
                     session_id,
                     Some(reviewer),
@@ -381,7 +390,7 @@ impl AgentTeamEngine {
                 .await?;
 
             // 保存消息
-            repo_rt::create_message(
+            let review_msg = repo_rt::create_message(
                 &pool,
                 session_id,
                 Some(&round.id),
@@ -392,6 +401,9 @@ impl AgentTeamEngine {
                 None,
             )
             .await?;
+            if let Some(tc) = review_tool_calls {
+                repo_rt::update_message_tool_calls(&pool, &review_msg.id, &tc).await?;
+            }
 
             review_results.push((reviewer_id, reviewer_name, review));
         }
@@ -539,7 +551,7 @@ impl AgentTeamEngine {
             })
             .await?;
 
-            let review = self
+            let (review, review_tool_calls) = self
                 .invoke_llm_streaming(
                     session_id,
                     Some(reviewer),
@@ -556,7 +568,7 @@ impl AgentTeamEngine {
                 review_scores.push(s);
             }
 
-            repo_rt::create_message(
+            let review_msg = repo_rt::create_message(
                 &pool,
                 session_id,
                 Some(&round.id),
@@ -567,6 +579,9 @@ impl AgentTeamEngine {
                 None,
             )
             .await?;
+            if let Some(tc) = review_tool_calls {
+                repo_rt::update_message_tool_calls(&pool, &review_msg.id, &tc).await?;
+            }
 
             all_reviews.push(format!("**{}的评审：**\n{}", reviewer.name, &review));
         }
@@ -635,7 +650,7 @@ impl AgentTeamEngine {
         })
         .await?;
 
-        let decision = self
+        let (decision, decision_tool_calls) = self
             .invoke_llm_streaming(
                 session_id,
                 Some(decider),
@@ -646,7 +661,7 @@ impl AgentTeamEngine {
             )
             .await?;
 
-        repo_rt::create_message(
+        let decision_msg = repo_rt::create_message(
             &pool,
             session_id,
             Some(&round.id),
@@ -657,6 +672,9 @@ impl AgentTeamEngine {
             None,
         )
         .await?;
+        if let Some(tc) = decision_tool_calls {
+            repo_rt::update_message_tool_calls(&pool, &decision_msg.id, &tc).await?;
+        }
 
         // 记录最终决策到白板
         self.blackboard
@@ -761,7 +779,7 @@ impl AgentTeamEngine {
         })
         .await?;
 
-        let artifact_content = self
+        let (artifact_content, _artifact_tool_calls) = self
             .invoke_llm_streaming(
                 session_id,
                 Some(architect),
@@ -822,7 +840,7 @@ impl AgentTeamEngine {
     }
 
     /// 发送 Tauri 事件
-    fn emit_event(&self, session_id: &str, event: &str, payload: serde_json::Value) {
+    fn emit_event(&self, _session_id: &str, event: &str, payload: serde_json::Value) {
         let _ = self.app_handle.emit(event, &payload);
     }
 
@@ -912,7 +930,7 @@ impl AgentTeamEngine {
         config: &LlmConfig,
         system_prompt: &str,
         history: &[ChatMessage],
-    ) -> Result<String> {
+    ) -> Result<(String, Option<serde_json::Value>)> {
         let client = StreamingLlmClient::new(config.clone());
         let stream_id = uuid::Uuid::new_v4().to_string();
         let member_id = member.map(|m| m.id.clone());
@@ -941,7 +959,17 @@ impl AgentTeamEngine {
         };
 
         let mut emitted_any = false;
-        let dynamic_tools = self.resolve_dynamic_tools_for_member(member).await;
+        let mut tool_calls_by_id: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut collected_tool_calls: Vec<serde_json::Value> = Vec::new();
+        let execution_id = format!(
+            "team:{}:{}:{}",
+            session_id,
+            member_id.clone().unwrap_or_else(|| "unknown".to_string()),
+            stream_id
+        );
+        let dynamic_tools = self
+            .resolve_dynamic_tools_for_member(member, &execution_id)
+            .await;
         info!(
             "Team member '{}' available dynamic tools: {}",
             member_name.as_deref().unwrap_or("unknown"),
@@ -974,12 +1002,61 @@ impl AgentTeamEngine {
                             );
                         }
                     }
-                    StreamContent::ToolCallComplete { name, .. } => {
+                    StreamContent::ToolCallComplete { id, name, arguments } => {
+                        if !tool_calls_by_id.contains_key(&id) {
+                            collected_tool_calls.push(json!({
+                                "id": id.clone(),
+                                "name": name.clone(),
+                                "arguments": arguments,
+                            }));
+                            let idx = collected_tool_calls.len() - 1;
+                            tool_calls_by_id.insert(id.clone(), idx);
+                        }
+                        self.emit_event(
+                            session_id,
+                            "agent_team:tool_call",
+                            json!({
+                                "session_id": session_id,
+                                "stream_id": &stream_id,
+                                "member_id": member_id.clone(),
+                                "member_name": member_name.clone(),
+                                "phase": phase,
+                                "tool_call_id": id.clone(),
+                                "name": name.clone(),
+                                "arguments": arguments.clone(),
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            }),
+                        );
                         if let Some(mid) = member_id.as_deref() {
                             if let Ok(mut gov) = self.tool_governance.lock() {
                                 gov.record_call(mid, &name);
                             }
                         }
+                    }
+                    StreamContent::ToolResult { id, result } => {
+                        if let Some(idx) = tool_calls_by_id.get(&id).copied() {
+                            if let Some(existing) = collected_tool_calls.get_mut(idx) {
+                                if let Some(obj) = existing.as_object_mut() {
+                                    obj.insert("result".to_string(), json!(result.clone()));
+                                    obj.insert("success".to_string(), json!(true));
+                                }
+                            }
+                        }
+                        self.emit_event(
+                            session_id,
+                            "agent_team:tool_result",
+                            json!({
+                                "session_id": session_id,
+                                "stream_id": &stream_id,
+                                "member_id": member_id.clone(),
+                                "member_name": member_name.clone(),
+                                "phase": phase,
+                                "tool_call_id": id,
+                                "result": result,
+                                "success": true,
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            }),
+                        );
                     }
                     _ => {}
                 }
@@ -1003,7 +1080,12 @@ impl AgentTeamEngine {
                         "had_delta": emitted_any
                     }),
                 );
-                Ok(text)
+                let tool_calls = if collected_tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Array(collected_tool_calls))
+                };
+                Ok((text, tool_calls))
             }
             Err(e) => {
                 self.emit_event(
@@ -1043,6 +1125,7 @@ impl AgentTeamEngine {
     async fn resolve_dynamic_tools_for_member(
         &self,
         member: Option<&AgentTeamMember>,
+        execution_id: &str,
     ) -> Vec<DynamicTool> {
         let Some(member) = member else {
             return vec![];
@@ -1071,7 +1154,67 @@ impl AgentTeamEngine {
             }
         }
 
-        server.get_dynamic_tools(&selected_names).await
+        let mut dynamic_tools = server.get_dynamic_tools(&selected_names).await;
+
+        // Mirror AI assistant behavior: inject execution_id into shell calls so
+        // runtime mode/config is applied consistently for team sessions.
+        if selected_names.iter().any(|name| name == ShellTool::NAME) {
+            if let Some(shell_info) = server.get_tool(ShellTool::NAME).await {
+                let execution_id_for_shell = execution_id.to_string();
+                let shell_input_schema = shell_info.input_schema.clone();
+                let shell_description = shell_info.description.clone();
+                let shell_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+                    let execution_id_for_shell = execution_id_for_shell.clone();
+                    Box::pin(async move {
+                        use rig::tool::Tool;
+                        use sentinel_tools::buildin_tools::shell::{ShellArgs, ShellTool};
+
+                        let mut patched_args = args;
+                        if let Some(obj) = patched_args.as_object_mut() {
+                            obj.insert(
+                                "execution_id".to_string(),
+                                serde_json::Value::String(execution_id_for_shell.clone()),
+                            );
+                        }
+
+                        let tool_args: ShellArgs = serde_json::from_value(patched_args)
+                            .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                        let tool = ShellTool::new();
+                        let result = tool
+                            .call(tool_args)
+                            .await
+                            .map_err(|e| format!("Shell execution failed: {}", e))?;
+
+                        serde_json::to_value(result)
+                            .map_err(|e| format!("Failed to serialize shell result: {}", e))
+                    })
+                });
+
+                let shell_def = DynamicToolDef {
+                    name: ShellTool::NAME.to_string(),
+                    description: shell_description,
+                    input_schema: shell_input_schema,
+                    output_schema: None,
+                    source: ToolSource::Builtin,
+                    category: "system".to_string(),
+                    executor: shell_executor,
+                };
+
+                dynamic_tools = dynamic_tools
+                    .into_iter()
+                    .map(|tool| {
+                        if tool.name() == ShellTool::NAME {
+                            DynamicTool::new(shell_def.clone())
+                        } else {
+                            tool
+                        }
+                    })
+                    .collect();
+            }
+        }
+
+        dynamic_tools
     }
 } // end impl AgentTeamEngine
 
@@ -1092,7 +1235,12 @@ fn get_running_sessions() -> &'static RwLock<HashMap<String, tokio::task::JoinHa
 pub async fn start_agent_team_run_async(app_handle: AppHandle, session_id: String) -> Result<()> {
     let sessions = get_running_sessions();
     let is_running = {
-        let lock = sessions.read().await;
+        let mut lock = sessions.write().await;
+        if let Some(handle) = lock.get(&session_id) {
+            if handle.is_finished() {
+                lock.remove(&session_id);
+            }
+        }
         lock.contains_key(&session_id)
     };
 
@@ -1117,6 +1265,7 @@ pub async fn start_agent_team_run_async(app_handle: AppHandle, session_id: Strin
                             goal: None,
                             state: Some("FAILED".to_string()),
                             max_rounds: None,
+                            state_machine: None,
                             error_message: Some(e.to_string()),
                         },
                     )
@@ -1124,12 +1273,30 @@ pub async fn start_agent_team_run_async(app_handle: AppHandle, session_id: Strin
                 }
             }
         }
+        // Always cleanup running handle record after run exits.
+        let mut lock = get_running_sessions().write().await;
+        lock.remove(&session_id_clone);
     });
 
     let mut lock = sessions.write().await;
     lock.insert(session_id, handle);
 
     Ok(())
+}
+
+/// 停止 Team 运行（中断后台任务）
+pub async fn stop_agent_team_run_async(session_id: &str) -> Result<bool> {
+    let sessions = get_running_sessions();
+    let handle_opt = {
+        let mut lock = sessions.write().await;
+        lock.remove(session_id)
+    };
+
+    if let Some(handle) = handle_opt {
+        handle.abort();
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 // ==================== 工具函数 ====================

@@ -17,6 +17,7 @@ export default {
   ragManagement: 'RAG Management',
   smartAgent: 'Smart Agent Console',
   aiAssistant: 'AI Assistant',
+  aiTeam: 'AI Team',
   settings: 'System Settings',
   language: 'Language Settings',
   performance: 'Performance Monitor',

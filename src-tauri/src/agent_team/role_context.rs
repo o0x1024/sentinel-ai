@@ -4,8 +4,9 @@
 //! 防止多角色讨论导致的 Token 爆炸。
 
 use anyhow::Result;
+use sentinel_db::Database;
 use sentinel_llm::{ChatMessage, LlmConfig};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tracing::info;
 
 use super::blackboard::BlackboardManager;
@@ -81,14 +82,49 @@ pub async fn build_role_context(input: RoleContextInput<'_>) -> Result<RoleConte
         input.round_task,
     );
 
+    // 4. 工作目录注入（与 AI 助手一致，优先 agent.working_directory）
+    let working_dir_section = if let Some(db) = input
+        .app_handle
+        .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+    {
+        let configured_agent = db
+            .inner()
+            .get_config("agent", "working_directory")
+            .await
+            .ok()
+            .flatten()
+            .filter(|dir| !dir.trim().is_empty());
+        let configured_legacy_ai = db
+            .inner()
+            .get_config("ai", "working_directory")
+            .await
+            .ok()
+            .flatten()
+            .filter(|dir| !dir.trim().is_empty());
+        let working_dir = configured_agent.or(configured_legacy_ai);
+        if let Some(dir) = working_dir {
+            format!(
+                "\n\n[Execution Environment]\n\
+                - Working Directory: {}\n\
+                \n\
+                [Working Directory Note: When performing file operations, executing scripts, or any file system related tasks, use this directory as your base path unless explicitly specified otherwise by the user.]",
+                dir
+            )
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
     // 4. 共享白板快照注入（核心反 Token 爆炸机制）
     let blackboard_summary = input.blackboard.get_context_summary(input.session_id).await;
     let blackboard_section = format!("\n\n{}", blackboard_summary);
 
     // 5. 组装完整 System Prompt
     let system_prompt = format!(
-        "{}{}{}{}",
-        base_system_prompt, role_meta, collaboration_rules, blackboard_section
+        "{}{}{}{}{}",
+        base_system_prompt, role_meta, collaboration_rules, working_dir_section, blackboard_section
     );
 
     // 6. 构建历史消息（仅包含定向路由消息，不含全量历史）

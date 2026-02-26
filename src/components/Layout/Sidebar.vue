@@ -171,6 +171,13 @@ const mainMenuItems = computed(() => [
     badge: null,
     badgeClass: ''
   },
+  {
+    path: '/ai-team',
+    name: t('sidebar.aiTeam', 'AI Team'),
+    icon: 'fas fa-users',
+    badge: null,
+    badgeClass: ''
+  },
 
   {
     path: '/workflow-studio',

@@ -321,9 +321,9 @@ pub async fn create_agent_team_session(
 
     sqlx::query(
         r#"INSERT INTO agent_team_sessions
-           (id, conversation_id, template_id, name, goal, state, current_round, max_rounds,
+           (id, conversation_id, template_id, name, goal, state, state_machine, current_round, max_rounds,
             total_tokens, estimated_cost, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&id)
     .bind(&req.conversation_id)
@@ -331,6 +331,7 @@ pub async fn create_agent_team_session(
     .bind(&req.name)
     .bind(&req.goal)
     .bind(TeamSessionState::Pending.to_string())
+    .bind(req.state_machine.as_ref().map(|v| v.to_string()))
     .bind(0i32)
     .bind(req.max_rounds.unwrap_or(5))
     .bind(0i64)
@@ -367,6 +368,7 @@ pub async fn update_agent_team_session(
                goal = COALESCE(?, goal),
                state = COALESCE(?, state),
                max_rounds = COALESCE(?, max_rounds),
+               state_machine = COALESCE(?, state_machine),
                error_message = COALESCE(?, error_message),
                updated_at = ?
            WHERE id = ?"#,
@@ -375,11 +377,23 @@ pub async fn update_agent_team_session(
     .bind(&req.goal)
     .bind(&req.state)
     .bind(req.max_rounds)
+    .bind(req.state_machine.as_ref().map(|v| v.to_string()))
     .bind(&req.error_message)
     .bind(now)
     .bind(id)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+pub async fn delete_agent_team_session(pool: &SqlitePool, id: &str) -> Result<()> {
+    ensure_schema(pool).await?;
+
+    // Child tables are configured with ON DELETE CASCADE, so deleting session is sufficient.
+    sqlx::query("DELETE FROM agent_team_sessions WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -451,6 +465,7 @@ pub async fn list_agent_team_sessions(
     pool: &SqlitePool,
     conversation_id: Option<&str>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<AgentTeamSession>> {
     ensure_schema(pool).await?;
 
@@ -460,10 +475,11 @@ pub async fn list_agent_team_sessions(
                FROM agent_team_sessions
                WHERE conversation_id = ?
                ORDER BY updated_at DESC
-               LIMIT ?"#,
+               LIMIT ? OFFSET ?"#,
         )
         .bind(conv_id)
         .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?
     } else {
@@ -471,9 +487,10 @@ pub async fn list_agent_team_sessions(
             r#"SELECT id
                FROM agent_team_sessions
                ORDER BY updated_at DESC
-               LIMIT ?"#,
+               LIMIT ? OFFSET ?"#,
         )
         .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?
     };
@@ -655,6 +672,24 @@ pub async fn create_message(
         token_count,
         timestamp: now,
     })
+}
+
+pub async fn update_message_tool_calls(
+    pool: &SqlitePool,
+    message_id: &str,
+    tool_calls: &serde_json::Value,
+) -> Result<()> {
+    ensure_schema(pool).await?;
+    sqlx::query(
+        r#"UPDATE agent_team_messages
+           SET tool_calls = ?
+           WHERE id = ?"#,
+    )
+    .bind(tool_calls.to_string())
+    .bind(message_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn get_messages(pool: &SqlitePool, session_id: &str) -> Result<Vec<AgentTeamMessage>> {

@@ -309,7 +309,7 @@ impl WorkflowOrchestrator {
         context: WorkflowContext,
         steps: Vec<StepContext>,
         executor: Arc<dyn PluginExecutor>,
-        db: &DatabaseService,
+        _db: &DatabaseService,
     ) -> anyhow::Result<WorkflowExecutionSummary> {
         let start_time = Utc::now();
         let mut completed_steps = 0;

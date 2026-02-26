@@ -1,16 +1,15 @@
 //! Phase 3: 多场景 Artifact 模板扩展、版本链、工作流对接
 //! 以及 Phase 4: Tenth-Man Judge、Prompt Injection 防护、FinOps、测试工具
 
-use anyhow::{Context, Result};
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use tracing::{info, warn};
+
 use uuid::Uuid;
 
-use super::artifact::{ArtifactTemplate, ArtifactType, format_artifact_with_header};
-use super::models::*;
+
 
 // ============================================================
 // Phase 3: 场景化 Artifact 套件

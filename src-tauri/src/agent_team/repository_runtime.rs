@@ -92,10 +92,11 @@ pub async fn list_agent_team_sessions(
     pool: &DatabasePool,
     conversation_id: Option<&str>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<AgentTeamSession>> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::list_agent_team_sessions(p, conversation_id, limit).await,
-        DatabasePool::SQLite(p) => sqlite_repo::list_agent_team_sessions(p, conversation_id, limit).await,
+        DatabasePool::PostgreSQL(p) => pg_repo::list_agent_team_sessions(p, conversation_id, limit, offset).await,
+        DatabasePool::SQLite(p) => sqlite_repo::list_agent_team_sessions(p, conversation_id, limit, offset).await,
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -108,6 +109,14 @@ pub async fn update_agent_team_session(
     match pool {
         DatabasePool::PostgreSQL(p) => pg_repo::update_agent_team_session(p, id, req).await,
         DatabasePool::SQLite(p) => sqlite_repo::update_agent_team_session(p, id, req).await,
+        DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
+    }
+}
+
+pub async fn delete_agent_team_session(pool: &DatabasePool, id: &str) -> Result<()> {
+    match pool {
+        DatabasePool::PostgreSQL(p) => pg_repo::delete_agent_team_session(p, id).await,
+        DatabasePool::SQLite(p) => sqlite_repo::delete_agent_team_session(p, id).await,
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -178,6 +187,18 @@ pub async fn create_message(
             token_count,
         )
         .await,
+        DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
+    }
+}
+
+pub async fn update_message_tool_calls(
+    pool: &DatabasePool,
+    message_id: &str,
+    tool_calls: &serde_json::Value,
+) -> Result<()> {
+    match pool {
+        DatabasePool::PostgreSQL(p) => pg_repo::update_message_tool_calls(p, message_id, tool_calls).await,
+        DatabasePool::SQLite(p) => sqlite_repo::update_message_tool_calls(p, message_id, tool_calls).await,
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }

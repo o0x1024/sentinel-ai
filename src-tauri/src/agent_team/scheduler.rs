@@ -3,10 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::future::join_all;
 use tokio::sync::Semaphore;
-use tracing::{info, warn};
 
 use super::models::AgentTeamMember;
 
@@ -191,12 +190,16 @@ impl DivergenceCalculator {
 pub struct ToolGovernance {
     /// 全局黑名单（任意角色都不能使用）
     global_blacklist: HashSet<String>,
+    /// 全局白名单（若设置，则只允许其中工具）
+    global_allowlist: Option<HashSet<String>>,
     /// 角色级白名单 member_id -> allowed tools
     role_allowlist: HashMap<String, HashSet<String>>,
     /// 角色级黑名单 member_id -> denied tools
     role_denylist: HashMap<String, HashSet<String>>,
     /// 工具调用上限 member_id -> max_calls
     call_limits: HashMap<String, u32>,
+    /// 全局调用上限（会话级）
+    global_call_limit: Option<u32>,
     /// 当前调用计数 member_id -> tool_name -> count
     call_counts: HashMap<String, HashMap<String, u32>>,
     /// 高危工具集合（需要审批）
@@ -207,25 +210,51 @@ pub struct ToolGovernance {
 
 impl ToolGovernance {
     pub fn new() -> Self {
-        let mut sensitive = HashSet::new();
-        // 默认高危工具
-        sensitive.insert("shell".to_string());
-        sensitive.insert("interactive_shell".to_string());
-        sensitive.insert("file_write".to_string());
-        sensitive.insert("database_execute".to_string());
-
-        let mut global_blacklist = HashSet::new();
-        // 在 Team 模式下默认禁用的工具
-        global_blacklist.insert("browser_control".to_string());
-
         Self {
-            global_blacklist,
+            global_blacklist: HashSet::new(),
+            global_allowlist: None,
             role_allowlist: HashMap::new(),
             role_denylist: HashMap::new(),
             call_limits: HashMap::new(),
+            global_call_limit: None,
             call_counts: HashMap::new(),
-            sensitive_tools: sensitive,
+            sensitive_tools: HashSet::new(),
             mutex_locks: HashMap::new(),
+        }
+    }
+
+    /// 从会话级 tool_policy JSON 加载配置（作用于整个 Team）
+    pub fn load_session_policy(&mut self, tool_policy: &serde_json::Value) {
+        if let Some(enabled) = tool_policy.get("enabled").and_then(|v| v.as_bool()) {
+            if !enabled {
+                self.global_allowlist = Some(HashSet::new());
+            }
+        }
+
+        if let Some(allowlist) = tool_policy.get("allowlist").and_then(|v| v.as_array()) {
+            let tools: HashSet<String> = allowlist
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            self.global_allowlist = Some(tools);
+        }
+
+        if let Some(denylist) = tool_policy.get("denylist").and_then(|v| v.as_array()) {
+            self.global_blacklist = denylist
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+        }
+
+        if let Some(max_calls) = tool_policy.get("max_calls").and_then(|v| v.as_u64()) {
+            self.global_call_limit = Some(max_calls as u32);
+        }
+
+        if let Some(sensitive_tools) = tool_policy.get("sensitive_tools").and_then(|v| v.as_array()) {
+            self.sensitive_tools = sensitive_tools
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
         }
     }
 
@@ -252,6 +281,13 @@ impl ToolGovernance {
 
     /// 检查某个角色是否有权限使用某工具
     pub fn check_permission(&self, member_id: &str, tool_name: &str) -> ToolPermissionResult {
+        // 全局白名单（如配置了白名单，则只允许白名单内的工具）
+        if let Some(global_allowlist) = &self.global_allowlist {
+            if !global_allowlist.contains(tool_name) {
+                return ToolPermissionResult::Denied("不在会话工具白名单中".to_string());
+            }
+        }
+
         // 全局黑名单
         if self.global_blacklist.contains(tool_name) {
             return ToolPermissionResult::Denied("全局黑名单工具".to_string());
@@ -277,6 +313,12 @@ impl ToolGovernance {
             let total: u32 = counts.map(|c| c.values().sum()).unwrap_or(0);
             if total >= *max {
                 return ToolPermissionResult::Denied("已超出工具调用上限".to_string());
+            }
+        } else if let Some(global_max) = self.global_call_limit {
+            let counts = self.call_counts.get(member_id);
+            let total: u32 = counts.map(|c| c.values().sum()).unwrap_or(0);
+            if total >= global_max {
+                return ToolPermissionResult::Denied("已超出会话工具调用上限".to_string());
             }
         }
 
@@ -430,8 +472,13 @@ mod tests {
     fn test_tool_permission() {
         let mut gov = ToolGovernance::new();
         assert_eq!(gov.check_permission("m1", "web_search"), ToolPermissionResult::Allowed);
-        assert_eq!(gov.check_permission("m1", "shell"), ToolPermissionResult::NeedsApproval);
-        assert_eq!(gov.check_permission("m1", "browser_control"), ToolPermissionResult::Denied("全局黑名单工具".to_string()));
+        assert_eq!(gov.check_permission("m1", "shell"), ToolPermissionResult::Allowed);
+        gov.load_session_policy(&serde_json::json!({
+            "allowlist": ["web_search"],
+            "denylist": ["browser_control"]
+        }));
+        assert_eq!(gov.check_permission("m1", "shell"), ToolPermissionResult::Denied("不在会话工具白名单中".to_string()));
+        assert_eq!(gov.check_permission("m1", "browser_control"), ToolPermissionResult::Denied("不在会话工具白名单中".to_string()));
     }
 
     #[test]

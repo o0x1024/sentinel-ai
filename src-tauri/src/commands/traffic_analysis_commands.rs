@@ -10,7 +10,6 @@
 //! - list_plugins: 列出所有插件
 
 use sentinel_plugins::{HttpTransaction, Severity};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};

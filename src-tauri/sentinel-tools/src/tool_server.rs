@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use crate::buildin_tools::{
     CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
     LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, TodosTool, SubagentAwaitTool, SubagentChannelTool, MemoryManagerTool,
+    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool,
     WebSearchTool, OcrTool, SkillsTool,
     ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
     CrossFileTaintTool, AuditReportTool, BuildCpgTool, QueryCpgTool, CpgTaintAnalysisTool,

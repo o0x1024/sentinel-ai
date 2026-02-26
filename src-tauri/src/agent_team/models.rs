@@ -322,6 +322,8 @@ pub struct CreateAgentTeamSessionRequest {
     pub template_id: Option<String>,
     pub conversation_id: Option<String>,
     pub max_rounds: Option<i32>,
+    /// JSON: 会话级状态（含 Team 全局工具配置）
+    pub state_machine: Option<serde_json::Value>,
     /// 若不使用模板，手动指定成员列表
     pub members: Option<Vec<CreateAgentTeamTemplateMemberRequest>>,
 }
@@ -333,6 +335,8 @@ pub struct UpdateAgentTeamSessionRequest {
     pub goal: Option<String>,
     pub state: Option<String>,
     pub max_rounds: Option<i32>,
+    /// JSON: 会话级状态（含 Team 全局工具配置）
+    pub state_machine: Option<serde_json::Value>,
     pub error_message: Option<String>,
 }
 
@@ -342,6 +346,17 @@ pub struct SubmitAgentTeamMessageRequest {
     pub session_id: String,
     pub content: String,
     pub resume: bool,
+}
+
+/// 保存中断时的流式消息片段
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppendAgentTeamPartialMessageRequest {
+    pub session_id: String,
+    pub member_id: Option<String>,
+    pub member_name: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub tool_calls: Option<serde_json::Value>,
 }
 
 /// 更新白板状态请求

@@ -5,8 +5,16 @@
       :key="index"
       class="tool-call-item bg-base-200/50 border border-base-300 rounded-lg overflow-hidden"
     >
+      <ShellToolResult
+        v-if="isShellCall(call)"
+        :args="parseArgs(call.arguments)"
+        :result="parseResult(call.result)"
+        :error="call.success === false ? (call.result || 'Shell execution failed') : undefined"
+        :status="call.success === false ? 'failed' : 'completed'"
+      />
       <!-- Tool call header -->
       <div 
+        v-else
         class="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-base-200/80 transition-colors"
         @click="toggleExpand(index)"
       >
@@ -50,6 +58,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import ShellToolResult from './ShellToolResult.vue'
 
 interface ToolCall {
   id?: string
@@ -82,6 +91,28 @@ const toggleExpand = (index: number) => {
     expandedItems.value.delete(index)
   } else {
     expandedItems.value.add(index)
+  }
+}
+
+const isShellCall = (call: ToolCall) => {
+  return call.name?.toLowerCase?.() === 'shell'
+}
+
+const parseArgs = (raw: string | undefined) => {
+  if (!raw) return {}
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return { command: raw }
+  }
+}
+
+const parseResult = (raw: string | undefined) => {
+  if (!raw) return ''
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
   }
 }
 

@@ -212,12 +212,19 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if policy.include_working_dir {
         if let Some(db) = input.app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
-            let configured_dir = db
+            let configured_dir_agent = db
+                .get_config("agent", "working_directory")
+                .await
+                .ok()
+                .flatten()
+                .filter(|dir| !dir.trim().is_empty());
+            let configured_dir_legacy_ai = db
                 .get_config("ai", "working_directory")
                 .await
                 .ok()
                 .flatten()
                 .filter(|dir| !dir.trim().is_empty());
+            let configured_dir = configured_dir_agent.or(configured_dir_legacy_ai);
             let working_dir = configured_dir
                 .unwrap_or_else(|| execution_context.context_dir.clone());
 

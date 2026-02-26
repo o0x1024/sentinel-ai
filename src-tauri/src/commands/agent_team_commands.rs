@@ -8,7 +8,7 @@ use tracing::{error, info};
 use sentinel_db::DatabaseService;
 
 use crate::agent_team::{
-    engine::start_agent_team_run_async,
+    engine::{start_agent_team_run_async, stop_agent_team_run_async},
     models::*,
     repository_runtime as repo_rt,
 };
@@ -126,9 +126,15 @@ pub async fn agent_team_list_sessions(
     db: DbState<'_>,
     conversation_id: Option<String>,
     limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Vec<AgentTeamSession>, String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
-    repo_rt::list_agent_team_sessions(&runtime_pool, conversation_id.as_deref(), limit.unwrap_or(20))
+    repo_rt::list_agent_team_sessions(
+        &runtime_pool,
+        conversation_id.as_deref(),
+        limit.unwrap_or(20),
+        offset.unwrap_or(0),
+    )
         .await
         .map_err(|e| e.to_string())
 }
@@ -146,6 +152,18 @@ pub async fn agent_team_update_session(
         .map_err(|e| e.to_string())
 }
 
+/// 删除 Agent Team 会话
+#[tauri::command]
+pub async fn agent_team_delete_session(
+    db: DbState<'_>,
+    session_id: String,
+) -> Result<(), String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::delete_agent_team_session(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 启动 Agent Team 运行（异步后台执行）
 #[tauri::command]
 pub async fn agent_team_start_run(
@@ -159,6 +177,38 @@ pub async fn agent_team_start_run(
             error!("Failed to start agent team run: {:#}", e);
             e.to_string()
         })
+}
+
+/// 停止 Agent Team 运行
+#[tauri::command]
+pub async fn agent_team_stop_run(
+    db: DbState<'_>,
+    session_id: String,
+) -> Result<(), String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    let stopped = stop_agent_team_run_async(&session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if stopped {
+        // 统一标记为 FAILED，并附带人工停止原因，便于前端展示与恢复。
+        repo_rt::update_agent_team_session(
+            &runtime_pool,
+            &session_id,
+            &UpdateAgentTeamSessionRequest {
+                name: None,
+                goal: None,
+                state: Some("FAILED".to_string()),
+                max_rounds: None,
+                state_machine: None,
+                error_message: Some("Execution stopped by user".to_string()),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 // ==================== 消息命令 ====================
@@ -203,6 +253,54 @@ pub async fn agent_team_submit_message(
         start_agent_team_run_async(app_handle, request.session_id)
             .await
             .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// 保存 Team 运行中断前的流式消息片段
+#[tauri::command]
+pub async fn agent_team_append_partial_message(
+    db: DbState<'_>,
+    request: AppendAgentTeamPartialMessageRequest,
+) -> Result<(), String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    let content = request.content.trim();
+    let has_tool_calls = request
+        .tool_calls
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false);
+
+    if content.is_empty() && !has_tool_calls {
+        return Ok(());
+    }
+
+    let role = request.role.trim().to_lowercase();
+    if role != "assistant" && role != "user" && role != "system" {
+        return Err("invalid role".to_string());
+    }
+
+    let msg = repo_rt::create_message(
+        &runtime_pool,
+        &request.session_id,
+        None,
+        request.member_id.as_deref(),
+        request.member_name.as_deref(),
+        &role,
+        content,
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if has_tool_calls {
+        if let Some(tool_calls) = request.tool_calls.as_ref() {
+            repo_rt::update_message_tool_calls(&runtime_pool, &msg.id, tool_calls)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(())

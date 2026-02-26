@@ -15,6 +15,7 @@ import type {
     UpdateAgentTeamSessionRequest,
     UpdateBlackboardRequest,
     SubmitAgentTeamMessageRequest,
+    AppendAgentTeamPartialMessageRequest,
 } from '@/types/agentTeam'
 
 // ==================== Template CRUD ====================
@@ -54,10 +55,11 @@ export const agentTeamApi = {
         return invoke('agent_team_get_session', { sessionId: id })
     },
 
-    async listSessions(conversationId?: string, limit = 20): Promise<AgentTeamSession[]> {
+    async listSessions(conversationId?: string, limit = 20, offset = 0): Promise<AgentTeamSession[]> {
         return invoke('agent_team_list_sessions', {
             conversationId: conversationId ?? null,
             limit,
+            offset,
         })
     },
 
@@ -65,9 +67,17 @@ export const agentTeamApi = {
         return invoke('agent_team_update_session', { sessionId: id, request: req })
     },
 
+    async deleteSession(id: string): Promise<void> {
+        return invoke('agent_team_delete_session', { sessionId: id })
+    },
+
     // Run lifecycle
     async startRun(sessionId: string): Promise<void> {
         return invoke('agent_team_start_run', { sessionId })
+    },
+
+    async stopRun(sessionId: string): Promise<void> {
+        return invoke('agent_team_stop_run', { sessionId })
     },
 
     async getRunStatus(sessionId: string): Promise<AgentTeamRunStatus | null> {
@@ -81,6 +91,10 @@ export const agentTeamApi = {
 
     async submitMessage(req: SubmitAgentTeamMessageRequest): Promise<void> {
         return invoke('agent_team_submit_message', { request: req })
+    },
+
+    async appendPartialMessage(req: AppendAgentTeamPartialMessageRequest): Promise<void> {
+        return invoke('agent_team_append_partial_message', { request: req })
     },
 
     // Blackboard
