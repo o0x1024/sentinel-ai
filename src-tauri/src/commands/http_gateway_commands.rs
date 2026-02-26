@@ -1,9 +1,9 @@
+use crate::services::ai::AiServiceManager;
 use crate::services::database::DatabaseService;
 use crate::services::http_gateway::{
     hash_api_key_for_storage, normalize_gateway_config, start_gateway_server, HttpGatewayConfig,
     HttpGatewayRuntime, HttpGatewayStatus,
 };
-use crate::services::ai::AiServiceManager;
 use once_cell::sync::Lazy;
 use rand::distributions::{Alphanumeric, DistString};
 use sentinel_db::Database;
@@ -138,7 +138,9 @@ pub async fn start_http_gateway(
         ai_manager.inner().clone(),
         db.inner().clone(),
         app_handle,
-    ).await {
+    )
+    .await
+    {
         Ok(runtime) => {
             let bind_addr = runtime.bind_addr();
             state.runtime = Some(runtime);

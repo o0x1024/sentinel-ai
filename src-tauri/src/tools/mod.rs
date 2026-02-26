@@ -4,8 +4,7 @@
 
 // Re-export builtin tools from sentinel-tools
 pub use sentinel_tools::buildin_tools::{
-    create_buildin_toolset,
-    PortScanTool, HttpRequestTool, LocalTimeTool, ShellTool,
+    create_buildin_toolset, HttpRequestTool, LocalTimeTool, PortScanTool, ShellTool,
 };
 
 // Re-export ToolSet

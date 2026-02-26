@@ -4,17 +4,16 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, OnceCell};
+use tokio::sync::{OnceCell, RwLock};
 use tokio_util::sync::CancellationToken;
 
 /// 全局取消令牌存储（使用OnceCell代替lazy_static）
-static CANCELLATION_TOKENS: OnceCell<Arc<RwLock<HashMap<String, CancellationToken>>>> = OnceCell::const_new();
+static CANCELLATION_TOKENS: OnceCell<Arc<RwLock<HashMap<String, CancellationToken>>>> =
+    OnceCell::const_new();
 
 async fn get_tokens() -> Arc<RwLock<HashMap<String, CancellationToken>>> {
     CANCELLATION_TOKENS
-        .get_or_init(|| async {
-            Arc::new(RwLock::new(HashMap::new()))
-        })
+        .get_or_init(|| async { Arc::new(RwLock::new(HashMap::new())) })
         .await
         .clone()
 }
@@ -25,7 +24,10 @@ pub async fn register_cancellation_token(execution_id: String) -> CancellationTo
     let tokens_store = get_tokens().await;
     let mut tokens = tokens_store.write().await;
     tokens.insert(execution_id.clone(), token.clone());
-    tracing::info!("Registered cancellation token for execution: {}", execution_id);
+    tracing::info!(
+        "Registered cancellation token for execution: {}",
+        execution_id
+    );
     token
 }
 
@@ -38,7 +40,10 @@ pub async fn cancel_execution(execution_id: &str) -> bool {
         tracing::info!("Cancelled execution via token: {}", execution_id);
         true
     } else {
-        tracing::warn!("Cancellation token not found for execution: {}", execution_id);
+        tracing::warn!(
+            "Cancellation token not found for execution: {}",
+            execution_id
+        );
         false
     }
 }
@@ -53,7 +58,10 @@ pub async fn cancel_execution_silent(execution_id: &str) -> bool {
         tracing::info!("Cancelled execution via global token: {}", execution_id);
         true
     } else {
-        tracing::debug!("No global cancellation token for execution (expected): {}", execution_id);
+        tracing::debug!(
+            "No global cancellation token for execution (expected): {}",
+            execution_id
+        );
         false
     }
 }
@@ -81,7 +89,10 @@ pub async fn cleanup_token(execution_id: &str) {
     let tokens_store = get_tokens().await;
     let mut tokens = tokens_store.write().await;
     if tokens.remove(execution_id).is_some() {
-        tracing::info!("Cleaned up cancellation token for execution: {}", execution_id);
+        tracing::info!(
+            "Cleaned up cancellation token for execution: {}",
+            execution_id
+        );
     }
 }
 
@@ -108,16 +119,16 @@ mod tests {
     #[tokio::test]
     async fn test_register_and_cancel() {
         let exec_id = "test_exec_1";
-        
+
         // Register token
         let token = register_cancellation_token(exec_id.to_string()).await;
         assert!(!token.is_cancelled());
-        
+
         // Cancel execution
         let cancelled = cancel_execution(exec_id).await;
         assert!(cancelled);
         assert!(token.is_cancelled());
-        
+
         // Cleanup
         cleanup_token(exec_id).await;
     }
@@ -128,4 +139,3 @@ mod tests {
         assert!(!cancelled);
     }
 }
-

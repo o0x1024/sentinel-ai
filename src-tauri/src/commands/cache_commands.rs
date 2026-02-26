@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
-use sentinel_db::Database;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheData {
@@ -69,11 +69,17 @@ pub async fn set_cache(
     request: SetCacheRequest,
 ) -> Result<SetCacheResponse, String> {
     let now = Utc::now();
-    let expires_at = request
-        .ttl_minutes
-        .map(|ttl| now + Duration::minutes(ttl));
+    let expires_at = request.ttl_minutes.map(|ttl| now + Duration::minutes(ttl));
 
-    match db_service.set_cache(&request.key, &request.value, &request.cache_type, expires_at).await {
+    match db_service
+        .set_cache(
+            &request.key,
+            &request.value,
+            &request.cache_type,
+            expires_at,
+        )
+        .await
+    {
         Ok(_) => Ok(SetCacheResponse {
             success: true,
             error: None,
@@ -129,8 +135,8 @@ pub async fn get_all_cache_keys(
     db_service: State<'_, Arc<dyn Database>>,
     cache_type: Option<String>,
 ) -> Result<Vec<String>, String> {
-    db_service.get_all_cache_keys(cache_type)
+    db_service
+        .get_all_cache_keys(cache_type)
         .await
         .map_err(|e| e.to_string())
 }
-

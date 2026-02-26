@@ -10,7 +10,7 @@ use rig::providers::gemini::completion::gemini_api_types::{
 };
 use rig::streaming::{StreamedAssistantContent, StreamingChat, StreamingPrompt};
 use rig::tool::server::ToolServer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use std::collections::HashMap;
 
 use crate::config::LlmConfig;
@@ -168,7 +168,11 @@ impl StreamingLlmClient {
             history.len()
         );
 
-        let mut system_prompt_with_hack = system_prompt.unwrap_or("You are a helpful AI assistant.").to_string();
+        let mut system_prompt_with_hack = system_prompt
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("You are a helpful AI assistant.")
+            .to_string();
         
         // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
         // We add a system-level instruction to help them comply, and we'll also use placeholders in history.
@@ -225,11 +229,53 @@ impl StreamingLlmClient {
         let user_message = build_user_message(user_prompt, image);
         let chat_history = convert_chat_history(history);
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
+        let is_bigmodel_compat =
+            Self::is_bigmodel_compatible_base_url(self.config.base_url.as_deref());
 
         // 根据 provider 创建带动态工具的 agent
         let content = match provider_for_agent.as_str() {
             "openai" => {
-                self.stream_with_openai(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
+                let tool_count = dynamic_tools.len();
+                info!(
+                    "OpenAI-compatible call context: base_url={:?}, bigmodel_compat={}, temperature={:?}, max_tokens={:?}, tools={}",
+                    self.config.base_url,
+                    is_bigmodel_compat,
+                    self.config.temperature,
+                    self.config.max_tokens,
+                    tool_count
+                );
+
+                let retry_user_message = user_message.clone();
+                let retry_chat_history = chat_history.clone();
+                match self
+                    .stream_with_openai(
+                        model,
+                        preamble,
+                        user_message,
+                        chat_history,
+                        timeout,
+                        dynamic_tools,
+                        &mut on_content,
+                    )
+                    .await
+                {
+                    Ok(content) => content,
+                    Err(e) if is_bigmodel_compat && Self::is_bigmodel_1210_error(&e) => {
+                        warn!(
+                            "BigModel returned 1210 (parameter error). Retrying once in minimal compatibility mode: no tools, no generation overrides."
+                        );
+                        self.stream_with_openai_minimal_compat(
+                            model,
+                            preamble,
+                            retry_user_message,
+                            retry_chat_history,
+                            timeout,
+                            &mut on_content,
+                        )
+                        .await?
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             "moonshot" => {
                 self.stream_with_moonshot(model, preamble, user_message, chat_history, timeout, dynamic_tools, &mut on_content).await?
@@ -388,6 +434,41 @@ impl StreamingLlmClient {
                 .build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_content).await
         }
+    }
+
+    async fn stream_with_openai_minimal_compat<F>(
+        &self,
+        model: &str,
+        preamble: &str,
+        user_message: Message,
+        chat_history: Vec<Message>,
+        timeout: std::time::Duration,
+        on_content: &mut F,
+    ) -> Result<String>
+    where
+        F: FnMut(StreamContent) -> bool,
+    {
+        use rig::providers::openai;
+
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
+        let base_url = self
+            .config
+            .base_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("base_url is required for minimal compat mode"))?;
+
+        let client: openai::CompletionsClient = openai::Client::builder()
+            .api_key(api_key)
+            .base_url(base_url)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
+            .completions_api();
+
+        let agent = client.agent(model).preamble(preamble).build();
+
+        self.execute_stream(agent, user_message, chat_history, timeout, on_content)
+            .await
     }
 
     async fn stream_with_moonshot<F>(
@@ -890,5 +971,21 @@ impl StreamingLlmClient {
             content.len()
         );
         Ok(content)
+    }
+
+    fn is_bigmodel_compatible_base_url(base_url: Option<&str>) -> bool {
+        base_url
+            .map(|u| {
+                let u = u.to_lowercase();
+                u.contains("open.bigmodel.cn") || u.contains("bigmodel.cn/api/paas")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_bigmodel_1210_error(err: &anyhow::Error) -> bool {
+        let msg = err.to_string();
+        msg.contains("\"code\":\"1210\"")
+            || msg.contains("\"code\": \"1210\"")
+            || (msg.contains("1210") && msg.contains("API 调用参数有误"))
     }
 }

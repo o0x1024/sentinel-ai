@@ -135,8 +135,8 @@ pub async fn agent_team_list_sessions(
         limit.unwrap_or(20),
         offset.unwrap_or(0),
     )
-        .await
-        .map_err(|e| e.to_string())
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 更新 Agent Team 会话
@@ -154,10 +154,7 @@ pub async fn agent_team_update_session(
 
 /// 删除 Agent Team 会话
 #[tauri::command]
-pub async fn agent_team_delete_session(
-    db: DbState<'_>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn agent_team_delete_session(db: DbState<'_>, session_id: String) -> Result<(), String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
     repo_rt::delete_agent_team_session(&runtime_pool, &session_id)
         .await
@@ -166,10 +163,7 @@ pub async fn agent_team_delete_session(
 
 /// 启动 Agent Team 运行（异步后台执行）
 #[tauri::command]
-pub async fn agent_team_start_run(
-    app_handle: AppHandle,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn agent_team_start_run(app_handle: AppHandle, session_id: String) -> Result<(), String> {
     info!("Starting Agent Team run for session: {}", session_id);
     start_agent_team_run_async(app_handle, session_id)
         .await
@@ -181,17 +175,28 @@ pub async fn agent_team_start_run(
 
 /// 停止 Agent Team 运行
 #[tauri::command]
-pub async fn agent_team_stop_run(
-    db: DbState<'_>,
-    session_id: String,
-) -> Result<(), String> {
+pub async fn agent_team_stop_run(db: DbState<'_>, session_id: String) -> Result<(), String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
     let stopped = stop_agent_team_run_async(&session_id)
         .await
         .map_err(|e| e.to_string())?;
 
-    if stopped {
-        // 统一标记为 FAILED，并附带人工停止原因，便于前端展示与恢复。
+    // 无论是否命中运行句柄，只要当前会话还处于运行态，都强制落库为 FAILED，
+    // 避免出现前端提示“已停止”但状态仍停留在运行中阶段。
+    let session = repo_rt::get_agent_team_session(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let should_mark_failed = session
+        .as_ref()
+        .map(|s| {
+            !matches!(
+                s.state.as_str(),
+                "PENDING" | "SUSPENDED_FOR_HUMAN" | "COMPLETED" | "FAILED" | "ARCHIVED"
+            )
+        })
+        .unwrap_or(false);
+
+    if should_mark_failed {
         repo_rt::update_agent_team_session(
             &runtime_pool,
             &session_id,
@@ -208,6 +213,13 @@ pub async fn agent_team_stop_run(
         .map_err(|e| e.to_string())?;
     }
 
+    if !stopped {
+        info!(
+            "Stop requested for session {} but no running handle found; state patched={}",
+            session_id, should_mark_failed
+        );
+    }
+
     Ok(())
 }
 
@@ -221,6 +233,18 @@ pub async fn agent_team_get_messages(
 ) -> Result<Vec<AgentTeamMessage>, String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
     repo_rt::get_messages(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取 Agent Team 讨论轮次
+#[tauri::command]
+pub async fn agent_team_get_rounds(
+    db: DbState<'_>,
+    session_id: String,
+) -> Result<Vec<AgentTeamRound>, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::get_rounds(&runtime_pool, &session_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -401,9 +425,7 @@ pub async fn agent_team_get_run_status(
 
 /// 触发种子数据（内置模板）
 #[tauri::command]
-pub async fn agent_team_seed_builtin_templates(
-    db: DbState<'_>,
-) -> Result<(), String> {
+pub async fn agent_team_seed_builtin_templates(db: DbState<'_>) -> Result<(), String> {
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
     repo_rt::seed_builtin_templates(&runtime_pool)
         .await
@@ -453,7 +475,10 @@ pub async fn agent_team_generate_template(
     use crate::agent_team::engine::AgentTeamEngine;
 
     let engine = AgentTeamEngine::new(app_handle);
-    let llm_config = engine.get_llm_config_pub().await.map_err(|e| e.to_string())?;
+    let llm_config = engine
+        .get_llm_config_pub()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let role_count = request.role_count.unwrap_or(3).clamp(2, 6);
     let domain_hint = request.domain.as_deref().unwrap_or("custom");
@@ -511,19 +536,29 @@ pub async fn agent_team_generate_template(
         .map_err(|e| format!("LLM 调用失败: {}", e))?;
 
     // 从 LLM 响应中提取 JSON
-    let json_str = extract_json_block(&raw)
-        .ok_or_else(|| format!("LLM 未返回合法 JSON。原始输出：\n{}", &raw[..raw.len().min(500)]))?;
+    let json_str = extract_json_block(&raw).ok_or_else(|| {
+        format!(
+            "LLM 未返回合法 JSON。原始输出：\n{}",
+            &raw[..raw.len().min(500)]
+        )
+    })?;
 
     // 解析 JSON
-    let parsed: serde_json::Value = serde_json::from_str(&json_str)
-        .map_err(|e| format!("JSON 解析失败: {}。内容：{}", e, &json_str[..json_str.len().min(300)]))?;
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
+        format!(
+            "JSON 解析失败: {}。内容：{}",
+            e,
+            &json_str[..json_str.len().min(300)]
+        )
+    })?;
 
     // 提取字段
     let name = parsed["name"].as_str().unwrap_or("AI 生成模板").to_string();
     let description = parsed["description"].as_str().unwrap_or("").to_string();
     let domain = parsed["domain"].as_str().unwrap_or(domain_hint).to_string();
 
-    let members_raw = parsed["members"].as_array()
+    let members_raw = parsed["members"]
+        .as_array()
         .ok_or_else(|| "生成结果缺少 members 字段".to_string())?;
 
     if members_raw.is_empty() {
@@ -536,15 +571,23 @@ pub async fn agent_team_generate_template(
             name: m["name"].as_str().unwrap_or("角色").to_string(),
             responsibility: m["responsibility"].as_str().unwrap_or("").to_string(),
             system_prompt: m["system_prompt"].as_str().unwrap_or("").to_string(),
-            decision_style: m["decision_style"].as_str().unwrap_or("balanced").to_string(),
-            risk_preference: m["risk_preference"].as_str().unwrap_or("medium").to_string(),
+            decision_style: m["decision_style"]
+                .as_str()
+                .unwrap_or("balanced")
+                .to_string(),
+            risk_preference: m["risk_preference"]
+                .as_str()
+                .unwrap_or("medium")
+                .to_string(),
             weight: m["weight"].as_f64().unwrap_or(1.0),
         })
         .collect();
 
     info!(
         "AI generated template '{}' with {} members for domain '{}'",
-        name, members.len(), domain
+        name,
+        members.len(),
+        domain
     );
 
     Ok(GeneratedTemplate {
@@ -572,8 +615,11 @@ pub async fn agent_team_save_generated_template(
         domain: generated.domain,
         default_rounds_config: None,
         default_tool_policy: None,
-        members: generated.members.into_iter().enumerate().map(|(i, m)| {
-            CreateAgentTeamTemplateMemberRequest {
+        members: generated
+            .members
+            .into_iter()
+            .enumerate()
+            .map(|(i, m)| CreateAgentTeamTemplateMemberRequest {
                 name: m.name,
                 responsibility: Some(m.responsibility),
                 system_prompt: Some(m.system_prompt),
@@ -583,8 +629,8 @@ pub async fn agent_team_save_generated_template(
                 tool_policy: None,
                 output_schema: None,
                 sort_order: Some(i as i32),
-            }
-        }).collect(),
+            })
+            .collect(),
     };
 
     repo_rt::create_agent_team_template(&runtime_pool, &request, None)

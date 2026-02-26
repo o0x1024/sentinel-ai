@@ -44,7 +44,7 @@ pub async fn execute_builtin_tool_with_tracking(
     // Complete tracking
     if let (Some(ref t), Some(ref tid), Some(ref lid)) = (&tracker, &task_id, &log_id) {
         let tool_id = format!("builtin:{}", tool_name);
-        
+
         let _ = t
             .track_complete(
                 lid.clone(),

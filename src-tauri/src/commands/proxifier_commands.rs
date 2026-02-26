@@ -7,14 +7,14 @@
 //! - pf 透明代理
 //! - 数据库持久化
 
+use sentinel_db::Database;
+use sentinel_db::DatabaseService;
+use sentinel_db::{ProxifierProxyRecord, ProxifierRuleRecord};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
-use tracing::{info, error};
-use sentinel_db::{ProxifierProxyRecord, ProxifierRuleRecord};
-use sentinel_db::DatabaseService;
-use sentinel_db::Database;
+use tracing::{error, info};
 
 #[cfg(target_os = "macos")]
 use sentinel_traffic::system_proxy::pf_firewall::TransparentProxyManager;
@@ -27,7 +27,7 @@ pub struct ProxifierProxy {
     pub host: String,
     pub port: u16,
     #[serde(rename = "type")]
-    pub proxy_type: String,  // HTTP, HTTPS, SOCKS5
+    pub proxy_type: String, // HTTP, HTTPS, SOCKS5
     pub username: Option<String>,
     pub password: Option<String>,
     pub enabled: bool,
@@ -39,12 +39,12 @@ pub struct ProxifierRule {
     pub id: String,
     pub name: String,
     pub enabled: bool,
-    pub applications: String,  // ; 分隔
+    pub applications: String, // ; 分隔
     #[serde(rename = "targetHosts")]
-    pub target_hosts: String,  // ; 分隔
+    pub target_hosts: String, // ; 分隔
     #[serde(rename = "targetPorts")]
-    pub target_ports: String,  // ; 分隔
-    pub action: String,        // Direct, Block, 或 Proxy 名称
+    pub target_ports: String, // ; 分隔
+    pub action: String,       // Direct, Block, 或 Proxy 名称
 }
 
 /// 连接记录
@@ -55,7 +55,7 @@ pub struct ProxifierConnection {
     pub target: String,
     #[serde(rename = "timeOrStatus")]
     pub time_or_status: String,
-    pub status: String,  // open, closed, error
+    pub status: String, // open, closed, error
     pub rule: String,
     pub proxy: String,
     pub sent: u64,
@@ -152,10 +152,13 @@ pub async fn start_proxifier(
     config.enabled = true;
     config.proxies = proxies;
     config.rules = rules;
-    
-    info!("Proxifier started with {} proxies and {} rules", 
-          config.proxies.len(), config.rules.len());
-    
+
+    info!(
+        "Proxifier started with {} proxies and {} rules",
+        config.proxies.len(),
+        config.rules.len()
+    );
+
     Ok(CommandResponse::ok(()))
 }
 
@@ -166,9 +169,9 @@ pub async fn stop_proxifier(
 ) -> Result<CommandResponse<()>, String> {
     let mut config = state.config.write().await;
     config.enabled = false;
-    
+
     info!("Proxifier stopped");
-    
+
     Ok(CommandResponse::ok(()))
 }
 
@@ -180,9 +183,9 @@ pub async fn save_proxifier_proxies(
 ) -> Result<CommandResponse<()>, String> {
     let mut config = state.config.write().await;
     config.proxies = proxies;
-    
+
     info!("Saved {} proxifier proxies", config.proxies.len());
-    
+
     Ok(CommandResponse::ok(()))
 }
 
@@ -194,9 +197,9 @@ pub async fn save_proxifier_rules(
 ) -> Result<CommandResponse<()>, String> {
     let mut config = state.config.write().await;
     config.rules = rules;
-    
+
     info!("Saved {} proxifier rules", config.rules.len());
-    
+
     Ok(CommandResponse::ok(()))
 }
 
@@ -223,7 +226,7 @@ pub async fn clear_proxifier_connections(
 pub async fn add_connection(state: &ProxifierState, connection: ProxifierConnection) {
     let mut connections = state.connections.write().await;
     connections.insert(0, connection);
-    
+
     // 保持最多 1000 条连接记录
     if connections.len() > 1000 {
         connections.pop();
@@ -248,7 +251,7 @@ pub async fn get_transparent_proxy_status(
     state: State<'_, ProxifierState>,
 ) -> Result<CommandResponse<TransparentProxyStatus>, String> {
     let status = state.transparent_status.read().await;
-    
+
     #[cfg(target_os = "macos")]
     {
         use sentinel_traffic::system_proxy::pf_firewall::is_pf_enabled;
@@ -256,7 +259,7 @@ pub async fn get_transparent_proxy_status(
         result.pf_enabled = is_pf_enabled();
         Ok(CommandResponse::ok(result))
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         Ok(CommandResponse::ok(status.clone()))
@@ -273,42 +276,48 @@ pub async fn start_transparent_proxy(
     #[cfg(target_os = "macos")]
     {
         let mut manager_lock = state.transparent_proxy.write().await;
-        
+
         // 如果已经有一个管理器，先停止它
         if let Some(ref mut manager) = *manager_lock {
             let _ = manager.stop();
         }
-        
+
         // 创建新的管理器
         let ports = if redirect_ports.is_empty() {
             vec![80, 443]
         } else {
             redirect_ports.clone()
         };
-        
+
         let mut manager = TransparentProxyManager::with_ports(proxy_port, ports.clone());
-        
+
         match manager.start() {
             Ok(()) => {
-                info!("Transparent proxy started on port {}, redirecting ports: {:?}", proxy_port, ports);
-                
+                info!(
+                    "Transparent proxy started on port {}, redirecting ports: {:?}",
+                    proxy_port, ports
+                );
+
                 // 更新状态
                 let mut status = state.transparent_status.write().await;
                 status.enabled = true;
                 status.proxy_port = proxy_port;
                 status.redirect_ports = ports;
                 status.pf_enabled = true;
-                
+
                 *manager_lock = Some(manager);
                 Ok(CommandResponse::ok(()))
             }
             Err(e) => {
                 error!("Failed to start transparent proxy: {}", e);
-                Ok(CommandResponse::err(format!("启动透明代理失败: {}。\n请确保以管理员权限运行应用。", e)))
+                Ok(CommandResponse::err(format!(
+                    "启动透明代理失败: {}。\n请确保以管理员权限运行应用。",
+                    e
+                )))
             }
         }
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         Ok(CommandResponse::err("透明代理仅支持 macOS 平台"))
@@ -323,16 +332,16 @@ pub async fn stop_transparent_proxy(
     #[cfg(target_os = "macos")]
     {
         let mut manager_lock = state.transparent_proxy.write().await;
-        
+
         if let Some(ref mut manager) = *manager_lock {
             match manager.stop() {
                 Ok(()) => {
                     info!("Transparent proxy stopped");
-                    
+
                     // 更新状态
                     let mut status = state.transparent_status.write().await;
                     status.enabled = false;
-                    
+
                     *manager_lock = None;
                     Ok(CommandResponse::ok(()))
                 }
@@ -348,7 +357,7 @@ pub async fn stop_transparent_proxy(
             Ok(CommandResponse::ok(()))
         }
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         Ok(CommandResponse::err("透明代理仅支持 macOS 平台"))
@@ -364,7 +373,7 @@ pub async fn add_transparent_redirect_port(
     #[cfg(target_os = "macos")]
     {
         let mut manager_lock = state.transparent_proxy.write().await;
-        
+
         if let Some(ref mut manager) = *manager_lock {
             match manager.add_redirect_port(port) {
                 Ok(()) => {
@@ -384,7 +393,7 @@ pub async fn add_transparent_redirect_port(
             Ok(CommandResponse::err("透明代理未启动"))
         }
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         Ok(CommandResponse::err("透明代理仅支持 macOS 平台"))
@@ -400,7 +409,7 @@ pub async fn remove_transparent_redirect_port(
     #[cfg(target_os = "macos")]
     {
         let mut manager_lock = state.transparent_proxy.write().await;
-        
+
         if let Some(ref mut manager) = *manager_lock {
             match manager.remove_redirect_port(port) {
                 Ok(()) => {
@@ -418,7 +427,7 @@ pub async fn remove_transparent_redirect_port(
             Ok(CommandResponse::err("透明代理未启动"))
         }
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         Ok(CommandResponse::err("透明代理仅支持 macOS 平台"))
@@ -442,17 +451,17 @@ pub struct NetworkExtensionStatus {
 #[tauri::command]
 pub async fn get_network_extension_status() -> Result<CommandResponse<NetworkExtensionStatus>, String> {
     use sentinel_traffic::system_proxy::NetworkExtensionManager;
-    
+
     let ext_status = NetworkExtensionManager::check_status();
     let proxy_status = NetworkExtensionManager::get_proxy_status();
     let available = NetworkExtensionManager::is_available();
-    
+
     let status = NetworkExtensionStatus {
         extension_status: format!("{:?}", ext_status),
         proxy_status: format!("{:?}", proxy_status),
         supported: cfg!(target_os = "macos") && available,
     };
-    
+
     Ok(CommandResponse::ok(status))
 }
 
@@ -460,7 +469,7 @@ pub async fn get_network_extension_status() -> Result<CommandResponse<NetworkExt
 #[tauri::command]
 pub async fn install_network_extension() -> Result<CommandResponse<()>, String> {
     use sentinel_traffic::system_proxy::NetworkExtensionManager;
-    
+
     match NetworkExtensionManager::install() {
         Ok(()) => {
             info!("Network Extension installed");
@@ -477,7 +486,7 @@ pub async fn install_network_extension() -> Result<CommandResponse<()>, String> 
 #[tauri::command]
 pub async fn uninstall_network_extension() -> Result<CommandResponse<()>, String> {
     use sentinel_traffic::system_proxy::NetworkExtensionManager;
-    
+
     match NetworkExtensionManager::uninstall() {
         Ok(()) => {
             info!("Network Extension uninstalled");
@@ -498,7 +507,7 @@ pub async fn start_network_extension_proxy(
     target_apps: Vec<String>,
 ) -> Result<CommandResponse<()>, String> {
     use sentinel_traffic::system_proxy::NetworkExtensionManager;
-    
+
     match NetworkExtensionManager::start_proxy(&host, port, &target_apps) {
         Ok(()) => {
             info!("Network Extension proxy started: {}:{}", host, port);
@@ -515,7 +524,7 @@ pub async fn start_network_extension_proxy(
 #[tauri::command]
 pub async fn stop_network_extension_proxy() -> Result<CommandResponse<()>, String> {
     use sentinel_traffic::system_proxy::NetworkExtensionManager;
-    
+
     match NetworkExtensionManager::stop_proxy() {
         Ok(()) => {
             info!("Network Extension proxy stopped");
@@ -542,21 +551,24 @@ pub async fn load_proxifier_proxies_from_db(
     match db_service.get_all_proxies().await {
         Ok(records) => {
             // 转换为前端格式
-            let proxies: Vec<ProxifierProxy> = records.iter().map(|r| ProxifierProxy {
-                id: r.id.clone(),
-                name: r.name.clone(),
-                host: r.host.clone(),
-                port: r.port as u16,
-                proxy_type: r.proxy_type.clone(),
-                username: r.username.clone(),
-                password: r.password.clone(),
-                enabled: r.enabled,
-            }).collect();
-            
+            let proxies: Vec<ProxifierProxy> = records
+                .iter()
+                .map(|r| ProxifierProxy {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    host: r.host.clone(),
+                    port: r.port as u16,
+                    proxy_type: r.proxy_type.clone(),
+                    username: r.username.clone(),
+                    password: r.password.clone(),
+                    enabled: r.enabled,
+                })
+                .collect();
+
             // 更新内存状态
             let mut config = state.config.write().await;
             config.proxies = proxies.clone();
-            
+
             info!("Loaded {} proxies from database", proxies.len());
             Ok(CommandResponse::ok(proxies))
         }
@@ -575,26 +587,29 @@ pub async fn save_proxifier_proxies_to_db(
     proxies: Vec<ProxifierProxy>,
 ) -> Result<CommandResponse<()>, String> {
     // 转换为数据库格式
-    let records: Vec<ProxifierProxyRecord> = proxies.iter().map(|p| ProxifierProxyRecord {
-        id: p.id.clone(),
-        name: p.name.clone(),
-        host: p.host.clone(),
-        port: p.port as i64,
-        proxy_type: p.proxy_type.clone(),
-        username: p.username.clone(),
-        password: p.password.clone(),
-        enabled: p.enabled,
-        sort_order: 0,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }).collect();
-    
+    let records: Vec<ProxifierProxyRecord> = proxies
+        .iter()
+        .map(|p| ProxifierProxyRecord {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            host: p.host.clone(),
+            port: p.port as i64,
+            proxy_type: p.proxy_type.clone(),
+            username: p.username.clone(),
+            password: p.password.clone(),
+            enabled: p.enabled,
+            sort_order: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+        .collect();
+
     match db_service.save_all_proxies(&records).await {
         Ok(()) => {
             // 更新内存状态
             let mut config = state.config.write().await;
             config.proxies = proxies;
-            
+
             info!("Saved {} proxies to database", records.len());
             Ok(CommandResponse::ok(()))
         }
@@ -614,20 +629,23 @@ pub async fn load_proxifier_rules_from_db(
     match db_service.get_all_rules().await {
         Ok(records) => {
             // 转换为前端格式
-            let rules: Vec<ProxifierRule> = records.iter().map(|r| ProxifierRule {
-                id: r.id.clone(),
-                name: r.name.clone(),
-                enabled: r.enabled,
-                applications: r.applications.clone(),
-                target_hosts: r.target_hosts.clone(),
-                target_ports: r.target_ports.clone(),
-                action: r.action.clone(),
-            }).collect();
-            
+            let rules: Vec<ProxifierRule> = records
+                .iter()
+                .map(|r| ProxifierRule {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    enabled: r.enabled,
+                    applications: r.applications.clone(),
+                    target_hosts: r.target_hosts.clone(),
+                    target_ports: r.target_ports.clone(),
+                    action: r.action.clone(),
+                })
+                .collect();
+
             // 更新内存状态
             let mut config = state.config.write().await;
             config.rules = rules.clone();
-            
+
             info!("Loaded {} rules from database", rules.len());
             Ok(CommandResponse::ok(rules))
         }
@@ -646,26 +664,29 @@ pub async fn save_proxifier_rules_to_db(
     rules: Vec<ProxifierRule>,
 ) -> Result<CommandResponse<()>, String> {
     // 转换为数据库格式
-    let records: Vec<ProxifierRuleRecord> = rules.iter().map(|r| ProxifierRuleRecord {
-        id: r.id.clone(),
-        name: r.name.clone(),
-        enabled: r.enabled,
-        applications: r.applications.clone(),
-        target_hosts: r.target_hosts.clone(),
-        target_ports: r.target_ports.clone(),
-        action: r.action.clone(),
-        proxy_id: None,
-        sort_order: 0,
-        created_at: String::new(),
-        updated_at: String::new(),
-    }).collect();
-    
+    let records: Vec<ProxifierRuleRecord> = rules
+        .iter()
+        .map(|r| ProxifierRuleRecord {
+            id: r.id.clone(),
+            name: r.name.clone(),
+            enabled: r.enabled,
+            applications: r.applications.clone(),
+            target_hosts: r.target_hosts.clone(),
+            target_ports: r.target_ports.clone(),
+            action: r.action.clone(),
+            proxy_id: None,
+            sort_order: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+        .collect();
+
     match db_service.save_all_rules(&records).await {
         Ok(()) => {
             // 更新内存状态
             let mut config = state.config.write().await;
             config.rules = rules;
-            
+
             info!("Saved {} rules to database", records.len());
             Ok(CommandResponse::ok(()))
         }

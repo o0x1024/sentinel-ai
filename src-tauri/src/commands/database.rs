@@ -1,11 +1,11 @@
 // 数据库管理命令模块
 
 use crate::services::database::DatabaseService;
-use sentinel_db::Database;
 use sentinel_db::database_service::{
     load_db_config_from_disk, save_db_config_to_disk, DatabaseConfig, DatabaseMigration,
     DatabasePool, DatabaseType,
 };
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -65,7 +65,9 @@ pub async fn get_query_history(
 
 /// 清除查询历史（临时简化实现）
 #[tauri::command]
-pub async fn clear_query_history(_db_service: State<'_, Arc<DatabaseService>>) -> Result<(), String> {
+pub async fn clear_query_history(
+    _db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<(), String> {
     // 暂时返回成功，等数据库模型完善后再实现
     Ok(())
 }
@@ -80,11 +82,11 @@ pub async fn get_database_status(
         .get_stats()
         .await
         .map_err(|e| format!("获取数据库统计信息失败: {}", e))?;
-    
+
     // 获取数据库路径
     let db_path = db_service.get_db_path();
     tracing::info!("Database path: {}", db_path.display());
-    
+
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
@@ -106,9 +108,11 @@ pub async fn get_database_status(
         Ok(rows) => {
             tracing::info!("Table count query result: {:?}", rows);
             if let Some(first) = rows.first() {
-                let count = first.get("table_count")
+                let count = first
+                    .get("table_count")
                     .and_then(|v| {
-                        v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
                     })
                     .unwrap_or(0) as i32;
                 tracing::info!("Table count: {}", count);
@@ -117,17 +121,16 @@ pub async fn get_database_status(
                 tracing::warn!("No rows returned from table count query");
                 0
             }
-        },
+        }
         Err(e) => {
             tracing::error!("Failed to get table count: {}", e);
             0
         }
     };
-    
+
     // 检查最后备份时间
-    let last_backup = get_last_backup_info(&db_path)
-        .map(|info| info.created_at);
-    
+    let last_backup = get_last_backup_info(&db_path).map(|info| info.created_at);
+
     // Get DB type from config
     let (db_type, connection_info) = if let Some(config) = db_service.get_db_config() {
         let type_str = match config.db_type {
@@ -135,18 +138,19 @@ pub async fn get_database_status(
             sentinel_db::database_service::DatabaseType::MySQL => "MySQL",
             sentinel_db::database_service::DatabaseType::SQLite => "SQLite",
         };
-        
+
         let conn_info = match config.db_type {
             sentinel_db::database_service::DatabaseType::SQLite => {
                 config.path.clone().unwrap_or_else(|| "Default".to_string())
-            },
+            }
             _ => {
                 let default_port = match config.db_type {
                     sentinel_db::database_service::DatabaseType::PostgreSQL => 5432,
                     sentinel_db::database_service::DatabaseType::MySQL => 3306,
                     sentinel_db::database_service::DatabaseType::SQLite => 0,
                 };
-                format!("{}:{}", 
+                format!(
+                    "{}:{}",
                     config.host.as_deref().unwrap_or("localhost"),
                     config.port.unwrap_or(default_port)
                 )
@@ -165,13 +169,16 @@ pub async fn get_database_status(
         path: connection_info,
         last_backup,
     };
-    
-    tracing::info!("Returning database status: path={}, tables={}, size={}", 
-        status.path, status.tables, status.size);
-    
+
+    tracing::info!(
+        "Returning database status: path={}, tables={}, size={}",
+        status.path,
+        status.tables,
+        status.size
+    );
+
     Ok(status)
 }
-
 
 /// 获取数据库路径
 #[tauri::command]
@@ -201,12 +208,12 @@ pub async fn create_database_backup(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let path = backup_path.map(PathBuf::from);
-    
+
     let result_path = db_service
         .backup(path)
         .await
         .map_err(|e| format!("创建备份失败: {}", e))?;
-    
+
     Ok(result_path.to_string_lossy().to_string())
 }
 
@@ -217,11 +224,11 @@ pub async fn restore_database_backup(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
     let path = PathBuf::from(backup_path);
-    
+
     if !path.exists() {
         return Err("备份文件不存在".to_string());
     }
-    
+
     db_service
         .restore(path)
         .await
@@ -294,9 +301,9 @@ pub async fn rebuild_database_indexes(
         .execute_query(index_sql)
         .await
         .map_err(|e| format!("获取索引列表失败: {}", e))?;
-    
+
     let mut rebuilt_count = 0;
-    
+
     for index in indexes {
         if let Some(name) = index.get("name").and_then(|v| v.as_str()) {
             let query = match db_kind {
@@ -312,7 +319,7 @@ pub async fn rebuild_database_indexes(
             }
         }
     }
-    
+
     Ok(format!("已重建 {} 个索引", rebuilt_count))
 }
 
@@ -363,7 +370,7 @@ pub async fn cleanup_database(
             ),
         ),
     };
-    
+
     // 清理旧日志
     if cleanup_logs {
         if let Ok(result) = db_service.execute_query(&logs_query).await {
@@ -371,23 +378,23 @@ pub async fn cleanup_database(
             deleted_count += result.len();
         }
     }
-    
+
     // 清理旧会话
     if cleanup_old_sessions {
         if let Ok(result) = db_service.execute_query(&sessions_query).await {
             deleted_count += result.len();
         }
     }
-    
+
     // 清理临时文件记录
     if cleanup_temp_files {
         // 可以在这里添加清理临时文件的逻辑
         tracing::info!("Cleaning up temp files...");
     }
-    
+
     // 最后执行 VACUUM 回收空间
     let _ = db_service.execute_query("VACUUM").await;
-    
+
     Ok(format!("清理完成，共清理 {} 条记录", deleted_count))
 }
 
@@ -399,11 +406,10 @@ pub async fn list_database_backups(
     let db_path = db_service.get_db_path();
     let default_path = PathBuf::from(".");
     let backup_dir = db_path.parent().unwrap_or(&default_path);
-    
-    let mut backups = Vec::new();
-    
-    if let Ok(entries) = std::fs::read_dir(backup_dir) {
 
+    let mut backups = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(backup_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -418,7 +424,7 @@ pub async fn list_database_backups(
                                 datetime.format("%Y-%m-%d %H:%M:%S").to_string()
                             })
                             .unwrap_or_else(|| "Unknown".to_string());
-                        
+
                         backups.push(BackupInfo {
                             path: path.to_string_lossy().to_string(),
                             size: metadata.len(),
@@ -436,7 +442,7 @@ pub async fn list_database_backups(
                                 datetime.format("%Y-%m-%d %H:%M:%S").to_string()
                             })
                             .unwrap_or_else(|| "Unknown".to_string());
-                        
+
                         backups.push(BackupInfo {
                             path: path.to_string_lossy().to_string(),
                             size: metadata.len(),
@@ -447,10 +453,10 @@ pub async fn list_database_backups(
             }
         }
     }
-    
+
     // 按创建时间倒序排序
     backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    
+
     Ok(backups)
 }
 
@@ -458,11 +464,11 @@ pub async fn list_database_backups(
 #[tauri::command]
 pub async fn delete_database_backup(backup_path: String) -> Result<(), String> {
     let path = PathBuf::from(&backup_path);
-    
+
     if !path.exists() {
         return Err("备份文件不存在".to_string());
     }
-    
+
     // 确保只能删除备份文件
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         let valid_ext = name.ends_with(".db") || name.ends_with(".sql");
@@ -472,7 +478,7 @@ pub async fn delete_database_backup(backup_path: String) -> Result<(), String> {
     } else {
         return Err("无效的文件路径".to_string());
     }
-    
+
     std::fs::remove_file(&path).map_err(|e| format!("删除备份失败: {}", e))
 }
 
@@ -488,7 +494,7 @@ pub async fn export_database_json(
         .get_db_config()
         .map(|c| c.db_type.clone())
         .unwrap_or(DatabaseType::SQLite);
-    
+
     for table in tables {
         let query = match db_kind {
             DatabaseType::MySQL => format!("SELECT * FROM `{}`", table),
@@ -497,19 +503,18 @@ pub async fn export_database_json(
         match db_service.execute_query(&query).await {
             Ok(rows) => {
                 export_data.insert(table, serde_json::Value::Array(rows));
-            },
+            }
             Err(e) => {
                 tracing::warn!("Failed to export table {}: {}", table, e);
             }
         }
     }
-    
-    let json = serde_json::to_string_pretty(&export_data)
-        .map_err(|e| format!("序列化失败: {}", e))?;
-    
-    std::fs::write(&output_path, json)
-        .map_err(|e| format!("写入文件失败: {}", e))?;
-    
+
+    let json =
+        serde_json::to_string_pretty(&export_data).map_err(|e| format!("序列化失败: {}", e))?;
+
+    std::fs::write(&output_path, json).map_err(|e| format!("写入文件失败: {}", e))?;
+
     Ok(output_path)
 }
 
@@ -519,15 +524,14 @@ pub async fn import_database_json(
     input_path: String,
     _db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
+    let content =
+        std::fs::read_to_string(&input_path).map_err(|e| format!("读取文件失败: {}", e))?;
 
-    let content = std::fs::read_to_string(&input_path)
-        .map_err(|e| format!("读取文件失败: {}", e))?;
-    
-    let data: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析 JSON 失败: {}", e))?;
-    
+    let data: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {}", e))?;
+
     let mut imported_count = 0;
-    
+
     if let Some(obj) = data.as_object() {
         for (table, rows) in obj {
             if let Some(arr) = rows.as_array() {
@@ -539,10 +543,13 @@ pub async fn import_database_json(
             }
         }
     }
-    
+
     // 注意：实际导入逻辑需要根据具体表结构实现
     // 这里仅返回提示信息
-    Ok(format!("解析完成，共 {} 条记录待导入（实际导入功能待实现）", imported_count))
+    Ok(format!(
+        "解析完成，共 {} 条记录待导入（实际导入功能待实现）",
+        imported_count
+    ))
 }
 
 /// 获取数据库统计详情
@@ -554,7 +561,7 @@ pub async fn get_database_statistics(
         .get_stats()
         .await
         .map_err(|e| format!("获取统计信息失败: {}", e))?;
-    
+
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
@@ -576,7 +583,7 @@ pub async fn get_database_statistics(
         .execute_query(table_info_sql)
         .await
         .unwrap_or_default();
-    
+
     Ok(serde_json::json!({
         "scan_tasks_count": stats.scan_tasks_count,
         "vulnerabilities_count": stats.vulnerabilities_count,
@@ -599,23 +606,26 @@ pub async fn reset_database(
     if confirm_text != "CONFIRM_RESET" {
         return Err("确认文本不正确，请输入 'CONFIRM_RESET'".to_string());
     }
-    
+
     // 首先创建备份
     let backup_path = db_service
         .backup(None)
         .await
         .map_err(|e| format!("创建备份失败: {}", e))?;
-    
-    tracing::warn!("Database reset initiated. Backup created at: {:?}", backup_path);
+
+    tracing::warn!(
+        "Database reset initiated. Backup created at: {:?}",
+        backup_path
+    );
     let db_kind = db_service
         .get_db_config()
         .map(|c| c.db_type.clone())
         .unwrap_or(DatabaseType::SQLite);
-    
+
     // 删除所有用户数据表的内容
     let tables_to_clear = vec![
         "scan_tasks",
-        "vulnerabilities", 
+        "vulnerabilities",
         "assets",
         "ai_conversations",
         "ai_messages",
@@ -625,7 +635,7 @@ pub async fn reset_database(
         "agent_execution_results",
         "agent_execution_steps",
     ];
-    
+
     for table in &tables_to_clear {
         let query = match db_kind {
             DatabaseType::MySQL => format!("DELETE FROM `{}`", table),
@@ -633,10 +643,10 @@ pub async fn reset_database(
         };
         let _ = db_service.execute_query(&query).await;
     }
-    
+
     // 执行 VACUUM 回收空间
     let _ = db_service.execute_query("VACUUM").await;
-    
+
     Ok(format!(
         "数据库已重置。备份已保存到: {}",
         backup_path.to_string_lossy()
@@ -647,14 +657,15 @@ pub async fn reset_database(
 
 fn get_last_backup_info(db_path: &PathBuf) -> Option<BackupInfo> {
     let backup_dir = db_path.parent()?;
-    
+
     let mut latest_backup: Option<BackupInfo> = None;
-    
+
     if let Ok(entries) = std::fs::read_dir(backup_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("backup_") && (name.ends_with(".db") || name.ends_with(".sql")) {
+                if name.starts_with("backup_") && (name.ends_with(".db") || name.ends_with(".sql"))
+                {
                     if let Ok(metadata) = std::fs::metadata(&path) {
                         let created = metadata
                             .created()
@@ -665,13 +676,13 @@ fn get_last_backup_info(db_path: &PathBuf) -> Option<BackupInfo> {
                                 datetime.format("%Y-%m-%d %H:%M:%S").to_string()
                             })
                             .unwrap_or_else(|| "Unknown".to_string());
-                        
+
                         let info = BackupInfo {
                             path: path.to_string_lossy().to_string(),
                             size: metadata.len(),
                             created_at: created.clone(),
                         };
-                        
+
                         if let Some(ref current) = latest_backup {
                             if created > current.created_at {
                                 latest_backup = Some(info);
@@ -684,7 +695,7 @@ fn get_last_backup_info(db_path: &PathBuf) -> Option<BackupInfo> {
             }
         }
     }
-    
+
     latest_backup
 }
 
@@ -692,7 +703,7 @@ fn format_file_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
     const GB: u64 = MB * 1024;
-    
+
     if bytes >= GB {
         format!("{:.2} GB", bytes as f64 / GB as f64)
     } else if bytes >= MB {
@@ -712,11 +723,11 @@ pub async fn test_db_connection(config: DatabaseConfig) -> Result<bool, String> 
     let pool = DatabasePool::connect(&config)
         .await
         .map_err(|e| format!("Failed to connect: {}", e))?;
-    
+
     pool.test_connection()
         .await
         .map_err(|e| format!("Connection test failed: {}", e))?;
-    
+
     Ok(true)
 }
 
@@ -734,11 +745,12 @@ pub async fn export_db_to_json(
         .await
         .map_err(|e| format!("Failed to connect source database: {}", e))?;
     let migration = DatabaseMigration::new(db_pool);
-    
-    migration.export_to_json(&output_path)
+
+    migration
+        .export_to_json(&output_path)
         .await
         .map_err(|e| format!("Export failed: {}", e))?;
-    
+
     Ok(output_path)
 }
 
@@ -756,11 +768,12 @@ pub async fn export_db_to_sql(
         .await
         .map_err(|e| format!("Failed to connect source database: {}", e))?;
     let migration = DatabaseMigration::new(db_pool);
-    
-    migration.export_to_sql(&output_path)
+
+    migration
+        .export_to_sql(&output_path)
         .await
         .map_err(|e| format!("Export failed: {}", e))?;
-    
+
     Ok(output_path)
 }
 
@@ -778,11 +791,12 @@ pub async fn import_db_from_json(
         .await
         .map_err(|e| format!("Failed to connect source database: {}", e))?;
     let migration = DatabaseMigration::new(db_pool);
-    
-    migration.import_from_json(&input_path)
+
+    migration
+        .import_from_json(&input_path)
         .await
         .map_err(|e| format!("Import failed: {}", e))?;
-    
+
     Ok("Import completed successfully".to_string())
 }
 
@@ -799,20 +813,23 @@ pub async fn migrate_database(
     let source_pool = DatabasePool::connect(&source_config)
         .await
         .map_err(|e| format!("Failed to connect source database: {}", e))?;
-    
+
     // Connect to target database
     let target_pool = DatabasePool::connect(&target_config)
         .await
         .map_err(|e| format!("Failed to connect to target database: {}", e))?;
-    
-    let migration = DatabaseMigration::new(source_pool)
-        .with_target(target_pool);
-    
-    migration.migrate()
+
+    let migration = DatabaseMigration::new(source_pool).with_target(target_pool);
+
+    migration
+        .migrate()
         .await
         .map_err(|e| format!("Migration failed: {}", e))?;
-    
-    Ok(format!("Migration to {:?} completed successfully", target_config.db_type))
+
+    Ok(format!(
+        "Migration to {:?} completed successfully",
+        target_config.db_type
+    ))
 }
 
 /// Save database configuration to a persistent file

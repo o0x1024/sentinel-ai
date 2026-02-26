@@ -33,16 +33,13 @@ impl McpService {
         let conn_id = crate::commands::mcp_commands::get_connection_id_by_name(conn_name)
             .await
             .ok_or_else(|| anyhow::anyhow!("MCP server '{}' is not connected", conn_name))?;
-            
+
         // Execute tool through the command function
-        let result = crate::commands::mcp_commands::mcp_call_tool(
-            conn_id,
-            tool_name.to_string(),
-            params
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("MCP tool execution failed: {}", e))?;
-        
+        let result =
+            crate::commands::mcp_commands::mcp_call_tool(conn_id, tool_name.to_string(), params)
+                .await
+                .map_err(|e| anyhow::anyhow!("MCP tool execution failed: {}", e))?;
+
         Ok(result)
     }
 }

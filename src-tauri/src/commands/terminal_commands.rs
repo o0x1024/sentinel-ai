@@ -1,11 +1,11 @@
 //! Terminal WebSocket server commands
 
+use once_cell::sync::Lazy;
 use sentinel_tools::terminal::TerminalServer;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use once_cell::sync::Lazy;
 
 /// Global terminal server
 pub static TERMINAL_SERVER: Lazy<Arc<RwLock<Option<Arc<TerminalServer>>>>> =
@@ -29,9 +29,7 @@ impl Default for TerminalServerConfig {
 
 /// Start terminal server
 #[tauri::command]
-pub async fn start_terminal_server(
-    config: Option<TerminalServerConfig>,
-) -> Result<String, String> {
+pub async fn start_terminal_server(config: Option<TerminalServerConfig>) -> Result<String, String> {
     let config = config.unwrap_or_default();
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
@@ -90,7 +88,8 @@ pub async fn get_terminal_server_status() -> Result<TerminalServerStatus, String
 
 /// List terminal sessions
 #[tauri::command]
-pub async fn list_terminal_sessions() -> Result<Vec<sentinel_tools::terminal::SessionInfo>, String> {
+pub async fn list_terminal_sessions() -> Result<Vec<sentinel_tools::terminal::SessionInfo>, String>
+{
     let server_guard = TERMINAL_SERVER.read().await;
 
     if let Some(server) = server_guard.as_ref() {
@@ -148,7 +147,8 @@ pub async fn cleanup_terminal_containers() -> Result<Vec<String>, String> {
 
 /// Get container info for all sessions
 #[tauri::command]
-pub async fn get_terminal_container_info() -> Result<Vec<sentinel_tools::terminal::ContainerInfo>, String> {
+pub async fn get_terminal_container_info(
+) -> Result<Vec<sentinel_tools::terminal::ContainerInfo>, String> {
     let server_guard = TERMINAL_SERVER.read().await;
 
     if let Some(server) = server_guard.as_ref() {

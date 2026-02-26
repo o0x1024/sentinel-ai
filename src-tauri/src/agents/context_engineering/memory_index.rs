@@ -73,7 +73,11 @@ pub async fn ingest_memory_items_persistent(
     let items_to_persist: Vec<(String, String)> = facts
         .iter()
         .map(|t| (t.clone(), "fact".to_string()))
-        .chain(decisions.iter().map(|t| (t.clone(), "decision".to_string())))
+        .chain(
+            decisions
+                .iter()
+                .map(|t| (t.clone(), "decision".to_string())),
+        )
         .chain(todos.iter().map(|t| (t.clone(), "todo".to_string())))
         .filter(|(t, _)| !t.trim().is_empty())
         .collect();
@@ -147,7 +151,13 @@ pub async fn retrieve_memory_items_hybrid(
             let ks = keyword_score_raw(&query.query, &item.text);
             (
                 item.text.clone(),
-                (ks, item.id.clone(), item.kind.clone(), item.importance, item.created_at_ms),
+                (
+                    ks,
+                    item.id.clone(),
+                    item.kind.clone(),
+                    item.importance,
+                    item.created_at_ms,
+                ),
             )
         })
         .collect();
@@ -156,7 +166,10 @@ pub async fn retrieve_memory_items_hybrid(
     let vector_results = match vector_retrieve(app_handle, &query.query, query.top_k * 2).await {
         Ok(results) => results,
         Err(e) => {
-            tracing::warn!("Vector retrieval failed, falling back to keyword-only: {}", e);
+            tracing::warn!(
+                "Vector retrieval failed, falling back to keyword-only: {}",
+                e
+            );
             return retrieve_memory_items(state, query);
         }
     };
@@ -172,11 +185,19 @@ pub async fn retrieve_memory_items_hybrid(
         }
 
         let (ks, importance, kind, id, created_at_ms) =
-            if let Some((kw_score, item_id, item_kind, imp, cat)) = keyword_scores.get(&normalized_text) {
+            if let Some((kw_score, item_id, item_kind, imp, cat)) =
+                keyword_scores.get(&normalized_text)
+            {
                 (*kw_score, *imp, item_kind.clone(), item_id.clone(), *cat)
             } else {
                 let ks = keyword_score_raw(&query.query, &normalized_text);
-                (ks, 3u8, "fact".to_string(), uuid::Uuid::new_v4().to_string(), now_ms)
+                (
+                    ks,
+                    3u8,
+                    "fact".to_string(),
+                    uuid::Uuid::new_v4().to_string(),
+                    now_ms,
+                )
             };
 
         let recency = recency_score(created_at_ms, now_ms);
@@ -219,7 +240,11 @@ pub async fn retrieve_memory_items_hybrid(
         }
     }
 
-    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(query.top_k.max(1));
 
     // 5) Expand with knowledge graph associations
@@ -303,11 +328,9 @@ async fn vector_retrieve(
         .try_state::<Arc<sentinel_db::DatabaseService>>()
         .ok_or_else(|| anyhow::anyhow!("DatabaseService not available"))?;
 
-    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(
-        db.inner().clone(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("RAG service init failed: {}", e))?;
+    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("RAG service init failed: {}", e))?;
 
     let collection_id =
         crate::commands::rag_commands::ensure_memory_collection_exists(db.inner().clone())
@@ -337,19 +360,14 @@ async fn vector_retrieve(
     Ok(results)
 }
 
-async fn persist_to_vector_store(
-    app_handle: &AppHandle,
-    items: &[(String, String)],
-) -> Result<()> {
+async fn persist_to_vector_store(app_handle: &AppHandle, items: &[(String, String)]) -> Result<()> {
     let db = app_handle
         .try_state::<Arc<sentinel_db::DatabaseService>>()
         .ok_or_else(|| anyhow::anyhow!("DatabaseService not available"))?;
 
-    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(
-        db.inner().clone(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("RAG service init failed: {}", e))?;
+    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("RAG service init failed: {}", e))?;
 
     let collection_id =
         crate::commands::rag_commands::ensure_memory_collection_exists(db.inner().clone())
@@ -378,7 +396,10 @@ async fn persist_to_vector_store(
         let existing = rag_service.query(check_request).await;
         if let Ok(resp) = existing {
             if !resp.results.is_empty() && resp.results[0].score > 0.92 {
-                tracing::debug!("Skipping duplicate memory item (score={:.3})", resp.results[0].score);
+                tracing::debug!(
+                    "Skipping duplicate memory item (score={:.3})",
+                    resp.results[0].score
+                );
                 continue;
             }
         }

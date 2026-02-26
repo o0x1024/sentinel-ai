@@ -1,14 +1,14 @@
 use crate::services::database::DatabaseService;
-use sentinel_db::Database;
 use log::{info, warn};
-use sentinel_rag::config::RagConfig as RagConfigRag;
 use sentinel_core::models::rag_config::RagConfig as RagConfigCore;
+use sentinel_db::Database;
+use sentinel_rag::config::RagConfig as RagConfigRag;
+use sentinel_rag::db::RagDatabase;
 use sentinel_rag::models::{
-    IngestRequest, IngestResponse, RagQueryRequest, RagQueryResponse, RagStatus,
-    DocumentSource, DocumentChunk,
+    DocumentChunk, DocumentSource, IngestRequest, IngestResponse, RagQueryRequest,
+    RagQueryResponse, RagStatus,
 };
 use sentinel_rag::service::RagService;
-use sentinel_rag::db::RagDatabase;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -33,23 +33,42 @@ fn get_reloading_flag() -> Arc<tokio::sync::RwLock<bool>> {
         .clone()
 }
 
-
 // 转换函数：ChunkingStrategy
-fn convert_chunking_strategy_core_to_rag(strategy: sentinel_core::models::rag_config::ChunkingStrategy) -> sentinel_rag::config::ChunkingStrategy {
+fn convert_chunking_strategy_core_to_rag(
+    strategy: sentinel_core::models::rag_config::ChunkingStrategy,
+) -> sentinel_rag::config::ChunkingStrategy {
     match strategy {
-        sentinel_core::models::rag_config::ChunkingStrategy::FixedSize => sentinel_rag::config::ChunkingStrategy::FixedSize,
-        sentinel_core::models::rag_config::ChunkingStrategy::RecursiveCharacter => sentinel_rag::config::ChunkingStrategy::RecursiveCharacter,
-        sentinel_core::models::rag_config::ChunkingStrategy::Semantic => sentinel_rag::config::ChunkingStrategy::Semantic,
-        sentinel_core::models::rag_config::ChunkingStrategy::StructureAware => sentinel_rag::config::ChunkingStrategy::StructureAware,
+        sentinel_core::models::rag_config::ChunkingStrategy::FixedSize => {
+            sentinel_rag::config::ChunkingStrategy::FixedSize
+        }
+        sentinel_core::models::rag_config::ChunkingStrategy::RecursiveCharacter => {
+            sentinel_rag::config::ChunkingStrategy::RecursiveCharacter
+        }
+        sentinel_core::models::rag_config::ChunkingStrategy::Semantic => {
+            sentinel_rag::config::ChunkingStrategy::Semantic
+        }
+        sentinel_core::models::rag_config::ChunkingStrategy::StructureAware => {
+            sentinel_rag::config::ChunkingStrategy::StructureAware
+        }
     }
 }
 
-fn convert_chunking_strategy_rag_to_core(strategy: sentinel_rag::config::ChunkingStrategy) -> sentinel_core::models::rag_config::ChunkingStrategy {
+fn convert_chunking_strategy_rag_to_core(
+    strategy: sentinel_rag::config::ChunkingStrategy,
+) -> sentinel_core::models::rag_config::ChunkingStrategy {
     match strategy {
-        sentinel_rag::config::ChunkingStrategy::FixedSize => sentinel_core::models::rag_config::ChunkingStrategy::FixedSize,
-        sentinel_rag::config::ChunkingStrategy::RecursiveCharacter => sentinel_core::models::rag_config::ChunkingStrategy::RecursiveCharacter,
-        sentinel_rag::config::ChunkingStrategy::Semantic => sentinel_core::models::rag_config::ChunkingStrategy::Semantic,
-        sentinel_rag::config::ChunkingStrategy::StructureAware => sentinel_core::models::rag_config::ChunkingStrategy::StructureAware,
+        sentinel_rag::config::ChunkingStrategy::FixedSize => {
+            sentinel_core::models::rag_config::ChunkingStrategy::FixedSize
+        }
+        sentinel_rag::config::ChunkingStrategy::RecursiveCharacter => {
+            sentinel_core::models::rag_config::ChunkingStrategy::RecursiveCharacter
+        }
+        sentinel_rag::config::ChunkingStrategy::Semantic => {
+            sentinel_core::models::rag_config::ChunkingStrategy::Semantic
+        }
+        sentinel_rag::config::ChunkingStrategy::StructureAware => {
+            sentinel_core::models::rag_config::ChunkingStrategy::StructureAware
+        }
     }
 }
 
@@ -138,18 +157,24 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
                     // 查找匹配的提供商
                     for (_key, provider_data) in providers_obj {
                         if let Some(provider_obj) = provider_data.as_object() {
-                            if let Some(provider_name) = provider_obj.get("provider").and_then(|v| v.as_str()) {
+                            if let Some(provider_name) =
+                                provider_obj.get("provider").and_then(|v| v.as_str())
+                            {
                                 // 匹配提供商名称（不区分大小写）
                                 if provider_name.eq_ignore_ascii_case(&config.embedding_provider) {
                                     // 获取 api_base
-                                    if let Some(api_base) = provider_obj.get("api_base").and_then(|v| v.as_str()) {
+                                    if let Some(api_base) =
+                                        provider_obj.get("api_base").and_then(|v| v.as_str())
+                                    {
                                         if !api_base.is_empty() {
                                             config.embedding_base_url = Some(api_base.to_string());
                                             info!("从 AI 配置中获取嵌入服务地址: {}", api_base);
                                         }
                                     }
                                     // 获取 api_key
-                                    if let Some(api_key) = provider_obj.get("api_key").and_then(|v| v.as_str()) {
+                                    if let Some(api_key) =
+                                        provider_obj.get("api_key").and_then(|v| v.as_str())
+                                    {
                                         if !api_key.is_empty() {
                                             config.embedding_api_key = Some(api_key.to_string());
                                             info!("从 AI 配置中获取嵌入服务 API Key");
@@ -192,7 +217,9 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
 }
 
 /// 获取并尝试初始化全局RAG服务实例
-pub async fn get_or_init_rag_service(database: Arc<DatabaseService>) -> Result<Arc<AppRagService>, String> {
+pub async fn get_or_init_rag_service(
+    database: Arc<DatabaseService>,
+) -> Result<Arc<AppRagService>, String> {
     if let Some(service_wrapper) = GLOBAL_RAG_SERVICE.get() {
         let service_guard = service_wrapper.read().await;
         if let Some(service) = service_guard.as_ref() {
@@ -203,11 +230,15 @@ pub async fn get_or_init_rag_service(database: Arc<DatabaseService>) -> Result<A
     // 如果未初始化或服务不可用，尝试初始化
     initialize_global_rag_service(database.clone()).await?;
 
-    let service_wrapper = GLOBAL_RAG_SERVICE.get()
+    let service_wrapper = GLOBAL_RAG_SERVICE
+        .get()
         .ok_or("Global RAG service failed to set during auto-initialization")?;
-    
+
     let service_guard = service_wrapper.read().await;
-    service_guard.as_ref().cloned().ok_or("RAG service not available after initialization".to_string())
+    service_guard
+        .as_ref()
+        .cloned()
+        .ok_or("RAG service not available after initialization".to_string())
 }
 
 /// 获取已初始化的全局RAG服务实例（如果尚未初始化则报错）
@@ -325,19 +356,23 @@ pub async fn rag_batch_ingest_sources(
     let batch_id = uuid::Uuid::new_v4().to_string();
     let total = file_paths.len();
     let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
-    
+
     // 使用信号量控制并发数
     let max_concurrent = 3; // 最多同时处理3个文件
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
-    
+
     let mut tasks = Vec::new();
     let success_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let failed_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let total_chunks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let failures = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    
+
     for (index, file_path) in file_paths.into_iter().enumerate() {
-        let permit = semaphore.clone().acquire_owned().await.map_err(|e| e.to_string())?;
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
         let rag_service = rag_service.clone();
         let collection_id = collection_id.clone();
         let app = app.clone();
@@ -346,13 +381,17 @@ pub async fn rag_batch_ingest_sources(
         let failed_count = failed_count.clone();
         let total_chunks = total_chunks.clone();
         let failures = failures.clone();
-        
+
         let task = tokio::spawn(async move {
             let _permit = permit; // 持有许可直到任务完成
-            
+
             let current = index + 1;
-            let file_name = file_path.split('/').next_back().unwrap_or(&file_path).to_string();
-            
+            let file_name = file_path
+                .split('/')
+                .next_back()
+                .unwrap_or(&file_path)
+                .to_string();
+
             // 发送进度事件
             let progress = BatchIngestProgress {
                 batch_id: batch_id.clone(),
@@ -364,7 +403,7 @@ pub async fn rag_batch_ingest_sources(
                 status: "processing".to_string(),
             };
             let _ = app.emit("rag_batch_ingest_progress", &progress);
-            
+
             // 执行导入
             let request = IngestRequest {
                 file_path: file_path.clone(),
@@ -374,18 +413,24 @@ pub async fn rag_batch_ingest_sources(
                     ("file_name".to_string(), file_name.clone()),
                 ])),
             };
-            
+
             match rag_service.ingest_source(request).await {
                 Ok(response) => {
                     success_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    total_chunks.fetch_add(response.chunks_created, std::sync::atomic::Ordering::Relaxed);
-                    info!("文件 {} 导入成功，创建 {} 个块", file_name, response.chunks_created);
+                    total_chunks.fetch_add(
+                        response.chunks_created,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    info!(
+                        "文件 {} 导入成功，创建 {} 个块",
+                        file_name, response.chunks_created
+                    );
                 }
                 Err(e) => {
                     failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let error_msg = e.to_string();
                     warn!("文件 {} 导入失败: {}", file_name, error_msg);
-                    
+
                     let mut failures_guard = failures.lock().await;
                     failures_guard.push(BatchIngestFailure {
                         file_path: file_path.clone(),
@@ -394,20 +439,20 @@ pub async fn rag_batch_ingest_sources(
                 }
             }
         });
-        
+
         tasks.push(task);
     }
-    
+
     // 等待所有任务完成
     for task in tasks {
         let _ = task.await;
     }
-    
+
     let success = success_count.load(std::sync::atomic::Ordering::Relaxed);
     let failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);
     let chunks = total_chunks.load(std::sync::atomic::Ordering::Relaxed);
     let failures_vec = failures.lock().await.clone();
-    
+
     // 发送完成事件
     let final_progress = BatchIngestProgress {
         batch_id: batch_id.clone(),
@@ -416,12 +461,19 @@ pub async fn rag_batch_ingest_sources(
         success,
         failed,
         current_file: String::new(),
-        status: if failed == 0 { "completed".to_string() } else { "partial".to_string() },
+        status: if failed == 0 {
+            "completed".to_string()
+        } else {
+            "partial".to_string()
+        },
     };
     let _ = app.emit("rag_batch_ingest_progress", &final_progress);
-    
-    info!("批量导入完成: 成功 {}/{}, 总块数 {}", success, total, chunks);
-    
+
+    info!(
+        "批量导入完成: 成功 {}/{}, 总块数 {}",
+        success, total, chunks
+    );
+
     Ok(BatchIngestResponse {
         batch_id,
         total,
@@ -570,19 +622,19 @@ pub async fn list_rag_documents_paginated(
     let page = page.max(1);
     let page_size = page_size.clamp(1, 100);
     let offset = (page - 1) * page_size;
-    
+
     let (documents, total_count) = RagDatabase::get_rag_documents_paginated(
-        database.inner().as_ref(), 
-        &collection_id, 
-        page_size, 
-        offset, 
-        search_query.as_deref()
+        database.inner().as_ref(),
+        &collection_id,
+        page_size,
+        offset,
+        search_query.as_deref(),
     )
     .await
     .map_err(|e| format!("获取文档列表失败: {}", e))?;
-    
+
     let total_pages = (total_count as f64 / page_size as f64).ceil() as i64;
-    
+
     Ok(PaginatedDocumentsResponse {
         documents,
         total_count,
@@ -633,7 +685,7 @@ pub async fn rag_get_supported_file_types() -> Result<Vec<String>, String> {
 
     // 从 sentinel_rag 的 SupportedFileType 枚举获取
     use sentinel_rag::config::SupportedFileType;
-    
+
     Ok(SupportedFileType::primary_extensions())
 }
 
@@ -662,7 +714,7 @@ pub async fn create_rag_collection(
     }
 
     let rag_service = get_or_init_rag_service(database.inner().clone()).await?;
-    
+
     let _collection_id = rag_service
         .create_collection(&name, description.as_deref())
         .await
@@ -728,11 +780,12 @@ pub async fn update_rag_collection(
     description: Option<String>,
 ) -> Result<bool, String> {
     info!("更新RAG集合: {} -> {}", collection_id, name);
-    
-    database.update_rag_collection(&collection_id, &name, description.as_deref())
+
+    database
+        .update_rag_collection(&collection_id, &name, description.as_deref())
         .await
         .map_err(|e| format!("Failed to update collection: {}", e))?;
-    
+
     Ok(true)
 }
 
@@ -773,28 +826,28 @@ pub async fn save_rag_config(
     match database.inner().save_rag_config(&core_config).await {
         Ok(_) => {
             info!("RAG配置已成功保存到数据库");
-            
+
             // 检查是否有正在进行的重载操作
             let reloading_flag = get_reloading_flag();
             let is_reloading = *reloading_flag.read().await;
-            
+
             if is_reloading {
                 warn!("RAG服务正在重载中，跳过本次重载请求");
             } else {
                 // 异步重载RAG服务，不阻塞配置保存
                 let database_clone = database.inner().clone();
                 let app_clone = app.clone();
-                
+
                 tokio::spawn(async move {
                     let reloading_flag = get_reloading_flag();
                     {
                         let mut flag = reloading_flag.write().await;
                         *flag = true;
                     }
-                    
+
                     // 等待一小段时间，确保没有正在进行的操作
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    
+
                     match initialize_global_rag_service(database_clone).await {
                         Ok(_) => {
                             info!("RAG服务已成功重载");
@@ -805,14 +858,14 @@ pub async fn save_rag_config(
                             let _ = app_clone.emit("rag_service_reload_failed", e);
                         }
                     }
-                    
+
                     {
                         let mut flag = reloading_flag.write().await;
                         *flag = false;
                     }
                 });
             }
-            
+
             // 向前端广播配置变更事件
             if let Err(e) = app.emit("rag_config_updated", &core_config) {
                 log::warn!("Failed to emit rag_config_updated: {}", e);
@@ -853,27 +906,43 @@ pub async fn reset_rag_config(
 /// 检查路径是否为敏感系统目录
 fn is_sensitive_directory(path: &std::path::Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    
+
     // 系统敏感目录黑名单
     let sensitive_dirs = [
         // Windows
-        "c:\\windows", "c:\\program files", "c:\\programdata", 
-        "c:\\system32", "c:\\syswow64",
+        "c:\\windows",
+        "c:\\program files",
+        "c:\\programdata",
+        "c:\\system32",
+        "c:\\syswow64",
         // macOS/Linux
-        "/system", "/private", "/usr/bin", "/usr/sbin", 
-        "/bin", "/sbin", "/etc", "/var", "/tmp", "/dev",
-        "/proc", "/sys", "/boot", "/root",
+        "/system",
+        "/private",
+        "/usr/bin",
+        "/usr/sbin",
+        "/bin",
+        "/sbin",
+        "/etc",
+        "/var",
+        "/tmp",
+        "/dev",
+        "/proc",
+        "/sys",
+        "/boot",
+        "/root",
         // 应用敏感目录
-        "/library/keychains", "/library/application support",
-        "\\appdata\\local", "\\appdata\\roaming",
+        "/library/keychains",
+        "/library/application support",
+        "\\appdata\\local",
+        "\\appdata\\roaming",
     ];
-    
+
     for sensitive in &sensitive_dirs {
         if path_str.starts_with(sensitive) || path_str.contains(sensitive) {
             return true;
         }
     }
-    
+
     false
 }
 
@@ -905,7 +974,7 @@ pub async fn get_folder_files(
     for entry in WalkDir::new(folder)
         .max_depth(10) // 限制遍历深度
         .into_iter()
-        .filter_map(|e| e.ok()) 
+        .filter_map(|e| e.ok())
     {
         if files.len() >= max_files {
             warn!("文件数量超过限制 {}，停止遍历", max_files);
@@ -932,7 +1001,6 @@ pub async fn get_folder_files(
     info!("在文件夹 {} 中找到 {} 个文档文件", folder_path, files.len());
     Ok(files)
 }
-
 
 /// 确保默认RAG集合存在
 #[tauri::command]
@@ -1066,14 +1134,20 @@ pub async fn test_embedding_connection(
                 if let Some(providers_obj) = providers.as_object() {
                     for (_key, provider_data) in providers_obj {
                         if let Some(provider_obj) = provider_data.as_object() {
-                            if let Some(provider_name) = provider_obj.get("provider").and_then(|v| v.as_str()) {
+                            if let Some(provider_name) =
+                                provider_obj.get("provider").and_then(|v| v.as_str())
+                            {
                                 if provider_name.eq_ignore_ascii_case(&embedding_config.provider) {
-                                    if let Some(api_base) = provider_obj.get("api_base").and_then(|v| v.as_str()) {
+                                    if let Some(api_base) =
+                                        provider_obj.get("api_base").and_then(|v| v.as_str())
+                                    {
                                         if !api_base.is_empty() {
                                             embedding_config.base_url = Some(api_base.to_string());
                                         }
                                     }
-                                    if let Some(api_key) = provider_obj.get("api_key").and_then(|v| v.as_str()) {
+                                    if let Some(api_key) =
+                                        provider_obj.get("api_key").and_then(|v| v.as_str())
+                                    {
                                         if !api_key.is_empty() {
                                             embedding_config.api_key = Some(api_key.to_string());
                                         }
@@ -1151,12 +1225,12 @@ pub async fn ensure_memory_collection_exists(
     database: Arc<DatabaseService>,
 ) -> Result<String, String> {
     info!("Ensuring memory collection exists");
-    
+
     let rag_service = get_or_init_rag_service(database).await?;
-    
+
     // 获取所有集合
     let status = rag_service.get_status().await.map_err(|e| e.to_string())?;
-    
+
     // 检查是否已存在memory集合
     for collection in &status.collections {
         if collection.name == MEMORY_COLLECTION_NAME {
@@ -1164,14 +1238,14 @@ pub async fn ensure_memory_collection_exists(
             return Ok(collection.id.clone());
         }
     }
-    
+
     // 不存在则创建
     info!("Creating memory collection: {}", MEMORY_COLLECTION_NAME);
     let collection_id = rag_service
         .create_collection(MEMORY_COLLECTION_NAME, Some(MEMORY_COLLECTION_DESCRIPTION))
         .await
         .map_err(|e| format!("Failed to create memory collection: {}", e))?;
-    
+
     info!("Memory collection created successfully: {}", collection_id);
     Ok(collection_id)
 }

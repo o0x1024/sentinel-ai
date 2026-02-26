@@ -65,10 +65,8 @@ impl AiServiceWrapper {
 
     // 对话管理方法
     pub async fn create_conversation(&self, title: Option<String>) -> Result<String> {
-        let mut conversation = AiConversation::new(
-            self.config.model.clone(),
-            self.config.provider.clone(),
-        );
+        let mut conversation =
+            AiConversation::new(self.config.model.clone(), self.config.provider.clone());
         conversation.id = Uuid::new_v4().to_string();
         conversation.title = title;
         self.db.create_ai_conversation(&conversation).await?;
@@ -76,7 +74,9 @@ impl AiServiceWrapper {
     }
 
     pub async fn get_conversation_history(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
-        self.db.get_ai_messages_by_conversation(conversation_id).await
+        self.db
+            .get_ai_messages_by_conversation(conversation_id)
+            .await
     }
 
     pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
@@ -87,7 +87,11 @@ impl AiServiceWrapper {
         self.db.get_ai_conversations().await
     }
 
-    pub async fn list_conversations_paginated(&self, limit: i64, offset: i64) -> Result<Vec<AiConversation>> {
+    pub async fn list_conversations_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<AiConversation>> {
         self.db.get_ai_conversations_paginated(limit, offset).await
     }
 
@@ -95,8 +99,14 @@ impl AiServiceWrapper {
         self.db.get_ai_conversations_count().await
     }
 
-    pub async fn update_conversation_title(&self, conversation_id: &str, title: &str) -> Result<()> {
-        self.db.update_ai_conversation_title(conversation_id, title).await
+    pub async fn update_conversation_title(
+        &self,
+        conversation_id: &str,
+        title: &str,
+    ) -> Result<()> {
+        self.db
+            .update_ai_conversation_title(conversation_id, title)
+            .await
     }
 
     pub async fn archive_conversation(&self, _conversation_id: &str) -> Result<()> {
@@ -132,7 +142,6 @@ impl AiServiceWrapper {
             );
         }
     }
-
 }
 
 #[derive(Debug, Deserialize)]
@@ -222,7 +231,13 @@ impl AiServiceManager {
                                     temperature: Some(temperature),
                                     max_tokens: Some(max_tokens),
                                     rig_provider,
-                                    max_turns: self.db.get_config("ai", "max_turns").await.ok().flatten().and_then(|s| s.parse().ok()),
+                                    max_turns: self
+                                        .db
+                                        .get_config("ai", "max_turns")
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .and_then(|s| s.parse().ok()),
                                 }));
                             }
                         }
@@ -288,7 +303,13 @@ impl AiServiceManager {
                 temperature: Some(temperature),
                 max_tokens: Some(max_tokens),
                 rig_provider,
-                max_turns: self.db.get_config("ai", "max_turns").await.ok().flatten().and_then(|s| s.parse().ok()),
+                max_turns: self
+                    .db
+                    .get_config("ai", "max_turns")
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.parse().ok()),
             }));
         }
 
@@ -343,7 +364,10 @@ impl AiServiceManager {
         debug!("Initializing default AI services...");
 
         // Get global default model as fallback
-        let global_default_model = self.db.get_config("ai", "default_llm_model").await
+        let global_default_model = self
+            .db
+            .get_config("ai", "default_llm_model")
+            .await
             .ok()
             .flatten()
             .unwrap_or_default();
@@ -368,37 +392,42 @@ impl AiServiceManager {
 
                         // Use provider's default model, or fall back to global default model
                         let mut default_model = provider_config.default_model.clone();
-                        
+
                         // If provider model is empty, try to extract from global default
                         if default_model.is_empty() && !global_default_model.is_empty() {
                             // Check if global default is in format "provider/model"
                             if let Some(slash_idx) = global_default_model.find('/') {
-                                let (model_provider, model_name) = global_default_model.split_at(slash_idx);
+                                let (model_provider, model_name) =
+                                    global_default_model.split_at(slash_idx);
                                 let model_name = &model_name[1..]; // Skip the '/'
-                                
+
                                 // Use global default model if it matches this provider
-                                if model_provider.eq_ignore_ascii_case(&provider_config.name) 
-                                    || model_provider.eq_ignore_ascii_case(&provider_config.provider) {
+                                if model_provider.eq_ignore_ascii_case(&provider_config.name)
+                                    || model_provider
+                                        .eq_ignore_ascii_case(&provider_config.provider)
+                                {
                                     default_model = model_name.to_string();
-                                    debug!("Using global default model for {}: {}", provider_config.name, model_name);
+                                    debug!(
+                                        "Using global default model for {}: {}",
+                                        provider_config.name, model_name
+                                    );
                                 }
                             } else {
                                 // Global default doesn't have provider prefix, use it as-is
                                 default_model = global_default_model.clone();
-                                debug!("Using global default model for {}: {}", provider_config.name, default_model);
+                                debug!(
+                                    "Using global default model for {}: {}",
+                                    provider_config.name, default_model
+                                );
                             }
                         }
-                        
+
                         if default_model.is_empty() {
                             warn!("Provider {} has no default model configured, service may not work properly", provider_config.name);
                         }
-                        
-                        let api_base = provider_config
-                            .api_base
-                            .filter(|s| !s.is_empty());
-                        let organization = provider_config
-                            .organization
-                            .filter(|s| !s.is_empty());
+
+                        let api_base = provider_config.api_base.filter(|s| !s.is_empty());
+                        let organization = provider_config.organization.filter(|s| !s.is_empty());
 
                         let rig_provider = provider_config
                             .rig_provider
@@ -411,7 +440,10 @@ impl AiServiceManager {
                         );
 
                         // Read max_turns from database
-                        let max_turns = self.db.get_config("ai", "max_turns").await
+                        let max_turns = self
+                            .db
+                            .get_config("ai", "max_turns")
+                            .await
                             .ok()
                             .flatten()
                             .and_then(|s| s.parse::<usize>().ok());
@@ -430,8 +462,7 @@ impl AiServiceManager {
 
                         // Use lowercase name as service key for consistency
                         let service_key = provider_config.name.to_lowercase();
-                        if let Err(e) = self.add_service(service_key.clone(), config).await
-                        {
+                        if let Err(e) = self.add_service(service_key.clone(), config).await {
                             error!(
                                 "Failed to add service for provider {}: {}",
                                 provider_config.name, e
@@ -456,16 +487,26 @@ impl AiServiceManager {
             _ => {
                 // Migrate from legacy key if exists
                 if let Ok(Some(legacy)) = self.db.get_config("ai", "default_provider").await {
-                    info!("Migrating default_provider to default_llm_provider: {}", legacy);
-                    let _ = self.db.set_config("ai", "default_llm_provider", &legacy, 
-                        Some("Global default LLM provider")).await;
+                    info!(
+                        "Migrating default_provider to default_llm_provider: {}",
+                        legacy
+                    );
+                    let _ = self
+                        .db
+                        .set_config(
+                            "ai",
+                            "default_llm_provider",
+                            &legacy,
+                            Some("Global default LLM provider"),
+                        )
+                        .await;
                     Some(legacy)
                 } else {
                     None
                 }
             }
         };
-        
+
         if let Some(provider) = default_llm_provider {
             let provider_key = provider.to_lowercase();
             if self.get_service(&provider_key).is_some() {
@@ -501,8 +542,15 @@ impl AiServiceManager {
         }
 
         let preferred = vec![
-            "deepseek", "openai", "anthropic", "gemini", "groq", "ollama", "moonshot",
-            "openrouter", "modelscope",
+            "deepseek",
+            "openai",
+            "anthropic",
+            "gemini",
+            "groq",
+            "ollama",
+            "moonshot",
+            "openrouter",
+            "modelscope",
         ];
 
         for provider in preferred {
@@ -529,10 +577,10 @@ impl AiServiceManager {
 
     pub async fn set_default_alias_to(&self, provider: &str) -> anyhow::Result<()> {
         let provider_lc = provider.to_lowercase();
-        
+
         // First try to get service by lowercase name (our standard key format)
         let service = self.get_service(&provider_lc);
-        
+
         // If not found, search by provider field in config
         let service = if service.is_some() {
             service
@@ -570,14 +618,21 @@ impl AiServiceManager {
             temperature: Some(temperature),
             max_tokens: Some(max_tokens),
             rig_provider: None,
-            max_turns: self.db.get_config("ai", "max_turns").await.ok().flatten().and_then(|s| s.parse().ok()),
+            max_turns: self
+                .db
+                .get_config("ai", "max_turns")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok()),
         };
         self.add_service("default".to_string(), config).await?;
         Ok(())
     }
 
     async fn load_generation_settings(&self) -> (f32, u32) {
-        let temperature = self.db
+        let temperature = self
+            .db
             .get_config("ai", "temperature")
             .await
             .ok()
@@ -585,7 +640,8 @@ impl AiServiceManager {
             .and_then(|s| s.parse::<f32>().ok())
             .unwrap_or(0.7);
 
-        let max_tokens = self.db
+        let max_tokens = self
+            .db
             .get_config("ai", "max_tokens")
             .await
             .ok()
@@ -595,7 +651,6 @@ impl AiServiceManager {
 
         (temperature, max_tokens)
     }
-
 }
 
 // 模型相关方法
@@ -716,7 +771,12 @@ impl AiServiceManager {
         let config_key = format!("default_{}_model", model_type);
         let model_value = format!("{}/{}", provider, model_name);
         self.db
-            .set_config("ai", &config_key, &model_value, Some(&format!("Default {} model", model_type)))
+            .set_config(
+                "ai",
+                &config_key,
+                &model_value,
+                Some(&format!("Default {} model", model_type)),
+            )
             .await?;
         info!("Set default {} model to: {}", model_type, model_value);
         Ok(())

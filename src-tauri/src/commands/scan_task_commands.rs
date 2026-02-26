@@ -1,8 +1,8 @@
 //! Scan task commands module
 
 use crate::services::database::DatabaseService;
-use sentinel_db::Database;
 use sentinel_core::models::database::ScanTask;
+use sentinel_db::Database;
 use std::sync::Arc;
 use tauri::State;
 
@@ -12,7 +12,8 @@ pub async fn get_scan_tasks(
     project_id: Option<String>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<ScanTask>, String> {
-    db_service.get_scan_tasks(project_id.as_deref())
+    db_service
+        .get_scan_tasks(project_id.as_deref())
         .await
         .map_err(|e: anyhow::Error| format!("Failed to get scan tasks: {}", e))
 }
@@ -23,7 +24,8 @@ pub async fn create_scan_task(
     task: ScanTask,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    db_service.create_scan_task(&task)
+    db_service
+        .create_scan_task(&task)
         .await
         .map_err(|e: anyhow::Error| format!("Failed to create scan task: {}", e))
 }
@@ -36,7 +38,8 @@ pub async fn update_scan_task_status(
     progress: Option<f64>,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    db_service.update_scan_task_status(&task_id, &status, progress)
+    db_service
+        .update_scan_task_status(&task_id, &status, progress)
         .await
         .map_err(|e: anyhow::Error| format!("Failed to update scan task status: {}", e))
 }
@@ -47,7 +50,8 @@ pub async fn delete_scan_task(
     task_id: String,
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    db_service.delete_scan_task(&task_id)
+    db_service
+        .delete_scan_task(&task_id)
         .await
         .map_err(|e: anyhow::Error| format!("Failed to delete scan task: {}", e))
 }

@@ -6,25 +6,27 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 use sentinel_db::Database;
-use sentinel_llm::{ChatMessage, StreamContent, StreamingLlmClient, parse_image_from_json};
-use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
-use sentinel_tools::ToolServer;
-use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
-use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
 use sentinel_db::DatabaseService;
+use sentinel_llm::{parse_image_from_json, ChatMessage, StreamContent, StreamingLlmClient};
+use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
+use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
+use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::ToolServer;
 
-use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
-use crate::agents::context_engineering::reflection::{record_execution_reflection, ExecutionOutcome};
+use super::AgentExecuteParams;
+use crate::agents::context_engineering::reflection::{
+    record_execution_reflection, ExecutionOutcome,
+};
 use crate::agents::executor::message_store::save_assistant_message;
 use crate::agents::executor::types::ToolCallRecord;
 use crate::agents::executor::utils::{cleanup_container_context_async, truncate_for_memory};
 use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
 use crate::agents::tool_router::ToolRouter;
+use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
 use crate::commands::code_audit_commands::{
     upsert_agent_audit_findings_with_db, AgentAuditFindingInput, UpsertAgentAuditFindingsRequest,
 };
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
-use super::AgentExecuteParams;
 
 async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
     match db.get_config("agent", "skills_enabled").await {
@@ -63,18 +65,21 @@ async fn register_skills_tool_guard(
     let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
         let db = db.clone();
         Box::pin(async move {
-            use sentinel_tools::buildin_tools::skills::{SkillsAction, SkillsTool, SkillsToolArgs};
             use rig::tool::Tool;
+            use sentinel_tools::buildin_tools::skills::{SkillsAction, SkillsTool, SkillsToolArgs};
 
-            let tool_args: SkillsToolArgs = serde_json::from_value(args)
-                .map_err(|e| format!("Invalid arguments: {}", e))?;
+            let tool_args: SkillsToolArgs =
+                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
             if !is_skills_enabled_in_db(&db).await {
                 return Err("Skills tool is disabled".to_string());
             }
 
             let skill_id = tool_args.skill_id.as_deref();
-            let requires_skill = matches!(tool_args.action, SkillsAction::Load | SkillsAction::ReadFile);
+            let requires_skill = matches!(
+                tool_args.action,
+                SkillsAction::Load | SkillsAction::ReadFile
+            );
             if requires_skill {
                 if let Some(id) = skill_id {
                     if !is_skill_enabled_in_db(&db, id).await {
@@ -101,8 +106,7 @@ async fn register_skills_tool_guard(
                 }
             }
 
-            serde_json::to_value(result)
-                .map_err(|e| format!("Failed to serialize result: {}", e))
+            serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
         })
     });
 
@@ -120,10 +124,7 @@ async fn register_skills_tool_guard(
     Ok(())
 }
 
-fn apply_allowed_tools_policy(
-    mut tool_ids: Vec<String>,
-    allowed_tools: &[String],
-) -> Vec<String> {
+fn apply_allowed_tools_policy(mut tool_ids: Vec<String>, allowed_tools: &[String]) -> Vec<String> {
     if allowed_tools.is_empty() {
         return tool_ids;
     }
@@ -324,16 +325,14 @@ pub async fn execute_agent_with_tools(
         .plan_tools(&params.task, &tool_config, Some(&llm_config))
         .await?;
 
-    let mut selected_tool_ids = apply_allowed_tools_policy(
-        selection_plan.tool_ids.clone(),
-        &tool_config.allowed_tools,
-    );
+    let mut selected_tool_ids =
+        apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools);
 
     if params.audit_mode {
         selected_tool_ids = enforce_audit_required_tools(selected_tool_ids);
         ensure_audit_tools_available(tool_server, &selected_tool_ids).await?;
     }
-    
+
     tracing::info!(
         "Selected {} tools for execution_id {}: {:?} (strategy={:?}, audit_mode={})",
         selected_tool_ids.len(),
@@ -404,10 +403,14 @@ pub async fn execute_agent_with_tools(
         // Phase 3: Auto-inject CPG code structure context
         // If a CPG is already cached, inject the project briefing into the system prompt.
         // This gives the AI a "bird's eye view" of the project from turn 1.
-        if let Some(cpg_context) = sentinel_tools::buildin_tools::try_get_cpg_audit_context().await {
+        if let Some(cpg_context) = sentinel_tools::buildin_tools::try_get_cpg_audit_context().await
+        {
             final_system_prompt.push_str("\n\n");
             final_system_prompt.push_str(&cpg_context);
-            tracing::info!("Injected CPG audit context into system prompt ({} chars)", cpg_context.len());
+            tracing::info!(
+                "Injected CPG audit context into system prompt ({} chars)",
+                cpg_context.len()
+            );
         } else {
             // No cached CPG — add a hint so the AI knows to build one
             final_system_prompt.push_str(
@@ -433,7 +436,7 @@ pub async fn execute_agent_with_tools(
 
     // 解析图片附件
     let image_attachment = parse_image_from_json(params.image_attachments.as_ref());
-    
+
     // 6. 使用 rig-core 原生工具调用
     // rig 的 multi_turn() 会自动处理工具调用循环
     let client = StreamingLlmClient::new(llm_config);
@@ -444,8 +447,8 @@ pub async fn execute_agent_with_tools(
         .map(|s| s.inner().clone());
 
     // 用于收集工具调用信息
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+    use std::sync::Mutex;
     let tool_calls_collector: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     let pending_calls: Arc<Mutex<std::collections::HashMap<String, (String, String, i64, u32)>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -460,7 +463,7 @@ pub async fn execute_agent_with_tools(
     let pending_tool_digests: Arc<Mutex<Vec<crate::agents::ToolDigest>>> =
         Arc::new(Mutex::new(Vec::new()));
     let context_policy_for_stream = context_policy.clone();
-    
+
     let collector = tool_calls_collector.clone();
     let pending = pending_calls.clone();
     let seq_counter = tool_seq.clone();
@@ -481,7 +484,7 @@ pub async fn execute_agent_with_tools(
     let mut last_error: Option<anyhow::Error> = None;
     let mut skill_reload_count = 0;
     let max_skill_reload = 3;
-    
+
     // 累积的工具调用记录（跨重试保留）
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     // 累积的助手输出（跨重试保留）
@@ -557,7 +560,10 @@ pub async fn execute_agent_with_tools(
     while retries <= max_retries {
         // Early exit if cancelled before starting a new stream turn
         if crate::commands::ai::is_conversation_cancelled(&params.execution_id) {
-            tracing::info!("Execution cancelled before new stream turn: {}", params.execution_id);
+            tracing::info!(
+                "Execution cancelled before new stream turn: {}",
+                params.execution_id
+            );
             let _ = app_handle.emit(
                 "agent:complete",
                 &serde_json::json!({
@@ -570,7 +576,10 @@ pub async fn execute_agent_with_tools(
 
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
 
-        if current_tool_ids.iter().any(|id| id == AUDIT_FINDING_UPSERT_TOOL) {
+        if current_tool_ids
+            .iter()
+            .any(|id| id == AUDIT_FINDING_UPSERT_TOOL)
+        {
             let db_for_audit_tool = db_service.inner().clone();
             let execution_id_for_audit_tool = params.execution_id.clone();
             let audit_finding_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
@@ -597,8 +606,9 @@ pub async fn execute_agent_with_tools(
                         .await
                         .map_err(|e| format!("Audit finding upsert failed: {}", e))?;
 
-                    serde_json::to_value(result)
-                        .map_err(|e| format!("Failed to serialize audit finding upsert result: {}", e))
+                    serde_json::to_value(result).map_err(|e| {
+                        format!("Failed to serialize audit finding upsert result: {}", e)
+                    })
                 })
             });
 
@@ -727,7 +737,7 @@ pub async fn execute_agent_with_tools(
                     acc.extend(current_calls.clone());
                 }
             }
-            
+
             // 保存当前已输出的内容到累积输出
             if let Ok(current_output) = assistant_segment_buf.lock() {
                 if !current_output.is_empty() {
@@ -739,7 +749,7 @@ pub async fn execute_agent_with_tools(
                     }
                 }
             }
-            
+
             tracing::warn!(
                 "Retrying agent execution (attempt {}/{}) due to error: {}. Accumulated {} tool calls and {} chars output.",
                 retries,
@@ -1290,7 +1300,9 @@ pub async fn execute_agent_with_tools(
                     None
                 };
                 if let Some(skill_id) = skill_id {
-                    if let Some(db) = app_handle.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
+                    if let Some(db) =
+                        app_handle.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+                    {
                         if let Ok(Some(skill)) = db.get_skill(&skill_id).await {
                             let mut next_tools = vec![
                                 "skills".to_string(),
@@ -1301,7 +1313,10 @@ pub async fn execute_agent_with_tools(
                                 "subagent_channel".to_string(),
                                 "tenth_man_review".to_string(),
                             ];
-                            if !tool_config.disabled_tools.contains(&ShellTool::NAME.to_string()) {
+                            if !tool_config
+                                .disabled_tools
+                                .contains(&ShellTool::NAME.to_string())
+                            {
                                 next_tools.push(ShellTool::NAME.to_string());
                             }
                             next_tools.extend(skill.allowed_tools.clone());
@@ -1341,10 +1356,17 @@ pub async fn execute_agent_with_tools(
                                 }),
                             );
 
-                            if let Some(db) = app_handle.try_state::<std::sync::Arc<sentinel_db::DatabaseService>>() {
+                            if let Some(db) = app_handle
+                                .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+                            {
                                 use sentinel_core::models::database as core_db;
                                 let tools_preview = {
-                                    let preview = current_tool_ids.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
+                                    let preview = current_tool_ids
+                                        .iter()
+                                        .take(6)
+                                        .cloned()
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
                                     let suffix = if current_tool_ids.len() > 6 {
                                         format!(" +{}", current_tool_ids.len() - 6)
                                     } else {
@@ -1378,7 +1400,10 @@ pub async fn execute_agent_with_tools(
                                 let db_clone = db.inner().clone();
                                 tauri::async_runtime::spawn(async move {
                                     if let Err(e) = db_clone.upsert_ai_message_append(&msg).await {
-                                        tracing::warn!("Failed to persist skill_loaded message: {}", e);
+                                        tracing::warn!(
+                                            "Failed to persist skill_loaded message: {}",
+                                            e
+                                        );
                                     }
                                 });
                             }
@@ -1420,7 +1445,7 @@ pub async fn execute_agent_with_tools(
                 } else {
                     full_response.clone()
                 };
-                
+
                 tracing::info!(
                     "Agent with tools completed - execution_id: {}, final_save_length: {}, full_response_length: {}, persisted_segments: {}",
                     params.execution_id,
@@ -1446,7 +1471,7 @@ pub async fn execute_agent_with_tools(
                         duration_ms: Some(call.duration_ms),
                     })
                     .collect::<Vec<_>>();
-                    
+
                 tracing::info!(
                     "Total tool calls completed: {} (accumulated: {}, current: {})",
                     tool_summaries.len(),
@@ -1516,28 +1541,34 @@ pub async fn execute_agent_with_tools(
                 // Tenth Man Rule: Adversarial Review (System-enforced final check)
                 if params.enable_tenth_man_rule {
                     let tenth_man = TenthMan::new(&params);
-                    
+
                     // Check if we should run final review based on mode
                     let should_run_final = if let Some(ref config) = params.tenth_man_config {
                         match &config.mode {
                             InterventionMode::SystemOnly => true,
-                            InterventionMode::Hybrid { force_final_review, .. } => {
-                                *force_final_review
-                            }
+                            InterventionMode::Hybrid {
+                                force_final_review, ..
+                            } => *force_final_review,
                             InterventionMode::ToolOnly => false,
                             _ => true, // Legacy modes default to true
                         }
                     } else {
                         true // Default: run final review
                     };
-                    
+
                     if should_run_final {
-                        tracing::info!("Running Tenth Man final review with full history for execution_id: {}", params.execution_id);
-                        
+                        tracing::info!(
+                            "Running Tenth Man final review with full history for execution_id: {}",
+                            params.execution_id
+                        );
+
                         match tenth_man.review_with_history(&params.execution_id).await {
                             Ok(critique) => {
-                                tracing::info!("Tenth Man Critique generated ({} chars)", critique.len());
-                                
+                                tracing::info!(
+                                    "Tenth Man Critique generated ({} chars)",
+                                    critique.len()
+                                );
+
                                 if params.persist_messages {
                                     if let Some(db) = db_for_stream.clone() {
                                         use sentinel_core::models::database as core_db;
@@ -1546,11 +1577,14 @@ pub async fn execute_agent_with_tools(
                                             conversation_id: params.execution_id.clone(),
                                             role: "system".to_string(),
                                             content: critique.clone(),
-                                            metadata: Some(json!({
-                                                "kind": "tenth_man_critique",
-                                                "trigger": "final_review",
-                                                "mode": "system_enforced"
-                                            }).to_string()),
+                                            metadata: Some(
+                                                json!({
+                                                    "kind": "tenth_man_critique",
+                                                    "trigger": "final_review",
+                                                    "mode": "system_enforced"
+                                                })
+                                                .to_string(),
+                                            ),
                                             token_count: Some(critique.len() as i32),
                                             cost: None,
                                             tool_calls: None,
@@ -1561,11 +1595,14 @@ pub async fn execute_agent_with_tools(
                                             architecture_meta: None,
                                             structured_data: None,
                                         };
-                                        
+
                                         if let Err(e) = db.create_ai_message(&review_msg).await {
-                                            tracing::warn!("Failed to save Tenth Man critique: {}", e);
+                                            tracing::warn!(
+                                                "Failed to save Tenth Man critique: {}",
+                                                e
+                                            );
                                         }
-                                        
+
                                         // Emit event to frontend
                                         let _ = app.emit(
                                             "agent:tenth_man_critique",
@@ -1575,7 +1612,7 @@ pub async fn execute_agent_with_tools(
                                                 "message_id": review_msg.id,
                                                 "trigger": "final_review",
                                                 "mode": "system_enforced"
-                                            })
+                                            }),
                                         );
                                     }
                                 }
@@ -1588,7 +1625,7 @@ pub async fn execute_agent_with_tools(
                         tracing::info!("Skipping final Tenth Man review (mode: ToolOnly)");
                     }
                 }
-                
+
                 // Cleanup Tenth Man execution context
                 if params.enable_tenth_man_rule {
                     use crate::agents::tenth_man_executor;
@@ -1602,10 +1639,10 @@ pub async fn execute_agent_with_tools(
             }
             Err(e) => {
                 let err_msg = e.to_string();
-                
+
                 // Cleanup container context files even on error
                 cleanup_container_context_async(&app, &params.execution_id).await;
-                
+
                 // 优化错误消息
                 let friendly_err = if err_msg.contains("error decoding response body") {
                     if err_msg.contains("UnexpectedEof") || err_msg.contains("unexpected EOF") {
@@ -1638,7 +1675,7 @@ pub async fn execute_agent_with_tools(
                             acc.extend(current_calls.clone());
                         }
                     }
-                    
+
                     if let Ok(current_output) = assistant_segment_buf.lock() {
                         if !current_output.is_empty() {
                             if let Ok(mut acc) = accumulated_assistant_output.lock() {

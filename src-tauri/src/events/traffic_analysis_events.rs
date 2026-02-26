@@ -6,9 +6,9 @@
 //! - scan:stats - 扫描统计更新
 //! - plugin:changed - 插件状态变化
 
+use sentinel_traffic::{Finding, ProxyStats};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
-use sentinel_traffic::{Finding, ProxyStats};
 
 /// 代理状态事件
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +34,7 @@ impl From<Finding> for FindingEvent {
     fn from(finding: Finding) -> Self {
         let vuln_type = finding.vuln_type.clone();
         let description = finding.description.clone();
-        
+
         Self {
             vuln_id: finding.id,
             vuln_type: vuln_type.clone(),

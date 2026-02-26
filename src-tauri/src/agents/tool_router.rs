@@ -4,25 +4,23 @@
 
 use anyhow::Result;
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-use serde_json;
 #[allow(unused_imports)]
 use sentinel_db::Database;
+use serde::{Deserialize, Serialize};
+use serde_json;
 #[allow(unused_imports)]
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
-    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, SubagentAwaitTool, SubagentChannelTool,
-    SubagentExecuteTool, TodosTool, MemoryManagerTool, WebSearchTool, OcrTool, SkillsTool,
-    ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
-    CrossFileTaintTool, AuditReportTool, BuildCpgTool, QueryCpgTool,
-    CpgTaintAnalysisTool, CpgSecurityScanTool,
+    browser::constants as browser_constants, AuditCoverageTool, AuditReportTool, BuildCpgTool,
+    CallGraphLiteTool, CodeSearchTool, CpgSecurityScanTool, CpgTaintAnalysisTool,
+    CrossFileTaintTool, DependencyAuditTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
+    LocalTimeTool, MemoryManagerTool, OcrTool, PortScanTool, ProjectOverviewTool, QueryCpgTool,
+    ReadFileTool, ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool,
+    SubagentExecuteTool, SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
 };
 
 use crate::engines::web_explorer::WebExplorerTool;
@@ -54,11 +52,11 @@ pub enum ToolCategory {
     Workflow,
     Browser,
     Utility,
-    Recon,      // Discovery/Reconnaissance
-    Scanning,   // Vulnerability scanning
+    Recon,        // Discovery/Reconnaissance
+    Scanning,     // Vulnerability scanning
     Exploitation, // Exploitation tools
-    Monitoring, // Monitoring tools
-    Other,      // Other/Uncategorized
+    Monitoring,   // Monitoring tools
+    Other,        // Other/Uncategorized
 }
 
 impl std::fmt::Display for ToolCategory {
@@ -92,8 +90,7 @@ pub enum ToolCost {
 }
 
 /// 工具选择策略
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ToolSelectionStrategy {
     /// 全部工具（不推荐，仅用于测试）
     All,
@@ -130,7 +127,6 @@ pub struct ToolSelectionPlan {
     /// 选中的 Skill 信息
     pub selected_skill: Option<SelectedSkill>,
 }
-
 
 /// 工具配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,7 +379,9 @@ impl ToolRouter {
             ToolMetadata {
                 id: "audit_finding_upsert".to_string(),
                 name: "audit_finding_upsert".to_string(),
-                description: "Persist one or many structured code audit findings into Security Center.".to_string(),
+                description:
+                    "Persist one or many structured code audit findings into Security Center."
+                        .to_string(),
                 category: ToolCategory::Security,
                 tags: vec![
                     "audit".to_string(),
@@ -617,7 +615,13 @@ impl ToolRouter {
                 name: TodosTool::NAME.to_string(),
                 description: TodosTool::DESCRIPTION.to_string(),
                 category: ToolCategory::System,
-                tags: vec!["plan".to_string(), "task".to_string(), "autonomous".to_string(), "workflow".to_string(), "todos".to_string()],
+                tags: vec![
+                    "plan".to_string(),
+                    "task".to_string(),
+                    "autonomous".to_string(),
+                    "workflow".to_string(),
+                    "todos".to_string(),
+                ],
                 cost_estimate: ToolCost::Low,
                 always_available: true,
             },
@@ -826,10 +830,7 @@ impl ToolRouter {
                 name: browser_constants::BROWSER_SCROLL_NAME.to_string(),
                 description: browser_constants::BROWSER_SCROLL_DESC.to_string(),
                 category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "scroll".to_string(),
-                ],
+                tags: vec!["browser".to_string(), "scroll".to_string()],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
@@ -838,10 +839,7 @@ impl ToolRouter {
                 name: browser_constants::BROWSER_WAIT_NAME.to_string(),
                 description: browser_constants::BROWSER_WAIT_DESC.to_string(),
                 category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "wait".to_string(),
-                ],
+                tags: vec!["browser".to_string(), "wait".to_string()],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
@@ -943,10 +941,7 @@ impl ToolRouter {
                 name: browser_constants::BROWSER_CLOSE_NAME.to_string(),
                 description: browser_constants::BROWSER_CLOSE_DESC.to_string(),
                 category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "close".to_string(),
-                ],
+                tags: vec!["browser".to_string(), "close".to_string()],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
@@ -986,13 +981,17 @@ impl ToolRouter {
                             } else {
                                 // 2. Legacy :: to __ match
                                 let replaced = t.replace("::", "__");
-                                if let Some(found) = all_tools.iter().find(|meta| meta.id == replaced) {
+                                if let Some(found) =
+                                    all_tools.iter().find(|meta| meta.id == replaced)
+                                {
                                     Some(found.id.clone())
                                 } else {
                                     // 3. Strict sanitization match (for plugins etc)
-                                    let sanitized =
-                                        replaced.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-                                    if let Some(found) = all_tools.iter().find(|meta| meta.id == sanitized) {
+                                    let sanitized = replaced
+                                        .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+                                    if let Some(found) =
+                                        all_tools.iter().find(|meta| meta.id == sanitized)
+                                    {
                                         Some(found.id.clone())
                                     } else {
                                         None
@@ -1223,11 +1222,11 @@ impl ToolRouter {
         tools.extend(self.workflow_tools.clone());
         tools.extend(self.mcp_tools.clone());
         tools.extend(self.plugin_tools.clone());
-        
+
         // Deduplicate by tool ID
         let mut seen = std::collections::HashSet::new();
         tools.retain(|t| seen.insert(t.id.clone()));
-        
+
         tools
     }
 
@@ -1342,19 +1341,22 @@ impl ToolRouter {
                 score += 15;
             }
             if (task_lower.contains("http") || task_lower.contains("api"))
-                && tool.id == "http_request" {
-                    score += 15;
-                }
+                && tool.id == "http_request"
+            {
+                score += 15;
+            }
             if (task_lower.contains("time") || task_lower.contains("date"))
-                && tool.id == "local_time" {
-                    score += 15;
-                }
+                && tool.id == "local_time"
+            {
+                score += 15;
+            }
             if (task_lower.contains("command")
                 || task_lower.contains("shell")
                 || task_lower.contains("execute"))
-                && tool.id == "shell" {
-                    score += 15;
-                }
+                && tool.id == "shell"
+            {
+                score += 15;
+            }
             if is_binary_security_task && tool.id == "interactive_shell" {
                 // For reverse/pwn flows, prefer persistent interactive sessions (gdb/pwndbg/python repl).
                 score += 35;
@@ -1372,17 +1374,19 @@ impl ToolRouter {
                 || task_lower.contains("recall")
                 || task_lower.contains("store")
                 || task_lower.contains("save"))
-                && tool.id == MemoryManagerTool::NAME {
-                    score += 25; // High priority for memory operations
-                }
+                && tool.id == MemoryManagerTool::NAME
+            {
+                score += 25; // High priority for memory operations
+            }
             if (task_lower.contains("ocr")
                 || task_lower.contains("text from image")
                 || task_lower.contains("read image")
                 || task_lower.contains("图片文字")
                 || task_lower.contains("文字识别"))
-                && tool.id == "ocr" {
-                    score += 30;
-                }
+                && tool.id == "ocr"
+            {
+                score += 30;
+            }
 
             // 工作流工具匹配
             if tool.category == ToolCategory::Workflow {
@@ -1680,14 +1684,21 @@ impl ToolRouter {
         let mut plugin_tools = Vec::new();
 
         use sentinel_db::Database;
-        let plugins = db_service.get_plugins_from_registry(Some("default"))
+        let plugins = db_service
+            .get_plugins_from_registry(Some("default"))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to query database plugins: {}", e))?;
 
         for p in plugins {
             // 只查询已启用的 agent 类型插件
-            if p.metadata.main_category == "agent" && p.status == sentinel_plugins::PluginStatus::Enabled {
-                let description_str = p.metadata.description.as_deref().unwrap_or("Agent plugin tool");
+            if p.metadata.main_category == "agent"
+                && p.status == sentinel_plugins::PluginStatus::Enabled
+            {
+                let description_str = p
+                    .metadata
+                    .description
+                    .as_deref()
+                    .unwrap_or("Agent plugin tool");
 
                 // 从 tags 提取标签
                 let mut tags = vec!["plugin".to_string(), "agent".to_string()];
@@ -1695,7 +1706,10 @@ impl ToolRouter {
                     tags.push(tag);
                 }
 
-                let sanitized_id = p.metadata.id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+                let sanitized_id = p
+                    .metadata
+                    .id
+                    .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
                 plugin_tools.push(ToolMetadata {
                     id: format!("plugin__{}", sanitized_id),
                     name: p.metadata.name.clone(),
@@ -2015,15 +2029,18 @@ Return ONLY:
         let user_prompt = format!("Task: {}", task);
 
         // Call LLM to select skill
-        let llm_cfg = llm_config.cloned().unwrap_or_else(|| {
-            LlmConfig::new("openai", "gpt-3.5-turbo").with_timeout(30)
-        });
+        let llm_cfg = llm_config
+            .cloned()
+            .unwrap_or_else(|| LlmConfig::new("openai", "gpt-3.5-turbo").with_timeout(30));
         let client = LlmClient::new(llm_cfg);
 
         let selected_skill_raw = match client.completion(Some(&system_prompt), &user_prompt).await {
             Ok(response) => response.trim().to_string(),
             Err(e) => {
-                tracing::warn!("Skill selection LLM call failed: {}, falling back to Keyword", e);
+                tracing::warn!(
+                    "Skill selection LLM call failed: {}, falling back to Keyword",
+                    e
+                );
                 let tool_ids = self.select_by_keywords(task, config)?;
                 return Ok(ToolSelectionPlan {
                     tool_ids,
@@ -2132,7 +2149,8 @@ Return ONLY:
 
         // Compute final tool_ids: fixed_tools + skill.allowed_tools - disabled_tools
         let all_available = self.get_all_available_tools();
-        let available_ids: std::collections::HashSet<_> = all_available.iter().map(|t| &t.id).collect();
+        let available_ids: std::collections::HashSet<_> =
+            all_available.iter().map(|t| &t.id).collect();
 
         let mut final_tools: Vec<String> = config.fixed_tools.clone();
 
@@ -2143,8 +2161,10 @@ Return ONLY:
                     continue;
                 }
                 let normalized_id = tool_id.replace("::", "__");
-                let exists = available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
-                if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id) {
+                let exists =
+                    available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
+                if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id)
+                {
                     final_tools.push(if available_ids.contains(&normalized_id) {
                         normalized_id
                     } else {
@@ -2164,9 +2184,7 @@ Return ONLY:
 
         // Log if no tools available (this is valid - skill may not need tools)
         if final_tools.is_empty() {
-            tracing::info!(
-                "Selected skills have no tools configured, proceeding without tools"
-            );
+            tracing::info!("Selected skills have no tools configured, proceeding without tools");
         }
 
         // Build injected system prompt (load SKILL.md body only, one block per skill)
@@ -2203,7 +2221,10 @@ Return ONLY:
 
         tracing::info!(
             "Skills selection: skills={:?}, tools={:?}, content_blocks={}",
-            full_skills.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+            full_skills
+                .iter()
+                .map(|s| s.name.clone())
+                .collect::<Vec<_>>(),
             final_tools,
             injected_blocks.len()
         );

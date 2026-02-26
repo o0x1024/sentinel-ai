@@ -59,15 +59,24 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
             if tool_name.contains("http") {
                 let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("unknown");
                 let status_code = map.get("status_code").and_then(|v| v.as_i64()).unwrap_or(0);
-                let status_text = map.get("status_text").and_then(|v| v.as_str()).unwrap_or("");
+                let status_text = map
+                    .get("status_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let body_len = map.get("body_length").and_then(|v| v.as_i64()).unwrap_or(0);
-                let truncated = map.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false);
+                let truncated = map
+                    .get("truncated")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 format!(
                     "HTTP {} {} {} ({} bytes, truncated: {})",
                     status_code, status_text, url, body_len, truncated
                 )
             } else if tool_name.contains("shell") || tool_name.contains("interactive_shell") {
-                let command = map.get("command").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let command = map
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let exit_code = map.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
                 let stdout = map.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
                 let stderr = map.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
@@ -83,7 +92,10 @@ pub fn build_tool_digest(tool_name: &str, args: &Value, result: &str) -> ToolDig
                     condense_text(output, 160)
                 )
             } else if tool_name.contains("todos") {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 format!("Todos action: {}", action)
             } else {
                 condense_text(result, 240)
@@ -117,7 +129,14 @@ pub fn condense_text(text: &str, max_len: usize) -> String {
     let head_len = max_len.saturating_sub(40).max(20);
     let tail_len = max_len.saturating_sub(head_len).min(20);
     let head: String = trimmed.chars().take(head_len).collect();
-    let tail: String = trimmed.chars().rev().take(tail_len).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String = trimmed
+        .chars()
+        .rev()
+        .take(tail_len)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{}...<truncated>...{}", head, tail)
 }
 
@@ -146,7 +165,10 @@ fn extract_artifact_reference(result: &str) -> (Option<String>, Option<String>) 
 
     if let Some(stored) = obj.get("output_stored").and_then(|v| v.as_bool()) {
         if stored {
-            let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("tool");
+            let command = obj
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool");
             return (
                 Some(format!("inline://{}:{}", command, created_suffix(result))),
                 Some("inline".to_string()),
@@ -170,8 +192,8 @@ fn extract_preview_snippet(result: &str) -> Option<String> {
 }
 
 fn created_suffix(result: &str) -> String {
-    let hash = result
-        .bytes()
-        .fold(0u64, |acc, b| acc.wrapping_mul(16777619).wrapping_add(b as u64));
+    let hash = result.bytes().fold(0u64, |acc, b| {
+        acc.wrapping_mul(16777619).wrapping_add(b as u64)
+    });
     format!("{:016x}", hash)
 }

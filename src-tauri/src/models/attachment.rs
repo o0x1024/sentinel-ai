@@ -1,5 +1,5 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 
 /// 图片媒体类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -179,14 +179,10 @@ pub struct DocumentAttachment {
 impl DocumentAttachment {
     /// 常见文档类型（用于 UI 提示）
     pub const SUPPORTED_EXTENSIONS: &'static [&'static str] = &[
-        "docx", "doc", "xlsx", "xls", "pptx", "ppt",
-        "pdf", "txt", "md", "rtf",
-        "eml", "msg",
-        "zip", "rar", "7z", "tar", "gz",
-        "json", "xml", "csv",
-        "js", "ts", "py", "java", "c", "cpp", "h", "rs", "go", "rb", "php",
-        "sh", "bash", "zsh", "sql", "yaml", "yml", "toml", "ini", "conf", "log",
-        "html", "htm", "css",
+        "docx", "doc", "xlsx", "xls", "pptx", "ppt", "pdf", "txt", "md", "rtf", "eml", "msg",
+        "zip", "rar", "7z", "tar", "gz", "json", "xml", "csv", "js", "ts", "py", "java", "c",
+        "cpp", "h", "rs", "go", "rb", "php", "sh", "bash", "zsh", "sql", "yaml", "yml", "toml",
+        "ini", "conf", "log", "html", "htm", "css",
     ];
 
     /// 检查是否是支持的文档类型（现在接受所有类型）
@@ -296,7 +292,7 @@ pub async fn load_image_from_path(file_path: &str) -> anyhow::Result<ImageAttach
     use std::path::Path;
 
     let path = Path::new(file_path);
-    
+
     // 获取文件扩展名
     let extension = path
         .extension()
@@ -335,7 +331,10 @@ mod tests {
             ImageMediaType::from_extension("PNG"),
             Some(ImageMediaType::PNG)
         );
-        assert_eq!(ImageMediaType::from_extension("gif"), Some(ImageMediaType::GIF));
+        assert_eq!(
+            ImageMediaType::from_extension("gif"),
+            Some(ImageMediaType::GIF)
+        );
         assert_eq!(ImageMediaType::from_extension("txt"), None);
     }
 

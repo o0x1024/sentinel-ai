@@ -4,11 +4,11 @@
 
 use chrono::Utc;
 use regex::Regex;
+use sentinel_db::DatabaseService;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tauri::State;
-use sentinel_db::DatabaseService;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// 命令响应
@@ -238,10 +238,12 @@ fn infer_severity_from_content(
     )
     .to_lowercase();
 
-    if merged.contains("sql注入") || merged.contains("sql injection") || merged.contains("cwe-89") {
+    if merged.contains("sql注入") || merged.contains("sql injection") || merged.contains("cwe-89")
+    {
         return "high".to_string();
     }
-    if merged.contains("command injection") || merged.contains("命令注入") || merged.contains("rce") {
+    if merged.contains("command injection") || merged.contains("命令注入") || merged.contains("rce")
+    {
         return "critical".to_string();
     }
     if merged.contains("xxe") || merged.contains("ssti") {
@@ -532,7 +534,8 @@ pub async fn upsert_agent_audit_findings_with_db(
                 .as_deref()
                 .or(inferred_lifecycle.as_deref()),
         );
-        let verification_status = normalize_verification_status(finding.verification_status.as_deref());
+        let verification_status =
+            normalize_verification_status(finding.verification_status.as_deref());
         let confidence = finding.confidence;
         let now = Utc::now();
         if files.is_empty() {
@@ -811,28 +814,22 @@ pub async fn save_agent_audit_quality_gate_thresholds(
     let normalized = normalize_quality_gate_thresholds(thresholds);
     let payload = serde_json::to_string(&normalized)
         .map_err(|e| format!("Failed to serialize thresholds: {}", e))?;
-    let (category, key, description) = if let Some(conversation_id) =
-        conversation_id.filter(|v| !v.trim().is_empty())
-    {
-        (
-            "agent_audit_quality_gate_conversation",
-            conversation_id,
-            "Conversation scoped audit quality gate thresholds",
-        )
-    } else {
-        (
-            "agent_audit_quality_gate",
-            "thresholds".to_string(),
-            "Audit quality gate thresholds",
-        )
-    };
+    let (category, key, description) =
+        if let Some(conversation_id) = conversation_id.filter(|v| !v.trim().is_empty()) {
+            (
+                "agent_audit_quality_gate_conversation",
+                conversation_id,
+                "Conversation scoped audit quality gate thresholds",
+            )
+        } else {
+            (
+                "agent_audit_quality_gate",
+                "thresholds".to_string(),
+                "Audit quality gate thresholds",
+            )
+        };
     db_service
-        .set_config_internal(
-            category,
-            &key,
-            &payload,
-            Some(description),
-        )
+        .set_config_internal(category, &key, &payload, Some(description))
         .await
         .map_err(|e| format!("Failed to save audit quality gate thresholds: {}", e))?;
     Ok(CommandResponse::ok(normalized))
@@ -845,7 +842,9 @@ pub async fn get_agent_audit_finding(
     finding_id: String,
 ) -> Result<CommandResponse<Option<AgentAuditFindingView>>, String> {
     match db_service.get_agent_audit_finding_by_id(&finding_id).await {
-        Ok(record) => Ok(CommandResponse::ok(record.map(map_agent_audit_record_to_view))),
+        Ok(record) => Ok(CommandResponse::ok(
+            record.map(map_agent_audit_record_to_view),
+        )),
         Err(e) => {
             tracing::error!("Failed to get agent audit finding: {}", e);
             Ok(CommandResponse::err(format!("Database error: {}", e)))
@@ -901,11 +900,7 @@ pub async fn delete_agent_audit_findings_batch(
 ) -> Result<CommandResponse<()>, String> {
     for finding_id in &finding_ids {
         if let Err(e) = db_service.delete_agent_audit_finding(finding_id).await {
-            tracing::warn!(
-                "Failed to delete agent audit finding {}: {}",
-                finding_id,
-                e
-            );
+            tracing::warn!("Failed to delete agent audit finding {}: {}", finding_id, e);
         }
     }
     Ok(CommandResponse::ok(()))
@@ -947,8 +942,12 @@ pub async fn transition_agent_audit_finding_lifecycle(
         .as_deref()
         .map(|v| normalize_verification_status(Some(v)));
     let judge_json = request.judge.and_then(|v| serde_json::to_string(&v).ok());
-    let verifier_json = request.verifier.and_then(|v| serde_json::to_string(&v).ok());
-    let provenance_json = request.provenance.and_then(|v| serde_json::to_string(&v).ok());
+    let verifier_json = request
+        .verifier
+        .and_then(|v| serde_json::to_string(&v).ok());
+    let provenance_json = request
+        .provenance
+        .and_then(|v| serde_json::to_string(&v).ok());
 
     db_service
         .update_agent_audit_finding_lifecycle(
@@ -972,8 +971,8 @@ pub async fn transition_agent_audit_finding_lifecycle(
 mod tests {
     use super::{
         infer_lifecycle_from_status, is_valid_lifecycle_transition, normalize_lifecycle_stage,
-        normalize_quality_gate_thresholds, normalize_verification_status, resolve_quality_gate_thresholds,
-        quality_gate_rates,
+        normalize_quality_gate_thresholds, normalize_verification_status, quality_gate_rates,
+        resolve_quality_gate_thresholds,
     };
     use sentinel_db::DatabaseService;
     use std::sync::Arc;
@@ -981,7 +980,10 @@ mod tests {
     #[test]
     fn normalize_lifecycle_stage_defaults_to_confirmed() {
         assert_eq!(normalize_lifecycle_stage(None), "confirmed");
-        assert_eq!(normalize_lifecycle_stage(Some("unknown_stage")), "confirmed");
+        assert_eq!(
+            normalize_lifecycle_stage(Some("unknown_stage")),
+            "confirmed"
+        );
         assert_eq!(normalize_lifecycle_stage(Some("Triaged")), "triaged");
     }
 
@@ -1044,11 +1046,12 @@ mod tests {
 
     #[test]
     fn quality_gate_thresholds_are_clamped_to_0_1() {
-        let normalized = normalize_quality_gate_thresholds(super::AgentAuditQualityGateThresholds {
-            min_evidence_rate: 2.0,
-            max_uncertain_rate: -0.2,
-            max_false_positive_rate: 1.5,
-        });
+        let normalized =
+            normalize_quality_gate_thresholds(super::AgentAuditQualityGateThresholds {
+                min_evidence_rate: 2.0,
+                max_uncertain_rate: -0.2,
+                max_false_positive_rate: 1.5,
+            });
         assert!((normalized.min_evidence_rate - 1.0).abs() < f64::EPSILON);
         assert!((normalized.max_uncertain_rate - 0.0).abs() < f64::EPSILON);
         assert!((normalized.max_false_positive_rate - 1.0).abs() < f64::EPSILON);

@@ -23,7 +23,11 @@ impl ContextBudgetPolicy {
         Self {
             system_max_tokens: scale_value(self.system_max_tokens, ratio, safe / 4),
             run_state_max_tokens: scale_value(self.run_state_max_tokens, ratio, safe / 8),
-            window_max_tokens: scale_value(self.window_max_tokens, ratio, (safe as f64 * 0.55) as usize),
+            window_max_tokens: scale_value(
+                self.window_max_tokens,
+                ratio,
+                (safe as f64 * 0.55) as usize,
+            ),
             retrieval_max_tokens: scale_value(self.retrieval_max_tokens, ratio, safe / 8),
             tool_digest_max_tokens: scale_value(self.tool_digest_max_tokens, ratio, safe / 10),
         }

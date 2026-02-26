@@ -381,8 +381,7 @@ pub struct DictionaryImportOptions {
 }
 
 /// 合并模式
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MergeMode {
     /// 替换现有字典
     Replace,
@@ -392,4 +391,3 @@ pub enum MergeMode {
     /// 创建新字典
     CreateNew,
 }
-

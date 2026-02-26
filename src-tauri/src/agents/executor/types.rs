@@ -17,4 +17,3 @@ pub struct ToolCallRecord {
     /// Tool call duration in millis.
     pub duration_ms: i64,
 }
-

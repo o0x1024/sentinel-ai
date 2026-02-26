@@ -1,24 +1,23 @@
-use crate::services::ai::AiServiceManager;
-use crate::commands::tool_commands::PendingPermissionRequest;
-use crate::skills::{parse_skill_markdown, scan_and_upsert_skills, skills_root};
-use crate::services::database::DatabaseService;
-use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
-use crate::models::database::{AiConversation, AiMessage};
+use crate::agents::tool_router::{clear_tool_usage_records, get_tool_usage_statistics};
 use crate::agents::AgentExecuteParams;
 use crate::agents::{ToolConfig, ToolSelectionStrategy};
-use crate::agents::tool_router::{clear_tool_usage_records, get_tool_usage_statistics};
+use crate::commands::tool_commands::PendingPermissionRequest;
+use crate::models::database::{AiConversation, AiMessage};
+use crate::services::ai::AiServiceManager;
+use crate::services::database::DatabaseService;
+use crate::skills::{parse_skill_markdown, scan_and_upsert_skills, skills_root};
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use axum::body::Body;
-use axum::extract::{
-    ConnectInfo, DefaultBodyLimit, Path, Query, Request, State,
-};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State};
+use axum::http::header::{HeaderValue, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderName, StatusCode};
-use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -28,17 +27,19 @@ use std::net::SocketAddr;
 use std::path::{Component, Path as StdPath, PathBuf};
 use std::str::FromStr;
 use std::sync::Mutex as StdMutex;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
-use tokio::net::TcpListener;
 use tokio::fs;
+use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use sentinel_db::Database;
 
 const HASH_PREFIX: &str = "sha256:";
 
@@ -756,7 +757,11 @@ fn gateway_dist_root() -> PathBuf {
 
 fn sanitize_asset_path(path: &str) -> Option<PathBuf> {
     let normalized = path.trim_start_matches('/');
-    let candidate = if normalized.is_empty() { "index.html" } else { normalized };
+    let candidate = if normalized.is_empty() {
+        "index.html"
+    } else {
+        normalized
+    };
     let rel = PathBuf::from(candidate);
     for comp in rel.components() {
         if !matches!(comp, Component::Normal(_)) {
@@ -1192,11 +1197,16 @@ fn normalize_skill_id(raw: &str) -> Result<String, String> {
         return Err("Skill name must be 64 characters or less".to_string());
     }
     let mut chars = id.chars();
-    let first = chars.next().ok_or_else(|| "Skill name is required".to_string())?;
+    let first = chars
+        .next()
+        .ok_or_else(|| "Skill name is required".to_string())?;
     if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
         return Err("Skill name must start with a lowercase letter or digit".to_string());
     }
-    if !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         return Err("Skill name must use lowercase letters, numbers, and hyphens only".to_string());
     }
     if id.ends_with('-') {
@@ -1244,7 +1254,9 @@ fn resolve_skill_file_for_read(skill_dir: &StdPath, rel_path: &str) -> Result<Pa
 fn resolve_skill_file_for_write(skill_dir: &StdPath, rel_path: &str) -> Result<PathBuf, String> {
     let rel = sanitize_skill_relative_path(rel_path)?;
     let target = skill_dir.join(rel);
-    let parent = target.parent().ok_or_else(|| "Invalid file path".to_string())?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "Invalid file path".to_string())?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let canonical_root = std::fs::canonicalize(skill_dir).map_err(|e| e.to_string())?;
     let canonical_parent = std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
@@ -1371,7 +1383,10 @@ pub fn validate_gateway_config(config: &HttpGatewayConfig) -> Result<(), String>
     }
 
     if !config.allow_lan && !is_loopback_host(&config.host) {
-        return Err("When LAN access is disabled, host must be loopback (127.0.0.1/::1/localhost)".to_string());
+        return Err(
+            "When LAN access is disabled, host must be loopback (127.0.0.1/::1/localhost)"
+                .to_string(),
+        );
     }
 
     if config.allow_lan && (!config.auth.required || config.auth.api_keys.is_empty()) {
@@ -1383,7 +1398,9 @@ pub fn validate_gateway_config(config: &HttpGatewayConfig) -> Result<(), String>
             || config.auth.api_keys.is_empty()
             || config.remote.public_base_url.trim().is_empty())
     {
-        return Err("Remote mode requires auth, at least one API key, and public_base_url".to_string());
+        return Err(
+            "Remote mode requires auth, at least one API key, and public_base_url".to_string(),
+        );
     }
 
     Ok(())
@@ -1468,7 +1485,9 @@ fn enforce_audit_tool_whitelist(
     tool_config.enabled = true;
     tool_config.allowed_tools = allowed_tools.clone();
     tool_config.selection_strategy = ToolSelectionStrategy::Manual(allowed_tools.clone());
-    tool_config.fixed_tools.retain(|tool| allowed_set.contains(tool));
+    tool_config
+        .fixed_tools
+        .retain(|tool| allowed_set.contains(tool));
     for tool in &allowed_tools {
         if !tool_config.fixed_tools.contains(tool) {
             tool_config.fixed_tools.push(tool.clone());
@@ -1480,7 +1499,10 @@ fn enforce_audit_tool_whitelist(
     tool_config
 }
 
-fn resolve_stream_cursor(payload_since_message_id: Option<String>, headers: &HeaderMap) -> Option<String> {
+fn resolve_stream_cursor(
+    payload_since_message_id: Option<String>,
+    headers: &HeaderMap,
+) -> Option<String> {
     if payload_since_message_id
         .as_ref()
         .map(|v| !v.trim().is_empty())
@@ -1580,7 +1602,10 @@ async fn auth_and_rate_limit_middleware(
     response
 }
 
-fn resolve_service(state: &GatewayAppState, service_name: Option<&str>) -> Result<crate::services::ai::AiServiceWrapper, String> {
+fn resolve_service(
+    state: &GatewayAppState,
+    service_name: Option<&str>,
+) -> Result<crate::services::ai::AiServiceWrapper, String> {
     if let Some(name) = service_name {
         if let Some(service) = state.ai_manager.get_service(name) {
             return Ok(service);
@@ -1724,7 +1749,9 @@ async fn run_agent_execution(
         rig_provider,
         api_key: provider_config.api_key.clone(),
         api_base: provider_config.api_base.clone(),
-        max_iterations: max_iterations.unwrap_or(provider_config.max_turns.unwrap_or(50)).max(10),
+        max_iterations: max_iterations
+            .unwrap_or(provider_config.max_turns.unwrap_or(50))
+            .max(10),
         timeout_secs: timeout_secs.unwrap_or(300),
         tool_config,
         enable_tenth_man_rule: enable_tenth_man_rule.unwrap_or(false),
@@ -1755,7 +1782,8 @@ async fn run_chat_completion(
 ) -> Result<String, String> {
     let service = resolve_service(state, service_name)?;
 
-    let llm_config = apply_generation_settings_from_db(state.db.as_ref(), service.service.to_llm_config()).await;
+    let llm_config =
+        apply_generation_settings_from_db(state.db.as_ref(), service.service.to_llm_config()).await;
     let streaming_client = sentinel_llm::StreamingLlmClient::new(llm_config);
 
     streaming_client
@@ -1778,7 +1806,10 @@ async fn create_session(State(state): State<GatewayAppState>) -> Response {
     .into_response()
 }
 
-async fn delete_session(Path(session_id): Path<String>, State(state): State<GatewayAppState>) -> Response {
+async fn delete_session(
+    Path(session_id): Path<String>,
+    State(state): State<GatewayAppState>,
+) -> Response {
     match state.db.delete_ai_conversation(&session_id).await {
         Ok(_) => (StatusCode::NO_CONTENT, "").into_response(),
         Err(e) => {
@@ -1953,7 +1984,10 @@ async fn bridge_invoke(
                 .get("request")
                 .cloned()
                 .ok_or_else(|| "create_ai_conversation missing request".to_string())
-                .and_then(|v| serde_json::from_value::<BridgeCreateConversationRequest>(v).map_err(|e| e.to_string()));
+                .and_then(|v| {
+                    serde_json::from_value::<BridgeCreateConversationRequest>(v)
+                        .map_err(|e| e.to_string())
+                });
             match req_obj {
                 Ok(v) => {
                     let service_name = if v.service_name.trim().is_empty() {
@@ -1961,7 +1995,11 @@ async fn bridge_invoke(
                     } else {
                         v.service_name.as_str()
                     };
-                    if let Some(service) = state.ai_manager.get_service(service_name).or_else(|| state.ai_manager.get_service("default")) {
+                    if let Some(service) = state
+                        .ai_manager
+                        .get_service(service_name)
+                        .or_else(|| state.ai_manager.get_service("default"))
+                    {
                         match service.create_conversation(Some(v.title)).await {
                             Ok(id) => Ok(json!(id)),
                             Err(e) => Err(format!("create_ai_conversation failed: {}", e)),
@@ -1983,7 +2021,11 @@ async fn bridge_invoke(
             if conversation_id.is_empty() {
                 Err("get_ai_messages_by_conversation missing conversation_id".to_string())
             } else {
-                match state.db.get_ai_messages_by_conversation(&conversation_id).await {
+                match state
+                    .db
+                    .get_ai_messages_by_conversation(&conversation_id)
+                    .await
+                {
                     Ok(items) => Ok(json!(items)),
                     Err(e) => Err(format!("get_ai_messages_by_conversation failed: {}", e)),
                 }
@@ -1995,7 +2037,9 @@ async fn bridge_invoke(
                 .get("request")
                 .cloned()
                 .ok_or_else(|| "save_ai_message missing request".to_string())
-                .and_then(|v| serde_json::from_value::<BridgeSaveMessageRequest>(v).map_err(|e| e.to_string()));
+                .and_then(|v| {
+                    serde_json::from_value::<BridgeSaveMessageRequest>(v).map_err(|e| e.to_string())
+                });
             match req_obj {
                 Ok(v) => {
                     let msg = AiMessage {
@@ -2003,7 +2047,10 @@ async fn bridge_invoke(
                         conversation_id: v.conversation_id,
                         role: v.role,
                         content: v.content,
-                        metadata: v.metadata.as_ref().and_then(|x| serde_json::to_string(x).ok()),
+                        metadata: v
+                            .metadata
+                            .as_ref()
+                            .and_then(|x| serde_json::to_string(x).ok()),
                         token_count: None,
                         cost: None,
                         tool_calls: None,
@@ -2029,19 +2076,37 @@ async fn bridge_invoke(
             }
         }
         "update_ai_conversation_title" => {
-            let conversation_id = req.payload.get("conversationId").or_else(|| req.payload.get("conversation_id"))
+            let conversation_id = req
+                .payload
+                .get("conversationId")
+                .or_else(|| req.payload.get("conversation_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let title = req.payload.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let service_name = req.payload.get("serviceName").or_else(|| req.payload.get("service_name"))
+            let title = req
+                .payload
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let service_name = req
+                .payload
+                .get("serviceName")
+                .or_else(|| req.payload.get("service_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("default")
                 .to_string();
             if conversation_id.is_empty() {
                 Err("update_ai_conversation_title missing conversation_id".to_string())
-            } else if let Some(service) = state.ai_manager.get_service(&service_name).or_else(|| state.ai_manager.get_service("default")) {
-                match service.update_conversation_title(&conversation_id, &title).await {
+            } else if let Some(service) = state
+                .ai_manager
+                .get_service(&service_name)
+                .or_else(|| state.ai_manager.get_service("default"))
+            {
+                match service
+                    .update_conversation_title(&conversation_id, &title)
+                    .await
+                {
                     Ok(_) => Ok(json!(null)),
                     Err(e) => Err(format!("update_ai_conversation_title failed: {}", e)),
                 }
@@ -2050,17 +2115,27 @@ async fn bridge_invoke(
             }
         }
         "delete_ai_conversation" => {
-            let conversation_id = req.payload.get("conversationId").or_else(|| req.payload.get("conversation_id"))
+            let conversation_id = req
+                .payload
+                .get("conversationId")
+                .or_else(|| req.payload.get("conversation_id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let service_name = req.payload.get("serviceName").or_else(|| req.payload.get("service_name"))
+            let service_name = req
+                .payload
+                .get("serviceName")
+                .or_else(|| req.payload.get("service_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("default")
                 .to_string();
             if conversation_id.is_empty() {
                 Err("delete_ai_conversation missing conversation_id".to_string())
-            } else if let Some(service) = state.ai_manager.get_service(&service_name).or_else(|| state.ai_manager.get_service("default")) {
+            } else if let Some(service) = state
+                .ai_manager
+                .get_service(&service_name)
+                .or_else(|| state.ai_manager.get_service("default"))
+            {
                 match service.delete_conversation(&conversation_id).await {
                     Ok(_) => Ok(json!(null)),
                     Err(e) => Err(format!("delete_ai_conversation failed: {}", e)),
@@ -2070,8 +2145,13 @@ async fn bridge_invoke(
             }
         }
         "delete_ai_message" => {
-            let message_id = req.payload.get("message_id").or_else(|| req.payload.get("messageId"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let message_id = req
+                .payload
+                .get("message_id")
+                .or_else(|| req.payload.get("messageId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if message_id.is_empty() {
                 Err("delete_ai_message missing message_id".to_string())
             } else {
@@ -2082,37 +2162,58 @@ async fn bridge_invoke(
             }
         }
         "delete_ai_messages_after" => {
-            let conversation_id = req.payload.get("conversation_id").or_else(|| req.payload.get("conversationId"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let message_id = req.payload.get("message_id").or_else(|| req.payload.get("messageId"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let conversation_id = req
+                .payload
+                .get("conversation_id")
+                .or_else(|| req.payload.get("conversationId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let message_id = req
+                .payload
+                .get("message_id")
+                .or_else(|| req.payload.get("messageId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if conversation_id.is_empty() || message_id.is_empty() {
                 Err("delete_ai_messages_after missing conversation_id or message_id".to_string())
             } else {
-                match state.db.delete_ai_messages_after(&conversation_id, &message_id).await {
+                match state
+                    .db
+                    .delete_ai_messages_after(&conversation_id, &message_id)
+                    .await
+                {
                     Ok(n) => Ok(json!(n)),
                     Err(e) => Err(format!("delete_ai_messages_after failed: {}", e)),
                 }
             }
         }
         "clear_conversation_messages" => {
-            let conversation_id = req.payload.get("conversation_id").or_else(|| req.payload.get("conversationId"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let conversation_id = req
+                .payload
+                .get("conversation_id")
+                .or_else(|| req.payload.get("conversationId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if conversation_id.is_empty() {
                 Err("clear_conversation_messages missing conversation_id".to_string())
             } else {
-                match state.db.delete_ai_messages_by_conversation(&conversation_id).await {
+                match state
+                    .db
+                    .delete_ai_messages_by_conversation(&conversation_id)
+                    .await
+                {
                     Ok(_) => Ok(json!(null)),
                     Err(e) => Err(format!("clear_conversation_messages failed: {}", e)),
                 }
             }
         }
-        "get_tool_config" => {
-            match load_tool_config_from_db(&state).await {
-                Some(cfg) => Ok(json!(cfg)),
-                None => Ok(json!(null)),
-            }
-        }
+        "get_tool_config" => match load_tool_config_from_db(&state).await {
+            Some(cfg) => Ok(json!(cfg)),
+            None => Ok(json!(null)),
+        },
         "save_tool_config" => {
             let tool_config = req
                 .payload
@@ -2125,7 +2226,11 @@ async fn bridge_invoke(
                 Ok(cfg) => {
                     let raw = serde_json::to_string(&cfg).map_err(|e| e.to_string());
                     match raw {
-                        Ok(value) => match state.db.set_config("agent", "tool_config", &value, None).await {
+                        Ok(value) => match state
+                            .db
+                            .set_config("agent", "tool_config", &value, None)
+                            .await
+                        {
                             Ok(_) => Ok(json!(null)),
                             Err(e) => Err(format!("save_tool_config failed: {}", e)),
                         },
@@ -2135,20 +2240,19 @@ async fn bridge_invoke(
                 Err(e) => Err(e),
             }
         }
-        "get_ai_roles" => {
-            match state.db.get_ai_roles().await {
-                Ok(items) => Ok(json!(items)),
-                Err(e) => Err(format!("get_ai_roles failed: {}", e)),
-            }
-        }
-        "get_current_ai_role" => {
-            match state.db.get_current_ai_role().await {
-                Ok(v) => Ok(json!(v)),
-                Err(e) => Err(format!("get_current_ai_role failed: {}", e)),
-            }
-        }
+        "get_ai_roles" => match state.db.get_ai_roles().await {
+            Ok(items) => Ok(json!(items)),
+            Err(e) => Err(format!("get_ai_roles failed: {}", e)),
+        },
+        "get_current_ai_role" => match state.db.get_current_ai_role().await {
+            Ok(v) => Ok(json!(v)),
+            Err(e) => Err(format!("get_current_ai_role failed: {}", e)),
+        },
         "set_current_ai_role" => {
-            let role_id = req.payload.get("roleId").or_else(|| req.payload.get("role_id"))
+            let role_id = req
+                .payload
+                .get("roleId")
+                .or_else(|| req.payload.get("role_id"))
                 .and_then(|v| v.as_str())
                 .map(|v| v.to_string());
             match state.db.set_current_ai_role(role_id.as_deref()).await {
@@ -2158,9 +2262,21 @@ async fn bridge_invoke(
         }
         "create_ai_role" => {
             let payload = req.payload.get("payload").cloned().unwrap_or_default();
-            let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let description = payload.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let title = payload
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let description = payload
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let prompt = payload
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             let capabilities = payload
                 .get("capabilities")
                 .and_then(|v| v.as_array())
@@ -2195,21 +2311,38 @@ async fn bridge_invoke(
         }
         "update_ai_role" => {
             let payload = req.payload.get("payload").cloned().unwrap_or_default();
-            let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let title = payload.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let description = payload.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let capabilities = payload
-                .get("capabilities")
-                .and_then(|v| v.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .map(|v| v.trim().to_string())
-                        .filter(|v| !v.is_empty())
-                        .collect::<Vec<_>>()
-                });
+            let id = payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let title = payload
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let description = payload
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let prompt = payload
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let capabilities =
+                payload
+                    .get("capabilities")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str())
+                            .map(|v| v.trim().to_string())
+                            .filter(|v| !v.is_empty())
+                            .collect::<Vec<_>>()
+                    });
             if id.is_empty() {
                 Err("update_ai_role missing id".to_string())
             } else {
@@ -2222,8 +2355,9 @@ async fn bridge_invoke(
                             title,
                             description,
                             prompt,
-                            capabilities: capabilities
-                                .unwrap_or_else(|| existing.map(|r| r.capabilities.clone()).unwrap_or_default()),
+                            capabilities: capabilities.unwrap_or_else(|| {
+                                existing.map(|r| r.capabilities.clone()).unwrap_or_default()
+                            }),
                             is_system: existing.map(|r| r.is_system).unwrap_or(false),
                             created_at: existing.map(|r| r.created_at).unwrap_or_else(Utc::now),
                             updated_at: Utc::now(),
@@ -2238,7 +2372,12 @@ async fn bridge_invoke(
             }
         }
         "delete_ai_role" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() {
                 Err("delete_ai_role missing id".to_string())
             } else {
@@ -2249,12 +2388,18 @@ async fn bridge_invoke(
             }
         }
         "cancel_ai_stream" => {
-            let conversation_id = req.payload.get("conversation_id").or_else(|| req.payload.get("conversationId"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let conversation_id = req
+                .payload
+                .get("conversation_id")
+                .or_else(|| req.payload.get("conversationId"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if conversation_id.is_empty() {
                 Err("cancel_ai_stream missing conversation_id".to_string())
             } else {
-                let _ = crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
+                let _ =
+                    crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
                 Ok(json!(null))
             }
         }
@@ -2269,7 +2414,8 @@ async fn bridge_invoke(
             if execution_id.is_empty() {
                 Err("cancel_shell_execution missing execution_id".to_string())
             } else {
-                let _ = sentinel_tools::buildin_tools::shell::cancel_shell_execution(&execution_id).await;
+                let _ = sentinel_tools::buildin_tools::shell::cancel_shell_execution(&execution_id)
+                    .await;
                 Ok(json!(null))
             }
         }
@@ -2278,7 +2424,8 @@ async fn bridge_invoke(
             Ok(json!(stats))
         }
         "get_all_tool_metadata" => {
-            let router = crate::agents::tool_router::ToolRouter::new_with_all_tools(Some(&state.db)).await;
+            let router =
+                crate::agents::tool_router::ToolRouter::new_with_all_tools(Some(&state.db)).await;
             let tools = router
                 .list_all_tools()
                 .into_iter()
@@ -2287,7 +2434,8 @@ async fn bridge_invoke(
             Ok(json!(tools))
         }
         "get_tool_statistics" => {
-            let router = crate::agents::tool_router::ToolRouter::new_with_all_tools(Some(&state.db)).await;
+            let router =
+                crate::agents::tool_router::ToolRouter::new_with_all_tools(Some(&state.db)).await;
             Ok(json!(router.get_statistics()))
         }
         "clear_tool_usage_stats" => {
@@ -2295,9 +2443,20 @@ async fn bridge_invoke(
             Ok(json!(null))
         }
         "get_config" => {
-            let request = req.payload.get("request").cloned().unwrap_or_else(|| req.payload.clone());
-            let category = request.get("category").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let key = request.get("key").and_then(|v| v.as_str()).map(|v| v.to_string());
+            let request = req
+                .payload
+                .get("request")
+                .cloned()
+                .unwrap_or_else(|| req.payload.clone());
+            let category = request
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let key = request
+                .get("key")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
             if category.is_empty() {
                 Err("get_config missing category".to_string())
             } else if let Some(key) = key {
@@ -2315,22 +2474,40 @@ async fn bridge_invoke(
                 }
             } else {
                 match state.db.get_configs_by_category(&category).await {
-                    Ok(items) => Ok(json!(items.into_iter().map(|c| json!({
-                        "id": c.id,
-                        "category": c.category,
-                        "key": c.key,
-                        "value": c.value.unwrap_or_default(),
-                        "description": c.description,
-                        "is_encrypted": c.is_encrypted
-                    })).collect::<Vec<_>>())),
+                    Ok(items) => Ok(json!(items
+                        .into_iter()
+                        .map(|c| json!({
+                            "id": c.id,
+                            "category": c.category,
+                            "key": c.key,
+                            "value": c.value.unwrap_or_default(),
+                            "description": c.description,
+                            "is_encrypted": c.is_encrypted
+                        }))
+                        .collect::<Vec<_>>())),
                     Err(e) => Err(format!("get_config failed: {}", e)),
                 }
             }
         }
         "set_config" => {
-            let category = req.payload.get("category").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let key = req.payload.get("key").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let value = req.payload.get("value").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let category = req
+                .payload
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let key = req
+                .payload
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let value = req
+                .payload
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if category.is_empty() || key.is_empty() {
                 Err("set_config missing category or key".to_string())
             } else {
@@ -2341,10 +2518,25 @@ async fn bridge_invoke(
             }
         }
         "get_agent_config" => {
-            let shell = crate::commands::tool_commands::agent_config::load_shell_config_from_db(state.db.as_ref()).await;
-            let terminal = crate::commands::tool_commands::agent_config::load_terminal_config_from_db(state.db.as_ref()).await;
-            let image_attachments = crate::commands::tool_commands::agent_config::load_image_attachment_config_from_db(state.db.as_ref()).await;
-            let subagent = crate::commands::tool_commands::agent_config::load_subagent_config_from_db(state.db.as_ref()).await;
+            let shell = crate::commands::tool_commands::agent_config::load_shell_config_from_db(
+                state.db.as_ref(),
+            )
+            .await;
+            let terminal =
+                crate::commands::tool_commands::agent_config::load_terminal_config_from_db(
+                    state.db.as_ref(),
+                )
+                .await;
+            let image_attachments =
+                crate::commands::tool_commands::agent_config::load_image_attachment_config_from_db(
+                    state.db.as_ref(),
+                )
+                .await;
+            let subagent =
+                crate::commands::tool_commands::agent_config::load_subagent_config_from_db(
+                    state.db.as_ref(),
+                )
+                .await;
             Ok(json!({
                 "shell": shell,
                 "terminal": terminal,
@@ -2354,50 +2546,90 @@ async fn bridge_invoke(
         }
         "save_agent_config" => {
             let save_result: Result<(), String> = async {
-                if let Some(config) = req.payload.get("config").or_else(|| req.payload.get("payload")) {
+                if let Some(config) = req
+                    .payload
+                    .get("config")
+                    .or_else(|| req.payload.get("payload"))
+                {
                     if let Some(terminal) = config.get("terminal") {
                         if let Some(v) = terminal.get("docker_image").and_then(|v| v.as_str()) {
-                            state.db.set_config("agent", "terminal_docker_image", v, None).await
+                            state
+                                .db
+                                .set_config("agent", "terminal_docker_image", v, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
-                        if let Some(v) = terminal.get("default_execution_mode").and_then(|v| v.as_str()) {
-                            state.db.set_config("agent", "default_execution_mode", v, None).await
+                        if let Some(v) = terminal
+                            .get("default_execution_mode")
+                            .and_then(|v| v.as_str())
+                        {
+                            state
+                                .db
+                                .set_config("agent", "default_execution_mode", v, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
-                        if let Some(v) = terminal.get("docker_memory_limit").and_then(|v| v.as_str()) {
-                            state.db.set_config("agent", "docker_memory_limit", v, None).await
+                        if let Some(v) =
+                            terminal.get("docker_memory_limit").and_then(|v| v.as_str())
+                        {
+                            state
+                                .db
+                                .set_config("agent", "docker_memory_limit", v, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
                         if let Some(v) = terminal.get("docker_cpu_limit").and_then(|v| v.as_str()) {
-                            state.db.set_config("agent", "docker_cpu_limit", v, None).await
+                            state
+                                .db
+                                .set_config("agent", "docker_cpu_limit", v, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
-                        if let Some(v) = terminal.get("docker_use_host_network").and_then(|v| v.as_bool()) {
+                        if let Some(v) = terminal
+                            .get("docker_use_host_network")
+                            .and_then(|v| v.as_bool())
+                        {
                             let val = if v { "true" } else { "false" };
-                            state.db.set_config("agent", "docker_use_host_network", val, None).await
+                            state
+                                .db
+                                .set_config("agent", "docker_use_host_network", val, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
                     }
                     if let Some(subagent) = config.get("subagent") {
                         if let Some(v) = subagent.get("timeout_secs").and_then(|v| v.as_u64()) {
-                            state.db.set_config("agent", "subagent_timeout_secs", &v.to_string(), None).await
+                            state
+                                .db
+                                .set_config("agent", "subagent_timeout_secs", &v.to_string(), None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
                     }
                     if let Some(image_cfg) = config.get("image_attachments") {
                         if let Some(v) = image_cfg.get("mode").and_then(|v| v.as_str()) {
-                            state.db.set_config("agent", "image_attachment_mode", v, None).await
+                            state
+                                .db
+                                .set_config("agent", "image_attachment_mode", v, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
-                        if let Some(v) = image_cfg.get("allow_upload_to_model").and_then(|v| v.as_bool()) {
+                        if let Some(v) = image_cfg
+                            .get("allow_upload_to_model")
+                            .and_then(|v| v.as_bool())
+                        {
                             let val = if v { "true" } else { "false" };
-                            state.db.set_config("agent", "allow_image_upload_to_model", val, None).await
+                            state
+                                .db
+                                .set_config("agent", "allow_image_upload_to_model", val, None)
+                                .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }
                     }
                 }
                 Ok(())
-            }.await;
+            }
+            .await;
             match save_result {
                 Ok(_) => Ok(json!(null)),
                 Err(e) => Err(e),
@@ -2441,7 +2673,7 @@ async fn bridge_invoke(
                     Err(e) => Err(format!("save_audit_policy_gate failed: {}", e)),
                 }
             }
-        },
+        }
         "get_agent_audit_quality_gate_thresholds" => {
             let conversation_id = req
                 .payload
@@ -2449,16 +2681,13 @@ async fn bridge_invoke(
                 .or_else(|| req.payload.get("conversation_id"))
                 .and_then(|v| v.as_str())
                 .map(|v| v.to_string());
-            let (category, key) = if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
-                ("agent_audit_quality_gate_conversation", cid.as_str())
-            } else {
-                ("agent_audit_quality_gate", "thresholds")
-            };
-            match state
-                .db
-                .get_config(category, key)
-                .await
-            {
+            let (category, key) =
+                if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
+                    ("agent_audit_quality_gate_conversation", cid.as_str())
+                } else {
+                    ("agent_audit_quality_gate", "thresholds")
+                };
+            match state.db.get_config(category, key).await {
                 Ok(raw) => {
                     let defaults = serde_json::json!({
                         "min_evidence_rate": 0.7,
@@ -2467,7 +2696,8 @@ async fn bridge_invoke(
                     });
                     match raw {
                         Some(v) => {
-                            let parsed: serde_json::Value = serde_json::from_str(&v).unwrap_or(defaults);
+                            let parsed: serde_json::Value =
+                                serde_json::from_str(&v).unwrap_or(defaults);
                             Ok(parsed)
                         }
                         None => Ok(defaults),
@@ -2478,7 +2708,7 @@ async fn bridge_invoke(
                     e
                 )),
             }
-        },
+        }
         "save_agent_audit_quality_gate_thresholds" => {
             let conversation_id = req
                 .payload
@@ -2511,27 +2741,23 @@ async fn bridge_invoke(
                 "max_uncertain_rate": max_uncertain_rate,
                 "max_false_positive_rate": max_false_positive_rate
             });
-            let (category, key, description) = if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
-                (
-                    "agent_audit_quality_gate_conversation",
-                    cid.as_str(),
-                    "Conversation scoped audit quality gate thresholds",
-                )
-            } else {
-                (
-                    "agent_audit_quality_gate",
-                    "thresholds",
-                    "Audit quality gate thresholds",
-                )
-            };
+            let (category, key, description) =
+                if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
+                    (
+                        "agent_audit_quality_gate_conversation",
+                        cid.as_str(),
+                        "Conversation scoped audit quality gate thresholds",
+                    )
+                } else {
+                    (
+                        "agent_audit_quality_gate",
+                        "thresholds",
+                        "Audit quality gate thresholds",
+                    )
+                };
             match state
                 .db
-                .set_config(
-                    category,
-                    key,
-                    &normalized.to_string(),
-                    Some(description),
-                )
+                .set_config(category, key, &normalized.to_string(), Some(description))
                 .await
             {
                 Ok(_) => Ok(normalized),
@@ -2540,7 +2766,7 @@ async fn bridge_invoke(
                     e
                 )),
             }
-        },
+        }
         "get_subagent_runs" => {
             let parent_id = req
                 .payload
@@ -2552,18 +2778,23 @@ async fn bridge_invoke(
             if parent_id.is_empty() {
                 Err("get_subagent_runs missing parent_execution_id".to_string())
             } else {
-                match state.db.get_subagent_runs_by_parent_internal(&parent_id).await {
+                match state
+                    .db
+                    .get_subagent_runs_by_parent_internal(&parent_id)
+                    .await
+                {
                     Ok(v) => Ok(json!(v)),
                     Err(e) => Err(format!("get_subagent_runs failed: {}", e)),
                 }
             }
-        },
+        }
         "start_terminal_server" => {
-            let cfg = req
-                .payload
-                .get("config")
-                .cloned()
-                .and_then(|v| serde_json::from_value::<crate::commands::terminal_commands::TerminalServerConfig>(v).ok());
+            let cfg = req.payload.get("config").cloned().and_then(|v| {
+                serde_json::from_value::<crate::commands::terminal_commands::TerminalServerConfig>(
+                    v,
+                )
+                .ok()
+            });
             match crate::commands::terminal_commands::start_terminal_server(cfg).await {
                 Ok(v) => Ok(json!(v)),
                 Err(e) => Err(format!("start_terminal_server failed: {}", e)),
@@ -2588,8 +2819,13 @@ async fn bridge_invoke(
             }
         }
         "stop_terminal_session" => {
-            let session_id = req.payload.get("sessionId").or_else(|| req.payload.get("session_id"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let session_id = req
+                .payload
+                .get("sessionId")
+                .or_else(|| req.payload.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if session_id.is_empty() {
                 Err("stop_terminal_session missing session_id".to_string())
             } else {
@@ -2605,26 +2841,25 @@ async fn bridge_invoke(
                 Err(e) => Err(format!("get_terminal_websocket_url failed: {}", e)),
             }
         }
-        "list_skills" => {
-            match state.db.list_skills_summary().await {
-                Ok(v) => Ok(json!(v)),
-                Err(e) => Err(format!("list_skills failed: {}", e)),
-            }
-        }
-        "list_skills_full" => {
-            match state.db.list_all_skills().await {
-                Ok(v) => Ok(json!(v)),
-                Err(e) => Err(format!("list_skills_full failed: {}", e)),
-            }
-        }
-        "refresh_skills_index" => {
-            match scan_and_upsert_skills(state.db.as_ref()).await {
-                Ok(v) => Ok(json!(v)),
-                Err(e) => Err(format!("refresh_skills_index failed: {}", e)),
-            }
-        }
+        "list_skills" => match state.db.list_skills_summary().await {
+            Ok(v) => Ok(json!(v)),
+            Err(e) => Err(format!("list_skills failed: {}", e)),
+        },
+        "list_skills_full" => match state.db.list_all_skills().await {
+            Ok(v) => Ok(json!(v)),
+            Err(e) => Err(format!("list_skills_full failed: {}", e)),
+        },
+        "refresh_skills_index" => match scan_and_upsert_skills(state.db.as_ref()).await {
+            Ok(v) => Ok(json!(v)),
+            Err(e) => Err(format!("refresh_skills_index failed: {}", e)),
+        },
         "get_skill_markdown" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() {
                 Err("get_skill_markdown missing id".to_string())
             } else {
@@ -2650,11 +2885,23 @@ async fn bridge_invoke(
             }
         }
         "create_skill" => {
-            let payload = req.payload.get("payload").cloned().unwrap_or_else(|| req.payload.clone());
-            let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+            let payload = req
+                .payload
+                .get("payload")
+                .cloned()
+                .unwrap_or_else(|| req.payload.clone());
+            let name = payload
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             match normalize_skill_id(name) {
                 Ok(id) => {
-                    let description = payload.get("description").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+                    let description = payload
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
                     if description.is_empty() {
                         Err("Skill description is required".to_string())
                     } else {
@@ -2667,7 +2914,10 @@ async fn bridge_invoke(
                                 if let Err(e) = std::fs::create_dir_all(&skill_dir) {
                                     Err(format!("create_skill failed: {}", e))
                                 } else {
-                                    let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or_default();
+                                    let content = payload
+                                        .get("content")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default();
                                     let markdown = build_skill_markdown(&id, &description, content);
                                     if let Err(e) = std::fs::write(&skill_md, markdown) {
                                         Err(format!("create_skill failed: {}", e))
@@ -2681,15 +2931,41 @@ async fn bridge_invoke(
                                                 .unwrap_or(&skill_md)
                                                 .to_string_lossy()
                                                 .to_string(),
-                                            argument_hint: payload.get("argument_hint").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                                            disable_model_invocation: payload.get("disable_model_invocation").and_then(|v| v.as_bool()).unwrap_or(false),
-                                            user_invocable: payload.get("user_invocable").and_then(|v| v.as_bool()).unwrap_or(true),
-                                            allowed_tools: payload.get("allowed_tools")
-                                                .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+                                            argument_hint: payload
+                                                .get("argument_hint")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_string(),
+                                            disable_model_invocation: payload
+                                                .get("disable_model_invocation")
+                                                .and_then(|v| v.as_bool())
+                                                .unwrap_or(false),
+                                            user_invocable: payload
+                                                .get("user_invocable")
+                                                .and_then(|v| v.as_bool())
+                                                .unwrap_or(true),
+                                            allowed_tools: payload
+                                                .get("allowed_tools")
+                                                .and_then(|v| {
+                                                    serde_json::from_value::<Vec<String>>(v.clone())
+                                                        .ok()
+                                                })
                                                 .unwrap_or_default(),
-                                            model: payload.get("model").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                                            context: payload.get("context").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                                            agent: payload.get("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                                            model: payload
+                                                .get("model")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_string(),
+                                            context: payload
+                                                .get("context")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_string(),
+                                            agent: payload
+                                                .get("agent")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_string(),
                                             hooks: payload.get("hooks").cloned(),
                                         };
                                         match state.db.create_skill(&create_payload).await {
@@ -2707,8 +2983,17 @@ async fn bridge_invoke(
             }
         }
         "update_skill" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let payload = req.payload.get("payload").cloned().unwrap_or_else(|| req.payload.clone());
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let payload = req
+                .payload
+                .get("payload")
+                .cloned()
+                .unwrap_or_else(|| req.payload.clone());
             if id.is_empty() {
                 Err("update_skill missing id".to_string())
             } else {
@@ -2716,7 +3001,11 @@ async fn bridge_invoke(
                 let skill_dir = root.join(&id);
                 let mut write_error: Option<String> = None;
                 if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
-                    let desc = payload.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                    let desc = payload
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
                     let desc = if desc.is_empty() {
                         match state.db.get_skill(&id).await {
                             Ok(Some(existing)) => existing.description,
@@ -2729,7 +3018,10 @@ async fn bridge_invoke(
                         write_error = Some("update_skill missing description".to_string());
                     } else {
                         let _ = std::fs::create_dir_all(&skill_dir);
-                        let _ = std::fs::write(skill_dir.join("SKILL.md"), build_skill_markdown(&id, &desc, content));
+                        let _ = std::fs::write(
+                            skill_dir.join("SKILL.md"),
+                            build_skill_markdown(&id, &desc, content),
+                        );
                     }
                 }
 
@@ -2737,20 +3029,45 @@ async fn bridge_invoke(
                     Err(err)
                 } else {
                     let update_payload = sentinel_db::UpdateSkill {
-                        name: payload.get("name").and_then(|v| v.as_str()).map(|v| v.to_string()),
-                        description: payload.get("description").and_then(|v| v.as_str()).map(|v| v.to_string()),
-                        source_path: Some(skill_dir.join("SKILL.md")
-                            .strip_prefix(&root)
-                            .unwrap_or(&skill_dir.join("SKILL.md"))
-                            .to_string_lossy()
-                            .to_string()),
-                        argument_hint: payload.get("argument_hint").and_then(|v| v.as_str()).map(|v| v.to_string()),
-                        disable_model_invocation: payload.get("disable_model_invocation").and_then(|v| v.as_bool()),
+                        name: payload
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string()),
+                        description: payload
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string()),
+                        source_path: Some(
+                            skill_dir
+                                .join("SKILL.md")
+                                .strip_prefix(&root)
+                                .unwrap_or(&skill_dir.join("SKILL.md"))
+                                .to_string_lossy()
+                                .to_string(),
+                        ),
+                        argument_hint: payload
+                            .get("argument_hint")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string()),
+                        disable_model_invocation: payload
+                            .get("disable_model_invocation")
+                            .and_then(|v| v.as_bool()),
                         user_invocable: payload.get("user_invocable").and_then(|v| v.as_bool()),
-                        allowed_tools: payload.get("allowed_tools").and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok()),
-                        model: payload.get("model").and_then(|v| v.as_str()).map(|v| v.to_string()),
-                        context: payload.get("context").and_then(|v| v.as_str()).map(|v| v.to_string()),
-                        agent: payload.get("agent").and_then(|v| v.as_str()).map(|v| v.to_string()),
+                        allowed_tools: payload
+                            .get("allowed_tools")
+                            .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok()),
+                        model: payload
+                            .get("model")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string()),
+                        context: payload
+                            .get("context")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string()),
+                        agent: payload
+                            .get("agent")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string()),
                         hooks: payload.get("hooks").cloned(),
                     };
                     match state.db.update_skill(&id, &update_payload).await {
@@ -2761,7 +3078,12 @@ async fn bridge_invoke(
             }
         }
         "delete_skill" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() {
                 Err("delete_skill missing id".to_string())
             } else {
@@ -2777,7 +3099,12 @@ async fn bridge_invoke(
             }
         }
         "list_skill_files" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() {
                 Err("list_skill_files missing id".to_string())
             } else {
@@ -2787,22 +3114,44 @@ async fn bridge_invoke(
                     Err("Skill directory not found".to_string())
                 } else {
                     let mut out = Vec::new();
-                    for entry in walkdir::WalkDir::new(&skill_dir).max_depth(5).into_iter().filter_map(|e| e.ok()) {
+                    for entry in walkdir::WalkDir::new(&skill_dir)
+                        .max_depth(5)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         if entry.file_type().is_file() {
                             let p = entry.path();
-                            let rel = p.strip_prefix(&skill_dir).unwrap_or(p).to_string_lossy().to_string();
+                            let rel = p
+                                .strip_prefix(&skill_dir)
+                                .unwrap_or(p)
+                                .to_string_lossy()
+                                .to_string();
                             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
                             out.push(json!({ "path": rel, "size": size }));
                         }
                     }
-                    out.sort_by(|a, b| a.get("path").and_then(|v| v.as_str()).cmp(&b.get("path").and_then(|v| v.as_str())));
+                    out.sort_by(|a, b| {
+                        a.get("path")
+                            .and_then(|v| v.as_str())
+                            .cmp(&b.get("path").and_then(|v| v.as_str()))
+                    });
                     Ok(json!(out))
                 }
             }
         }
         "read_skill_file" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let path = req.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() || path.is_empty() {
                 Err("read_skill_file missing id or path".to_string())
             } else {
@@ -2818,9 +3167,24 @@ async fn bridge_invoke(
             }
         }
         "save_skill_file" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let path = req.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let content = req.payload.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let content = req
+                .payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() || path.is_empty() {
                 Err("save_skill_file missing id or path".to_string())
             } else {
@@ -2840,8 +3204,18 @@ async fn bridge_invoke(
             }
         }
         "delete_skill_file" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let path = req.payload.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let path = req
+                .payload
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
             if id.is_empty() || path.is_empty() {
                 Err("delete_skill_file missing id or path".to_string())
             } else {
@@ -2857,11 +3231,25 @@ async fn bridge_invoke(
             }
         }
         "import_skill_file" => {
-            let id = req.payload.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let source_path = req.payload.get("sourcePath").or_else(|| req.payload.get("source_path"))
-                .and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let target_path = req.payload.get("targetPath").or_else(|| req.payload.get("target_path"))
-                .and_then(|v| v.as_str()).map(|v| v.to_string());
+            let id = req
+                .payload
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let source_path = req
+                .payload
+                .get("sourcePath")
+                .or_else(|| req.payload.get("source_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let target_path = req
+                .payload
+                .get("targetPath")
+                .or_else(|| req.payload.get("target_path"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
             if id.is_empty() || source_path.is_empty() {
                 Err("import_skill_file missing id or source_path".to_string())
             } else {
@@ -2869,7 +3257,11 @@ async fn bridge_invoke(
                 if !source.is_file() {
                     Err("Source file not found".to_string())
                 } else {
-                    let filename = source.file_name().and_then(|v| v.to_str()).unwrap_or("imported.txt").to_string();
+                    let filename = source
+                        .file_name()
+                        .and_then(|v| v.to_str())
+                        .unwrap_or("imported.txt")
+                        .to_string();
                     let rel_target = target_path.unwrap_or(filename);
                     let root = skills_root(state.db.as_ref());
                     let skill_dir = root.join(&id);
@@ -2915,7 +3307,9 @@ async fn bridge_invoke(
                         .config
                         .as_ref()
                         .and_then(|c| c.get("audit_config"))
-                        .and_then(|x| serde_json::from_value::<GatewayAuditExecuteConfig>(x.clone()).ok());
+                        .and_then(|x| {
+                            serde_json::from_value::<GatewayAuditExecuteConfig>(x.clone()).ok()
+                        });
                     let max_iterations = v
                         .config
                         .as_ref()
@@ -2929,7 +3323,9 @@ async fn bridge_invoke(
                         .config
                         .as_ref()
                         .and_then(|c| c.get("enable_tenth_man_rule").and_then(|x| x.as_bool()));
-                    if let Err(e) = ensure_conversation_exists(&state, &conversation_id, Some("default")).await {
+                    if let Err(e) =
+                        ensure_conversation_exists(&state, &conversation_id, Some("default")).await
+                    {
                         Err(e)
                     } else {
                         match run_agent_execution(
@@ -3003,7 +3399,11 @@ async fn get_pending_permissions(Query(query): Query<PendingPermissionsQuery>) -
             } else {
                 items
             };
-            Json(PendingPermissionsResponse { items: filtered, request_id }).into_response()
+            Json(PendingPermissionsResponse {
+                items: filtered,
+                request_id,
+            })
+            .into_response()
         }
         Err(e) => error_response_with_request_id(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3058,7 +3458,9 @@ async fn respond_permission(Json(payload): Json<PermissionRespondRequest>) -> Re
         }
     }
 
-    match crate::commands::tool_commands::respond_shell_permission(payload.id, payload.allowed).await {
+    match crate::commands::tool_commands::respond_shell_permission(payload.id, payload.allowed)
+        .await
+    {
         Ok(_) => Json(json!({
             "ok": true,
             "request_id": request_id,
@@ -3096,11 +3498,25 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
 
     let mode = match parse_mode(payload.mode.as_deref()) {
         Ok(v) => v,
-        Err(e) => return error_response_with_request_id(StatusCode::BAD_REQUEST, "BAD_REQUEST", &e, &request_id),
+        Err(e) => {
+            return error_response_with_request_id(
+                StatusCode::BAD_REQUEST,
+                "BAD_REQUEST",
+                &e,
+                &request_id,
+            )
+        }
     };
 
-    if let Err(e) = ensure_conversation_exists(&state, &session_id, payload.service_name.as_deref()).await {
-        return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+    if let Err(e) =
+        ensure_conversation_exists(&state, &session_id, payload.service_name.as_deref()).await
+    {
+        return error_response_with_request_id(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            &e,
+            &request_id,
+        );
     }
 
     if let Err(e) = try_register_active_execution(&state, &session_id, &request_id) {
@@ -3111,7 +3527,12 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
         Ok(h) => h,
         Err(e) => {
             release_active_execution(&state, &session_id, &request_id);
-            return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+            return error_response_with_request_id(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                &e,
+                &request_id,
+            );
         }
     };
 
@@ -3132,7 +3553,12 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
             Ok(text) => text,
             Err(e) => {
                 release_active_execution(&state, &session_id, &request_id);
-                return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+                return error_response_with_request_id(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    &e,
+                    &request_id,
+                );
             }
         }
     } else {
@@ -3148,17 +3574,34 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
             Ok(text) => text,
             Err(e) => {
                 release_active_execution(&state, &session_id, &request_id);
-                return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+                return error_response_with_request_id(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    &e,
+                    &request_id,
+                );
             }
         };
 
-        if let Err(e) = persist_message(&state, &session_id, "user", payload.message.clone()).await {
+        if let Err(e) = persist_message(&state, &session_id, "user", payload.message.clone()).await
+        {
             release_active_execution(&state, &session_id, &request_id);
-            return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+            return error_response_with_request_id(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                &e,
+                &request_id,
+            );
         }
-        if let Err(e) = persist_message(&state, &session_id, "assistant", completion.clone()).await {
+        if let Err(e) = persist_message(&state, &session_id, "assistant", completion.clone()).await
+        {
             release_active_execution(&state, &session_id, &request_id);
-            return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+            return error_response_with_request_id(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                &e,
+                &request_id,
+            );
         }
         completion
     };
@@ -3170,7 +3613,11 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
         session_id,
         message: completion,
         request_id,
-        mode: if mode == GatewayMode::Agent { "agent".to_string() } else { "llm".to_string() },
+        mode: if mode == GatewayMode::Agent {
+            "agent".to_string()
+        } else {
+            "llm".to_string()
+        },
     })
     .into_response()
 }
@@ -3181,7 +3628,11 @@ async fn session_chat(
     Json(payload): Json<SessionChatRequest>,
 ) -> Response {
     if payload.message.trim().is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "BAD_REQUEST", "message is required");
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "message is required",
+        );
     }
 
     match state.db.get_ai_conversation(&session_id).await {
@@ -3240,11 +3691,25 @@ async fn chat_stream(
 
     let mode = match parse_mode(payload.mode.as_deref()) {
         Ok(v) => v,
-        Err(e) => return error_response_with_request_id(StatusCode::BAD_REQUEST, "BAD_REQUEST", &e, &request_id),
+        Err(e) => {
+            return error_response_with_request_id(
+                StatusCode::BAD_REQUEST,
+                "BAD_REQUEST",
+                &e,
+                &request_id,
+            )
+        }
     };
 
-    if let Err(e) = ensure_conversation_exists(&state, &session_id, payload.service_name.as_deref()).await {
-        return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+    if let Err(e) =
+        ensure_conversation_exists(&state, &session_id, payload.service_name.as_deref()).await
+    {
+        return error_response_with_request_id(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            &e,
+            &request_id,
+        );
     }
 
     if let Err(e) = try_register_active_execution(&state, &session_id, &request_id) {
@@ -3255,7 +3720,12 @@ async fn chat_stream(
         Ok(h) => h,
         Err(e) => {
             release_active_execution(&state, &session_id, &request_id);
-            return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+            return error_response_with_request_id(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                &e,
+                &request_id,
+            );
         }
     };
 
@@ -3274,24 +3744,31 @@ async fn chat_stream(
     let mode_for_task = mode;
     let request_id_for_task = request_id.clone();
 
-    let initial_seen_ids: HashSet<String> = match state.db.get_ai_messages_by_conversation(&session_id).await {
-        Ok(messages) => {
-            if let Some(since_id) = since_message_id.as_deref() {
-                match messages.iter().position(|m| m.id == since_id) {
-                    Some(idx) => messages[..=idx].iter().map(|m| m.id.clone()).collect(),
-                    None => HashSet::new(),
+    let initial_seen_ids: HashSet<String> =
+        match state.db.get_ai_messages_by_conversation(&session_id).await {
+            Ok(messages) => {
+                if let Some(since_id) = since_message_id.as_deref() {
+                    match messages.iter().position(|m| m.id == since_id) {
+                        Some(idx) => messages[..=idx].iter().map(|m| m.id.clone()).collect(),
+                        None => HashSet::new(),
+                    }
+                } else {
+                    messages.iter().map(|m| m.id.clone()).collect()
                 }
-            } else {
-                messages.iter().map(|m| m.id.clone()).collect()
             }
-        }
-        Err(_) => HashSet::new(),
-    };
+            Err(_) => HashSet::new(),
+        };
 
     if mode_for_task != GatewayMode::Agent {
-        if let Err(e) = persist_message(&state, &session_id, "user", payload.message.clone()).await {
+        if let Err(e) = persist_message(&state, &session_id, "user", payload.message.clone()).await
+        {
             release_active_execution(&state, &session_id, &request_id);
-            return error_response_with_request_id(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", &e, &request_id);
+            return error_response_with_request_id(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                &e,
+                &request_id,
+            );
         }
     }
 
@@ -3318,7 +3795,11 @@ async fn chat_stream(
 
             let poller = tokio::spawn(async move {
                 while !finished_for_poll.load(Ordering::Relaxed) {
-                    if let Ok(messages) = poll_state.db.get_ai_messages_by_conversation(&poll_sid).await {
+                    if let Ok(messages) = poll_state
+                        .db
+                        .get_ai_messages_by_conversation(&poll_sid)
+                        .await
+                    {
                         for m in messages {
                             if !seen_ids.insert(m.id.clone()) {
                                 continue;
@@ -3329,7 +3810,9 @@ async fn chat_stream(
                                     return;
                                 }
                             } else if m.role == "tool" {
-                                let payload = m.metadata.as_ref()
+                                let payload = m
+                                    .metadata
+                                    .as_ref()
                                     .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
                                     .unwrap_or(json!({"raw": m.content}));
                                 if tx_poll.send(json!({"type":"tool_event","data": payload, "message_id": m.id, "request_id": request_id_for_poll}).to_string()).is_err() {
@@ -3339,7 +3822,9 @@ async fn chat_stream(
                             }
                         }
                     }
-                    if let Ok(pending_perms) = crate::commands::tool_commands::get_pending_shell_permissions().await {
+                    if let Ok(pending_perms) =
+                        crate::commands::tool_commands::get_pending_shell_permissions().await
+                    {
                         for req in pending_perms {
                             if req.execution_id.as_deref() != Some(&poll_sid) {
                                 continue;
@@ -3347,12 +3832,21 @@ async fn chat_stream(
                             if !seen_permission_ids.insert(req.id.clone()) {
                                 continue;
                             }
-                            if tx_poll.send(json!({
-                                "type":"permission_required",
-                                "permission": req,
-                                "request_id": request_id_for_poll,
-                            }).to_string()).is_err() {
-                                let _ = crate::managers::cancellation_manager::cancel_execution(&poll_sid).await;
+                            if tx_poll
+                                .send(
+                                    json!({
+                                        "type":"permission_required",
+                                        "permission": req,
+                                        "request_id": request_id_for_poll,
+                                    })
+                                    .to_string(),
+                                )
+                                .is_err()
+                            {
+                                let _ = crate::managers::cancellation_manager::cancel_execution(
+                                    &poll_sid,
+                                )
+                                .await;
                                 return;
                             }
                         }
@@ -3416,12 +3910,22 @@ async fn chat_stream(
             let service = match resolve_service(&state_for_task, service_name.as_deref()) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = tx.send(json!({"type":"error","code":"INTERNAL_ERROR","message": e}).to_string());
-                    release_active_execution(&state_for_task, &session_id_for_task, &request_id_for_task);
+                    let _ = tx.send(
+                        json!({"type":"error","code":"INTERNAL_ERROR","message": e}).to_string(),
+                    );
+                    release_active_execution(
+                        &state_for_task,
+                        &session_id_for_task,
+                        &request_id_for_task,
+                    );
                     return;
                 }
             };
-            let llm_config = apply_generation_settings_from_db(state_for_task.db.as_ref(), service.service.to_llm_config()).await;
+            let llm_config = apply_generation_settings_from_db(
+                state_for_task.db.as_ref(),
+                service.service.to_llm_config(),
+            )
+            .await;
             let streaming_client = sentinel_llm::StreamingLlmClient::new(llm_config);
             let completion = streaming_client
                 .stream_chat(
@@ -3447,7 +3951,13 @@ async fn chat_stream(
 
             match completion {
                 Ok(final_text) => {
-                    let _ = persist_message(&state_for_task, &session_id_for_task, "assistant", final_text.clone()).await;
+                    let _ = persist_message(
+                        &state_for_task,
+                        &session_id_for_task,
+                        "assistant",
+                        final_text.clone(),
+                    )
+                    .await;
                     let _ = tx.send(
                         json!({
                             "type":"done",
@@ -3488,7 +3998,11 @@ async fn chat_stream(
     let stream = UnboundedReceiverStream::new(rx).map(|msg| {
         let mut event = Event::default().event("message");
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg) {
-            if let Some(id) = v.get("message_id").and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+            if let Some(id) = v
+                .get("message_id")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+            {
                 event = event.id(id);
             }
         }
@@ -3496,7 +4010,11 @@ async fn chat_stream(
     });
 
     Sse::new(stream)
-        .keep_alive(KeepAlive::default().interval(Duration::from_secs(10)).text("keepalive"))
+        .keep_alive(
+            KeepAlive::default()
+                .interval(Duration::from_secs(10))
+                .text("keepalive"),
+        )
         .into_response()
 }
 
@@ -3557,14 +4075,19 @@ pub async fn start_gateway_server(
         .route("/session/{session_id}/messages", get(get_session_messages))
         .route("/session/{session_id}/chat", post(session_chat))
         .route("/session/{session_id}", delete(delete_session))
-        .route_layer(from_fn_with_state(state.clone(), auth_and_rate_limit_middleware));
+        .route_layer(from_fn_with_state(
+            state.clone(),
+            auth_and_rate_limit_middleware,
+        ));
 
     let app = Router::new()
         .route("/", get(web_entry))
         .route("/{*path}", get(web_assets))
         .route("/health", get(health))
         .nest("/api", protected_api)
-        .layer(DefaultBodyLimit::max(normalized_config.limits.max_body_bytes.max(1024)))
+        .layer(DefaultBodyLimit::max(
+            normalized_config.limits.max_body_bytes.max(1024),
+        ))
         .with_state(state);
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();

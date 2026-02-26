@@ -64,7 +64,11 @@ pub async fn get_upload_policy(api_key: &str, model_name: &str) -> Result<Upload
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("Failed to get upload policy: status={}, body={}", status, body);
+        anyhow::bail!(
+            "Failed to get upload policy: status={}, body={}",
+            status,
+            body
+        );
     }
 
     let resp: DashScopeResponse = response
@@ -72,7 +76,10 @@ pub async fn get_upload_policy(api_key: &str, model_name: &str) -> Result<Upload
         .await
         .context("Failed to parse upload policy response")?;
 
-    debug!("Got upload policy: upload_host={}, upload_dir={}", resp.data.upload_host, resp.data.upload_dir);
+    debug!(
+        "Got upload policy: upload_host={}, upload_dir={}",
+        resp.data.upload_host, resp.data.upload_dir
+    );
     Ok(resp.data)
 }
 
@@ -99,7 +106,10 @@ pub async fn upload_file_to_oss(policy: &UploadPolicyData, file_path: &Path) -> 
         .text("Signature", policy.signature.clone())
         .text("policy", policy.policy.clone())
         .text("x-oss-object-acl", policy.x_oss_object_acl.clone())
-        .text("x-oss-forbid-overwrite", policy.x_oss_forbid_overwrite.clone())
+        .text(
+            "x-oss-forbid-overwrite",
+            policy.x_oss_forbid_overwrite.clone(),
+        )
         .text("key", key.clone())
         .text("success_action_status", "200")
         .part("file", file_part);

@@ -107,8 +107,6 @@ pub struct ScanStageProgress {
     pub estimated_completion: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-
-
 impl ScanSession {
     pub fn new(
         name: String,

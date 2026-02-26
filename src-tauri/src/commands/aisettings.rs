@@ -178,9 +178,13 @@ pub async fn save_ai_config(
         } else {
             tracing::info!("AI services reloaded after saving config");
         }
-        
+
         // Apply default LLM provider alias
-        if let Ok(Some(default_llm_provider)) = db.inner().get_config_internal("ai", "default_llm_provider").await {
+        if let Ok(Some(default_llm_provider)) = db
+            .inner()
+            .get_config_internal("ai", "default_llm_provider")
+            .await
+        {
             if let Err(e) = ai_manager.set_default_alias_to(&default_llm_provider).await {
                 tracing::warn!(
                     "Failed to set default alias to '{}': {}",
@@ -188,7 +192,10 @@ pub async fn save_ai_config(
                     e
                 );
             } else {
-                tracing::info!("Default LLM provider alias updated to '{}'", default_llm_provider);
+                tracing::info!(
+                    "Default LLM provider alias updated to '{}'",
+                    default_llm_provider
+                );
             }
         }
     }
@@ -213,19 +220,22 @@ pub async fn add_custom_provider(
     tracing::info!("Adding custom provider: {}", request.name);
 
     // Load existing config
-    let mut providers: HashMap<String, AiProviderConfig> = match db.get_config_internal("ai", "providers_config").await {
-        Ok(Some(config_str)) => {
-            serde_json::from_str(&config_str)
-                .unwrap_or_else(|_| HashMap::new())
-        }
-        _ => HashMap::new(),
-    };
+    let mut providers: HashMap<String, AiProviderConfig> =
+        match db.get_config_internal("ai", "providers_config").await {
+            Ok(Some(config_str)) => {
+                serde_json::from_str(&config_str).unwrap_or_else(|_| HashMap::new())
+            }
+            _ => HashMap::new(),
+        };
 
     let provider_id = request.name.clone();
 
     // Check if already exists
     if providers.contains_key(&provider_id) {
-        return Err(format!("Provider '{}' already exists", request.display_name));
+        return Err(format!(
+            "Provider '{}' already exists",
+            request.display_name
+        ));
     }
 
     // Build model config
@@ -281,12 +291,18 @@ pub async fn add_custom_provider(
         }
     }
 
-    tracing::info!("Custom provider '{}' added successfully", request.display_name);
+    tracing::info!(
+        "Custom provider '{}' added successfully",
+        request.display_name
+    );
 
     // Reload AI services
     if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
         if let Err(e) = ai_manager.reload_services().await {
-            tracing::error!("Failed to reload AI services after adding custom provider: {}", e);
+            tracing::error!(
+                "Failed to reload AI services after adding custom provider: {}",
+                e
+            );
         } else {
             tracing::info!("AI services reloaded after adding custom provider");
         }
@@ -328,7 +344,10 @@ pub async fn set_default_llm_provider(
 
     // Notify frontend
     if let Err(e) = app.emit("ai_default_llm_provider_updated", &provider) {
-        tracing::warn!("Failed to emit ai_default_llm_provider_updated event: {}", e);
+        tracing::warn!(
+            "Failed to emit ai_default_llm_provider_updated event: {}",
+            e
+        );
     }
 
     Ok(())
@@ -343,21 +362,13 @@ pub async fn set_default_llm_model(
     app: AppHandle,
 ) -> Result<(), String> {
     // Save to database
-    db.set_config_internal(
-        "ai",
-        "default_llm_model",
-        &model,
-        Some("Default LLM model"),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    db.set_config_internal("ai", "default_llm_model", &model, Some("Default LLM model"))
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Update AI manager if format is provider/model_name
     if let Some((provider, model_name)) = model.split_once('/') {
-        if let Err(e) = ai_manager
-            .set_default_llm_model(provider, model_name)
-            .await
-        {
+        if let Err(e) = ai_manager.set_default_llm_model(provider, model_name).await {
             tracing::warn!("Failed to update AI manager default chat model: {}", e);
         }
     }
@@ -377,14 +388,9 @@ pub async fn set_default_vlm_model(
     model: String,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    db.set_config_internal(
-        "ai",
-        "default_vlm_model",
-        &model,
-        Some("Default VLM model"),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    db.set_config_internal("ai", "default_vlm_model", &model, Some("Default VLM model"))
+        .await
+        .map_err(|e| e.to_string())?;
 
     tracing::info!("Set default vision model to: {}", model);
     Ok(())
@@ -401,25 +407,66 @@ pub async fn get_ai_config(
         "providers": {}
     });
 
-    // Get providers config from database
-    match db.get_config_internal("ai", "providers_config").await {
+    // Get providers config from database. On first install (or invalid data), initialize defaults.
+    let mut should_persist_default_providers = false;
+    let providers_config = match db.get_config_internal("ai", "providers_config").await {
         Ok(Some(providers_json)) => {
-            if let Ok(providers) = serde_json::from_str::<serde_json::Value>(&providers_json) {
-                ai_config["providers"] = providers;
+            match serde_json::from_str::<serde_json::Value>(&providers_json) {
+                Ok(providers) => providers,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse AI providers configuration, using Rig defaults: {}",
+                        e
+                    );
+                    should_persist_default_providers = true;
+                    default_providers_config()
+                }
             }
         }
         Ok(None) => {
-            tracing::info!("No AI providers configuration found, using Rig defaults");
-            ai_config["providers"] = default_providers_config();
+            tracing::info!("No AI providers configuration found, initializing Rig defaults");
+            should_persist_default_providers = true;
+            default_providers_config()
         }
         Err(e) => {
             tracing::warn!("Failed to load AI providers configuration: {}", e);
-            ai_config["providers"] = default_providers_config();
+            should_persist_default_providers = true;
+            default_providers_config()
+        }
+    };
+    ai_config["providers"] = providers_config.clone();
+
+    if should_persist_default_providers {
+        match serde_json::to_string(&providers_config) {
+            Ok(config_str) => {
+                if let Err(e) = db
+                    .set_config_internal(
+                        "ai",
+                        "providers_config",
+                        &config_str,
+                        Some("AI providers configuration"),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to persist default AI providers configuration: {}",
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to serialize default AI providers configuration: {}",
+                    e
+                );
+            }
         }
     }
 
     // Get other AI config items
-    if let Ok(Some(default_llm_provider)) = db.get_config_internal("ai", "default_llm_provider").await {
+    if let Ok(Some(default_llm_provider)) =
+        db.get_config_internal("ai", "default_llm_provider").await
+    {
         ai_config["default_llm_provider"] = serde_json::Value::String(default_llm_provider);
     }
 
@@ -431,7 +478,9 @@ pub async fn get_ai_config(
         ai_config["default_llm_model"] = serde_json::Value::String(default_llm_model);
     }
 
-    if let Ok(Some(default_vlm_provider)) = db.get_config_internal("ai", "default_vlm_provider").await {
+    if let Ok(Some(default_vlm_provider)) =
+        db.get_config_internal("ai", "default_vlm_provider").await
+    {
         ai_config["default_vlm_provider"] = serde_json::Value::String(default_vlm_provider);
     }
 
@@ -461,7 +510,8 @@ pub async fn get_ai_config(
         }
     }
 
-    if let Ok(Some(enable_multimodal_str)) = db.get_config_internal("ai", "enable_multimodal").await {
+    if let Ok(Some(enable_multimodal_str)) = db.get_config_internal("ai", "enable_multimodal").await
+    {
         if let Ok(enable_multimodal) = enable_multimodal_str.parse::<bool>() {
             ai_config["enable_multimodal"] = serde_json::Value::Bool(enable_multimodal);
         }
@@ -469,12 +519,14 @@ pub async fn get_ai_config(
 
     if let Ok(Some(max_turns_str)) = db.get_config_internal("ai", "max_turns").await {
         if let Ok(max_turns) = max_turns_str.parse::<u32>() {
-            ai_config["max_turns"] =
-                serde_json::Value::Number(serde_json::Number::from(max_turns));
+            ai_config["max_turns"] = serde_json::Value::Number(serde_json::Number::from(max_turns));
         }
     }
 
-    if let Ok(Some(output_storage_threshold_str)) = db.get_config_internal("ai", "output_storage_threshold").await {
+    if let Ok(Some(output_storage_threshold_str)) = db
+        .get_config_internal("ai", "output_storage_threshold")
+        .await
+    {
         if let Ok(output_storage_threshold) = output_storage_threshold_str.parse::<u64>() {
             ai_config["output_storage_threshold"] =
                 serde_json::Value::Number(serde_json::Number::from(output_storage_threshold));
@@ -517,7 +569,8 @@ async fn test_modelscope_connection(
         if !org.is_empty() {
             headers.insert(
                 "x-title",
-                org.parse().map_err(|e| format!("Invalid organization ID: {}", e))?,
+                org.parse()
+                    .map_err(|e| format!("Invalid organization ID: {}", e))?,
             );
         }
     }
@@ -600,7 +653,8 @@ pub async fn test_openrouter_connection(
         if !org.is_empty() {
             headers.insert(
                 "x-title",
-                org.parse().map_err(|e| format!("Invalid organization ID: {}", e))?,
+                org.parse()
+                    .map_err(|e| format!("Invalid organization ID: {}", e))?,
             );
         }
     }
@@ -661,7 +715,7 @@ async fn test_openai_connection(
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
     // Check if this is a local service (LM Studio, Ollama, etc.) that doesn't require API key
-    let is_local_service = api_base.starts_with("http://localhost") 
+    let is_local_service = api_base.starts_with("http://localhost")
         || api_base.starts_with("http://127.0.0.1")
         || api_base.starts_with("http://0.0.0.0");
 
@@ -679,7 +733,7 @@ async fn test_openai_connection(
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
     let mut headers = reqwest::header::HeaderMap::new();
-    
+
     // Use provided API key, or use a dummy key for local services
     let api_key = request.api_key.unwrap_or_else(|| "lm-studio".to_string());
     headers.insert(
@@ -693,7 +747,8 @@ async fn test_openai_connection(
         if !org.is_empty() {
             headers.insert(
                 "OpenAI-Organization",
-                org.parse().map_err(|e| format!("Invalid organization ID: {}", e))?,
+                org.parse()
+                    .map_err(|e| format!("Invalid organization ID: {}", e))?,
             );
         }
     }
@@ -1208,172 +1263,120 @@ async fn test_moonshot_connection(
 
 fn default_providers_config() -> serde_json::Value {
     use serde_json::json;
-    
+
+    let base_provider = |id: &str, name: &str, rig_provider: &str, api_base: Option<&str>| {
+        json!({
+            "id": id,
+            "provider": id,
+            "rig_provider": rig_provider,
+            "name": name,
+            "enabled": false,
+            "api_key": null,
+            "api_base": api_base,
+            "organization": null,
+            "default_model": "",
+            "models": [],
+            "max_context_length": null
+        })
+    };
+
     let providers: Vec<(&'static str, serde_json::Value)> = vec![
         (
-            "OpenAI",
-            json!({
-                "id": "openai",
-                "provider": "openai",
-                "rig_provider": "openai",
-                "name": "OpenAI",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.openai.com/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
-        ),
-        (
             "Anthropic",
-            json!({
-                "id": "anthropic",
-                "provider": "anthropic",
-                "rig_provider": "anthropic",
-                "name": "Anthropic",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.anthropic.com",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            base_provider(
+                "anthropic",
+                "Anthropic",
+                "anthropic",
+                Some("https://api.anthropic.com"),
+            ),
         ),
         (
-            "Gemini",
-            json!({
-                "id": "gemini",
-                "provider": "gemini",
-                "rig_provider": "gemini",
-                "name": "Gemini",
-                "enabled": false,
-                "api_key": null,
-                "api_base": null,
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            "OpenAI",
+            base_provider(
+                "openai",
+                "OpenAI",
+                "openai",
+                Some("https://api.openai.com/v1"),
+            ),
         ),
         (
-            "DeepSeek",
-            json!({
-                "id": "deepseek",
-                "provider": "deepseek",
-                "rig_provider": "deepseek",
-                "name": "DeepSeek",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.deepseek.com/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
-        ),
-        (
-            "Ollama",
-            json!({
-                "id": "ollama",
-                "provider": "ollama",
-                "rig_provider": "ollama",
-                "name": "Ollama",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "http://localhost:11434",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
-        ),
-        (
-            "Groq",
-            json!({
-                "id": "groq",
-                "provider": "groq",
-                "rig_provider": "groq",
-                "name": "Groq",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.groq.com/openai/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            "Azure OpenAI",
+            base_provider("azure", "Azure OpenAI", "azure", None),
         ),
         (
             "Cohere",
-            json!({
-                "id": "cohere",
-                "provider": "cohere",
-                "rig_provider": "cohere",
-                "name": "Cohere",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.cohere.ai",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            base_provider("cohere", "Cohere", "cohere", Some("https://api.cohere.ai")),
         ),
+        (
+            "DeepSeek",
+            base_provider(
+                "deepseek",
+                "DeepSeek",
+                "deepseek",
+                Some("https://api.deepseek.com/v1"),
+            ),
+        ),
+        (
+            "EternalAI",
+            base_provider("eternalai", "EternalAI", "eternalai", None),
+        ),
+        (
+            "Google Gemini",
+            base_provider("gemini", "Google Gemini", "gemini", None),
+        ),
+        (
+            "Galadriel",
+            base_provider("galadriel", "Galadriel", "galadriel", None),
+        ),
+        (
+            "Groq",
+            base_provider(
+                "groq",
+                "Groq",
+                "groq",
+                Some("https://api.groq.com/openai/v1"),
+            ),
+        ),
+        (
+            "Hyperbolic",
+            base_provider(
+                "hyperbolic",
+                "Hyperbolic",
+                "hyperbolic",
+                Some("https://api.hyperbolic.xyz/v1"),
+            ),
+        ),
+        ("Mira", base_provider("mira", "Mira", "mira", None)),
         (
             "Moonshot",
-            json!({
-                "id": "moonshot",
-                "provider": "moonshot",
-                "rig_provider": "moonshot",
-                "name": "Moonshot",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.moonshot.cn/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            base_provider(
+                "moonshot",
+                "Moonshot",
+                "moonshot",
+                Some("https://api.moonshot.cn/v1"),
+            ),
         ),
         (
-            "xAI",
-            json!({
-                "id": "xai",
-                "provider": "xai",
-                "rig_provider": "xai",
-                "name": "xAI",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.x.ai/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            "Ollama",
+            base_provider("ollama", "Ollama", "ollama", Some("http://localhost:11434")),
         ),
         (
             "Perplexity",
-            json!({
-                "id": "perplexity",
-                "provider": "perplexity",
-                "rig_provider": "perplexity",
-                "name": "Perplexity",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.perplexity.ai",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            base_provider(
+                "perplexity",
+                "Perplexity",
+                "perplexity",
+                Some("https://api.perplexity.ai"),
+            ),
         ),
         (
             "TogetherAI",
-            json!({
-                "id": "togetherai",
-                "provider": "togetherai",
-                "rig_provider": "togetherai",
-                "name": "TogetherAI",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.together.xyz/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            base_provider(
+                "togetherai",
+                "TogetherAI",
+                "togetherai",
+                Some("https://api.together.xyz/v1"),
+            ),
         ),
         (
             "OpenRouter",
@@ -1388,54 +1391,14 @@ fn default_providers_config() -> serde_json::Value {
                 "organization": null,
                 "default_model": "",
                 "models": [],
+                "max_context_length": null,
                 "http_referer": null,
                 "x_title": null
             }),
         ),
         (
-            "ModelScope",
-            json!({
-                "id": "modelscope",
-                "provider": "modelscope",
-                "rig_provider": "openai",
-                "name": "ModelScope",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api-inference.modelscope.cn/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
-        ),
-        (
-            "LM Studio",
-            json!({
-                "id": "lm studio",
-                "provider": "lm studio",
-                "rig_provider": "openai",
-                "name": "LM Studio",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "http://172.28.38.178:1234",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
-        ),
-        (
-            "Hyperbolic",
-            json!({
-                "id": "hyperbolic",
-                "provider": "hyperbolic",
-                "rig_provider": "hyperbolic",
-                "name": "Hyperbolic",
-                "enabled": false,
-                "api_key": null,
-                "api_base": "https://api.hyperbolic.xyz/v1",
-                "organization": null,
-                "default_model": "",
-                "models": []
-            }),
+            "xAI",
+            base_provider("xai", "xAI", "xai", Some("https://api.x.ai/v1")),
         ),
     ];
 

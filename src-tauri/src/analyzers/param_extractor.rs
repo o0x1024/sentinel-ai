@@ -38,12 +38,12 @@ impl ParamExtractor {
         }
 
         let mut params = Vec::new();
-        
+
         for pair in query.split('&') {
             if let Some((key, value)) = pair.split_once('=') {
                 let decoded_key = urlencoding::decode(key).unwrap_or_else(|_| key.into());
                 let decoded_value = urlencoding::decode(value).unwrap_or_else(|_| value.into());
-                
+
                 params.push(Parameter {
                     name: decoded_key.to_string(),
                     param_type: self.infer_type(&decoded_value),
@@ -244,16 +244,23 @@ mod tests {
         let params = extractor.extract_body_params(body, &Some("application/json".to_string()));
 
         assert_eq!(params.len(), 3);
-        assert!(params.iter().any(|p| p.name == "username" && p.param_type == ParameterType::String));
-        assert!(params.iter().any(|p| p.name == "age" && p.param_type == ParameterType::Number));
-        assert!(params.iter().any(|p| p.name == "active" && p.param_type == ParameterType::Boolean));
+        assert!(params
+            .iter()
+            .any(|p| p.name == "username" && p.param_type == ParameterType::String));
+        assert!(params
+            .iter()
+            .any(|p| p.name == "age" && p.param_type == ParameterType::Number));
+        assert!(params
+            .iter()
+            .any(|p| p.name == "active" && p.param_type == ParameterType::Boolean));
     }
 
     #[test]
     fn test_extract_from_form() {
         let extractor = ParamExtractor::new();
         let body = "username=admin&password=secret&remember=true";
-        let params = extractor.extract_body_params(body, &Some("application/x-www-form-urlencoded".to_string()));
+        let params = extractor
+            .extract_body_params(body, &Some("application/x-www-form-urlencoded".to_string()));
 
         assert_eq!(params.len(), 3);
         assert!(params.iter().any(|p| p.name == "username"));
@@ -273,4 +280,3 @@ mod tests {
         assert!(params.iter().any(|p| p.name == "user.profile.age"));
     }
 }
-

@@ -310,7 +310,11 @@ pub async fn add_child_process_mcp_server(
         clients.insert(name.clone(), Arc::new(tokio::sync::Mutex::new(client)));
     }
 
-    tracing::info!("MCP server {} connected with id: {} (persistent client stored)", name, connection_id);
+    tracing::info!(
+        "MCP server {} connected with id: {} (persistent client stored)",
+        name,
+        connection_id
+    );
 
     Ok(connection_id)
 }
@@ -337,13 +341,13 @@ pub async fn mcp_disconnect_server(
             let mut clients = PERSISTENT_CLIENTS.write().await;
             if let Some(client_arc) = clients.remove(&name) {
                 tracing::info!("Removing persistent MCP client for server: {}", name);
-                
+
                 // Try to clean up gracefully if we can acquire the lock
                 // We use try_lock to avoid deadlocks in shutdown scenarios
                 if let Ok(_client) = client_arc.try_lock() {
-                     // Note: RunningService doesn't implement Cancel in version 0.9.1 the way we expect
-                     // Drop will handle cleanup via Drop trait in rmcp/tokio transport
-                     // Just letting it drop is sufficient
+                    // Note: RunningService doesn't implement Cancel in version 0.9.1 the way we expect
+                    // Drop will handle cleanup via Drop trait in rmcp/tokio transport
+                    // Just letting it drop is sufficient
                 }
             }
         }
@@ -514,9 +518,15 @@ pub async fn mcp_auto_connect_servers(db: Arc<DatabaseService>, app: AppHandle) 
                 // Store the client in persistent storage for reuse
                 {
                     let mut clients = PERSISTENT_CLIENTS.write().await;
-                    clients.insert(config.name.clone(), Arc::new(tokio::sync::Mutex::new(client)));
+                    clients.insert(
+                        config.name.clone(),
+                        Arc::new(tokio::sync::Mutex::new(client)),
+                    );
                 }
-                tracing::info!("Auto-connected MCP server: {} (persistent client stored)", config.name);
+                tracing::info!(
+                    "Auto-connected MCP server: {} (persistent client stored)",
+                    config.name
+                );
 
                 // Notify frontend to update status
                 let _ = app.emit(
@@ -646,36 +656,41 @@ pub async fn mcp_call_tool(
             .await
             .map_err(|e| format!("Failed to call tool: {}", e))?
     } else {
-        // Fallback: This should rarely happen if connection flow is correct. 
+        // Fallback: This should rarely happen if connection flow is correct.
         // We warn but try to create a fresh temporary connection for robustness.
-        tracing::warn!("Persistent client not found for {}, creating temporary connection", server_name);
-        
+        tracing::warn!(
+            "Persistent client not found for {}, creating temporary connection",
+            server_name
+        );
+
         let (command, args) = {
-             let active = ACTIVE_CONNECTIONS.read().await;
-             active.get(&server_name)
-                 .map(|c| (c.command.clone(), c.args.clone()))
-                 .ok_or_else(|| format!("Server {} not active", server_name))?
+            let active = ACTIVE_CONNECTIONS.read().await;
+            active
+                .get(&server_name)
+                .map(|c| (c.command.clone(), c.args.clone()))
+                .ok_or_else(|| format!("Server {} not active", server_name))?
         };
 
         let mut cmd = TokioCommand::new(&command);
         cmd.args(&args);
-        
+
         // ... standard connection setup ...
         let transport = rmcp::transport::TokioChildProcess::new(cmd)
             .map_err(|e| format!("Creation failed: {}", e))?;
-            
+
         let client_info = create_client_info();
         let client = client_info
             .serve(transport)
             .await
             .map_err(|e| format!("Connection failed: {}", e))?;
-            
-        client.call_tool(rmcp::model::CallToolRequestParam {
-            name: tool_name.clone().into(),
-            arguments: args_map,
-        })
-        .await
-        .map_err(|e| format!("Tool call failed: {}", e))?
+
+        client
+            .call_tool(rmcp::model::CallToolRequestParam {
+                name: tool_name.clone().into(),
+                arguments: args_map,
+            })
+            .await
+            .map_err(|e| format!("Tool call failed: {}", e))?
     };
 
     // Convert result to JSON

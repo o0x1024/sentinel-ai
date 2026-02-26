@@ -1,11 +1,11 @@
-use sentinel_db::core::models::scan_session::*;
 use crate::services::DatabaseService;
 use anyhow::Result;
+use sentinel_db::core::models::scan_session::*;
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
-use sentinel_db::Database;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListSessionsRequest {
@@ -124,7 +124,8 @@ pub async fn list_scan_sessions(
     request: ListSessionsRequest,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<SessionsListResponse, String> {
-    match db.inner()
+    match db
+        .inner()
         .list_scan_sessions(request.limit, request.offset, request.status_filter)
         .await
     {

@@ -276,7 +276,7 @@ mod tests {
     #[tokio::test]
     async fn test_stream_buffer_basic() {
         let buffer = StreamBuffer::new(StreamBufferConfig {
-            min_buffer_size: 3,  // 降低最小缓冲大小
+            min_buffer_size: 3, // 降低最小缓冲大小
             max_buffer_size: 20,
             flush_interval_ms: 100,
             flush_on_chars: vec!['\n'],
@@ -344,7 +344,7 @@ mod tests {
         let collector: BatchCollector<i32> = BatchCollector::new(
             3,
             DebounceConfig {
-                delay_ms: 1000,  // 较长延迟，确保不会因去抖动触发
+                delay_ms: 1000, // 较长延迟，确保不会因去抖动触发
                 max_wait_ms: 5000,
             },
         );
@@ -364,7 +364,7 @@ mod tests {
         let collector: BatchCollector<i32> = BatchCollector::new(
             10,
             DebounceConfig {
-                delay_ms: 1000,  // 较长延迟
+                delay_ms: 1000, // 较长延迟
                 max_wait_ms: 5000,
             },
         );
@@ -381,4 +381,3 @@ mod tests {
         assert!(collector.flush().await.is_empty());
     }
 }
-

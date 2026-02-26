@@ -3,13 +3,15 @@
 use std::fs;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
 use sentinel_db::{Database, Skill, SkillDetail, SkillSummary};
+use serde::{Deserialize, Serialize};
 
-use crate::skills::{parse_skill_markdown, scan_and_upsert_skills, skills_root, validate_skill_with_skills_ref};
+use crate::skills::{
+    parse_skill_markdown, scan_and_upsert_skills, skills_root, validate_skill_with_skills_ref,
+};
 use std::path::{Component, Path, PathBuf};
-use walkdir::WalkDir;
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSkillRequest {
@@ -116,7 +118,12 @@ fn build_skill_markdown(name: &str, description: &str, content: &str) -> String 
     md
 }
 
-fn write_skill_file(skill_dir: &PathBuf, name: &str, description: &str, content: &str) -> Result<PathBuf, String> {
+fn write_skill_file(
+    skill_dir: &PathBuf,
+    name: &str,
+    description: &str,
+    content: &str,
+) -> Result<PathBuf, String> {
     fs::create_dir_all(skill_dir).map_err(|e| e.to_string())?;
     let skill_path = skill_dir.join("SKILL.md");
     let markdown = build_skill_markdown(name, description, content);
@@ -182,10 +189,7 @@ pub async fn get_skill(
     id: String,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Option<Skill>, String> {
-    db_service
-        .get_skill(&id)
-        .await
-        .map_err(|e| e.to_string())
+    db_service.get_skill(&id).await.map_err(|e| e.to_string())
 }
 
 /// Get SKILL.md body for a skill
@@ -241,7 +245,12 @@ pub async fn create_skill(
     }
     let skill_dir = root.join(&dir_name);
     let skill_name = dir_name.clone();
-    let skill_path = write_skill_file(&skill_dir, &skill_name, &payload.description, &payload.content)?;
+    let skill_path = write_skill_file(
+        &skill_dir,
+        &skill_name,
+        &payload.description,
+        &payload.content,
+    )?;
 
     if let Err(e) = validate_skill_with_skills_ref(&skill_dir) {
         tracing::warn!("skills-ref validation warning (create_skill): {}", e);
@@ -276,10 +285,7 @@ pub async fn update_skill(
     payload: UpdateSkillRequest,
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
-    let existing = db_service
-        .get_skill(&id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let existing = db_service.get_skill(&id).await.map_err(|e| e.to_string())?;
 
     let existing = existing.ok_or_else(|| "Skill not found".to_string())?;
     let root = skills_root(&db_service);
@@ -310,8 +316,9 @@ pub async fn update_skill(
             let skill_path = skill_dir.join("SKILL.md");
             if skill_path.exists() {
                 let doc = parse_skill_markdown(
-                    &fs::read_to_string(&skill_path).map_err(|e| e.to_string())?
-                ).map_err(|e| e.to_string())?;
+                    &fs::read_to_string(&skill_path).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
                 doc.body
             } else {
                 String::new()
@@ -370,10 +377,7 @@ pub async fn delete_skill(
     let root = skills_root(&db_service);
     let canonical_root = std::fs::canonicalize(&root).map_err(|e| e.to_string())?;
 
-    let skill = db_service
-        .get_skill(&id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let skill = db_service.get_skill(&id).await.map_err(|e| e.to_string())?;
 
     // Try to remove on-disk skill directory first so index refresh won't re-import it.
     if let Some(skill) = skill {
@@ -381,7 +385,9 @@ pub async fn delete_skill(
         if skill_dir_from_id.exists() {
             let canonical_skill_dir =
                 std::fs::canonicalize(&skill_dir_from_id).map_err(|e| e.to_string())?;
-            if !canonical_skill_dir.starts_with(&canonical_root) || canonical_skill_dir == canonical_root {
+            if !canonical_skill_dir.starts_with(&canonical_root)
+                || canonical_skill_dir == canonical_root
+            {
                 return Err("Refusing to delete path outside skills root".to_string());
             }
             std::fs::remove_dir_all(&canonical_skill_dir).map_err(|e| e.to_string())?;
@@ -393,15 +399,21 @@ pub async fn delete_skill(
                 } else {
                     source
                 };
-                let canonical_candidate = std::fs::canonicalize(&candidate_dir).map_err(|e| e.to_string())?;
-                if canonical_candidate.starts_with(&canonical_root) && canonical_candidate != canonical_root {
+                let canonical_candidate =
+                    std::fs::canonicalize(&candidate_dir).map_err(|e| e.to_string())?;
+                if canonical_candidate.starts_with(&canonical_root)
+                    && canonical_candidate != canonical_root
+                {
                     std::fs::remove_dir_all(&canonical_candidate).map_err(|e| e.to_string())?;
                 }
             }
         }
     }
 
-    db_service.delete_skill(&id).await.map_err(|e| e.to_string())
+    db_service
+        .delete_skill(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Scan skills directory and refresh DB index
@@ -550,7 +562,9 @@ fn validate_relative_path(path: &str) -> Result<PathBuf, String> {
     }
     for comp in rel.components() {
         match comp {
-            Component::ParentDir => return Err("Parent directory paths are not allowed".to_string()),
+            Component::ParentDir => {
+                return Err("Parent directory paths are not allowed".to_string())
+            }
             Component::CurDir => return Err("Current directory paths are not allowed".to_string()),
             _ => {}
         }
@@ -613,15 +627,15 @@ pub async fn read_skill_file(
     let skill_dir = resolve_skill_dir(&root, &id)?;
     let rel = validate_relative_path(&path)?;
     let target = skill_dir.join(&rel);
-    
+
     // Security check: ensure the file is within the skill directory
     let canonical_root = std::fs::canonicalize(&skill_dir).map_err(|e| e.to_string())?;
     let canonical_file = std::fs::canonicalize(&target).map_err(|e| e.to_string())?;
-    
+
     if !canonical_file.starts_with(&canonical_root) {
         return Err("Path escapes skill directory".to_string());
     }
-    
+
     let content = std::fs::read_to_string(&canonical_file).map_err(|e| e.to_string())?;
     Ok(content)
 }
@@ -691,9 +705,7 @@ pub async fn import_skill_file(
 }
 
 /// Discover skills from a local file or directory
-pub async fn discover_skills_from_path(
-    source_path: String,
-) -> Result<Vec<SkillCandidate>, String> {
+pub async fn discover_skills_from_path(source_path: String) -> Result<Vec<SkillCandidate>, String> {
     let resolved = resolve_skill_source_path(&source_path)?;
     discover_skills_in_dir(&resolved)
 }
@@ -772,7 +784,7 @@ pub async fn install_skills_from_path(
         if skill_md_path.exists() {
             match fs::read_to_string(&skill_md_path) {
                 Ok(content) => match parse_skill_markdown(&content) {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(e) => {
                         let msg = format!("Skill '{}' SKILL.md parse error: {}", skill_id, e);
                         tracing::warn!("{}", msg);

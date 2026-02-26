@@ -1,9 +1,9 @@
 //! 窗口管理命令
-//! 
+//!
 //! 提供窗口创建、管理和控制的Tauri命令接口
 
-use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use serde::{Deserialize, Serialize};
+use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WindowConfig {
@@ -32,13 +32,10 @@ pub async fn create_window(app: AppHandle, config: WindowConfig) -> Result<Strin
     }
 
     // 创建窗口构建器
-    let mut builder = WebviewWindowBuilder::new(
-        &app,
-        &config.label,
-        WebviewUrl::App("index.html".into())
-    )
-    .title(&config.title)
-    .inner_size(config.width, config.height);
+    let mut builder =
+        WebviewWindowBuilder::new(&app, &config.label, WebviewUrl::App("index.html".into()))
+            .title(&config.title)
+            .inner_size(config.width, config.height);
 
     // 设置位置
     if let (Some(x), Some(y)) = (config.x, config.y) {
@@ -103,7 +100,7 @@ pub async fn get_window_info(app: AppHandle, label: String) -> Result<serde_json
         let size = window.outer_size().map_err(|e| e.to_string())?;
         let is_visible = window.is_visible().map_err(|e| e.to_string())?;
         let is_maximized = window.is_maximized().map_err(|e| e.to_string())?;
-        
+
         Ok(serde_json::json!({
             "label": label,
             "position": {
@@ -124,9 +121,18 @@ pub async fn get_window_info(app: AppHandle, label: String) -> Result<serde_json
 
 /// 设置窗口位置
 #[command]
-pub async fn set_window_position(app: AppHandle, label: String, x: f64, y: f64) -> Result<(), String> {
+pub async fn set_window_position(
+    app: AppHandle,
+    label: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&label) {
-        window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: x as i32, y: y as i32 }))
+        window
+            .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                x: x as i32,
+                y: y as i32,
+            }))
             .map_err(|e| e.to_string())?;
         Ok(())
     } else {
@@ -136,9 +142,18 @@ pub async fn set_window_position(app: AppHandle, label: String, x: f64, y: f64) 
 
 /// 设置窗口大小
 #[command]
-pub async fn set_window_size(app: AppHandle, label: String, width: f64, height: f64) -> Result<(), String> {
+pub async fn set_window_size(
+    app: AppHandle,
+    label: String,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&label) {
-        window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: width as u32, height: height as u32 }))
+        window
+            .set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                width: width as u32,
+                height: height as u32,
+            }))
             .map_err(|e| e.to_string())?;
         Ok(())
     } else {

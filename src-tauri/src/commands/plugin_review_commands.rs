@@ -1,12 +1,12 @@
 //! Plugin review and management commands for Tauri
 
-use tauri::State;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use chrono::Utc;
+use tauri::State;
 
-use crate::services::database::DatabaseService;
 use crate::generators::validator::{PluginValidator, ValidationResult};
+use crate::services::database::DatabaseService;
 use sentinel_db::Database;
 
 /// Response for plugin review operations
@@ -23,7 +23,7 @@ pub async fn get_plugins_for_review(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugins for review from plugin_registry");
-    
+
     // Query from plugin_registry table
     match db.inner().get_plugins_from_registry(None).await {
         Ok(plugins) => {
@@ -51,7 +51,7 @@ pub async fn list_generated_plugins(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Listing all generated plugins");
-    
+
     // Redirect to get_plugins_for_review
     get_plugins_for_review(db).await
 }
@@ -63,9 +63,9 @@ pub async fn get_plugin_detail(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugin detail: {}", plugin_id);
-    
+
     // TODO: Query from database
-    
+
     Ok(PluginReviewResponse {
         success: true,
         message: "Plugin found".to_string(),
@@ -80,9 +80,13 @@ pub async fn approve_plugin(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Approving plugin: {}", plugin_id);
-    
+
     // Update plugin status in database
-    match db.inner().update_plugin_status(&plugin_id, "Approved").await {
+    match db
+        .inner()
+        .update_plugin_status(&plugin_id, "Approved")
+        .await
+    {
         Ok(_) => {
             log::info!("Plugin {} approved successfully", plugin_id);
             Ok(PluginReviewResponse {
@@ -114,9 +118,13 @@ pub async fn reject_plugin(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Rejecting plugin: {} (reason: {})", plugin_id, reason);
-    
+
     // Update plugin status in database
-    match db.inner().update_plugin_status(&plugin_id, "Rejected").await {
+    match db
+        .inner()
+        .update_plugin_status(&plugin_id, "Rejected")
+        .await
+    {
         Ok(_) => {
             log::info!("Plugin {} rejected successfully", plugin_id);
             Ok(PluginReviewResponse {
@@ -149,7 +157,7 @@ pub async fn review_update_plugin_code(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Updating plugin code: {}", plugin_id);
-    
+
     // 先获取插件现有元数据
     let plugin = match db.inner().get_plugin_from_registry(&plugin_id).await {
         Ok(Some(p)) => p,
@@ -168,7 +176,7 @@ pub async fn review_update_plugin_code(
             });
         }
     };
-    
+
     // 使用现有元数据 + 新代码更新
     let metadata_json = serde_json::to_value(&plugin.metadata).unwrap_or(serde_json::json!({}));
     match db.inner().update_plugin(&metadata_json, &code).await {
@@ -202,12 +210,16 @@ pub async fn batch_approve_plugins(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Batch approving {} plugins", plugin_ids.len());
-    
+
     let mut approved_count = 0;
     let mut failed_ids: Vec<String> = vec![];
-    
+
     for plugin_id in plugin_ids {
-        match db.inner().update_plugin_status(&plugin_id, "Approved").await {
+        match db
+            .inner()
+            .update_plugin_status(&plugin_id, "Approved")
+            .await
+        {
             Ok(_) => {
                 approved_count += 1;
                 log::info!("Plugin {} approved", plugin_id);
@@ -218,7 +230,7 @@ pub async fn batch_approve_plugins(
             }
         }
     }
-    
+
     Ok(PluginReviewResponse {
         success: true,
         message: format!("Approved {} plugins", approved_count),
@@ -237,12 +249,16 @@ pub async fn batch_reject_plugins(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Batch rejecting {} plugins", plugin_ids.len());
-    
+
     let mut rejected_count = 0;
     let mut failed_ids: Vec<String> = vec![];
-    
+
     for plugin_id in plugin_ids {
-        match db.inner().update_plugin_status(&plugin_id, "Rejected").await {
+        match db
+            .inner()
+            .update_plugin_status(&plugin_id, "Rejected")
+            .await
+        {
             Ok(_) => {
                 rejected_count += 1;
                 log::info!("Plugin {} rejected", plugin_id);
@@ -253,7 +269,7 @@ pub async fn batch_reject_plugins(
             }
         }
     }
-    
+
     Ok(PluginReviewResponse {
         success: true,
         message: format!("Rejected {} plugins", rejected_count),
@@ -271,9 +287,9 @@ pub async fn get_plugin_statistics(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugin statistics");
-    
+
     // TODO: Query statistics from database
-    
+
     Ok(PluginReviewResponse {
         success: true,
         message: "Statistics retrieved".to_string(),
@@ -296,9 +312,9 @@ pub async fn search_plugins(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Searching plugins: {}", query);
-    
+
     // TODO: Search in database
-    
+
     Ok(PluginReviewResponse {
         success: true,
         message: "Search completed".to_string(),
@@ -317,7 +333,7 @@ pub async fn export_plugin(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Exporting plugin: {} as {}", plugin_id, format);
-    
+
     // Get plugin from database
     match db.inner().get_plugin_from_registry(&plugin_id).await {
         Ok(plugin) => {
@@ -346,7 +362,7 @@ pub async fn review_delete_plugin(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Deleting plugin: {}", plugin_id);
-    
+
     // Delete from database
     match db.inner().delete_plugin_from_registry(&plugin_id).await {
         Ok(_) => {
@@ -381,23 +397,30 @@ pub async fn get_plugins_paginated(
     user_id: Option<String>,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
-    log::info!("Getting plugins paginated: page={}, page_size={}, status={:?}, search={:?}", 
-        page, page_size, status_filter, search_text);
-    
-    match db.inner().get_plugins_paginated(
+    log::info!(
+        "Getting plugins paginated: page={}, page_size={}, status={:?}, search={:?}",
         page,
         page_size,
-        status_filter.as_deref(),
-        search_text.as_deref(),
-        user_id.as_deref(),
-    ).await {
-        Ok(result) => {
-            Ok(PluginReviewResponse {
-                success: true,
-                message: "Plugins retrieved".to_string(),
-                data: Some(result),
-            })
-        }
+        status_filter,
+        search_text
+    );
+
+    match db
+        .inner()
+        .get_plugins_paginated(
+            page,
+            page_size,
+            status_filter.as_deref(),
+            search_text.as_deref(),
+            user_id.as_deref(),
+        )
+        .await
+    {
+        Ok(result) => Ok(PluginReviewResponse {
+            success: true,
+            message: "Plugins retrieved".to_string(),
+            data: Some(result),
+        }),
         Err(e) => {
             log::error!("Failed to get plugins paginated: {}", e);
             Ok(PluginReviewResponse {
@@ -417,13 +440,21 @@ pub async fn toggle_plugin_favorite(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Toggling favorite for plugin: {}", plugin_id);
-    
-    match db.inner().toggle_plugin_favorite(&plugin_id, user_id.as_deref()).await {
+
+    match db
+        .inner()
+        .toggle_plugin_favorite(&plugin_id, user_id.as_deref())
+        .await
+    {
         Ok(is_favorited) => {
             log::info!("Plugin {} favorite status: {}", plugin_id, is_favorited);
             Ok(PluginReviewResponse {
                 success: true,
-                message: if is_favorited { "Plugin favorited".to_string() } else { "Plugin unfavorited".to_string() },
+                message: if is_favorited {
+                    "Plugin favorited".to_string()
+                } else {
+                    "Plugin unfavorited".to_string()
+                },
                 data: Some(serde_json::json!({
                     "plugin_id": plugin_id,
                     "is_favorited": is_favorited,
@@ -448,17 +479,15 @@ pub async fn get_favorited_plugins(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting favorited plugins");
-    
+
     match db.inner().get_favorited_plugins(user_id.as_deref()).await {
-        Ok(plugin_ids) => {
-            Ok(PluginReviewResponse {
-                success: true,
-                message: format!("Found {} favorited plugins", plugin_ids.len()),
-                data: Some(serde_json::json!({
-                    "plugin_ids": plugin_ids,
-                })),
-            })
-        }
+        Ok(plugin_ids) => Ok(PluginReviewResponse {
+            success: true,
+            message: format!("Found {} favorited plugins", plugin_ids.len()),
+            data: Some(serde_json::json!({
+                "plugin_ids": plugin_ids,
+            })),
+        }),
         Err(e) => {
             log::error!("Failed to get favorited plugins: {}", e);
             Ok(PluginReviewResponse {
@@ -476,15 +505,13 @@ pub async fn get_plugin_review_statistics(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<PluginReviewResponse, String> {
     log::info!("Getting plugin review statistics");
-    
+
     match db.inner().get_plugin_review_stats().await {
-        Ok(stats) => {
-            Ok(PluginReviewResponse {
-                success: true,
-                message: "Statistics retrieved".to_string(),
-                data: Some(stats),
-            })
-        }
+        Ok(stats) => Ok(PluginReviewResponse {
+            success: true,
+            message: "Statistics retrieved".to_string(),
+            data: Some(stats),
+        }),
         Err(e) => {
             log::error!("Failed to get plugin review statistics: {}", e);
             Ok(PluginReviewResponse {
@@ -498,13 +525,11 @@ pub async fn get_plugin_review_statistics(
 
 /// Validate plugin code syntax and structure
 #[tauri::command]
-pub async fn validate_plugin_code(
-    code: String,
-) -> Result<ValidationResult, String> {
+pub async fn validate_plugin_code(code: String) -> Result<ValidationResult, String> {
     log::debug!("Validating plugin code, length: {}", code.len());
-    
+
     let validator = PluginValidator::new();
-    
+
     match validator.validate(&code).await {
         Ok(result) => {
             log::debug!(

@@ -1,10 +1,10 @@
 //! ToolServer management commands
 
-use std::sync::Arc;
 use sentinel_db::Database;
+use std::sync::Arc;
 
-use sentinel_tools::get_tool_server;
 use sentinel_tools::buildin_tools::SkillsTool;
+use sentinel_tools::get_tool_server;
 
 /// Initialize the global tool server with builtin tools
 #[tauri::command]
@@ -48,7 +48,9 @@ pub async fn list_tools_by_source(
 
 /// Get tool info by name
 #[tauri::command]
-pub async fn get_tool_server_tool(tool_name: String) -> Result<Option<sentinel_tools::ToolInfo>, String> {
+pub async fn get_tool_server_tool(
+    tool_name: String,
+) -> Result<Option<sentinel_tools::ToolInfo>, String> {
     if tool_name == SkillsTool::NAME {
         return Ok(None);
     }
@@ -66,11 +68,13 @@ pub async fn get_tool_input_schema(tool_id: String) -> Result<serde_json::Value,
     if tool_id == SkillsTool::NAME {
         return Err("Tool not found: skills".to_string());
     }
-    
+
     // Get tool info
-    let tool_info = server.get_tool(&tool_id).await
+    let tool_info = server
+        .get_tool(&tool_id)
+        .await
         .ok_or_else(|| format!("Tool not found: {}", tool_id))?;
-    
+
     // Return the input_schema from ToolInfo
     Ok(tool_info.input_schema)
 }
@@ -84,16 +88,20 @@ pub async fn get_tool_output_schema(tool_id: String) -> Result<serde_json::Value
     if tool_id == SkillsTool::NAME {
         return Err("Tool not found: skills".to_string());
     }
-    
+
     // Get tool info
-    let tool_info = server.get_tool(&tool_id).await
+    let tool_info = server
+        .get_tool(&tool_id)
+        .await
         .ok_or_else(|| format!("Tool not found: {}", tool_id))?;
-    
+
     // Return the output_schema from ToolInfo
-    Ok(tool_info.output_schema.unwrap_or_else(|| serde_json::json!({
-        "type": "object",
-        "properties": {}
-    })))
+    Ok(tool_info.output_schema.unwrap_or_else(|| {
+        serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })
+    }))
 }
 
 /// Execute a tool via ToolServer
@@ -223,7 +231,10 @@ pub async fn register_workflow_tools(
             continue;
         }
 
-        let id = workflow.get("id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("");
+        let id = workflow
+            .get("id")
+            .and_then(|v: &serde_json::Value| v.as_str())
+            .unwrap_or("");
         let name = workflow
             .get("name")
             .and_then(|v: &serde_json::Value| v.as_str())
@@ -239,7 +250,11 @@ pub async fn register_workflow_tools(
 
         // Extract input schema from workflow definition
         let input_schema =
-            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(&workflow, Some(&server)).await;
+            sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_input_schema(
+                &workflow,
+                Some(&server),
+            )
+            .await;
         let output_schema =
             sentinel_tools::workflow_adapter::WorkflowToolAdapter::extract_output_schema(&workflow);
 
@@ -282,7 +297,9 @@ pub async fn refresh_all_dynamic_tools(
     server.clear_workflow_tools().await;
 
     // Reload workflow tools
-    let workflow_count = register_workflow_tools(db_service.clone()).await.unwrap_or(0);
+    let workflow_count = register_workflow_tools(db_service.clone())
+        .await
+        .unwrap_or(0);
 
     // Note: MCP and plugin tools need to be registered via their respective commands
     // when servers connect or plugins are enabled

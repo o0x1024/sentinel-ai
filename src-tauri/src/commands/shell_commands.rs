@@ -1,11 +1,7 @@
 //! Shell tool configuration commands
 
-use sentinel_tools::shell::{
-    get_shell_config, set_shell_config, ShellConfig,
-};
-use sentinel_tools::{
-    init_docker_sandbox, DockerSandbox,
-};
+use sentinel_tools::shell::{get_shell_config, set_shell_config, ShellConfig};
+use sentinel_tools::{init_docker_sandbox, DockerSandbox};
 use serde::{Deserialize, Serialize};
 
 /// Shell configuration response
@@ -20,7 +16,7 @@ pub struct ShellConfigResponse {
 pub async fn get_shell_configuration() -> Result<ShellConfigResponse, String> {
     let config = get_shell_config().await;
     let docker_available = DockerSandbox::is_docker_available().await;
-    
+
     Ok(ShellConfigResponse {
         config,
         docker_available,
@@ -42,15 +38,15 @@ pub async fn initialize_docker_sandbox() -> Result<String, String> {
         .map_err(|e| format!("Failed to get current directory: {}", e))?
         .join("sentinel-tools")
         .join("Dockerfile.sandbox");
-    
+
     let dockerfile_str = dockerfile_path
         .to_str()
         .ok_or_else(|| "Invalid Dockerfile path".to_string())?;
-    
+
     init_docker_sandbox(Some(dockerfile_str), Some("sentinel-sandbox:latest"))
         .await
         .map_err(|e| format!("Failed to initialize Docker sandbox: {}", e))?;
-    
+
     Ok("Docker sandbox initialized successfully".to_string())
 }
 
@@ -67,15 +63,15 @@ pub async fn build_docker_sandbox_image() -> Result<String, String> {
         .map_err(|e| format!("Failed to get current directory: {}", e))?
         .join("sentinel-tools")
         .join("Dockerfile.sandbox");
-    
+
     let dockerfile_str = dockerfile_path
         .to_str()
         .ok_or_else(|| "Invalid Dockerfile path".to_string())?;
-    
+
     DockerSandbox::build_image(dockerfile_str, "sentinel-sandbox:latest")
         .await
         .map_err(|e| format!("Failed to build Docker image: {}", e))?;
-    
+
     Ok("Docker image built successfully".to_string())
 }
 

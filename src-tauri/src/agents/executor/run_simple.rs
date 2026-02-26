@@ -6,10 +6,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
 
+use super::AgentExecuteParams;
 use crate::agents::executor::message_store::save_assistant_message;
 use crate::agents::executor::utils::cleanup_container_context_async;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
-use super::AgentExecuteParams;
 
 pub async fn execute_agent_simple(
     app_handle: &AppHandle,
@@ -40,42 +40,38 @@ pub async fn execute_agent_simple(
     let app = app_handle.clone();
 
     let result = client
-        .stream_completion(
-            Some(&system_prompt),
-            &params.task,
-            |content| {
-                if crate::commands::ai::is_conversation_cancelled(&execution_id) {
-                    return false;
+        .stream_completion(Some(&system_prompt), &params.task, |content| {
+            if crate::commands::ai::is_conversation_cancelled(&execution_id) {
+                return false;
+            }
+            match content {
+                StreamContent::Text(text) => {
+                    let _ = app.emit(
+                        "agent:chunk",
+                        &serde_json::json!({
+                            "execution_id": execution_id,
+                            "chunk_type": "text",
+                            "content": text,
+                        }),
+                    );
                 }
-                match content {
-                    StreamContent::Text(text) => {
-                        let _ = app.emit(
-                            "agent:chunk",
-                            &serde_json::json!({
-                                "execution_id": execution_id,
-                                "chunk_type": "text",
-                                "content": text,
-                            }),
-                        );
-                    }
-                    StreamContent::Reasoning(reasoning) => {
-                        let _ = app.emit(
-                            "agent:chunk",
-                            &serde_json::json!({
-                                "execution_id": execution_id,
-                                "chunk_type": "reasoning",
-                                "content": reasoning,
-                            }),
-                        );
-                    }
-                    StreamContent::Done => {
-                        tracing::info!("Agent completed - execution_id: {}", execution_id);
-                    }
-                    _ => {}
+                StreamContent::Reasoning(reasoning) => {
+                    let _ = app.emit(
+                        "agent:chunk",
+                        &serde_json::json!({
+                            "execution_id": execution_id,
+                            "chunk_type": "reasoning",
+                            "content": reasoning,
+                        }),
+                    );
                 }
-                true
-            },
-        )
+                StreamContent::Done => {
+                    tracing::info!("Agent completed - execution_id: {}", execution_id);
+                }
+                _ => {}
+            }
+            true
+        })
         .await;
 
     match result {

@@ -1,7 +1,5 @@
 //! Agent Team 文档产物与模板引擎
 
-
-
 /// 标准产物类型
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactType {
@@ -53,12 +51,27 @@ pub struct ArtifactTemplate {
 
 impl ArtifactTemplate {
     /// 生成产物提示词
-    pub fn build_prompt(&self, session_goal: &str, discussion_summary: &str, blackboard_summary: &str) -> String {
+    pub fn build_prompt(
+        &self,
+        session_goal: &str,
+        discussion_summary: &str,
+        blackboard_summary: &str,
+    ) -> String {
         match &self.artifact_type {
-            ArtifactType::Prd => self.prd_prompt(session_goal, discussion_summary, blackboard_summary),
-            ArtifactType::Architecture => self.architecture_prompt(session_goal, discussion_summary, blackboard_summary),
-            ArtifactType::TestPlan => self.test_plan_prompt(session_goal, discussion_summary, blackboard_summary),
-            ArtifactType::VulnerabilityReport => self.vulnerability_report_prompt(session_goal, discussion_summary, blackboard_summary),
+            ArtifactType::Prd => {
+                self.prd_prompt(session_goal, discussion_summary, blackboard_summary)
+            }
+            ArtifactType::Architecture => {
+                self.architecture_prompt(session_goal, discussion_summary, blackboard_summary)
+            }
+            ArtifactType::TestPlan => {
+                self.test_plan_prompt(session_goal, discussion_summary, blackboard_summary)
+            }
+            ArtifactType::VulnerabilityReport => self.vulnerability_report_prompt(
+                session_goal,
+                discussion_summary,
+                blackboard_summary,
+            ),
             _ => self.generic_prompt(session_goal, discussion_summary, blackboard_summary),
         }
     }
@@ -115,7 +128,12 @@ impl ArtifactTemplate {
         )
     }
 
-    fn vulnerability_report_prompt(&self, goal: &str, discussion: &str, blackboard: &str) -> String {
+    fn vulnerability_report_prompt(
+        &self,
+        goal: &str,
+        discussion: &str,
+        blackboard: &str,
+    ) -> String {
         format!(
             "请基于以下安全团队讨论，生成一份漏洞分析报告：\n\n\
             **分析目标**: {}\n\n**讨论摘要**: {}\n\n**白板共识**: {}\n\n\
@@ -137,7 +155,10 @@ impl ArtifactTemplate {
             "请基于以下团队讨论，生成一份「{}」文档：\n\n\
             **目标**: {}\n\n**讨论摘要**: {}\n\n**白板共识**: {}\n\n\
             请以结构化 Markdown 格式输出，包含摘要、详细内容、行动计划。",
-            self.artifact_type.display_name(), goal, discussion, blackboard
+            self.artifact_type.display_name(),
+            goal,
+            discussion,
+            blackboard
         )
     }
 }
@@ -145,16 +166,9 @@ impl ArtifactTemplate {
 /// 根据会话 domain 推断应生成的产物类型列表
 pub fn get_artifact_types_for_domain(domain: &str) -> Vec<ArtifactType> {
     match domain {
-        "product" => vec![
-            ArtifactType::Prd,
-            ArtifactType::Architecture,
-        ],
-        "security" | "audit" => vec![
-            ArtifactType::VulnerabilityReport,
-        ],
-        "ops" => vec![
-            ArtifactType::DetailedDesign,
-        ],
+        "product" => vec![ArtifactType::Prd, ArtifactType::Architecture],
+        "security" | "audit" => vec![ArtifactType::VulnerabilityReport],
+        "ops" => vec![ArtifactType::DetailedDesign],
         _ => vec![ArtifactType::Architecture],
     }
 }

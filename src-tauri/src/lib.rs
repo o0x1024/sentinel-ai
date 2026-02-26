@@ -15,10 +15,10 @@ pub mod tools;
 pub mod trackers;
 pub mod utils;
 
+use sentinel_db::Database;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use sentinel_db::Database;
 use tauri::{
     generate_handler,
     menu::{Menu, MenuItem},
@@ -29,20 +29,20 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use services::{ai::AiServiceManager, database::DatabaseService};
 
+use crate::skills::scan_and_upsert_skills;
 use commands::{
-    ai, aisettings, asset, config, database as db_commands, dictionary,
-    get_cache, set_cache, delete_cache, cleanup_expired_cache, get_all_cache_keys,
-    traffic_analysis_commands::{self, TrafficAnalysisState},
-    code_audit_commands,
-    security_rule_commands,
+    ai, aisettings, asset, cleanup_expired_cache, code_audit_commands, config,
+    database as db_commands, delete_cache, dictionary, get_all_cache_keys, get_cache,
     llm_test_commands,
+    monitor_commands::MonitorSchedulerState,
+    packet_capture_commands::{self, PacketCaptureState},
     performance,
     proxifier_commands::{self, ProxifierState},
-    monitor_commands::MonitorSchedulerState,
-    rag_commands, scan_session_commands, scan_task_commands, tool_commands, window,
-    packet_capture_commands::{self, PacketCaptureState},
+    rag_commands, scan_session_commands, scan_task_commands, security_rule_commands, set_cache,
+    tool_commands,
+    traffic_analysis_commands::{self, TrafficAnalysisState},
+    window,
 };
-use crate::skills::scan_and_upsert_skills;
 
 // Workflow engine and scheduler
 use sentinel_workflow::{WorkflowEngine, WorkflowScheduler};
@@ -56,7 +56,7 @@ pub fn run() {
     // Install rustls CryptoProvider (required for rustls 0.23+)
     // Must be called before any rustls usage
     let _ = rustls::crypto::ring::default_provider().install_default();
-    
+
     let context = tauri::generate_context!();
 
     // Configure log directory:
@@ -1319,6 +1319,7 @@ pub fn run() {
             commands::agent_team_commands::agent_team_start_run,
             commands::agent_team_commands::agent_team_stop_run,
             commands::agent_team_commands::agent_team_get_messages,
+            commands::agent_team_commands::agent_team_get_rounds,
             commands::agent_team_commands::agent_team_submit_message,
             commands::agent_team_commands::agent_team_append_partial_message,
             commands::agent_team_commands::agent_team_get_blackboard,
@@ -1348,7 +1349,9 @@ async fn toggle_proxy(app: &tauri::AppHandle) {
                 Err(e) => tracing::error!("Failed to stop proxy: {}", e),
             }
         } else {
-            match traffic_analysis_commands::start_traffic_analysis_internal(app, &state, None).await {
+            match traffic_analysis_commands::start_traffic_analysis_internal(app, &state, None)
+                .await
+            {
                 Ok(port) => {
                     tracing::info!("Proxy started from tray menu on port {}", port);
                     update_proxy_menu_text(app, true);
@@ -1423,7 +1426,10 @@ async fn auto_start_proxy_if_enabled(
     let db_service = traffic_state.get_db_service();
 
     // Load proxy auto-start configuration
-    let auto_start_enabled = match db_service.load_proxy_config("proxy_auto_start_enabled").await {
+    let auto_start_enabled = match db_service
+        .load_proxy_config("proxy_auto_start_enabled")
+        .await
+    {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(false),
         _ => false,
     };
@@ -1446,7 +1452,10 @@ async fn auto_start_proxy_if_enabled(
         Ok(Some(config_json)) => {
             match serde_json::from_str::<sentinel_traffic::ProxyConfig>(&config_json) {
                 Ok(config) => {
-                    tracing::info!("Loaded proxy configuration for auto-start: port {}", config.start_port);
+                    tracing::info!(
+                        "Loaded proxy configuration for auto-start: port {}",
+                        config.start_port
+                    );
                     Some(config)
                 }
                 Err(e) => {
@@ -1466,9 +1475,14 @@ async fn auto_start_proxy_if_enabled(
     };
 
     // Start the proxy listener
-    match traffic_analysis_commands::start_traffic_analysis_internal(app, traffic_state, config).await {
+    match traffic_analysis_commands::start_traffic_analysis_internal(app, traffic_state, config)
+        .await
+    {
         Ok(port) => {
-            tracing::info!("✅ Proxy listener auto-started successfully on port {}", port);
+            tracing::info!(
+                "✅ Proxy listener auto-started successfully on port {}",
+                port
+            );
             update_proxy_menu_text(app, true);
             Ok(())
         }

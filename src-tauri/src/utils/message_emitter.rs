@@ -1,14 +1,12 @@
 //! 标准化消息发送器
-//! 
+//!
 //! 为各个架构提供统一的消息发送接口，确保消息格式一致性
 
 use serde_json::Value;
 use std::sync::Arc;
 use tauri::AppHandle;
 
-use super::ordered_message::{
-    emit_message_chunk_with_arch, ArchitectureType, ChunkType,
-};
+use super::ordered_message::{emit_message_chunk_with_arch, ArchitectureType, ChunkType};
 
 /// 标准消息发送器
 pub struct StandardMessageEmitter {
@@ -104,7 +102,7 @@ impl StandardMessageEmitter {
     /// 发送工具结果（强制要求tool_name）
     pub fn emit_tool_result(&self, tool_name: &str, result: &Value) {
         let result_str = result.to_string();
-        
+
         emit_message_chunk_with_arch(
             &self.app_handle,
             &self.execution_id,
@@ -257,7 +255,6 @@ impl StandardMessageEmitter {
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn test_emitter_creation() {
@@ -265,4 +262,3 @@ mod tests {
         // 实际使用时需要真实的Tauri AppHandle
     }
 }
-

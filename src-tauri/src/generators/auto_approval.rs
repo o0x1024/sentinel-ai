@@ -12,25 +12,25 @@ use serde::{Deserialize, Serialize};
 pub struct PluginAutoApprovalConfig {
     /// 是否启用自动批准
     pub enabled: bool,
-    
+
     /// 自动批准的质量阈值（>= 此分数自动批准）
     pub auto_approve_threshold: f32,
-    
+
     /// 需要人工审核的最低阈值（>= 此分数进入审核队列）
     pub require_review_threshold: f32,
-    
+
     /// 自动拒绝阈值（< 此分数自动拒绝）
     pub auto_reject_threshold: f32,
-    
+
     /// 是否自动重新生成低质量插件
     pub auto_regenerate_on_low_quality: bool,
-    
+
     /// 最大重新生成次数
     pub max_regeneration_attempts: u32,
-    
+
     /// 是否检查危险代码模式
     pub check_dangerous_patterns: bool,
-    
+
     /// 危险代码模式列表（如果检测到则强制人工审核）
     pub dangerous_patterns: Vec<String>,
 }
@@ -39,9 +39,9 @@ impl Default for PluginAutoApprovalConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            auto_approve_threshold: 80.0,      // 80分以上自动批准
-            require_review_threshold: 60.0,    // 60-80分需要审核
-            auto_reject_threshold: 60.0,       // 60分以下自动拒绝
+            auto_approve_threshold: 80.0,   // 80分以上自动批准
+            require_review_threshold: 60.0, // 60-80分需要审核
+            auto_reject_threshold: 60.0,    // 60分以下自动拒绝
             auto_regenerate_on_low_quality: true,
             max_regeneration_attempts: 2,
             check_dangerous_patterns: true,
@@ -63,17 +63,11 @@ impl Default for PluginAutoApprovalConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ApprovalDecision {
     /// 自动批准
-    AutoApprove {
-        reason: String,
-    },
+    AutoApprove { reason: String },
     /// 需要人工审核
-    RequireHumanReview {
-        reason: String,
-    },
+    RequireHumanReview { reason: String },
     /// 自动拒绝
-    AutoReject {
-        reason: String,
-    },
+    AutoReject { reason: String },
     /// 重新生成
     Regenerate {
         reason: String,
@@ -303,12 +297,8 @@ mod tests {
         let config = PluginAutoApprovalConfig::default();
         let engine = PluginAutoApprovalEngine::new(config);
 
-        let decision = engine.evaluate_plugin(
-            90.0,
-            "Passed",
-            "const result = eval('dangerous code');",
-            0,
-        );
+        let decision =
+            engine.evaluate_plugin(90.0, "Passed", "const result = eval('dangerous code');", 0);
 
         assert!(matches!(
             decision,
@@ -354,4 +344,3 @@ mod tests {
         assert_eq!(stats.automation_rate(), 75.0); // (2+1)/4 * 100
     }
 }
-

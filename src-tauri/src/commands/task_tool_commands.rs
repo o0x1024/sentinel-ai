@@ -76,7 +76,5 @@ pub async fn record_tool_execution_complete(
 pub async fn get_all_active_tools(
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<ActiveToolInfo>, String> {
-    db.get_all_active_tools()
-        .await
-        .map_err(|e| e.to_string())
+    db.get_all_active_tools().await.map_err(|e| e.to_string())
 }

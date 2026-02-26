@@ -667,6 +667,35 @@ pub async fn complete_round(
     Ok(())
 }
 
+pub async fn get_rounds(pool: &PgPool, session_id: &str) -> Result<Vec<AgentTeamRound>> {
+    let rows = sqlx::query(
+        r#"SELECT id, session_id, round_number, phase, status, divergence_score,
+                  started_at, completed_at, created_at
+           FROM agent_team_rounds
+           WHERE session_id = $1
+           ORDER BY created_at ASC"#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(AgentTeamRound {
+                id: row.try_get("id")?,
+                session_id: row.try_get("session_id")?,
+                round_number: row.try_get::<i32, _>("round_number").unwrap_or(0),
+                phase: row.try_get("phase")?,
+                status: row.try_get("status")?,
+                divergence_score: row.try_get("divergence_score")?,
+                started_at: row.try_get("started_at")?,
+                completed_at: row.try_get("completed_at")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect()
+}
+
 // ==================== 消息操作 ====================
 
 pub async fn create_message(
@@ -963,11 +992,10 @@ pub async fn get_artifact_detail(
 // ==================== 种子数据（内置模板） ====================
 
 pub async fn seed_builtin_templates(pool: &PgPool) -> Result<()> {
-    let count_row = sqlx::query(
-        "SELECT COUNT(*) as cnt FROM agent_team_templates WHERE is_system = true",
-    )
-    .fetch_one(pool)
-    .await?;
+    let count_row =
+        sqlx::query("SELECT COUNT(*) as cnt FROM agent_team_templates WHERE is_system = true")
+            .fetch_one(pool)
+            .await?;
     let count: i64 = count_row.try_get::<i64, _>("cnt").unwrap_or(0);
 
     if count > 0 {

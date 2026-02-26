@@ -1,7 +1,7 @@
 //! Context packet definitions and shared helpers.
 
-use serde::{Deserialize, Serialize};
 use sentinel_llm::ChatMessage;
+use serde::{Deserialize, Serialize};
 
 use crate::agents::context_engineering::tool_digest::ToolDigest;
 
@@ -121,15 +121,13 @@ pub fn trim_history_preserve_tool_pairs(
 
         // Orphaned tool message at front → remove it
         if trimmed[0].role == "tool" {
-            history_tokens =
-                history_tokens.saturating_sub(estimate_message_tokens(&trimmed[0]));
+            history_tokens = history_tokens.saturating_sub(estimate_message_tokens(&trimmed[0]));
             trimmed.remove(0);
             continue;
         }
 
         // Regular message (user / assistant without tool_calls)
-        history_tokens =
-            history_tokens.saturating_sub(estimate_message_tokens(&trimmed[0]));
+        history_tokens = history_tokens.saturating_sub(estimate_message_tokens(&trimmed[0]));
         trimmed.remove(0);
     }
 

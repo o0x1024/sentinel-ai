@@ -93,7 +93,11 @@ fn ext_from_filename(filename: Option<&str>) -> Option<String> {
         .extension()
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())?;
-    if ext.is_empty() { None } else { Some(ext) }
+    if ext.is_empty() {
+        None
+    } else {
+        Some(ext)
+    }
 }
 
 fn normalize_local_path(p: &str) -> String {
@@ -120,7 +124,9 @@ fn get_image_base64(img: &serde_json::Value) -> Option<String> {
         if d.is_string() {
             d.as_str().map(|s| s.to_string())
         } else {
-            d.get("data").and_then(|x| x.as_str()).map(|s| s.to_string())
+            d.get("data")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
         }
     })
 }
@@ -141,7 +147,10 @@ async fn prepare_local_image_file_for_attachment(
             let hash = sha256_hex_of_file(&sp).await?;
             return Ok((hash, sp, ext, filename));
         }
-        tracing::warn!("Image source_path not readable, falling back to base64: {}", sp);
+        tracing::warn!(
+            "Image source_path not readable, falling back to base64: {}",
+            sp
+        );
     }
 
     let b64 = get_image_base64(img).ok_or_else(|| "Missing image data".to_string())?;
@@ -166,14 +175,20 @@ pub async fn stage_images_to_docker_context(
 
     let mut out = Vec::new();
     for item in arr {
-        let Some(img) = as_image_object(item) else { continue };
-        let (hash, host_path, ext, filename) = match prepare_local_image_file_for_attachment(img).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Failed to prepare local image file for docker staging: {}", e);
-                continue;
-            }
+        let Some(img) = as_image_object(item) else {
+            continue;
         };
+        let (hash, host_path, ext, filename) =
+            match prepare_local_image_file_for_attachment(img).await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to prepare local image file for docker staging: {}",
+                        e
+                    );
+                    continue;
+                }
+            };
 
         let container_path = format!("{}/attachments/{}.{}", CONTAINER_CONTEXT_DIR, hash, ext);
         sandbox
@@ -190,7 +205,10 @@ pub async fn stage_images_to_docker_context(
     Ok(out)
 }
 
-pub async fn ocr_image_file(source_path: &str, filename: Option<String>) -> Result<ImageOcrResult, String> {
+pub async fn ocr_image_file(
+    source_path: &str,
+    filename: Option<String>,
+) -> Result<ImageOcrResult, String> {
     let source_path = normalize_local_path(source_path);
     let hash = sha256_hex_of_file(&source_path).await?;
     if let Some(text) = read_cache_text(&hash).await {
@@ -286,7 +304,9 @@ pub async fn ocr_images_from_attachments(
 
     let mut results = Vec::new();
     for item in arr {
-        let Some(img) = as_image_object(item) else { continue };
+        let Some(img) = as_image_object(item) else {
+            continue;
+        };
         let filename = get_string_field(img, "filename");
         let source_path = get_string_field(img, "source_path");
 
@@ -307,15 +327,15 @@ pub async fn ocr_images_from_attachments(
 
         // Fallback: decode base64 and OCR via temp file
         let media_type = get_string_field(img, "media_type");
-        let base64_data = img
-            .get("data")
-            .and_then(|d| {
-                if d.is_string() {
-                    d.as_str().map(|s| s.to_string())
-                } else {
-                    d.get("data").and_then(|x| x.as_str()).map(|s| s.to_string())
-                }
-            });
+        let base64_data = img.get("data").and_then(|d| {
+            if d.is_string() {
+                d.as_str().map(|s| s.to_string())
+            } else {
+                d.get("data")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+            }
+        });
 
         let Some(b64) = base64_data else { continue };
         let decoded = match base64::engine::general_purpose::STANDARD.decode(b64.as_bytes()) {
@@ -364,4 +384,3 @@ pub fn format_ocr_context(results: &[ImageOcrResult], max_chars: usize) -> Strin
     }
     out
 }
-

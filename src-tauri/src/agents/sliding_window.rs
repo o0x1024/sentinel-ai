@@ -4,13 +4,13 @@ use serde_json::{json, Value};
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, Emitter};
-use tracing::{info}; // Removed warn
+use tauri::{AppHandle, Emitter, Manager};
+use tracing::info; // Removed warn
 
-use sentinel_db::Database;
-use sentinel_llm::{ChatMessage, LlmClient, LlmConfig};
 use crate::agents::context_engineering::token_utils::estimate_tokens;
 use crate::agents::context_engineering::tool_digest::condense_text;
+use sentinel_db::Database;
+use sentinel_llm::{ChatMessage, LlmClient, LlmConfig};
 
 /// Configuration for sliding window manager
 #[derive(Debug, Clone)]
@@ -43,10 +43,10 @@ impl Default for SlidingWindowConfig {
             recent_message_count: 20,
             max_segment_summaries: 10,
             max_context_tokens: 128000,
-            global_summary_ratio: 0.08,  // 8% for global summary
+            global_summary_ratio: 0.08, // 8% for global summary
             segment_summary_ratio: 0.15, // 15% for segment summaries
-            // Remaining ~77% for history, but we reserve 30% for system prompt + tools
-            // So effective history budget is ~47% of max_context_tokens
+                                        // Remaining ~77% for history, but we reserve 30% for system prompt + tools
+                                        // So effective history budget is ~47% of max_context_tokens
         }
     }
 }
@@ -60,12 +60,12 @@ pub struct SlidingWindowManager {
     conversation_id: String,
     db: Arc<dyn Database>,
     config: SlidingWindowConfig,
-    
+
     // Memory State
     global_summary: Option<GlobalSummary>,
     segments: VecDeque<ConversationSegment>,
     recent_messages: VecDeque<ChatMessage>,
-    
+
     // Metadata
     total_processed_messages: i32,
 }
@@ -87,10 +87,10 @@ impl SlidingWindowManager {
 
         // Load config
         let final_config = config.unwrap_or_default();
-        
+
         // Load state from DB
         let (global_summary, segments) = db.get_sliding_window_summaries(conversation_id).await?;
-        
+
         // Determine where we left off
         let last_summarized_index = segments
             .iter()
@@ -100,8 +100,9 @@ impl SlidingWindowManager {
             .unwrap_or(-1);
 
         // Load recent messages
-        let recent_messages = Self::load_recent_messages(&db, conversation_id, last_summarized_index).await?;
-        
+        let recent_messages =
+            Self::load_recent_messages(&db, conversation_id, last_summarized_index).await?;
+
         let total_processed_messages = last_summarized_index + 1 + recent_messages.len() as i32;
 
         Ok(Self {
@@ -116,17 +117,16 @@ impl SlidingWindowManager {
         })
     }
 
-
     async fn load_recent_messages(
         db: &Arc<dyn Database>,
         conversation_id: &str,
         after_index: i32,
     ) -> Result<Vec<ChatMessage>> {
         let all_messages = db.get_ai_messages_by_conversation(conversation_id).await?;
-        
+
         // Convert to ChatMessage
         let chat_messages = crate::commands::ai::reconstruct_chat_history(&all_messages);
-        
+
         // Skip already summarized ones
         // Assuming strict ordering: summarized count = after_index + 1
         let skip_count = (after_index + 1) as usize;
@@ -156,20 +156,20 @@ impl SlidingWindowManager {
     /// Build the context for LLM execution
     pub fn build_context(&self, system_prompt: &str) -> Vec<ChatMessage> {
         let mut context = Vec::new();
-        
+
         // 1. System Prompt with Global Context
         let mut full_system_prompt = system_prompt.to_string();
-        
+
         if let Some(global) = &self.global_summary {
             full_system_prompt.push_str("\n\n=== LONG-TERM MEMORY ===\n");
             full_system_prompt.push_str(&global.summary);
         }
 
         if !self.segments.is_empty() {
-             full_system_prompt.push_str("\n\n=== RECENT ACTIVITY SUMMARY ===\n");
-             for segment in &self.segments {
-                 full_system_prompt.push_str(&format!("- {}\n", segment.summary));
-             }
+            full_system_prompt.push_str("\n\n=== RECENT ACTIVITY SUMMARY ===\n");
+            for segment in &self.segments {
+                full_system_prompt.push_str(&format!("- {}\n", segment.summary));
+            }
         }
 
         context.push(ChatMessage {
@@ -224,7 +224,9 @@ impl SlidingWindowManager {
     /// Returns true if compression occurred
     pub async fn compress_if_needed(&mut self, llm_config: &LlmConfig) -> Result<bool> {
         // Calculate tokens for all message components
-        let recent_tokens: usize = self.recent_messages.iter()
+        let recent_tokens: usize = self
+            .recent_messages
+            .iter()
             .map(|m| {
                 let mut tokens = estimate_tokens(&m.content);
                 if let Some(ref tc) = m.tool_calls {
@@ -236,25 +238,32 @@ impl SlidingWindowManager {
                 tokens
             })
             .sum();
-        
+
         // Align with builder safe limit ratio and reserve summary allocations
-        let history_ratio = SAFE_CONTEXT_RATIO - self.config.global_summary_ratio - self.config.segment_summary_ratio;
-        let threshold_tokens = (self.config.max_context_tokens as f64 * history_ratio.max(0.3)) as usize;
-        
-        let should_segment = self.recent_messages.len() > self.config.recent_message_count 
+        let history_ratio = SAFE_CONTEXT_RATIO
+            - self.config.global_summary_ratio
+            - self.config.segment_summary_ratio;
+        let threshold_tokens =
+            (self.config.max_context_tokens as f64 * history_ratio.max(0.3)) as usize;
+
+        let should_segment = self.recent_messages.len() > self.config.recent_message_count
             || recent_tokens > threshold_tokens;
 
         if should_segment {
-            info!("Triggering sliding window compression. Messages: {}, Tokens: {}/{}", 
-                self.recent_messages.len(), recent_tokens, threshold_tokens);
-            
+            info!(
+                "Triggering sliding window compression. Messages: {}, Tokens: {}/{}",
+                self.recent_messages.len(),
+                recent_tokens,
+                threshold_tokens
+            );
+
             self.create_segment_summary(llm_config).await?;
-            
+
             // After creating a segment, check if we need to merge to global summary
             if self.segments.len() > self.config.max_segment_summaries {
                 self.merge_to_global_summary(llm_config).await?;
             }
-            
+
             return Ok(true);
         }
 
@@ -276,7 +285,7 @@ impl SlidingWindowManager {
 
         let summarize_count = self.recent_messages.len() - keep_count;
         let mut messages_to_summarize = Vec::new();
-        
+
         for _ in 0..summarize_count {
             if let Some(msg) = self.recent_messages.pop_front() {
                 messages_to_summarize.push(msg);
@@ -288,17 +297,30 @@ impl SlidingWindowManager {
         }
 
         // Generate summary
-        let summary_text = self.generate_summary(&messages_to_summarize, llm_config).await?;
+        let summary_text = self
+            .generate_summary(&messages_to_summarize, llm_config)
+            .await?;
         let summary_tokens = estimate_tokens(&summary_text) as i32;
 
         // Calculate indices (based on what we tracked)
         // The start index is what follows the last known index.
-        let last_index = self.segments.iter().last().map(|s| s.end_message_index).or_else(|| self.global_summary.as_ref().map(|g| g.covers_up_to_index)).unwrap_or(-1);
-        
+        let last_index = self
+            .segments
+            .iter()
+            .last()
+            .map(|s| s.end_message_index)
+            .or_else(|| self.global_summary.as_ref().map(|g| g.covers_up_to_index))
+            .unwrap_or(-1);
+
         let start_index = last_index + 1;
         let end_index = start_index + messages_to_summarize.len() as i32 - 1;
 
-        let segment_index = self.segments.iter().last().map(|s| s.segment_index + 1).unwrap_or(0);
+        let segment_index = self
+            .segments
+            .iter()
+            .last()
+            .map(|s| s.segment_index + 1)
+            .unwrap_or(0);
 
         let segment = ConversationSegment {
             id: uuid::Uuid::new_v4().to_string(),
@@ -315,8 +337,11 @@ impl SlidingWindowManager {
         self.db.save_conversation_segment(&segment).await?;
 
         self.segments.push_back(segment.clone());
-        
-        info!("Created segment summary #{} covering messages {}-{}", segment_index, start_index, end_index);
+
+        info!(
+            "Created segment summary #{} covering messages {}-{}",
+            segment_index, start_index, end_index
+        );
 
         let _ = self.app_handle.emit(
             "agent:segment_summary_created",
@@ -325,14 +350,17 @@ impl SlidingWindowManager {
                 "segment_index": segment.segment_index,
                 "summary": segment.summary,
                 "tokens": segment.summary_tokens
-            })
+            }),
         );
 
         Ok(())
     }
 
     async fn merge_to_global_summary(&mut self, llm_config: &LlmConfig) -> Result<()> {
-        let excess_count = self.segments.len().saturating_sub(self.config.max_segment_summaries / 2); // Merge half
+        let excess_count = self
+            .segments
+            .len()
+            .saturating_sub(self.config.max_segment_summaries / 2); // Merge half
         if excess_count == 0 {
             return Ok(());
         }
@@ -349,7 +377,7 @@ impl SlidingWindowManager {
         }
 
         let new_covers_up_to = segments_to_merge.last().unwrap().end_message_index;
-        
+
         // Prepare prompt
         let mut prompt = String::new();
         if let Some(global) = &self.global_summary {
@@ -357,7 +385,7 @@ impl SlidingWindowManager {
             prompt.push_str(&global.summary);
             prompt.push_str("\n\n");
         }
-        
+
         prompt.push_str("New Activity Segments to Merge:\n");
         for seg in &segments_to_merge {
             prompt.push_str(&format!("- {}\n", seg.summary));
@@ -387,12 +415,15 @@ impl SlidingWindowManager {
         self.db.upsert_global_summary(&new_summary).await?;
 
         self.global_summary = Some(new_summary.clone());
-        
+
         // Delete merged segments from DB
         let ids: Vec<String> = segments_to_merge.iter().map(|s| s.id.clone()).collect();
         self.db.delete_conversation_segments(&ids).await?;
-        
-        info!("Merged segments into global summary. Covered up to index {}", new_covers_up_to);
+
+        info!(
+            "Merged segments into global summary. Covered up to index {}",
+            new_covers_up_to
+        );
 
         let _ = self.app_handle.emit(
             "agent:global_summary_updated",
@@ -400,13 +431,17 @@ impl SlidingWindowManager {
                 "conversation_id": self.conversation_id,
                 "summary": new_summary.summary,
                 "tokens": estimate_tokens(&new_summary.summary)
-            })
+            }),
         );
 
         Ok(())
     }
 
-    async fn generate_summary(&self, messages: &[ChatMessage], llm_config: &LlmConfig) -> Result<String> {
+    async fn generate_summary(
+        &self,
+        messages: &[ChatMessage],
+        llm_config: &LlmConfig,
+    ) -> Result<String> {
         let mut content = String::new();
         for msg in messages {
             let mut msg_content = msg.content.clone();
@@ -469,15 +504,25 @@ impl SlidingWindowManager {
 
     /// Export full conversation history to formatted string
     pub async fn export_history(&self) -> Result<String> {
-        let all_messages = self.db.get_ai_messages_by_conversation(&self.conversation_id).await?;
-        
+        let all_messages = self
+            .db
+            .get_ai_messages_by_conversation(&self.conversation_id)
+            .await?;
+
         let mut content = String::new();
-        content.push_str(&format!("=== Conversation History: {} ===\n", self.conversation_id));
+        content.push_str(&format!(
+            "=== Conversation History: {} ===\n",
+            self.conversation_id
+        ));
         content.push_str(&format!("Total Messages: {}\n", all_messages.len()));
-        content.push_str(&format!("Exported At: {}\n\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")));
-        
+        content.push_str(&format!(
+            "Exported At: {}\n\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+
         for (idx, msg) in all_messages.iter().enumerate() {
-            content.push_str(&format!("--- Message #{} [{} at {}] ---\n", 
+            content.push_str(&format!(
+                "--- Message #{} [{} at {}] ---\n",
                 idx + 1,
                 msg.role,
                 msg.timestamp.format("%Y-%m-%d %H:%M:%S")
@@ -485,7 +530,7 @@ impl SlidingWindowManager {
             content.push_str(&msg.content);
             content.push_str("\n\n");
         }
-        
+
         Ok(content)
     }
 }
@@ -497,9 +542,19 @@ fn condense_tool_output(raw: &str) -> Option<String> {
     // shell tool output
     if obj.contains_key("command") && obj.contains_key("stdout") && obj.contains_key("stderr") {
         let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        let exit_code = obj.get("exit_code").and_then(|v| v.as_i64()).map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string());
-        let completed = obj.get("completed").and_then(|v| v.as_bool()).unwrap_or(true);
-        let output_stored = obj.get("output_stored").and_then(|v| v.as_bool()).unwrap_or(false);
+        let exit_code = obj
+            .get("exit_code")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let completed = obj
+            .get("completed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let output_stored = obj
+            .get("output_stored")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
         let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
         let stdout_snip = trim_text(stdout, 8, 500);
@@ -511,10 +566,17 @@ fn condense_tool_output(raw: &str) -> Option<String> {
     }
 
     // interactive_shell output
-    if obj.contains_key("session_id") && obj.contains_key("output") && obj.contains_key("completed") {
+    if obj.contains_key("session_id") && obj.contains_key("output") && obj.contains_key("completed")
+    {
         let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        let completed = obj.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
-        let truncated = obj.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false);
+        let completed = obj
+            .get("completed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let truncated = obj
+            .get("truncated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let output = obj.get("output").and_then(|v| v.as_str()).unwrap_or("");
         let output_snip = trim_text(output, 10, 600);
         return Some(format!(

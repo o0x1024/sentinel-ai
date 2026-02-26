@@ -48,11 +48,11 @@
             </select>
           </div>
           <div class="space-y-1">
-            <label class="text-xs font-medium text-base-content/70">默认轮次</label>
+            <label class="text-xs font-medium text-base-content/70">默认总轮次（提案+审查+决策）</label>
             <input
               v-model.number="form.defaultRounds"
               type="number"
-              min="2"
+              min="1"
               max="10"
               class="input input-bordered input-sm w-full focus:border-secondary"
             />
@@ -308,6 +308,9 @@ const isSaving = ref(false)
 const modelOptions = ref<ModelOption[]>([])
 
 const roleColors = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
+const DEFAULT_TEMPLATE_ROUNDS = 5
+const MIN_TEMPLATE_ROUNDS = 1
+const MAX_TEMPLATE_ROUNDS = 10
 
 // ==================== Computed ====================
 
@@ -334,6 +337,7 @@ onMounted(() => {
     form.value.name = props.template.name
     form.value.description = props.template.description ?? ''
     form.value.domain = props.template.domain
+    form.value.defaultRounds = extractTemplateDefaultRounds(props.template.default_rounds_config)
     form.value.members = props.template.members.map((m, i) => ({
       _key: `${m.id}-${i}`,
       name: m.name,
@@ -385,6 +389,8 @@ async function handleSave() {
   if (!isFormValid.value) return
   isSaving.value = true
   try {
+    const normalizedRounds = normalizeTemplateRounds(form.value.defaultRounds)
+    form.value.defaultRounds = normalizedRounds
     const memberPayload = form.value.members.map((m, i) => ({
       name: m.name.trim(),
       responsibility: m.responsibility || undefined,
@@ -401,6 +407,9 @@ async function handleSave() {
         name: form.value.name.trim(),
         description: form.value.description || undefined,
         domain: form.value.domain,
+        default_rounds_config: {
+          max_rounds: normalizedRounds,
+        },
         members: memberPayload,
       })
       const updated = await agentTeamApi.getTemplate(props.template.id)
@@ -410,6 +419,9 @@ async function handleSave() {
         name: form.value.name.trim(),
         description: form.value.description || undefined,
         domain: form.value.domain,
+        default_rounds_config: {
+          max_rounds: normalizedRounds,
+        },
         members: memberPayload,
       })
       emit('save', created)
@@ -511,6 +523,29 @@ function buildMemberOutputSchema(modelOverride: string) {
     model_name: modelName,
     llm_model: `${provider.trim().toLowerCase()}/${modelName}`,
   }
+}
+
+function normalizeTemplateRounds(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_TEMPLATE_ROUNDS
+  const normalized = Math.trunc(n)
+  return Math.max(MIN_TEMPLATE_ROUNDS, Math.min(MAX_TEMPLATE_ROUNDS, normalized))
+}
+
+function extractTemplateDefaultRounds(config: unknown): number {
+  if (typeof config === 'number') {
+    return normalizeTemplateRounds(config)
+  }
+  if (config && typeof config === 'object') {
+    const obj = config as Record<string, unknown>
+    const candidate =
+      obj.max_rounds ??
+      obj.maxRounds ??
+      obj.default_rounds ??
+      obj.rounds
+    return normalizeTemplateRounds(candidate)
+  }
+  return DEFAULT_TEMPLATE_ROUNDS
 }
 </script>
 

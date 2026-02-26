@@ -1,12 +1,12 @@
 //! Run state checkpoint storage.
 
 use anyhow::Result;
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex as TokioMutex;
-use sentinel_db::Database;
 
 use crate::agents::context_engineering::policy::ContextPolicy;
 use crate::agents::context_engineering::tool_digest::ToolDigest;
@@ -57,9 +57,12 @@ pub struct ContextRunState {
     pub last_updated_at_ms: i64,
 }
 
-pub async fn load_run_state(app_handle: &AppHandle, execution_id: &str) -> Result<Option<ContextRunState>> {
+pub async fn load_run_state(
+    app_handle: &AppHandle,
+    execution_id: &str,
+) -> Result<Option<ContextRunState>> {
     let db = app_handle.state::<Arc<dyn Database>>().inner().clone();
-    
+
     let state_json_opt = db.get_agent_run_state(execution_id).await?;
 
     if let Some(state_json) = state_json_opt {
@@ -75,7 +78,7 @@ pub async fn save_run_state(
     state: &ContextRunState,
 ) -> Result<()> {
     let db = app_handle.state::<Arc<dyn Database>>().inner().clone();
-    
+
     let state_json = serde_json::to_string(state)?;
     db.save_agent_run_state(execution_id, &state_json).await?;
 

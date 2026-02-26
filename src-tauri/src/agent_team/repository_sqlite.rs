@@ -248,11 +248,10 @@ pub async fn get_agent_team_template_detail(
 pub async fn seed_builtin_templates(pool: &SqlitePool) -> Result<()> {
     ensure_schema(pool).await?;
 
-    let count_row = sqlx::query(
-        "SELECT COUNT(*) as cnt FROM agent_team_templates WHERE is_system = true",
-    )
-    .fetch_one(pool)
-    .await?;
+    let count_row =
+        sqlx::query("SELECT COUNT(*) as cnt FROM agent_team_templates WHERE is_system = true")
+            .fetch_one(pool)
+            .await?;
     let count: i64 = count_row.try_get::<i64, _>("cnt").unwrap_or(0);
 
     if count > 0 {
@@ -410,7 +409,10 @@ pub async fn update_session_state(pool: &SqlitePool, session_id: &str, state: &s
     Ok(())
 }
 
-pub async fn get_agent_team_session(pool: &SqlitePool, id: &str) -> Result<Option<AgentTeamSession>> {
+pub async fn get_agent_team_session(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<AgentTeamSession>> {
     ensure_schema(pool).await?;
 
     let row_opt = sqlx::query(
@@ -613,6 +615,37 @@ pub async fn complete_round(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn get_rounds(pool: &SqlitePool, session_id: &str) -> Result<Vec<AgentTeamRound>> {
+    ensure_schema(pool).await?;
+
+    let rows = sqlx::query(
+        r#"SELECT id, session_id, round_number, phase, status, divergence_score,
+                  started_at, completed_at, created_at
+           FROM agent_team_rounds
+           WHERE session_id = ?
+           ORDER BY created_at ASC"#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(AgentTeamRound {
+                id: row.try_get("id")?,
+                session_id: row.try_get("session_id")?,
+                round_number: row.try_get::<i32, _>("round_number").unwrap_or(0),
+                phase: row.try_get("phase")?,
+                status: row.try_get("status")?,
+                divergence_score: row.try_get("divergence_score")?,
+                started_at: row.try_get("started_at")?,
+                completed_at: row.try_get("completed_at")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect()
 }
 
 // ==================== 消息操作 ====================
@@ -922,7 +955,10 @@ pub async fn get_artifact_detail(
     }))
 }
 
-async fn get_template_members(pool: &SqlitePool, template_id: &str) -> Result<Vec<AgentTeamTemplateMember>> {
+async fn get_template_members(
+    pool: &SqlitePool,
+    template_id: &str,
+) -> Result<Vec<AgentTeamTemplateMember>> {
     let rows = sqlx::query(
         r#"SELECT id, template_id, name, responsibility, system_prompt, decision_style,
                   risk_preference, weight, tool_policy, output_schema, sort_order,

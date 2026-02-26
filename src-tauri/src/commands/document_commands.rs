@@ -191,7 +191,10 @@ pub async fn load_workspace_settings(app_handle: &AppHandle) -> WorkspaceSetting
         return settings;
     };
 
-    if let Ok(Some(v)) = db.get_config("agent", "workspace_auto_cleanup_enabled").await {
+    if let Ok(Some(v)) = db
+        .get_config("agent", "workspace_auto_cleanup_enabled")
+        .await
+    {
         settings.auto_cleanup_enabled = v == "1" || v.eq_ignore_ascii_case("true");
     }
     if let Ok(Some(v)) = db.get_config("agent", "workspace_retention_days").await {
@@ -209,7 +212,10 @@ pub async fn load_workspace_settings(app_handle: &AppHandle) -> WorkspaceSetting
             settings.max_total_mb = n.max(1);
         }
     }
-    if let Ok(Some(v)) = db.get_config("agent", "workspace_max_files_per_conversation").await {
+    if let Ok(Some(v)) = db
+        .get_config("agent", "workspace_max_files_per_conversation")
+        .await
+    {
         if let Ok(n) = v.parse::<usize>() {
             settings.max_files_per_conversation = n.max(1);
         }
@@ -232,18 +238,42 @@ pub async fn save_workspace_settings(
         .try_state::<Arc<crate::services::database::DatabaseService>>()
         .ok_or_else(|| "Database service not available".to_string())?;
 
-    db.set_config("agent", "workspace_auto_cleanup_enabled", if settings.auto_cleanup_enabled { "true" } else { "false" }, None)
-        .await
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-    db.set_config("agent", "workspace_retention_days", &settings.retention_days.to_string(), None)
-        .await
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-    db.set_config("agent", "workspace_max_file_mb", &settings.max_file_mb.to_string(), None)
-        .await
-        .map_err(|e| format!("Failed to save config: {}", e))?;
-    db.set_config("agent", "workspace_max_total_mb", &settings.max_total_mb.to_string(), None)
-        .await
-        .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config(
+        "agent",
+        "workspace_auto_cleanup_enabled",
+        if settings.auto_cleanup_enabled {
+            "true"
+        } else {
+            "false"
+        },
+        None,
+    )
+    .await
+    .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config(
+        "agent",
+        "workspace_retention_days",
+        &settings.retention_days.to_string(),
+        None,
+    )
+    .await
+    .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config(
+        "agent",
+        "workspace_max_file_mb",
+        &settings.max_file_mb.to_string(),
+        None,
+    )
+    .await
+    .map_err(|e| format!("Failed to save config: {}", e))?;
+    db.set_config(
+        "agent",
+        "workspace_max_total_mb",
+        &settings.max_total_mb.to_string(),
+        None,
+    )
+    .await
+    .map_err(|e| format!("Failed to save config: {}", e))?;
     db.set_config(
         "agent",
         "workspace_max_files_per_conversation",
@@ -281,7 +311,9 @@ async fn maybe_auto_cleanup(app_handle: &AppHandle, index: &mut UploadIndex) -> 
     Ok(())
 }
 
-async fn resolve_runtime_path_for_host_file(host_path: &str) -> Result<(String, Option<String>), String> {
+async fn resolve_runtime_path_for_host_file(
+    host_path: &str,
+) -> Result<(String, Option<String>), String> {
     let shell_config = get_shell_config().await;
     let docker_requested = shell_config.default_execution_mode == ShellExecutionMode::Docker
         && shell_config.docker_config.is_some();
@@ -311,7 +343,9 @@ async fn resolve_runtime_path_for_host_file(host_path: &str) -> Result<(String, 
     let container_dir = format!("/workspace/uploads/{}", date_dir);
     let container_path = format!("{}/{}", container_dir, filename);
 
-    let _ = sandbox.execute(&format!("mkdir -p '{}'", container_dir), 10).await;
+    let _ = sandbox
+        .execute(&format!("mkdir -p '{}'", container_dir), 10)
+        .await;
     sandbox
         .copy_file_to_container(host_path, &container_path)
         .await
@@ -353,13 +387,16 @@ pub async fn run_file_security_analysis(file_id: String) -> Result<String, Strin
     if !(docker_available && image_exists && container_ready) {
         return Err("Security analysis requires a ready Docker sandbox".to_string());
     }
-    Ok(format!("Security analysis accepted for file_id={}.", file_id))
+    Ok(format!(
+        "Security analysis accepted for file_id={}.",
+        file_id
+    ))
 }
 
 #[tauri::command]
 pub async fn get_file_stat(path: String) -> Result<FileStatResult, String> {
-    let metadata = std::fs::metadata(&path)
-        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let metadata =
+        std::fs::metadata(&path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
 
     Ok(FileStatResult {
         size: metadata.len(),
@@ -496,7 +533,9 @@ pub async fn upload_document_attachment(
             conversation_id.clone().unwrap_or_else(|| "-".to_string())
         );
         return Ok(ProcessedDocumentResult {
-            id: client_id.clone().unwrap_or_else(|| existing.file_id.clone()),
+            id: client_id
+                .clone()
+                .unwrap_or_else(|| existing.file_id.clone()),
             file_id: existing.file_id.clone(),
             original_filename: existing.filename,
             file_size: existing.size,
@@ -604,10 +643,7 @@ pub async fn list_uploaded_files(
                 .as_ref()
                 .map(|cid| f.conversation_id.as_ref() == Some(cid))
                 .unwrap_or(true);
-            let date_ok = date
-                .as_ref()
-                .map(|d| &f.date == d)
-                .unwrap_or(true);
+            let date_ok = date.as_ref().map(|d| &f.date == d).unwrap_or(true);
             conv_ok && date_ok
         })
         .collect();
@@ -637,15 +673,27 @@ fn clear_host_context_cache() -> Result<(), String> {
     if !context_dir.exists() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(&context_dir).map_err(|e| format!("Failed to read context cache: {}", e))? {
+    for entry in std::fs::read_dir(&context_dir)
+        .map_err(|e| format!("Failed to read context cache: {}", e))?
+    {
         let entry = entry.map_err(|e| format!("Failed to access context cache entry: {}", e))?;
         let path = entry.path();
         if path.is_dir() {
-            std::fs::remove_dir_all(&path)
-                .map_err(|e| format!("Failed to remove context cache dir {}: {}", path.display(), e))?;
+            std::fs::remove_dir_all(&path).map_err(|e| {
+                format!(
+                    "Failed to remove context cache dir {}: {}",
+                    path.display(),
+                    e
+                )
+            })?;
         } else {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to remove context cache file {}: {}", path.display(), e))?;
+            std::fs::remove_file(&path).map_err(|e| {
+                format!(
+                    "Failed to remove context cache file {}: {}",
+                    path.display(),
+                    e
+                )
+            })?;
         }
     }
     Ok(())
@@ -705,10 +753,16 @@ pub async fn clear_uploaded_files(
 
         clear_host_context_cache()?;
         if let Err(e) = clear_container_workspace_cache().await {
-            tracing::warn!("[upload-audit] failed to clear container workspace cache: {}", e);
+            tracing::warn!(
+                "[upload-audit] failed to clear container workspace cache: {}",
+                e
+            );
         }
 
-        tracing::info!("[upload-audit] full clear completed, removed files count={}", removed_count);
+        tracing::info!(
+            "[upload-audit] full clear completed, removed files count={}",
+            removed_count
+        );
         return Ok(removed_count);
     }
 

@@ -298,13 +298,13 @@ pub enum ScrollDirection {
 pub struct ActionResult {
     /// Whether the action succeeded
     pub success: bool,
-    
+
     /// New URL after action (if changed)
     pub new_url: Option<String>,
-    
+
     /// Error message if failed
     pub error: Option<String>,
-    
+
     /// New observation after action
     pub observation: Option<Observation>,
 }
@@ -316,31 +316,31 @@ pub struct ActionResult {
 pub struct ExplorationState {
     /// Current URL
     pub current_url: String,
-    
+
     /// Current depth in exploration tree
     pub current_depth: u32,
-    
+
     /// Maximum allowed depth
     pub max_depth: u32,
-    
+
     /// Number of steps taken
     pub steps_taken: u32,
-    
+
     /// Maximum allowed steps
     pub max_steps: u32,
-    
+
     /// URLs that have been visited
     pub visited_urls: HashSet<String>,
-    
+
     /// API endpoints discovered
     pub discovered_apis: Vec<String>,
-    
+
     /// History of steps
     pub history: Vec<Step>,
-    
+
     /// Whether exploration is complete
     pub is_complete: bool,
-    
+
     /// Reason for completion (if complete)
     pub completion_reason: Option<String>,
 }
@@ -363,8 +363,8 @@ impl ExplorationState {
 
     /// Check if should continue exploration
     pub fn should_continue(&self) -> bool {
-        !self.is_complete 
-            && self.steps_taken < self.max_steps 
+        !self.is_complete
+            && self.steps_taken < self.max_steps
             && self.current_depth <= self.max_depth
     }
 
@@ -418,7 +418,7 @@ pub struct Step {
 pub struct ReActDecision {
     /// Thought process (analysis + action intent)
     pub thought: String,
-    
+
     /// Chosen action
     pub action: Action,
 }

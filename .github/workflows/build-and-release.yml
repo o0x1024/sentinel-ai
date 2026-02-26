@@ -246,16 +246,6 @@ jobs:
           body: |
             ## Sentinel AI v${{ steps.get_version.outputs.VERSION }}
             
-            ### 🚀 Features
-            - AI-driven vulnerability discovery
-            - MCP tools dynamic integration
-            - Performance optimization and monitoring
-            
-            ### 📦 Platform Support
-            - Windows x64 (.exe installer)
-            - macOS ARM64 (.dmg)
-            
-            See [CHANGELOG.md](CHANGELOG.md) for full changelog.
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
 

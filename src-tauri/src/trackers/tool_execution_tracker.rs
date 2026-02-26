@@ -1,6 +1,6 @@
 use anyhow::Result;
-use sentinel_db::DatabaseService;
 use sentinel_db::models::task_tool::*;
+use sentinel_db::DatabaseService;
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, error, info};
@@ -27,7 +27,9 @@ impl ToolExecutionTracker {
     ) -> Result<String> {
         info!(
             "Tracking tool execution start - task: {}, tool: {} ({})",
-            task_id, tool_name, tool_type.to_string()
+            task_id,
+            tool_name,
+            tool_type.to_string()
         );
 
         // Record in database
@@ -195,16 +197,19 @@ pub fn get_tracker() -> Option<Arc<ToolExecutionTracker>> {
 macro_rules! track_tool_execution {
     ($task_id:expr, $tool_id:expr, $tool_name:expr, $tool_type:expr, $input:expr, $body:expr) => {{
         use $crate::trackers::tool_execution_tracker::get_tracker;
-        
+
         let tracker = get_tracker();
         let log_id = if let Some(ref t) = tracker {
-            match t.track_start(
-                $task_id.clone(),
-                $tool_id.clone(),
-                $tool_name.clone(),
-                $tool_type,
-                $input,
-            ).await {
+            match t
+                .track_start(
+                    $task_id.clone(),
+                    $tool_id.clone(),
+                    $tool_name.clone(),
+                    $tool_type,
+                    $input,
+                )
+                .await
+            {
                 Ok(id) => Some(id),
                 Err(e) => {
                     tracing::error!("Failed to track tool start: {}", e);
@@ -220,22 +225,26 @@ macro_rules! track_tool_execution {
         if let (Some(ref t), Some(ref lid)) = (&tracker, &log_id) {
             match &result {
                 Ok(output) => {
-                    let _ = t.track_complete(
-                        lid.clone(),
-                        $task_id.clone(),
-                        $tool_id.clone(),
-                        true,
-                        Some(serde_json::json!(output)),
-                        None,
-                    ).await;
+                    let _ = t
+                        .track_complete(
+                            lid.clone(),
+                            $task_id.clone(),
+                            $tool_id.clone(),
+                            true,
+                            Some(serde_json::json!(output)),
+                            None,
+                        )
+                        .await;
                 }
                 Err(e) => {
-                    let _ = t.track_error(
-                        lid.clone(),
-                        $task_id.clone(),
-                        $tool_id.clone(),
-                        e.to_string(),
-                    ).await;
+                    let _ = t
+                        .track_error(
+                            lid.clone(),
+                            $task_id.clone(),
+                            $tool_id.clone(),
+                            e.to_string(),
+                        )
+                        .await;
                 }
             }
         }

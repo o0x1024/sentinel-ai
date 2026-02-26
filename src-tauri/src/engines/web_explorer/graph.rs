@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn test_graph_basic() {
         let mut graph = ExplorationGraph::new();
-        
+
         graph.add_node(
             "node1".to_string(),
             "https://example.com".to_string(),
@@ -147,7 +147,7 @@ mod tests {
             "dashboard".to_string(),
             0,
         );
-        
+
         graph.add_node(
             "node2".to_string(),
             "https://example.com/about".to_string(),
@@ -155,9 +155,13 @@ mod tests {
             "static".to_string(),
             1,
         );
-        
-        graph.add_edge("node1".to_string(), "node2".to_string(), "click".to_string());
-        
+
+        graph.add_edge(
+            "node1".to_string(),
+            "node2".to_string(),
+            "click".to_string(),
+        );
+
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 1);
         assert!(graph.has_node("node1"));
@@ -167,14 +171,32 @@ mod tests {
     #[test]
     fn test_get_edges_from() {
         let mut graph = ExplorationGraph::new();
-        
-        graph.add_node("n1".to_string(), "url1".to_string(), "t1".to_string(), "dashboard".to_string(), 0);
-        graph.add_node("n2".to_string(), "url2".to_string(), "t2".to_string(), "form".to_string(), 1);
-        graph.add_node("n3".to_string(), "url3".to_string(), "t3".to_string(), "list".to_string(), 1);
-        
+
+        graph.add_node(
+            "n1".to_string(),
+            "url1".to_string(),
+            "t1".to_string(),
+            "dashboard".to_string(),
+            0,
+        );
+        graph.add_node(
+            "n2".to_string(),
+            "url2".to_string(),
+            "t2".to_string(),
+            "form".to_string(),
+            1,
+        );
+        graph.add_node(
+            "n3".to_string(),
+            "url3".to_string(),
+            "t3".to_string(),
+            "list".to_string(),
+            1,
+        );
+
         graph.add_edge("n1".to_string(), "n2".to_string(), "click".to_string());
         graph.add_edge("n1".to_string(), "n3".to_string(), "navigate".to_string());
-        
+
         let edges = graph.get_edges_from("n1");
         assert_eq!(edges.len(), 2);
     }

@@ -27,6 +27,8 @@ pub struct RoleContextInput<'a> {
     pub blackboard: &'a BlackboardManager,
     /// 本角色可看到的定向消息（由调度器注入）
     pub directed_messages: Vec<ChatMessage>,
+    /// 共享执行记忆（由引擎注入，帮助后续角色避免重复工作）
+    pub shared_execution_memory: Option<&'a str>,
 }
 
 /// 角色专属上下文构建结果
@@ -77,9 +79,7 @@ pub async fn build_role_context(input: RoleContextInput<'_>) -> Result<RoleConte
            - **支持**: [可接受的要点]\n\
            - **异议**: [需要修改的要点]\n\
            - **建议**: [具体改进措施]\n",
-        input.round_number,
-        input.session_goal,
-        input.round_task,
+        input.round_number, input.session_goal, input.round_task,
     );
 
     // 4. 工作目录注入（与 AI 助手一致，优先 agent.working_directory）
@@ -121,13 +121,26 @@ pub async fn build_role_context(input: RoleContextInput<'_>) -> Result<RoleConte
     let blackboard_summary = input.blackboard.get_context_summary(input.session_id).await;
     let blackboard_section = format!("\n\n{}", blackboard_summary);
 
-    // 5. 组装完整 System Prompt
+    // 5. 共享执行记忆（跨角色通用摘要卡片）
+    let shared_memory_section = input
+        .shared_execution_memory
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("\n\n[Shared Execution Memory]\n{}", s))
+        .unwrap_or_default();
+
+    // 6. 组装完整 System Prompt
     let system_prompt = format!(
-        "{}{}{}{}{}",
-        base_system_prompt, role_meta, collaboration_rules, working_dir_section, blackboard_section
+        "{}{}{}{}{}{}",
+        base_system_prompt,
+        role_meta,
+        collaboration_rules,
+        working_dir_section,
+        blackboard_section,
+        shared_memory_section
     );
 
-    // 6. 构建历史消息（仅包含定向路由消息，不含全量历史）
+    // 7. 构建历史消息（仅包含定向路由消息，不含全量历史）
     let mut history_messages = input.directed_messages;
 
     // 确保消息不超过合理限制（防止 Token 超标）

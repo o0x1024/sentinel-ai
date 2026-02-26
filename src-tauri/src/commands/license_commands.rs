@@ -29,7 +29,7 @@ pub fn get_license_info() -> LicenseInfo {
 #[tauri::command]
 pub fn activate_license(license_key: String) -> ActivationResult {
     use sentinel_license::ValidationResult;
-    
+
     match sentinel_license::activate(&license_key) {
         ValidationResult::Valid => ActivationResult {
             success: true,
@@ -73,7 +73,7 @@ pub fn deactivate_license() -> ActivationResult {
             message: format!("Failed to deactivate: {}", e),
         };
     }
-    
+
     ActivationResult {
         success: true,
         message: "License deactivated".to_string(),

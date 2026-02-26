@@ -10,9 +10,9 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool, ShellTool, SubagentAwaitTool,
-    SubagentChannelTool, SubagentExecuteTool, TodosTool, TenthManTool, SkillsTool,
-    browser::constants as browser_constants,
+    browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool,
+    ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool,
+    TenthManTool, TodosTool,
 };
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
@@ -52,9 +52,18 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(HttpRequestTool::NAME.to_string(), true);
     map.insert(LocalTimeTool::NAME.to_string(), true);
     map.insert(ShellTool::NAME.to_string(), true);
-    map.insert(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(), true);
-    map.insert(sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(), true);
-    map.insert(sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(), true);
+    map.insert(
+        sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
+        true,
+    );
+    map.insert(
+        sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
+        true,
+    );
+    map.insert(
+        sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(),
+        true,
+    );
     map.insert(OcrTool::NAME.to_string(), true);
     map.insert(TerminalServer::NAME.to_string(), true);
     map.insert(TenthManTool::NAME.to_string(), true);
@@ -222,7 +231,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             description: sentinel_tools::buildin_tools::SubdomainBruteTool::DESCRIPTION.to_string(),
             category: ToolCategory::Network.to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME).unwrap_or(&true),
+            enabled: *states
+                .get(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME)
+                .unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -273,7 +284,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             description: sentinel_tools::buildin_tools::WebSearchTool::DESCRIPTION.to_string(),
             category: "network".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get(sentinel_tools::buildin_tools::WebSearchTool::NAME).unwrap_or(&true),
+            enabled: *states
+                .get(sentinel_tools::buildin_tools::WebSearchTool::NAME)
+                .unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -302,7 +315,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             description: sentinel_tools::buildin_tools::MemoryManagerTool::DESCRIPTION.to_string(),
             category: "ai".to_string(),
             version: "1.0.0".to_string(),
-            enabled: *states.get(sentinel_tools::buildin_tools::MemoryManagerTool::NAME).unwrap_or(&true),
+            enabled: *states
+                .get(sentinel_tools::buildin_tools::MemoryManagerTool::NAME)
+                .unwrap_or(&true),
             input_schema: Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -626,7 +641,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_SNAPSHOT_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_SNAPSHOT_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_SNAPSHOT_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -650,7 +667,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_CLICK_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_CLICK_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_CLICK_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -669,7 +688,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_FILL_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_FILL_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_FILL_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -692,7 +713,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_TYPE_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_TYPE_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_TYPE_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -719,7 +742,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_SELECT_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_SELECT_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_SELECT_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -742,7 +767,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_SCROLL_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_SCROLL_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_SCROLL_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -767,7 +794,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_WAIT_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_WAIT_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_WAIT_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -790,7 +819,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_GET_TEXT_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_GET_TEXT_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_GET_TEXT_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -809,7 +840,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_SCREENSHOT_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_SCREENSHOT_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_SCREENSHOT_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -828,7 +861,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_BACK_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_BACK_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_BACK_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {}
@@ -841,7 +876,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_PRESS_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_PRESS_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_PRESS_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -864,7 +901,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_HOVER_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_HOVER_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_HOVER_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -883,7 +922,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_EVALUATE_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_EVALUATE_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_EVALUATE_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {
@@ -902,7 +943,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_GET_URL_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_GET_URL_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_GET_URL_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {}
@@ -915,7 +958,9 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         description: browser_constants::BROWSER_CLOSE_DESC.to_string(),
         category: ToolCategory::Browser.to_string(),
         version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_CLOSE_NAME).unwrap_or(&true),
+        enabled: *states
+            .get(browser_constants::BROWSER_CLOSE_NAME)
+            .unwrap_or(&true),
         input_schema: Some(serde_json::json!({
             "type": "object",
             "properties": {}
@@ -1117,7 +1162,7 @@ pub struct PortDef {
 }
 
 /// 从插件代码获取 input_schema（仅通过运行时调用 get_input_schema）
-/// 
+///
 /// 调用插件导出的 get_input_schema() 函数获取 schema。
 /// 如果插件未导出该函数，返回默认空 schema。
 async fn get_plugin_input_schema_async(
@@ -1140,9 +1185,7 @@ async fn get_plugin_input_schema_async(
 
     // 运行时获取 schema
     match sentinel_plugins::get_input_schema_from_code(code, metadata).await {
-        Ok(schema) => {
-            schema
-        }
+        Ok(schema) => schema,
         Err(e) => {
             tracing::warn!(
                 "Failed to get schema from runtime for {}: {}, plugin must export get_input_schema()",
@@ -1161,7 +1204,10 @@ async fn get_plugin_input_schema_async(
 /// List all available node types for workflow studio
 #[tauri::command]
 pub async fn list_node_catalog(
-    traffic_state: tauri::State<'_, crate::commands::traffic_analysis_commands::TrafficAnalysisState>,
+    traffic_state: tauri::State<
+        '_,
+        crate::commands::traffic_analysis_commands::TrafficAnalysisState,
+    >,
 ) -> Result<Vec<NodeCatalogItem>, String> {
     build_node_catalog(traffic_state.inner()).await
 }
@@ -1573,8 +1619,6 @@ pub async fn build_node_catalog(
 // Tool Metadata Management Commands
 // ============================================================================
 
-
-
 /// Get all tool metadata
 #[tauri::command]
 pub async fn get_all_tool_metadata(
@@ -1667,10 +1711,9 @@ pub async fn clear_tool_usage_stats() -> Result<(), String> {
 
 pub mod tool_server;
 pub use tool_server::{
-    execute_tool_server_tool, get_tool_server_stats, get_tool_server_tool, 
-    get_tool_input_schema, get_tool_output_schema, init_tool_server,
-    list_tool_server_tools, list_tools_by_source, refresh_all_dynamic_tools,
-    register_mcp_tools_from_server, register_workflow_tools,
+    execute_tool_server_tool, get_tool_input_schema, get_tool_output_schema, get_tool_server_stats,
+    get_tool_server_tool, init_tool_server, list_tool_server_tools, list_tools_by_source,
+    refresh_all_dynamic_tools, register_mcp_tools_from_server, register_workflow_tools,
 };
 
 // ============================================================================
@@ -1685,7 +1728,9 @@ mod shell_permissions;
 pub use shell_permissions::PendingPermissionRequest;
 
 pub mod agent_config;
-pub use agent_config::{AgentConfig, SubagentConfig, init_agent_config, load_subagent_config_from_db};
+pub use agent_config::{
+    init_agent_config, load_subagent_config_from_db, AgentConfig, SubagentConfig,
+};
 
 mod skills;
 

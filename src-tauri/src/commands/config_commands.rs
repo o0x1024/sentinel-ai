@@ -9,11 +9,10 @@ use crate::generators::PluginAutoApprovalConfig;
 
 /// 获取当前自动批准配置
 #[tauri::command]
-pub async fn get_auto_approval_config(
-    // TODO: 从数据库或配置文件加载
+pub async fn get_auto_approval_config(// TODO: 从数据库或配置文件加载
 ) -> Result<PluginAutoApprovalConfig, String> {
     log::info!("Getting auto-approval config");
-    
+
     // 暂时返回默认配置
     Ok(PluginAutoApprovalConfig::default())
 }
@@ -24,29 +23,30 @@ pub async fn update_auto_approval_config(
     config: PluginAutoApprovalConfig,
     // TODO: 保存到数据库或配置文件
 ) -> Result<(), String> {
-    log::info!("Updating auto-approval config: enabled={}, thresholds={}/{}/{}", 
+    log::info!(
+        "Updating auto-approval config: enabled={}, thresholds={}/{}/{}",
         config.enabled,
         config.auto_approve_threshold,
         config.require_review_threshold,
         config.auto_reject_threshold
     );
-    
+
     // 验证配置
     if config.auto_approve_threshold < config.require_review_threshold {
         return Err("Auto-approve threshold must be >= require-review threshold".to_string());
     }
-    
+
     if config.require_review_threshold < config.auto_reject_threshold {
         return Err("Require-review threshold must be >= auto-reject threshold".to_string());
     }
-    
+
     if config.auto_approve_threshold > 100.0 || config.auto_reject_threshold < 0.0 {
         return Err("Thresholds must be between 0 and 100".to_string());
     }
-    
+
     // TODO: 保存配置到数据库或文件
     log::info!("Auto-approval config updated successfully");
-    
+
     Ok(())
 }
 
@@ -54,7 +54,7 @@ pub async fn update_auto_approval_config(
 #[tauri::command]
 pub async fn get_config_presets() -> Result<Vec<ConfigPreset>, String> {
     log::info!("Getting config presets");
-    
+
     Ok(vec![
         ConfigPreset {
             name: "Conservative (手动为主)".to_string(),
@@ -124,12 +124,15 @@ pub async fn test_config_impact(
     config: PluginAutoApprovalConfig,
     test_scores: Vec<f32>,
 ) -> Result<TestResult, String> {
-    log::info!("Testing config impact with {} sample scores", test_scores.len());
-    
+    log::info!(
+        "Testing config impact with {} sample scores",
+        test_scores.len()
+    );
+
     use crate::generators::PluginAutoApprovalEngine;
-    
+
     let engine = PluginAutoApprovalEngine::new(config);
-    
+
     let mut results = vec![];
     for score in test_scores {
         let decision = engine.evaluate_plugin(
@@ -140,9 +143,9 @@ pub async fn test_config_impact(
         );
         results.push(decision);
     }
-    
+
     let stats = engine.get_stats(&results);
-    
+
     Ok(TestResult {
         total_plugins: stats.total,
         auto_approved: stats.auto_approved,
@@ -171,4 +174,3 @@ pub struct TestResult {
     pub automation_rate: f64,
     pub approval_rate: f64,
 }
-

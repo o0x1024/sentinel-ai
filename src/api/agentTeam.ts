@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
     AgentTeamTemplate,
     AgentTeamSession,
+    AgentTeamRound,
     AgentTeamMessage,
     AgentTeamBlackboardEntry,
     AgentTeamArtifact,
@@ -87,6 +88,10 @@ export const agentTeamApi = {
     // Messages
     async getMessages(sessionId: string): Promise<AgentTeamMessage[]> {
         return invoke('agent_team_get_messages', { sessionId })
+    },
+
+    async getRounds(sessionId: string): Promise<AgentTeamRound[]> {
+        return invoke('agent_team_get_rounds', { sessionId })
     },
 
     async submitMessage(req: SubmitAgentTeamMessageRequest): Promise<void> {

@@ -489,124 +489,6 @@
         </div>
       </div>
 
-      <!-- Tavily Search 设置 -->
-      <div class="card bg-base-100 shadow-sm mt-6">
-        <div class="card-body p-4">
-          <div class="flex items-center gap-3 mb-2">
-            <i class="fas fa-search text-primary text-lg"></i>
-            <h3 class="font-semibold">Tavily Search</h3>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text">Tavily API Key</span>
-              </label>
-              <input v-model="tavilyApiKeyLocal" type="password" class="input input-bordered" placeholder="tvly-..." />
-              <label class="label">
-                <span class="label-text-alt">{{ t('settings.ai.tavilyApiKeyDescription') }}</span>
-              </label>
-            </div>
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text">{{ t('settings.ai.defaultMaxResults') }}</span>
-              </label>
-              <input v-model.number="tavilyMaxResultsLocal" type="number" min="1" max="20"
-                class="input input-bordered w-40" />
-            </div>
-          </div>
-          <div class="flex justify-end mt-3">
-            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
-              <i class="fas fa-save mr-1"></i>
-              {{ t('settings.ai.save') }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 阿里云 OSS 配置（用于 DashScope 文件上传） -->
-      <div class="card bg-base-100 shadow-sm mt-6">
-        <div class="card-body p-4">
-          <div class="flex items-center gap-3 mb-2">
-            <i class="fas fa-cloud-upload-alt text-primary text-lg"></i>
-            <h3 class="font-semibold">{{ t('settings.ai.aliyunDashScope') }}</h3>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text">{{ t('settings.ai.dashscopeApiKey') }}</span>
-              </label>
-              <input v-model="aliyunApiKeyLocal" type="password" class="input input-bordered" placeholder="sk-..." />
-              <label class="label">
-                <span class="label-text-alt">{{ t('settings.ai.dashscopeApiKeyDescription') }}</span>
-              </label>
-            </div>
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
-              </label>
-              <input v-model="aliyunDefaultModelLocal" type="text" class="input input-bordered"
-                placeholder="qwen-vl-plus" />
-              <label class="label">
-                <span class="label-text-alt">{{ t('settings.ai.dashscopeDefaultModelDescription') }}</span>
-              </label>
-            </div>
-          </div>
-          <div class="flex justify-end mt-3 gap-2">
-            <button class="btn btn-outline btn-sm" @click="testAliyunConnection" :disabled="testingAliyun">
-              <span v-if="testingAliyun" class="loading loading-spinner loading-sm"></span>
-              <i v-else class="fas fa-plug mr-1"></i>
-              {{ t('settings.ai.testConnection') }}
-            </button>
-            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
-              <i class="fas fa-save mr-1"></i>
-              {{ t('settings.ai.save') }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 可用模型列表 - 重构为卡片布局 -->
-      <div class="mt-6">
-        <h3 class="text-lg font-semibold border-b pb-2 mb-4">
-          {{ t('settings.ai.availableModels') }} ({{ selectedProviderConfig?.models?.length || 0 }})
-        </h3>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div v-for="model in selectedProviderConfig?.models" :key="model.id"
-            class="card bg-base-100 shadow-sm border">
-            <div class="card-body p-4">
-              <div class="flex justify-between items-start mb-2">
-                <h4 class="card-title text-sm">{{ model.name }}</h4>
-                <div :class="model.is_available ? 'badge badge-success badge-sm' : 'badge badge-error badge-sm'">
-                  {{ model.is_available ? t('settings.ai.available') : t('settings.ai.unavailable') }}
-                </div>
-              </div>
-
-              <p class="text-xs text-base-content/70 mb-3">{{ model.description }}</p>
-
-              <div class="space-y-2">
-                <div class="flex justify-between text-xs">
-                  <span class="text-base-content/60">{{ t('settings.ai.contextLength') }}:</span>
-                  <span>{{ model.context_length?.toLocaleString() || 'N/A' }}</span>
-                </div>
-
-                <div class="flex flex-wrap gap-1">
-                  <div v-if="model.supports_streaming" class="badge badge-primary badge-xs">
-                    {{ t('settings.ai.streaming') }}
-                  </div>
-                  <div v-if="model.supports_tools" class="badge badge-secondary badge-xs">
-                    {{ t('settings.ai.tools') }}
-                  </div>
-                  <div v-if="model.supports_vision" class="badge badge-accent badge-xs">
-                    {{ t('settings.ai.vision') }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- 自定义AI提供商 -->
       <div class="card bg-base-100 shadow-sm mt-6">
         <div class="card-body">
@@ -747,6 +629,127 @@
               <span v-if="addingCustomProvider" class="loading loading-spinner loading-sm"></span>
               <i v-else class="fas fa-plus"></i>
               {{ t('settings.ai.addCustomProvider') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 可用模型列表 -->
+      <div class="collapse collapse-arrow bg-base-100 shadow-sm border mt-6">
+        <input type="checkbox" v-model="isAvailableModelsExpanded" />
+        <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+          {{ t('settings.ai.availableModels') }}
+          <span class="badge badge-ghost badge-sm">{{ selectedProviderConfig?.models?.length || 0 }}</span>
+        </div>
+        <div class="collapse-content">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+            <div v-for="model in selectedProviderConfig?.models" :key="model.id"
+              class="card bg-base-100 shadow-sm border">
+              <div class="card-body p-4">
+                <div class="flex justify-between items-start mb-2">
+                  <h4 class="card-title text-sm">{{ model.name }}</h4>
+                  <div :class="model.is_available ? 'badge badge-success badge-sm' : 'badge badge-error badge-sm'">
+                    {{ model.is_available ? t('settings.ai.available') : t('settings.ai.unavailable') }}
+                  </div>
+                </div>
+
+                <p class="text-xs text-base-content/70 mb-3">{{ model.description }}</p>
+
+                <div class="space-y-2">
+                  <div class="flex justify-between text-xs">
+                    <span class="text-base-content/60">{{ t('settings.ai.contextLength') }}:</span>
+                    <span>{{ model.context_length?.toLocaleString() || 'N/A' }}</span>
+                  </div>
+
+                  <div class="flex flex-wrap gap-1">
+                    <div v-if="model.supports_streaming" class="badge badge-primary badge-xs">
+                      {{ t('settings.ai.streaming') }}
+                    </div>
+                    <div v-if="model.supports_tools" class="badge badge-secondary badge-xs">
+                      {{ t('settings.ai.tools') }}
+                    </div>
+                    <div v-if="model.supports_vision" class="badge badge-accent badge-xs">
+                      {{ t('settings.ai.vision') }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tavily Search 设置 -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-3 mb-2">
+            <i class="fas fa-search text-primary text-lg"></i>
+            <h3 class="font-semibold">Tavily Search</h3>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">Tavily API Key</span>
+              </label>
+              <input v-model="tavilyApiKeyLocal" type="password" class="input input-bordered" placeholder="tvly-..." />
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.ai.tavilyApiKeyDescription') }}</span>
+              </label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.defaultMaxResults') }}</span>
+              </label>
+              <input v-model.number="tavilyMaxResultsLocal" type="number" min="1" max="20"
+                class="input input-bordered w-40" />
+            </div>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+              <i class="fas fa-save mr-1"></i>
+              {{ t('settings.ai.save') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 阿里云 OSS 配置（用于 DashScope 文件上传） -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-3 mb-2">
+            <i class="fas fa-cloud-upload-alt text-primary text-lg"></i>
+            <h3 class="font-semibold">{{ t('settings.ai.aliyunDashScope') }}</h3>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.dashscopeApiKey') }}</span>
+              </label>
+              <input v-model="aliyunApiKeyLocal" type="password" class="input input-bordered" placeholder="sk-..." />
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.ai.dashscopeApiKeyDescription') }}</span>
+              </label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
+              </label>
+              <input v-model="aliyunDefaultModelLocal" type="text" class="input input-bordered"
+                placeholder="qwen-vl-plus" />
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.ai.dashscopeDefaultModelDescription') }}</span>
+              </label>
+            </div>
+          </div>
+          <div class="flex justify-end mt-3 gap-2">
+            <button class="btn btn-outline btn-sm" @click="testAliyunConnection" :disabled="testingAliyun">
+              <span v-if="testingAliyun" class="loading loading-spinner loading-sm"></span>
+              <i v-else class="fas fa-plug mr-1"></i>
+              {{ t('settings.ai.testConnection') }}
+            </button>
+            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+              <i class="fas fa-save mr-1"></i>
+              {{ t('settings.ai.save') }}
             </button>
           </div>
         </div>
@@ -922,6 +925,7 @@ const configValid = ref(false)
 // 统计视图状态
 const statsView = ref<'provider' | 'model'>('provider')
 const detailedStats = ref<any[]>([])
+const isAvailableModelsExpanded = ref(false)
 
 // 加载详细统计
 const loadDetailedStats = async () => {
@@ -1145,7 +1149,7 @@ const defaultVlmModelLocal = ref('')
 
 watch(() => props.aiConfig, (cfg: any) => {
 
-  const dp = (cfg && (cfg as any).default_llm_provider) || 'modelscope'
+  const dp = (cfg && (cfg as any).default_llm_provider) || 'openai'
   // 查找匹配的提供商名称（不区分大小写）
   const matchedProvider = Object.keys(cfg?.providers || {}).find(key =>
     key.toLowerCase() === String(dp).toLowerCase()
@@ -1333,12 +1337,17 @@ const getProviderModels = (providerKey: string) => {
 const getProviderIcon = (provider: string) => {
   const icons: Record<string, string> = {
     'OpenAI': 'fas fa-brain',
+    'Azure OpenAI': 'fab fa-microsoft',
     'Anthropic': 'fas fa-robot',
     'Google': 'fab fa-google',
     'Gemini': 'fab fa-google',
+    'Google Gemini': 'fab fa-google',
     'Ollama': 'fas fa-server',
     'DeepSeek': 'fas fa-eye',
+    'EternalAI': 'fas fa-link',
+    'Galadriel': 'fas fa-hat-wizard',
     'Moonshot': 'fas fa-moon',
+    'Mira': 'fas fa-compass',
     'OpenRouter': 'fas fa-route',
     'ModelScope': 'fas fa-cog',
     'Groq': 'fas fa-bolt',
@@ -1354,12 +1363,17 @@ const getProviderIcon = (provider: string) => {
 const getProviderName = (provider: string) => {
   const names: Record<string, string> = {
     'OpenAI': 'OpenAI',
+    'Azure OpenAI': 'Azure OpenAI',
     'Anthropic': 'Anthropic',
     'Google': 'Google',
     'Gemini': 'Gemini',
+    'Google Gemini': 'Google Gemini',
     'Ollama': 'Ollama',
     'DeepSeek': 'DeepSeek',
+    'EternalAI': 'EternalAI',
+    'Galadriel': 'Galadriel',
     'Moonshot': 'Moonshot',
+    'Mira': 'Mira',
     'OpenRouter': 'OpenRouter',
     'ModelScope': 'ModelScope',
     'Groq': 'Groq',
@@ -1374,20 +1388,23 @@ const getProviderName = (provider: string) => {
 
 // rig 库支持的提供商列表
 const rigProviderOptions = [
-  { value: 'openai', label: 'OpenAI', description: 'OpenAI 及兼容 API' },
   { value: 'anthropic', label: 'Anthropic', description: 'Claude 系列模型' },
-  { value: 'gemini', label: 'Google Gemini', description: 'Google Gemini 模型' },
-  { value: 'openrouter', label: 'OpenRouter', description: '多模型路由服务' },
-  { value: 'ollama', label: 'Ollama', description: '本地模型服务' },
+  { value: 'openai', label: 'OpenAI', description: 'OpenAI 及兼容 API' },
+  { value: 'azure', label: 'Azure OpenAI', description: 'Azure 托管 OpenAI 服务' },
+  { value: 'cohere', label: 'Cohere', description: 'Cohere 模型' },
   { value: 'deepseek', label: 'DeepSeek', description: 'DeepSeek 模型' },
+  { value: 'eternalai', label: 'EternalAI', description: 'EternalAI 模型' },
+  { value: 'gemini', label: 'Google Gemini', description: 'Google Gemini 模型' },
+  { value: 'galadriel', label: 'Galadriel', description: 'Galadriel 模型' },
   { value: 'groq', label: 'Groq', description: 'Groq 高速推理' },
+  { value: 'hyperbolic', label: 'Hyperbolic', description: 'Hyperbolic 模型' },
+  { value: 'mira', label: 'Mira', description: 'Mira 模型' },
+  { value: 'moonshot', label: 'Moonshot', description: 'Moonshot Kimi 模型' },
+  { value: 'ollama', label: 'Ollama', description: '本地模型服务' },
+  { value: 'openrouter', label: 'OpenRouter', description: '多模型路由服务' },
   { value: 'perplexity', label: 'Perplexity', description: 'Perplexity 搜索增强' },
   { value: 'togetherai', label: 'TogetherAI', description: '开源模型托管' },
   { value: 'xai', label: 'xAI', description: 'xAI Grok 模型' },
-  { value: 'cohere', label: 'Cohere', description: 'Cohere 模型' },
-  { value: 'hyperbolic', label: 'Hyperbolic', description: 'Hyperbolic 模型' },
-  { value: 'moonshot', label: 'Moonshot', description: 'Moonshot Kimi 模型' },
-  { value: 'azure', label: 'Azure OpenAI', description: 'Azure 托管的 OpenAI' },
 ]
 
 const needsApiKey = (provider: string) => {
@@ -1781,89 +1798,49 @@ const formatConfig = () => {
 }
 
 const resetToDefault = () => {
+  const buildDefaultProvider = (
+    id: string,
+    name: string,
+    rigProvider: string,
+    apiBase: string | null,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    id,
+    provider: id,
+    name,
+    api_key: null,
+    api_base: apiBase,
+    organization: null,
+    enabled: false,
+    default_model: '',
+    models: [],
+    rig_provider: rigProvider,
+    max_context_length: null,
+    ...extra
+  })
+
   const defaultConfig = {
     providers: {
-      OpenAI: {
-        enabled: false,
-        rig_provider: 'openai',
-        api_key: '',
-        api_base: 'https://api.openai.com/v1',
-        default_model: '',
-        models: []
-      },
-      Anthropic: {
-        enabled: false,
-        rig_provider: 'anthropic',
-        api_key: '',
-        api_base: 'https://api.anthropic.com',
-        default_model: '',
-        models: []
-      },
-      Gemini: {
-        enabled: false,
-        rig_provider: 'gemini',
-        api_key: '',
-        api_base: 'https://generativelanguage.googleapis.com/v1beta',
-        default_model: '',
-        models: []
-      },
-      Ollama: {
-        enabled: false,
-        rig_provider: 'ollama',
-        api_base: 'http://localhost:11434',
-        default_model: '',
-        models: []
-      },
-      DeepSeek: {
-        enabled: false,
-        rig_provider: 'deepseek',
-        api_key: '',
-        api_base: 'https://api.deepseek.com/v1',
-        default_model: '',
-        models: []
-      },
-      Moonshot: {
-        enabled: false,
-        rig_provider: 'moonshot',
-        api_key: '',
-        api_base: 'https://api.moonshot.cn/v1',
-        default_model: '',
-        models: []
-      },
-      OpenRouter: {
-        enabled: false,
-        rig_provider: 'openrouter',
-        api_key: '',
-        api_base: 'https://openrouter.ai/api/v1',
-        default_model: '',
-        http_referer: '',
-        x_title: '',
-        models: []
-      },
-      Groq: {
-        enabled: false,
-        rig_provider: 'groq',
-        api_key: '',
-        api_base: 'https://api.groq.com/openai/v1',
-        default_model: '',
-        models: []
-      },
-      Perplexity: {
-        enabled: false,
-        rig_provider: 'perplexity',
-        api_key: '',
-        api_base: 'https://api.perplexity.ai',
-        default_model: '',
-        models: []
-      },
-      xAI: {
-        enabled: false,
-        rig_provider: 'xai',
-        api_key: '',
-        api_base: 'https://api.x.ai/v1',
-        default_model: '',
-        models: []
-      }
+      Anthropic: buildDefaultProvider('anthropic', 'Anthropic', 'anthropic', 'https://api.anthropic.com'),
+      OpenAI: buildDefaultProvider('openai', 'OpenAI', 'openai', 'https://api.openai.com/v1'),
+      'Azure OpenAI': buildDefaultProvider('azure', 'Azure OpenAI', 'azure', null),
+      Cohere: buildDefaultProvider('cohere', 'Cohere', 'cohere', 'https://api.cohere.ai'),
+      DeepSeek: buildDefaultProvider('deepseek', 'DeepSeek', 'deepseek', 'https://api.deepseek.com/v1'),
+      EternalAI: buildDefaultProvider('eternalai', 'EternalAI', 'eternalai', null),
+      'Google Gemini': buildDefaultProvider('gemini', 'Google Gemini', 'gemini', null),
+      Galadriel: buildDefaultProvider('galadriel', 'Galadriel', 'galadriel', null),
+      Groq: buildDefaultProvider('groq', 'Groq', 'groq', 'https://api.groq.com/openai/v1'),
+      Hyperbolic: buildDefaultProvider('hyperbolic', 'Hyperbolic', 'hyperbolic', 'https://api.hyperbolic.xyz/v1'),
+      Mira: buildDefaultProvider('mira', 'Mira', 'mira', null),
+      Moonshot: buildDefaultProvider('moonshot', 'Moonshot', 'moonshot', 'https://api.moonshot.cn/v1'),
+      Ollama: buildDefaultProvider('ollama', 'Ollama', 'ollama', 'http://localhost:11434'),
+      OpenRouter: buildDefaultProvider('openrouter', 'OpenRouter', 'openrouter', 'https://openrouter.ai/api/v1', {
+        http_referer: null,
+        x_title: null
+      }),
+      Perplexity: buildDefaultProvider('perplexity', 'Perplexity', 'perplexity', 'https://api.perplexity.ai'),
+      TogetherAI: buildDefaultProvider('togetherai', 'TogetherAI', 'togetherai', 'https://api.together.xyz/v1'),
+      xAI: buildDefaultProvider('xai', 'xAI', 'xai', 'https://api.x.ai/v1')
     }
   }
 

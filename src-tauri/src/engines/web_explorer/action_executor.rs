@@ -60,7 +60,7 @@ impl ActionExecutor {
         match service.open(url, Some("load"), None).await {
             Ok(result) => {
                 info!("Navigation successful to: {}", result.url);
-                
+
                 // Wait briefly for any dynamic content
                 let _ = service.wait(None, Some(500)).await;
                 debug!("Wait completed after navigation");
@@ -242,7 +242,11 @@ impl ActionExecutor {
     }
 
     /// Execute scroll action
-    async fn execute_scroll(&self, direction: ScrollDirection, amount: u32) -> Result<ActionResult> {
+    async fn execute_scroll(
+        &self,
+        direction: ScrollDirection,
+        amount: u32,
+    ) -> Result<ActionResult> {
         debug!("Scrolling: {:?} by {}", direction, amount);
 
         let service = get_browser_service().await;
@@ -361,5 +365,4 @@ impl ActionExecutor {
         debug!("Discovered {} API endpoints", apis.len());
         Ok(apis)
     }
-
 }

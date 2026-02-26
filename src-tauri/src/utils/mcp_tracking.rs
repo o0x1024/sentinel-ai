@@ -5,7 +5,7 @@ use tracing::{debug, error};
 use crate::trackers::get_tracker;
 
 /// Execute an MCP tool with tracking
-/// 
+///
 /// Note: This is a wrapper function. The actual MCP tool execution should be done
 /// by the caller, and this function is provided as a reference implementation.
 pub async fn execute_mcp_tool_with_tracking(

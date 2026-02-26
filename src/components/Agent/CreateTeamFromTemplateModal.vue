@@ -71,12 +71,12 @@
 
           <!-- Max rounds -->
           <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-base-content/70">最大讨论轮次</label>
+            <label class="text-xs font-semibold text-base-content/70">会话总轮次（提案+审查+决策）</label>
             <div class="flex items-center gap-3">
               <input
                 v-model.number="form.maxRounds"
                 type="range"
-                min="2"
+                min="1"
                 max="10"
                 class="range range-xs range-primary flex-1"
                 id="max-rounds-slider"
@@ -84,7 +84,7 @@
               <div class="badge badge-primary badge-sm min-w-[2.5rem] text-center">{{ form.maxRounds }}</div>
             </div>
             <div class="flex justify-between text-xs text-base-content/30">
-              <span>2（快速）</span>
+              <span>1（快速）</span>
               <span>10（深度）</span>
             </div>
           </div>
@@ -131,11 +131,14 @@ const emit = defineEmits<{
 // ==================== State ====================
 
 const isCreating = ref(false)
+const DEFAULT_TEMPLATE_ROUNDS = 5
+const MIN_TEMPLATE_ROUNDS = 1
+const MAX_TEMPLATE_ROUNDS = 10
 
 const form = ref({
   goal: '',
   name: '',
-  maxRounds: 5,
+  maxRounds: extractTemplateMaxRounds(props.template.default_rounds_config),
 })
 
 const roleColors = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b']
@@ -168,5 +171,33 @@ async function handleCreate() {
   } finally {
     isCreating.value = false
   }
+}
+
+watch(
+  () => props.template.id,
+  () => {
+    form.value.maxRounds = extractTemplateMaxRounds(props.template.default_rounds_config)
+  },
+)
+
+function normalizeRounds(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_TEMPLATE_ROUNDS
+  const normalized = Math.trunc(n)
+  return Math.max(MIN_TEMPLATE_ROUNDS, Math.min(MAX_TEMPLATE_ROUNDS, normalized))
+}
+
+function extractTemplateMaxRounds(config: unknown): number {
+  if (typeof config === 'number') return normalizeRounds(config)
+  if (config && typeof config === 'object') {
+    const obj = config as Record<string, unknown>
+    const candidate =
+      obj.max_rounds ??
+      obj.maxRounds ??
+      obj.default_rounds ??
+      obj.rounds
+    return normalizeRounds(candidate)
+  }
+  return DEFAULT_TEMPLATE_ROUNDS
 }
 </script>

@@ -1,6 +1,8 @@
 use sentinel_llm::ChatMessage;
 
-use crate::agents::context_engineering::memory_index::{ingest_memory_items, retrieve_memory_items, MemoryQuery};
+use crate::agents::context_engineering::memory_index::{
+    ingest_memory_items, retrieve_memory_items, MemoryQuery,
+};
 use crate::agents::context_engineering::tool_digest::build_tool_digest;
 use crate::agents::context_engineering::types::trim_history_preserve_tool_pairs;
 use crate::agents::context_engineering::ContextRunState;
@@ -26,7 +28,10 @@ fn memory_retrieval_prefers_relevant_items() {
     let mut state = ContextRunState::default();
     ingest_memory_items(
         &mut state,
-        &[String::from("service runs on port 8080"), String::from("project root is /tmp/demo")],
+        &[
+            String::from("service runs on port 8080"),
+            String::from("project root is /tmp/demo"),
+        ],
         &[String::from("use ripgrep for searches")],
         &[String::from("write regression tests")],
     );
@@ -48,6 +53,9 @@ fn digest_extracts_artifact_reference() {
         &serde_json::json!({"command":"cat output.txt"}),
         r#"{"command":"cat output.txt","stdout":"","stderr":"","output_stored":true,"container_path":"/workspace/context/shell_1.txt"}"#,
     );
-    assert_eq!(digest.artifact_id.as_deref(), Some("/workspace/context/shell_1.txt"));
+    assert_eq!(
+        digest.artifact_id.as_deref(),
+        Some("/workspace/context/shell_1.txt")
+    );
     assert!(!digest.preview_snippets.is_empty() || digest.artifact_kind.is_some());
 }

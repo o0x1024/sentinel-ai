@@ -1,17 +1,17 @@
 //! Web Explorer - ReAct Architecture
 //!
 //! A simplified web exploration engine using the ReAct (Reasoning + Acting) pattern.
-//! 
+//!
 //! ## Architecture
-//! 
+//!
 //! The engine follows a simple loop:
 //! 1. **Observe**: Analyze the current page using Vision LLM + Snapshot
 //! 2. **Think**: Use LLM to reason about what action to take next
 //! 3. **Act**: Execute the chosen action via AgentBrowserService
 //! 4. **Update**: Record results and update exploration state
-//! 
+//!
 //! ## Modules
-//! 
+//!
 //! - `types`: Core data structures
 //! - `graph`: Simple exploration graph for tracking visited pages
 //! - `perception`: Page analysis using Vision LLM and snapshot
@@ -31,7 +31,7 @@ pub use graph::{ExplorationGraph, GraphEdge, GraphNode};
 pub use react_engine::ReActEngine;
 pub use tool::WebExplorerTool;
 pub use types::{
-    Action, ActionResult, AIConfig, AuthStatus, Element, ExplorationResult, ExplorationState,
-    FormField, FormInfo, Observation, PageContext, PageType, ReActDecision, ScrollDirection,
-    Step, WebExplorerConfig, WebExplorerMessage,
+    AIConfig, Action, ActionResult, AuthStatus, Element, ExplorationResult, ExplorationState,
+    FormField, FormInfo, Observation, PageContext, PageType, ReActDecision, ScrollDirection, Step,
+    WebExplorerConfig, WebExplorerMessage,
 };

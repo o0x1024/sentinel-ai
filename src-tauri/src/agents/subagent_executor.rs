@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use once_cell::sync::{Lazy, OnceCell};
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::Emitter;
 use tauri::Manager;
 use tokio::sync::{watch, RwLock, Semaphore};
@@ -21,14 +21,14 @@ use tokio::task::AbortHandle;
 use sentinel_tools::buildin_tools::subagent_tool::{
     set_subagent_await_executor, set_subagent_channel_executor, set_subagent_execute_executor,
     SubagentAwaitArgs, SubagentAwaitOutput, SubagentAwaitPolicy, SubagentChannelArgs,
-    SubagentChannelOp, SubagentChannelOutput, SubagentExecuteArgs, SubagentExecuteMode,
-    SubagentExecuteOutput,
-    SubagentEventItem, SubagentEventPollArgs, SubagentEventPollOutput, SubagentEventPublishArgs,
-    SubagentEventPublishOutput, SubagentRunArgs, SubagentRunOutput, SubagentSpawnArgs,
-    SubagentSpawnOutput, SubagentStateGetArgs, SubagentStateGetOutput, SubagentStatePutArgs,
-    SubagentStatePutOutput, SubagentStatus, SubagentTaskInfo, SubagentTaskResult, SubagentToolError,
-    SubagentWaitAnyArgs, SubagentWaitAnyOutput, SubagentWaitArgs, SubagentWaitOutput,
-    SubagentWorkflowNodeResult, SubagentWorkflowRunArgs, SubagentWorkflowRunOutput,
+    SubagentChannelOp, SubagentChannelOutput, SubagentEventItem, SubagentEventPollArgs,
+    SubagentEventPollOutput, SubagentEventPublishArgs, SubagentEventPublishOutput,
+    SubagentExecuteArgs, SubagentExecuteMode, SubagentExecuteOutput, SubagentRunArgs,
+    SubagentRunOutput, SubagentSpawnArgs, SubagentSpawnOutput, SubagentStateGetArgs,
+    SubagentStateGetOutput, SubagentStatePutArgs, SubagentStatePutOutput, SubagentStatus,
+    SubagentTaskInfo, SubagentTaskResult, SubagentToolError, SubagentWaitAnyArgs,
+    SubagentWaitAnyOutput, SubagentWaitArgs, SubagentWaitOutput, SubagentWorkflowNodeResult,
+    SubagentWorkflowRunArgs, SubagentWorkflowRunOutput,
 };
 
 use super::{condense_text, execute_agent, ContextPolicy, ToolConfig, ToolSelectionStrategy};
@@ -156,7 +156,10 @@ async fn abort_parent_tasks(parent_id: &str) {
             .values()
             .filter(|e| {
                 e.info.parent_execution_id == parent_id
-                    && matches!(e.info.status, SubagentStatus::Pending | SubagentStatus::Running)
+                    && matches!(
+                        e.info.status,
+                        SubagentStatus::Pending | SubagentStatus::Running
+                    )
             })
             .map(|e| {
                 if let Some(handle) = &e.abort_handle {
@@ -317,10 +320,14 @@ fn apply_role_tool_policy(mut config: ToolConfig, role: Option<&str>) -> ToolCon
         config.allowed_tools = role_allowed.iter().cloned().collect();
         config.allowed_tools.sort();
     } else {
-        config.allowed_tools.retain(|tool| role_allowed.contains(tool));
+        config
+            .allowed_tools
+            .retain(|tool| role_allowed.contains(tool));
     }
 
-    config.fixed_tools.retain(|tool| role_allowed.contains(tool));
+    config
+        .fixed_tools
+        .retain(|tool| role_allowed.contains(tool));
 
     if let ToolSelectionStrategy::Manual(ref mut tools) = config.selection_strategy {
         tools.retain(|tool| role_allowed.contains(tool));
@@ -497,8 +504,10 @@ fn normalize_judge_output(output: String) -> String {
         payload.rationale = "No rationale provided.".to_string();
     }
 
-    if matches!(payload.verdict, JudgeVerdictKind::Confirmed | JudgeVerdictKind::Probable)
-        && payload.evidence_refs.is_empty()
+    if matches!(
+        payload.verdict,
+        JudgeVerdictKind::Confirmed | JudgeVerdictKind::Probable
+    ) && payload.evidence_refs.is_empty()
     {
         payload.verdict = JudgeVerdictKind::Uncertain;
         payload.confidence = payload.confidence.min(0.4);
@@ -631,7 +640,10 @@ async fn cleanup_parent_resources_if_idle(parent_id: &str) {
         let mut tasks = TASK_REGISTRY.write().await;
         let active = tasks.values().any(|entry| {
             entry.info.parent_execution_id == parent_id
-                && matches!(entry.info.status, SubagentStatus::Pending | SubagentStatus::Running)
+                && matches!(
+                    entry.info.status,
+                    SubagentStatus::Pending | SubagentStatus::Running
+                )
         });
 
         if !active {
@@ -760,7 +772,10 @@ async fn mark_task_terminal(task_id: &str, completion: TaskCompletion) {
     }
 }
 
-async fn wait_for_dependencies(task_id: &str, timeout: tokio::time::Duration) -> Result<(), String> {
+async fn wait_for_dependencies(
+    task_id: &str,
+    timeout: tokio::time::Duration,
+) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + timeout;
 
     let (parent_id, deps) = {
@@ -868,12 +883,13 @@ async fn export_parent_history(
                 let shell_config = get_shell_config().await;
                 if let Some(docker_config) = shell_config.docker_config {
                     let sandbox = sentinel_tools::DockerSandbox::new(docker_config);
-                    if let Err(e) = sentinel_tools::output_storage::store_history_in_container_with_id(
-                        &sandbox,
-                        &parent_history_content,
-                        Some(parent_execution_id),
-                    )
-                    .await
+                    if let Err(e) =
+                        sentinel_tools::output_storage::store_history_in_container_with_id(
+                            &sandbox,
+                            &parent_history_content,
+                            Some(parent_execution_id),
+                        )
+                        .await
                     {
                         tracing::warn!("Failed to export parent history to container: {}", e);
                     }
@@ -1086,12 +1102,7 @@ async fn run_task(task_id: String) {
                     Some(ref role) if role == "judge" || role == "reviewer"
                 )
             {
-                persist_judge_lifecycle_decision(
-                    &app_handle,
-                    &parent_execution_id,
-                    &output,
-                )
-                .await;
+                persist_judge_lifecycle_decision(&app_handle, &parent_execution_id, &output).await;
             }
             let completed_at = chrono::Utc::now();
             let _ = app_handle.emit(
@@ -1391,7 +1402,9 @@ async fn execute_wait(args: SubagentWaitArgs) -> Result<SubagentWaitOutput, Suba
 
     let summary = format!(
         "Completed {} tasks: {} succeeded, {} failed",
-        results.len(), success_count, fail_count
+        results.len(),
+        success_count,
+        fail_count
     );
 
     Ok(SubagentWaitOutput { results, summary })
@@ -1401,7 +1414,9 @@ async fn execute_wait(args: SubagentWaitArgs) -> Result<SubagentWaitOutput, Suba
 // Executor: wait_any
 // ============================================================================
 
-async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOutput, SubagentToolError> {
+async fn execute_wait_any(
+    args: SubagentWaitAnyArgs,
+) -> Result<SubagentWaitAnyOutput, SubagentToolError> {
     if args.task_ids.is_empty() {
         return Err(SubagentToolError::InvalidArguments(
             "task_ids cannot be empty".to_string(),
@@ -1412,7 +1427,11 @@ async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOu
 
     // First pass: check already-completed and collect watch receivers for pending
     let mut completed = Vec::new();
-    let mut pending_info: Vec<(String, Option<String>, watch::Receiver<Option<TaskCompletion>>)> = Vec::new();
+    let mut pending_info: Vec<(
+        String,
+        Option<String>,
+        watch::Receiver<Option<TaskCompletion>>,
+    )> = Vec::new();
 
     {
         let tasks = TASK_REGISTRY.read().await;
@@ -1475,8 +1494,7 @@ async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOu
     }
 
     // Use mpsc to get notified when any watcher sees a completion
-    let (notify_tx, mut notify_rx) =
-        tokio::sync::mpsc::channel::<usize>(pending_info.len().max(1));
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<usize>(pending_info.len().max(1));
 
     let watcher_handles: Vec<_> = pending_info
         .iter()
@@ -1543,7 +1561,9 @@ async fn execute_wait_any(args: SubagentWaitAnyArgs) -> Result<SubagentWaitAnyOu
 // Executor: workflow_run (DAG orchestration)
 // ============================================================================
 
-async fn execute_workflow_run(args: SubagentWorkflowRunArgs) -> Result<SubagentWorkflowRunOutput, SubagentToolError> {
+async fn execute_workflow_run(
+    args: SubagentWorkflowRunArgs,
+) -> Result<SubagentWorkflowRunOutput, SubagentToolError> {
     if args.nodes.is_empty() {
         return Err(SubagentToolError::InvalidArguments(
             "workflow nodes cannot be empty".to_string(),
@@ -1630,7 +1650,10 @@ async fn execute_workflow_run(args: SubagentWorkflowRunArgs) -> Result<SubagentW
 
     let wait_output = execute_wait(SubagentWaitArgs {
         parent_execution_id: args.parent_execution_id.clone(),
-        task_ids: spawn_order.iter().map(|(_, task_id)| task_id.clone()).collect(),
+        task_ids: spawn_order
+            .iter()
+            .map(|(_, task_id)| task_id.clone())
+            .collect(),
         timeout_secs: args.timeout_secs,
     })
     .await?;
@@ -1898,12 +1921,14 @@ async fn execute_event_poll(
 // Unified executors
 // ============================================================================
 
-async fn execute_unified(args: SubagentExecuteArgs) -> Result<SubagentExecuteOutput, SubagentToolError> {
+async fn execute_unified(
+    args: SubagentExecuteArgs,
+) -> Result<SubagentExecuteOutput, SubagentToolError> {
     match args.mode {
         SubagentExecuteMode::Async => {
-            let task = args
-                .task
-                .ok_or_else(|| SubagentToolError::InvalidArguments("task is required for mode=async".to_string()))?;
+            let task = args.task.ok_or_else(|| {
+                SubagentToolError::InvalidArguments("task is required for mode=async".to_string())
+            })?;
             let spawn_output = execute_spawn(SubagentSpawnArgs {
                 parent_execution_id: args.parent_execution_id,
                 task,
@@ -1931,9 +1956,9 @@ async fn execute_unified(args: SubagentExecuteArgs) -> Result<SubagentExecuteOut
             })
         }
         SubagentExecuteMode::Sync => {
-            let task = args
-                .task
-                .ok_or_else(|| SubagentToolError::InvalidArguments("task is required for mode=sync".to_string()))?;
+            let task = args.task.ok_or_else(|| {
+                SubagentToolError::InvalidArguments("task is required for mode=sync".to_string())
+            })?;
             let run_output = execute_run(SubagentRunArgs {
                 parent_execution_id: args.parent_execution_id,
                 task,
@@ -1972,9 +1997,9 @@ async fn execute_unified(args: SubagentExecuteArgs) -> Result<SubagentExecuteOut
                     "nodes is required for mode=workflow".to_string(),
                 ));
             }
-            let timeout_secs =
-                args.timeout_secs
-                    .unwrap_or_else(sentinel_tools::buildin_tools::subagent_tool::get_default_subagent_timeout);
+            let timeout_secs = args.timeout_secs.unwrap_or_else(
+                sentinel_tools::buildin_tools::subagent_tool::get_default_subagent_timeout,
+            );
             let workflow_output = execute_workflow_run(SubagentWorkflowRunArgs {
                 parent_execution_id: args.parent_execution_id,
                 nodes: args.nodes,
@@ -2030,14 +2055,18 @@ async fn await_unified(args: SubagentAwaitArgs) -> Result<SubagentAwaitOutput, S
     }
 }
 
-async fn channel_unified(args: SubagentChannelArgs) -> Result<SubagentChannelOutput, SubagentToolError> {
+async fn channel_unified(
+    args: SubagentChannelArgs,
+) -> Result<SubagentChannelOutput, SubagentToolError> {
     match args.op {
         SubagentChannelOp::StatePut => {
             let key = args.key.ok_or_else(|| {
                 SubagentToolError::InvalidArguments("key is required for op=state.put".to_string())
             })?;
             let value = args.value.ok_or_else(|| {
-                SubagentToolError::InvalidArguments("value is required for op=state.put".to_string())
+                SubagentToolError::InvalidArguments(
+                    "value is required for op=state.put".to_string(),
+                )
             })?;
 
             let output = execute_state_put(SubagentStatePutArgs {

@@ -9,12 +9,12 @@
 //! - disable_plugin: 禁用插件
 //! - list_plugins: 列出所有插件
 
+use sentinel_db::Database;
 use sentinel_plugins::{HttpTransaction, Severity};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc::UnboundedSender, RwLock};
-use sentinel_db::Database;
 
 use sentinel_traffic::{
     CertificateService, EvidenceRecord, Finding, FindingDeduplicator,
@@ -291,8 +291,9 @@ impl TrafficAnalysisState {
     /// 只返回已批准（Approved）的插件，待审核和已拒绝的插件不显示
     pub async fn list_plugins_internal(&self) -> Result<Vec<PluginRecord>, String> {
         let db = self.get_db_service();
-        
-        let db_records = db.get_plugins_from_registry(Some("default"))
+
+        let db_records = db
+            .get_plugins_from_registry(Some("default"))
             .await
             .map_err(|e| format!("Failed to query database plugins: {}", e))?;
 
@@ -430,18 +431,19 @@ pub async fn start_traffic_analysis_internal(
     // 从数据库加载拦截过滤规则
     let db_service = state.get_db_service();
     let loaded_rules = match db_service.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => {
-            match serde_json::from_str::<InterceptFilterRules>(&json) {
-                Ok(rules) => {
-                    tracing::info!("Loaded {} intercept filter rules from database", rules.rules.len());
-                    rules.rules
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to parse intercept filter rules: {}", e);
-                    Vec::new()
-                }
+        Ok(Some(json)) => match serde_json::from_str::<InterceptFilterRules>(&json) {
+            Ok(rules) => {
+                tracing::info!(
+                    "Loaded {} intercept filter rules from database",
+                    rules.rules.len()
+                );
+                rules.rules
             }
-        }
+            Err(e) => {
+                tracing::warn!("Failed to parse intercept filter rules: {}", e);
+                Vec::new()
+            }
+        },
         _ => {
             tracing::info!("No saved intercept filter rules found");
             Vec::new()
@@ -481,14 +483,20 @@ pub async fn start_traffic_analysis_internal(
     }
 
     // 从数据库加载流量分析插件扫描开关
-    let plugin_scanning_enabled = match db_service.load_proxy_config("traffic_analysis_plugin_enabled").await {
+    let plugin_scanning_enabled = match db_service
+        .load_proxy_config("traffic_analysis_plugin_enabled")
+        .await
+    {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(true),
         _ => true, // 默认启用
     };
     {
         let mut plugin_scanning = state.plugin_scanning_enabled.write().await;
         *plugin_scanning = plugin_scanning_enabled;
-        tracing::info!("Loaded traffic analysis plugin scanning enabled: {}", plugin_scanning_enabled);
+        tracing::info!(
+            "Loaded traffic analysis plugin scanning enabled: {}",
+            plugin_scanning_enabled
+        );
     }
 
     // 创建拦截状态
@@ -762,30 +770,30 @@ pub async fn start_traffic_analysis_internal(
             }
         }
     });
-    
+
     // 启动自动持久化任务（每30秒检查一次）
     let cache_for_persist = history_cache.clone();
     let db_for_persist = db_service.clone();
     let is_running_for_persist = state.is_running.clone();
-    
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
-            
+
             let is_running = *is_running_for_persist.read().await;
             if !is_running {
                 break;
             }
-            
+
             // 检查是否需要持久化
             if cache_for_persist.should_auto_persist().await {
                 let unpersisted = cache_for_persist.get_unpersisted_records().await;
                 let count = unpersisted.len();
-                
+
                 if count > 0 {
                     tracing::info!("Auto-persisting {} records to database", count);
-                    
+
                     let mut saved = 0;
                     for record in unpersisted {
                         let db_record = sentinel_db::ProxyRequestRecord {
@@ -805,12 +813,16 @@ pub async fn start_traffic_analysis_internal(
                             request_body_compressed: false,
                             response_body_compressed: false,
                         };
-                        
-                        if db_for_persist.insert_proxy_request(&db_record).await.is_ok() {
+
+                        if db_for_persist
+                            .insert_proxy_request(&db_record)
+                            .await
+                            .is_ok()
+                        {
                             saved += 1;
                         }
                     }
-                    
+
                     cache_for_persist.mark_persisted(saved).await;
                     tracing::info!("Auto-persisted {}/{} records successfully", saved, count);
                 }
@@ -993,7 +1005,10 @@ pub async fn list_findings(
     };
 
     let db_service = state.get_db_service();
-    match db_service.list_traffic_vulnerabilities_with_evidence(filters).await {
+    match db_service
+        .list_traffic_vulnerabilities_with_evidence(filters)
+        .await
+    {
         Ok(records) => {
             // tracing::info!(
             //     "Loaded {} findings with evidence from database",
@@ -1022,9 +1037,7 @@ pub async fn count_findings(
 
     let db_service = state.get_db_service();
     match db_service.count_traffic_vulnerabilities(filters).await {
-        Ok(count) => {
-            Ok(CommandResponse::ok(count))
-        }
+        Ok(count) => Ok(CommandResponse::ok(count)),
         Err(e) => {
             tracing::error!("Failed to count findings: {}", e);
             Ok(CommandResponse::err(format!("Database error: {}", e)))
@@ -1048,19 +1061,37 @@ pub async fn enable_plugin(
     // 1. 获取插件信息
     let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
         Ok(Some(info)) => info,
-        Ok(None) => return Ok(CommandResponse::err(format!("Plugin not found: {}", plugin_id))),
-        Err(e) => return Ok(CommandResponse::err(format!("Failed to query plugin: {}", e))),
+        Ok(None) => {
+            return Ok(CommandResponse::err(format!(
+                "Plugin not found: {}",
+                plugin_id
+            )))
+        }
+        Err(e) => {
+            return Ok(CommandResponse::err(format!(
+                "Failed to query plugin: {}",
+                e
+            )))
+        }
     };
 
     // 2. 更新启用状态
     if let Err(e) = db.update_plugin_enabled(&plugin_id, true).await {
-        return Ok(CommandResponse::err(format!("Failed to enable plugin: {}", e)));
+        return Ok(CommandResponse::err(format!(
+            "Failed to enable plugin: {}",
+            e
+        )));
     }
 
     tracing::info!("Plugin enabled in database: {}", plugin_id);
 
     // 3. 获取插件名称用于事件发送
-    let plugin_name = db.get_plugin_name(&plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
+    let plugin_name = db
+        .get_plugin_name(&plugin_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| plugin_id.clone());
 
     // 4. 重载流量分析管道（如果是流量插件）
     if main_category == "traffic" {
@@ -1096,19 +1127,37 @@ pub async fn disable_plugin(
     // 1. 获取插件信息
     let (main_category, _) = match db.get_plugin_summary(&plugin_id).await {
         Ok(Some(info)) => info,
-        Ok(None) => return Ok(CommandResponse::err(format!("Plugin not found: {}", plugin_id))),
-        Err(e) => return Ok(CommandResponse::err(format!("Failed to query plugin: {}", e))),
+        Ok(None) => {
+            return Ok(CommandResponse::err(format!(
+                "Plugin not found: {}",
+                plugin_id
+            )))
+        }
+        Err(e) => {
+            return Ok(CommandResponse::err(format!(
+                "Failed to query plugin: {}",
+                e
+            )))
+        }
     };
 
     // 2. 更新启用状态
     if let Err(e) = db.update_plugin_enabled(&plugin_id, false).await {
-        return Ok(CommandResponse::err(format!("Failed to disable plugin: {}", e)));
+        return Ok(CommandResponse::err(format!(
+            "Failed to disable plugin: {}",
+            e
+        )));
     }
 
     tracing::info!("Plugin disabled in database: {}", plugin_id);
 
     // 3. 获取插件名称用于事件发送
-    let plugin_name = db.get_plugin_name(&plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
+    let plugin_name = db
+        .get_plugin_name(&plugin_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| plugin_id.clone());
 
     // 4. 从流量分析管道移除（如果是流量插件）
     if main_category == "traffic" {
@@ -1178,7 +1227,12 @@ pub async fn batch_enable_plugins(
         }
 
         enabled_count += 1;
-        let plugin_name = db.get_plugin_name(plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
+        let plugin_name = db
+            .get_plugin_name(plugin_id)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| plugin_id.clone());
 
         emit_plugin_changed(
             &app,
@@ -1215,7 +1269,12 @@ pub async fn batch_disable_plugins(
         }
 
         disabled_count += 1;
-        let plugin_name = db.get_plugin_name(plugin_id).await.ok().flatten().unwrap_or_else(|| plugin_id.clone());
+        let plugin_name = db
+            .get_plugin_name(plugin_id)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| plugin_id.clone());
 
         emit_plugin_changed(
             &app,
@@ -1286,7 +1345,7 @@ pub async fn trust_ca_cert(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<String>, String> {
     #[cfg(target_os = "macos")]
-    { 
+    {
         // 确保 CA 存在
         if let Err(e) = state.certificate_service.ensure_root_ca().await {
             return Ok(CommandResponse::err(format!("Failed to ensure CA: {}", e)));
@@ -1862,7 +1921,10 @@ pub async fn export_findings_html(
     fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
 
-    let filename = format!("traffic_analysis_report_{}.html", now.format("%Y%m%d_%H%M%S"));
+    let filename = format!(
+        "traffic_analysis_report_{}.html",
+        now.format("%Y%m%d_%H%M%S")
+    );
     let output_path = output_dir.join(&filename);
 
     fs::write(&output_path, html).map_err(|e| format!("Failed to write report: {}", e))?;
@@ -1942,7 +2004,7 @@ pub async fn save_history_to_database(
 ) -> Result<CommandResponse<usize>, String> {
     let cache = state.get_history_cache();
     let db = state.get_db_service();
-    
+
     // 获取要保存的请求
     let filters = sentinel_traffic::HttpRequestFilters {
         protocol: None,
@@ -1954,14 +2016,14 @@ pub async fn save_history_to_database(
         limit,
         offset: None,
     };
-    
+
     let requests = cache.list_http_requests(filters).await;
     let total = requests.len();
     let mut saved = 0;
     let mut failed = 0;
-    
+
     tracing::info!("Saving {} HTTP requests to database", total);
-    
+
     // 批量保存到数据库
     for request in requests {
         // 转换为数据库记录格式
@@ -1982,7 +2044,7 @@ pub async fn save_history_to_database(
             request_body_compressed: false,
             response_body_compressed: false,
         };
-        
+
         match db.insert_proxy_request(&record).await {
             Ok(_) => saved += 1,
             Err(e) => {
@@ -1991,7 +2053,7 @@ pub async fn save_history_to_database(
             }
         }
     }
-    
+
     tracing::info!("Saved {} requests to database ({} failed)", saved, failed);
     Ok(CommandResponse::ok(saved))
 }
@@ -2004,9 +2066,13 @@ pub async fn load_history_from_database(
     offset: Option<usize>,
 ) -> Result<CommandResponse<Vec<sentinel_traffic::HttpRequestRecord>>, String> {
     let db = state.get_db_service();
-    
-    tracing::info!("Loading history from database (limit: {:?}, offset: {:?})", limit, offset);
-    
+
+    tracing::info!(
+        "Loading history from database (limit: {:?}, offset: {:?})",
+        limit,
+        offset
+    );
+
     // 从数据库加载请求
     let filters = sentinel_db::ProxyRequestFilters {
         protocol: None,
@@ -2017,11 +2083,12 @@ pub async fn load_history_from_database(
         limit: limit.map(|l| l as i64),
         offset: offset.map(|o| o as i64),
     };
-    
-    let db_records = db.list_proxy_requests(filters)
+
+    let db_records = db
+        .list_proxy_requests(filters)
         .await
         .map_err(|e| format!("Failed to load from database: {}", e))?;
-    
+
     // 转换为缓存记录格式
     let mut records = Vec::new();
     for db_record in db_records {
@@ -2050,7 +2117,7 @@ pub async fn load_history_from_database(
         };
         records.push(record);
     }
-    
+
     tracing::info!("Loaded {} requests from database", records.len());
     Ok(CommandResponse::ok(records))
 }
@@ -2338,18 +2405,17 @@ pub async fn update_plugin(
     }
 
     // **热更新支持**：如果是流量分析插件且代理正在运行，触发 ScanPipeline 热更新
-    if main_category == "traffic"
-        && *state.is_running.read().await {
-            if let Some(scan_tx) = state.scan_tx.read().await.as_ref() {
-                if let Err(e) =
-                    scan_tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone()))
-                {
-                    tracing::error!("Failed to send reload task for plugin {}: {}", plugin_id, e);
-                } else {
-                    tracing::info!("Sent hot-reload task for traffic plugin: {}", plugin_id);
-                }
+    if main_category == "traffic" && *state.is_running.read().await {
+        if let Some(scan_tx) = state.scan_tx.read().await.as_ref() {
+            if let Err(e) =
+                scan_tx.send(sentinel_traffic::ScanTask::ReloadPlugin(plugin_id.clone()))
+            {
+                tracing::error!("Failed to send reload task for plugin {}: {}", plugin_id, e);
+            } else {
+                tracing::info!("Sent hot-reload task for traffic plugin: {}", plugin_id);
             }
         }
+    }
 
     // **关键修复**：如果是 Agent 工具类插件，重新注册到 ToolServer
     if main_category == "agent" {
@@ -2369,15 +2435,19 @@ pub async fn update_plugin(
             version: "1.0.0".to_string(),
             author: None,
             main_category: "agent".to_string(),
-            category: plugin_category.clone().unwrap_or_else(|| "other".to_string()),
+            category: plugin_category
+                .clone()
+                .unwrap_or_else(|| "other".to_string()),
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],
             description: Some(plugin_description.clone()),
         };
-        let input_schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
-            &plugin_code,
-            plugin_metadata,
-        ).await;
+        let input_schema =
+            sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+                &plugin_code,
+                plugin_metadata,
+            )
+            .await;
 
         // 创建执行器
         let executor = sentinel_tools::dynamic_tool::create_executor({
@@ -2474,7 +2544,9 @@ pub async fn test_plugin(
     // 如果插件未启用或不存在，保持原有提示逻辑。
     let db = state.get_db_service();
 
-    let plugin_record = db.get_plugin_from_registry(&plugin_id).await
+    let plugin_record = db
+        .get_plugin_from_registry(&plugin_id)
+        .await
         .map_err(|e| format!("Failed to query plugin: {}", e))?;
 
     if let Some(record) = plugin_record {
@@ -2498,22 +2570,28 @@ pub async fn test_plugin(
             // 如果内存中尚未注册插件元数据或代码，尝试从数据库加载
             if plugin_manager.get_plugin(&plugin_id).await.is_none() {
                 // 加载代码
-                let code_opt = db.get_plugin_code(&plugin_id)
+                let code_opt = db
+                    .get_plugin_code(&plugin_id)
                     .await
                     .map_err(|e| format!("Failed to load plugin code: {}", e))?;
-                
+
                 if let Some(code) = code_opt {
                     // 构造 PluginMetadata 供注册
-                    let metadata = db.get_plugin_from_registry(&plugin_id)
+                    let metadata = db
+                        .get_plugin_from_registry(&plugin_id)
                         .await
                         .map_err(|e| format!("Failed to query plugin metadata: {}", e))?
                         .ok_or_else(|| format!("Plugin metadata not found for id {}", plugin_id))?
                         .metadata;
-                    
+
                     let severity = match metadata.default_severity {
-                        sentinel_plugins::Severity::Critical => sentinel_traffic::types::Severity::Critical,
+                        sentinel_plugins::Severity::Critical => {
+                            sentinel_traffic::types::Severity::Critical
+                        }
                         sentinel_plugins::Severity::High => sentinel_traffic::types::Severity::High,
-                        sentinel_plugins::Severity::Medium => sentinel_traffic::types::Severity::Medium,
+                        sentinel_plugins::Severity::Medium => {
+                            sentinel_traffic::types::Severity::Medium
+                        }
                         sentinel_plugins::Severity::Low => sentinel_traffic::types::Severity::Low,
                         sentinel_plugins::Severity::Info => sentinel_traffic::types::Severity::Info,
                     };
@@ -2542,7 +2620,10 @@ pub async fn test_plugin(
         }
 
         // 在测试前，确保插件在内存中是启用状态（测试时允许临时启用未启用的插件）
-        let original_status = plugin_manager.get_plugin(&plugin_id).await.map(|p| p.status);
+        let original_status = plugin_manager
+            .get_plugin(&plugin_id)
+            .await
+            .map(|p| p.status);
         if !enabled {
             // 临时启用插件以便测试
             let _ = plugin_manager.enable_plugin(&plugin_id).await;
@@ -2687,7 +2768,7 @@ pub async fn test_plugin_advanced(
     let runs = runs.unwrap_or(1).max(1);
     let concurrency = concurrency.unwrap_or(1).max(1);
     let db = state.get_db_service();
-    
+
     // 确保插件存在并加载到内存中
     let plugin_record = match db.get_plugin_from_registry(&plugin_id).await {
         Ok(Some(p)) => p,
@@ -2710,16 +2791,18 @@ pub async fn test_plugin_advanced(
         }
         Err(e) => return Err(format!("Failed to query plugin: {}", e)),
     };
-    
+
     // 确保插件已加载到内存中（不检查启用状态）
     let plugin_manager = state.get_plugin_manager();
     if plugin_manager.get_plugin(&plugin_id).await.is_none() {
         // 加载插件代码
-        let code_opt = db.get_plugin_code(&plugin_id).await
+        let code_opt = db
+            .get_plugin_code(&plugin_id)
+            .await
             .map_err(|e| format!("Failed to load plugin code: {}", e))?;
-        
+
         if let Some(code) = code_opt {
-             let metadata = PluginMetadata {
+            let metadata = PluginMetadata {
                 id: plugin_id.clone(),
                 name: plugin_record.metadata.name,
                 version: plugin_record.metadata.version,
@@ -2736,7 +2819,7 @@ pub async fn test_plugin_advanced(
                 },
                 tags: plugin_record.metadata.tags,
             };
-            
+
             let _ = plugin_manager
                 .register_plugin(plugin_id.clone(), metadata, true) // force enable for test
                 .await;
@@ -2928,7 +3011,8 @@ pub async fn test_agent_plugin(
     // 移除启用状态检查，允许测试未启用的插件
 
     // 获取插件代码
-    let code = db.get_plugin_code(&plugin_id)
+    let code = db
+        .get_plugin_code(&plugin_id)
         .await
         .map_err(|e| format!("Failed to query plugin code: {}", e))?;
 
@@ -2946,7 +3030,8 @@ pub async fn test_agent_plugin(
     };
 
     // 获取插件名称
-    let name = db.get_plugin_name(&plugin_id)
+    let name = db
+        .get_plugin_name(&plugin_id)
         .await
         .map_err(|e| format!("Failed to query plugin name: {}", e))?
         .unwrap_or_else(|| plugin_id.clone());
@@ -3092,9 +3177,9 @@ pub async fn get_plugin_input_schema(
         description: None,
     };
     let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
-        &code,
-        metadata,
-    ).await;
+        &code, metadata,
+    )
+    .await;
 
     Ok(CommandResponse::ok(schema))
 }
@@ -3145,11 +3230,15 @@ pub async fn get_plugin_output_schema(
         tags: vec![],
         description: None,
     };
-    
+
     let schema = match sentinel_plugins::get_output_schema_from_code(&code, metadata).await {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("Failed to get output schema for plugin {}: {}", plugin_id, e);
+            log::warn!(
+                "Failed to get output schema for plugin {}: {}",
+                plugin_id,
+                e
+            );
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -3195,7 +3284,8 @@ pub async fn delete_traffic_vulnerability(
     let db = state.get_db_service();
 
     // Delete from database and get signature
-    let signature = db.delete_traffic_vulnerability(&vuln_id)
+    let signature = db
+        .delete_traffic_vulnerability(&vuln_id)
         .await
         .map_err(|e| format!("Failed to delete vulnerability: {}", e))?;
 
@@ -3246,7 +3336,10 @@ pub async fn delete_traffic_vulnerabilities_batch(
         for sig in &signatures_to_remove {
             cache.remove(sig);
         }
-        tracing::debug!("Removed {} signatures from dedupe cache", signatures_to_remove.len());
+        tracing::debug!(
+            "Removed {} signatures from dedupe cache",
+            signatures_to_remove.len()
+        );
     }
 
     tracing::info!(
@@ -3272,7 +3365,7 @@ pub async fn delete_all_traffic_vulnerabilities(
     let mut cache = state.dedupe_cache.write().await;
     cache.clear();
     tracing::info!("All vulnerabilities deleted and dedupe cache cleared");
-    
+
     Ok(CommandResponse::ok(()))
 }
 
@@ -3295,19 +3388,19 @@ pub async fn get_vulnerability_dedupe_cache_info(
 ) -> Result<CommandResponse<serde_json::Value>, String> {
     let cache = state.dedupe_cache.read().await;
     let size = cache.len();
-    
+
     // 获取前10个签名作为示例
     let samples: Vec<String> = cache
         .iter()
         .take(10)
         .map(|s| s[..8.min(s.len())].to_string())
         .collect();
-    
+
     let info = serde_json::json!({
         "cache_size": size,
         "sample_signatures": samples,
     });
-    
+
     tracing::debug!("Dedupe cache info: {} entries", size);
     Ok(CommandResponse::ok(info))
 }
@@ -3486,7 +3579,10 @@ pub async fn save_proxy_config(
     {
         let mut exclude_self = state.exclude_self_traffic.write().await;
         *exclude_self = config.exclude_self_traffic;
-        tracing::info!("Updated exclude_self_traffic to: {}", config.exclude_self_traffic);
+        tracing::info!(
+            "Updated exclude_self_traffic to: {}",
+            config.exclude_self_traffic
+        );
     }
 
     tracing::info!("Proxy configuration saved successfully");
@@ -3586,7 +3682,10 @@ pub async fn set_traffic_analysis_plugin_enabled(
     db.save_proxy_config("traffic_analysis_plugin_enabled", &enabled.to_string())
         .await
         .map_err(|e| {
-            tracing::error!("Failed to save traffic analysis plugin enabled config: {}", e);
+            tracing::error!(
+                "Failed to save traffic analysis plugin enabled config: {}",
+                e
+            );
             format!("Failed to save config: {}", e)
         })?;
 
@@ -3601,9 +3700,12 @@ pub async fn get_traffic_analysis_plugin_enabled(
 ) -> Result<CommandResponse<bool>, String> {
     let db = state.get_db_service();
 
-    let enabled = match db.load_proxy_config("traffic_analysis_plugin_enabled").await {
+    let enabled = match db
+        .load_proxy_config("traffic_analysis_plugin_enabled")
+        .await
+    {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(true), // 默认为 true（启用）
-        _ => true, // 如果配置不存在，默认启用
+        _ => true,                                                // 如果配置不存在，默认启用
     };
 
     Ok(CommandResponse::ok(enabled))
@@ -3641,15 +3743,15 @@ pub async fn set_history_persistence_config(
     config: HistoryPersistenceConfig,
 ) -> Result<CommandResponse<()>, String> {
     tracing::info!("Setting history persistence config: {:?}", config);
-    
+
     let db = state.get_db_service();
-    let json = serde_json::to_string(&config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    
+    let json =
+        serde_json::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
+
     db.save_proxy_config("history_persistence_config", &json)
         .await
         .map_err(|e| format!("Failed to save config: {}", e))?;
-    
+
     tracing::info!("History persistence config saved successfully");
     Ok(CommandResponse::ok(()))
 }
@@ -3660,15 +3762,14 @@ pub async fn get_history_persistence_config(
     state: State<'_, TrafficAnalysisState>,
 ) -> Result<CommandResponse<HistoryPersistenceConfig>, String> {
     let db = state.get_db_service();
-    
+
     let config = match db.load_proxy_config("history_persistence_config").await {
         Ok(Some(json)) => {
-            serde_json::from_str::<HistoryPersistenceConfig>(&json)
-                .unwrap_or_default()
+            serde_json::from_str::<HistoryPersistenceConfig>(&json).unwrap_or_default()
         }
         _ => HistoryPersistenceConfig::default(),
     };
-    
+
     Ok(CommandResponse::ok(config))
 }
 
@@ -4111,7 +4212,7 @@ async fn read_http_response<S: tokio::io::AsyncRead + Unpin>(
 
     // 短超时用于检测响应结束（500ms 没有新数据就认为响应完成）
     let read_timeout = std::time::Duration::from_millis(500);
-    
+
     // 总超时计时器
     let start_time = std::time::Instant::now();
 
@@ -4586,18 +4687,16 @@ pub async fn update_runtime_filter_rules(
 
     // Persist rules to database
     let db = state.get_db_service();
-    
+
     // Load existing rules from database
     let mut all_rules = match db.load_proxy_config("intercept_filter_rules").await {
-        Ok(Some(json)) => {
-            serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default()
-        }
+        Ok(Some(json)) => serde_json::from_str::<InterceptFilterRules>(&json).unwrap_or_default(),
         _ => InterceptFilterRules::default(),
     };
 
     // Remove old rules of this type and add new ones
     all_rules.rules.retain(|r| r.rule_type != rule_type);
-    
+
     // Convert runtime rules to persisted format
     for rule in rules.iter() {
         all_rules.rules.push(InterceptFilterRule {
@@ -4618,7 +4717,11 @@ pub async fn update_runtime_filter_rules(
         .await
         .map_err(|e| format!("Failed to persist rules: {}", e))?;
 
-    tracing::info!("Filter rules persisted to database: {} {} rules", rules.len(), rule_type);
+    tracing::info!(
+        "Filter rules persisted to database: {} {} rules",
+        rules.len(),
+        rule_type
+    );
     Ok(CommandResponse::ok(()))
 }
 
@@ -4651,18 +4754,13 @@ pub struct StorePluginListResponse {
 
 /// 从 GitHub 仓库获取插件列表
 #[tauri::command]
-pub async fn fetch_store_plugins(
-    repo_url: String,
-) -> Result<StorePluginListResponse, String> {
+pub async fn fetch_store_plugins(repo_url: String) -> Result<StorePluginListResponse, String> {
     tracing::info!("Fetching store plugins from: {}", repo_url);
 
     // Parse repo URL to get API endpoint
     // Expected format: https://github.com/owner/repo
-    let parts: Vec<&str> = repo_url
-        .trim_end_matches('/')
-        .split('/')
-        .collect();
-    
+    let parts: Vec<&str> = repo_url.trim_end_matches('/').split('/').collect();
+
     if parts.len() < 2 {
         return Ok(StorePluginListResponse {
             success: false,
@@ -4670,61 +4768,72 @@ pub async fn fetch_store_plugins(
             error: Some("Invalid repository URL".to_string()),
         });
     }
-    
+
     let owner = parts[parts.len() - 2];
     let repo = parts[parts.len() - 1];
-    
+
     // Fetch plugins.json from the repo
     let api_url = format!(
         "https://raw.githubusercontent.com/{}/{}/main/plugins.json",
         owner, repo
     );
-    
+
     tracing::info!("Fetching plugin manifest from: {}", api_url);
-    
+
     // Apply global proxy configuration
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
     let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
     let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
+
     let response = client.get(&api_url).send().await;
-    
+
     match response {
         Ok(resp) => {
             if resp.status().is_success() {
                 let text = resp.text().await.map_err(|e| e.to_string())?;
-                
+
                 // Parse the manifest
                 match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(manifest) => {
                         let mut plugins = Vec::new();
-                        
-                        if let Some(plugin_list) = manifest.get("plugins").and_then(|v| v.as_array()) {
-                                            tracing::info!("Found {} plugins in manifest", plugin_list.len());
-                                            for plugin_value in plugin_list {
-                                                match serde_json::from_value::<StorePluginInfo>(plugin_value.clone()) {
-                                                    Ok(mut plugin) => {
-                                                        // Build download URL if not provided
-                                                        if plugin.download_url.is_empty() {
-                                                            plugin.download_url = format!(
+
+                        if let Some(plugin_list) =
+                            manifest.get("plugins").and_then(|v| v.as_array())
+                        {
+                            tracing::info!("Found {} plugins in manifest", plugin_list.len());
+                            for plugin_value in plugin_list {
+                                match serde_json::from_value::<StorePluginInfo>(
+                                    plugin_value.clone(),
+                                ) {
+                                    Ok(mut plugin) => {
+                                        // Build download URL if not provided
+                                        if plugin.download_url.is_empty() {
+                                            plugin.download_url = format!(
                                                                 "https://raw.githubusercontent.com/{}/{}/main/plugins/{}.ts",
                                                                 owner, repo, plugin.id
                                                             );
-                                                        }
-                                                        plugins.push(plugin);
-                                                    }
-                                                    Err(e) => {
-                                                        let plugin_id = plugin_value.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                                        tracing::warn!("Failed to parse plugin '{}': {}", plugin_id, e);
-                                                    }
-                                                }
-                                            }
                                         }
-                        
+                                        plugins.push(plugin);
+                                    }
+                                    Err(e) => {
+                                        let plugin_id = plugin_value
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown");
+                                        tracing::warn!(
+                                            "Failed to parse plugin '{}': {}",
+                                            plugin_id,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
                         tracing::info!("Fetched {} plugins from store", plugins.len());
-                        
+
                         Ok(StorePluginListResponse {
                             success: true,
                             plugins,
@@ -4762,20 +4871,18 @@ pub async fn fetch_store_plugins(
 
 /// 获取插件代码
 #[tauri::command]
-pub async fn fetch_plugin_code(
-    download_url: String,
-) -> Result<serde_json::Value, String> {
+pub async fn fetch_plugin_code(download_url: String) -> Result<serde_json::Value, String> {
     tracing::info!("Fetching plugin code from: {}", download_url);
-    
+
     // Apply global proxy configuration
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
     let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
     let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
+
     let response = client.get(&download_url).send().await;
-    
+
     match response {
         Ok(resp) => {
             if resp.status().is_success() {
@@ -4791,12 +4898,10 @@ pub async fn fetch_plugin_code(
                 }))
             }
         }
-        Err(e) => {
-            Ok(serde_json::json!({
-                "success": false,
-                "error": format!("Network error: {}", e)
-            }))
-        }
+        Err(e) => Ok(serde_json::json!({
+            "success": false,
+            "error": format!("Network error: {}", e)
+        })),
     }
 }
 
@@ -4807,7 +4912,7 @@ pub async fn install_store_plugin(
     plugin: StorePluginInfo,
 ) -> Result<CommandResponse<String>, String> {
     tracing::info!("Installing store plugin: {} ({})", plugin.name, plugin.id);
-    
+
     // Fetch plugin code
     // Apply global proxy configuration
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
@@ -4815,22 +4920,30 @@ pub async fn install_store_plugin(
     let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
+
     let response = client.get(&plugin.download_url).send().await;
-    
+
     let plugin_code = match response {
         Ok(resp) => {
             if resp.status().is_success() {
-                resp.text().await.map_err(|e| format!("Failed to read response: {}", e))?
+                resp.text()
+                    .await
+                    .map_err(|e| format!("Failed to read response: {}", e))?
             } else {
-                return Ok(CommandResponse::err(format!("Failed to download plugin: HTTP {}", resp.status())));
+                return Ok(CommandResponse::err(format!(
+                    "Failed to download plugin: HTTP {}",
+                    resp.status()
+                )));
             }
         }
         Err(e) => {
-            return Ok(CommandResponse::err(format!("Failed to download plugin: {}", e)));
+            return Ok(CommandResponse::err(format!(
+                "Failed to download plugin: {}",
+                e
+            )));
         }
     };
-    
+
     // Parse severity from string
     let severity = match plugin.default_severity.to_lowercase().as_str() {
         "critical" => Severity::Critical,
@@ -4840,7 +4953,7 @@ pub async fn install_store_plugin(
         "info" => Severity::Info,
         _ => Severity::Medium,
     };
-    
+
     // Create plugin metadata
     let metadata = PluginMetadata {
         id: plugin.id.clone(),
@@ -4853,10 +4966,10 @@ pub async fn install_store_plugin(
         default_severity: severity,
         tags: plugin.tags,
     };
-    
+
     // Register plugin to database
     let db = state.get_db_service();
-    
+
     // Convert to TrafficPluginMetadata
     use sentinel_db::TrafficPluginMetadata;
     let traffic_metadata = TrafficPluginMetadata {
@@ -4870,19 +4983,22 @@ pub async fn install_store_plugin(
         default_severity: format!("{}", metadata.default_severity),
         tags: metadata.tags.clone(),
     };
-    
+
     db.register_traffic_plugin_with_code(&traffic_metadata, &plugin_code)
         .await
         .map_err(|e| format!("Failed to install plugin: {}", e))?;
-    
+
     tracing::info!("Plugin installed: {}", plugin.id);
-    
+
     // Update plugin manager cache
     let plugin_manager = state.get_plugin_manager();
-    if let Err(e) = plugin_manager.set_plugin_code(plugin.id.clone(), plugin_code).await {
+    if let Err(e) = plugin_manager
+        .set_plugin_code(plugin.id.clone(), plugin_code)
+        .await
+    {
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
-    
+
     Ok(CommandResponse::ok(plugin.id))
 }
 
@@ -4893,29 +5009,37 @@ pub async fn update_store_plugin(
     plugin: StorePluginInfo,
 ) -> Result<CommandResponse<String>, String> {
     tracing::info!("Updating store plugin: {} ({})", plugin.name, plugin.id);
-    
+
     // Fetch plugin code
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
     let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
     let client = builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
+
     let response = client.get(&plugin.download_url).send().await;
-    
+
     let plugin_code = match response {
         Ok(resp) => {
             if resp.status().is_success() {
-                resp.text().await.map_err(|e| format!("Failed to read response: {}", e))?
+                resp.text()
+                    .await
+                    .map_err(|e| format!("Failed to read response: {}", e))?
             } else {
-                return Ok(CommandResponse::err(format!("Failed to download plugin: HTTP {}", resp.status())));
+                return Ok(CommandResponse::err(format!(
+                    "Failed to download plugin: HTTP {}",
+                    resp.status()
+                )));
             }
         }
         Err(e) => {
-            return Ok(CommandResponse::err(format!("Failed to download plugin: {}", e)));
+            return Ok(CommandResponse::err(format!(
+                "Failed to download plugin: {}",
+                e
+            )));
         }
     };
-    
+
     // Parse severity from string
     let severity = match plugin.default_severity.to_lowercase().as_str() {
         "critical" => Severity::Critical,
@@ -4925,7 +5049,7 @@ pub async fn update_store_plugin(
         "info" => Severity::Info,
         _ => Severity::Medium,
     };
-    
+
     // Create plugin metadata
     let metadata = PluginMetadata {
         id: plugin.id.clone(),
@@ -4938,10 +5062,10 @@ pub async fn update_store_plugin(
         default_severity: severity,
         tags: plugin.tags,
     };
-    
+
     // Update plugin in database
     let db = state.get_db_service();
-    
+
     // Convert to TrafficPluginMetadata
     use sentinel_db::TrafficPluginMetadata;
     let traffic_metadata = TrafficPluginMetadata {
@@ -4955,18 +5079,21 @@ pub async fn update_store_plugin(
         default_severity: format!("{}", metadata.default_severity),
         tags: metadata.tags.clone(),
     };
-    
+
     db.update_traffic_plugin(&traffic_metadata, &plugin_code)
         .await
         .map_err(|e| format!("Failed to update plugin: {}", e))?;
-    
+
     tracing::info!("Plugin updated: {}", plugin.id);
-    
+
     // Update plugin manager cache
     let plugin_manager = state.get_plugin_manager();
-    if let Err(e) = plugin_manager.set_plugin_code(plugin.id.clone(), plugin_code).await {
+    if let Err(e) = plugin_manager
+        .set_plugin_code(plugin.id.clone(), plugin_code)
+        .await
+    {
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
-    
+
     Ok(CommandResponse::ok(plugin.id))
 }

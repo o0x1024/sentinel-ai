@@ -238,13 +238,16 @@ impl AdvancedPluginGenerator {
         );
 
         // 2. Build generation prompt with examples
-        let prompt = self.prompt_builder.build_generation_prompt_with_examples_async(
-            &request.analysis,
-            vuln_type,
-            request.target_endpoints.as_deref(),
-            request.requirements.as_deref(),
-            &examples,
-        ).await?;
+        let prompt = self
+            .prompt_builder
+            .build_generation_prompt_with_examples_async(
+                &request.analysis,
+                vuln_type,
+                request.target_endpoints.as_deref(),
+                request.requirements.as_deref(),
+                &examples,
+            )
+            .await?;
 
         // 3. Call LLM to generate code
         let (code, model) = self.call_llm_for_generation(&prompt).await?;

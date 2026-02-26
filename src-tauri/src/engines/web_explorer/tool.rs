@@ -26,29 +26,50 @@ fn msg_type_name(msg: &WebExplorerMessage) -> String {
         WebExplorerMessage::ApiDiscovered { .. } => "api_discovered",
         WebExplorerMessage::Completed { .. } => "completed",
         WebExplorerMessage::Error { .. } => "error",
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Convert message to data object for frontend
 fn msg_to_data(msg: &WebExplorerMessage) -> serde_json::Value {
     match msg {
-        WebExplorerMessage::Started { session_id, target_url } => json!({
+        WebExplorerMessage::Started {
+            session_id,
+            target_url,
+        } => json!({
             "session_id": session_id,
             "target_url": target_url
         }),
-        WebExplorerMessage::Step { step_number, thought, action, current_url } => json!({
+        WebExplorerMessage::Step {
+            step_number,
+            thought,
+            action,
+            current_url,
+        } => json!({
             "step_number": step_number,
             "thought": thought,
             "action": action,
             "current_url": current_url
         }),
-        WebExplorerMessage::Screenshot { step_number, screenshot_base64, url, title } => json!({
+        WebExplorerMessage::Screenshot {
+            step_number,
+            screenshot_base64,
+            url,
+            title,
+        } => json!({
             "step_number": step_number,
             "screenshot_base64": screenshot_base64,
             "url": url,
             "title": title
         }),
-        WebExplorerMessage::Analysis { step_number, page_type, description, elements_count, forms_count, links_count } => json!({
+        WebExplorerMessage::Analysis {
+            step_number,
+            page_type,
+            description,
+            elements_count,
+            forms_count,
+            links_count,
+        } => json!({
             "step_number": step_number,
             "page_type": format!("{:?}", page_type),
             "description": description,
@@ -56,24 +77,43 @@ fn msg_to_data(msg: &WebExplorerMessage) -> serde_json::Value {
             "forms_count": forms_count,
             "links_count": links_count
         }),
-        WebExplorerMessage::ActionExecuting { step_number, action_type, action_details } => json!({
+        WebExplorerMessage::ActionExecuting {
+            step_number,
+            action_type,
+            action_details,
+        } => json!({
             "step_number": step_number,
             "action_type": action_type,
             "action_details": action_details
         }),
-        WebExplorerMessage::ActionResult { step_number, success, error, new_url } => json!({
+        WebExplorerMessage::ActionResult {
+            step_number,
+            success,
+            error,
+            new_url,
+        } => json!({
             "step_number": step_number,
             "success": success,
             "error": error,
             "new_url": new_url
         }),
-        WebExplorerMessage::Observation { step_number, page_type, description, elements_count } => json!({
+        WebExplorerMessage::Observation {
+            step_number,
+            page_type,
+            description,
+            elements_count,
+        } => json!({
             "step_number": step_number,
             "page_type": format!("{:?}", page_type),
             "description": description,
             "elements_count": elements_count
         }),
-        WebExplorerMessage::Progress { steps_taken, max_steps, pages_visited, apis_discovered } => json!({
+        WebExplorerMessage::Progress {
+            steps_taken,
+            max_steps,
+            pages_visited,
+            apis_discovered,
+        } => json!({
             "steps_taken": steps_taken,
             "max_steps": max_steps,
             "pages_visited": pages_visited,
@@ -116,10 +156,8 @@ pub struct WebExplorerTool {
 }
 
 impl WebExplorerTool {
-
     pub const NAME: &'static str = "web_explorer";
     pub const DESCRIPTION: &'static str = "Explore a website using Web Explorer with ReAct architecture. Systematically discovers pages, APIs, and interactive elements through intelligent reasoning and action.";
-
 
     pub fn new(llm_config: LlmConfig) -> Self {
         Self {
@@ -141,7 +179,7 @@ impl WebExplorerTool {
 }
 
 impl Tool for WebExplorerTool {
-     const NAME: &'static str = "web_explorer";
+    const NAME: &'static str = "web_explorer";
 
     type Error = ToolError;
     type Args = WebExplorerArgs;
@@ -192,18 +230,26 @@ impl Tool for WebExplorerTool {
 
         // Try to override with global defaults if app_handle is available
         if let Some(ref app_handle) = self.app_handle {
-            if let Some(ai_manager) = app_handle.try_state::<Arc<crate::services::ai::AiServiceManager>>() {
+            if let Some(ai_manager) =
+                app_handle.try_state::<Arc<crate::services::ai::AiServiceManager>>()
+            {
                 // Get default LLM (Fast model)
                 if let Ok(Some(model_info)) = ai_manager.get_default_model("llm").await {
-                    if let Ok(Some(provider_cfg)) = ai_manager.get_provider_config(&model_info.provider).await {
-                        log::info!("WebExplorer: Using default LLM model {} ({})", model_info.name, provider_cfg.provider);
+                    if let Ok(Some(provider_cfg)) =
+                        ai_manager.get_provider_config(&model_info.provider).await
+                    {
+                        log::info!(
+                            "WebExplorer: Using default LLM model {} ({})",
+                            model_info.name,
+                            provider_cfg.provider
+                        );
                         ai_config.fast_model_id = model_info.name;
                         ai_config.fast_provider = provider_cfg.provider;
                         ai_config.fast_api_key = provider_cfg.api_key;
                         ai_config.fast_base_url = provider_cfg.api_base;
                     }
                 }
-                
+
                 // VLM (Vision model) is disabled - using DOM-only analysis
                 log::info!("WebExplorer: Using DOM-only analysis (VLM disabled)");
             }
@@ -252,7 +298,9 @@ impl Tool for WebExplorerTool {
                 let api_list_str = if result.api_list.is_empty() {
                     "  (none)".to_string()
                 } else {
-                    result.api_list.iter()
+                    result
+                        .api_list
+                        .iter()
                         .map(|api| format!("  - {}", api))
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -262,7 +310,9 @@ impl Tool for WebExplorerTool {
                 let urls_str = if result.visited_urls.is_empty() {
                     "  (none)".to_string()
                 } else {
-                    result.visited_urls.iter()
+                    result
+                        .visited_urls
+                        .iter()
                         .map(|url| format!("  - {}", url))
                         .collect::<Vec<_>>()
                         .join("\n")

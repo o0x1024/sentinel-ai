@@ -90,6 +90,7 @@
             <AgentTeamTemplateLibrary
               :conversation-id="conversationId"
               @close="showTemplateLibrary = false"
+              @templates-updated="handleTemplatesUpdated"
               @session-created="handleLibrarySessionCreated"
             />
           </div>
@@ -297,6 +298,32 @@
               <p class="text-xs text-base-content/70 mb-3">
                 团队意见存在较大分歧（分歧度超过阈值），请在底部输入栏发送人工指导意见继续。
               </p>
+              <p v-if="autoResumeSecondsLeft !== null" class="text-xs text-base-content/60 mb-3">
+                若无人工输入，{{ formatCountdown(autoResumeSecondsLeft) }} 后将按默认策略自动继续。
+              </p>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  class="btn btn-xs btn-outline btn-warning"
+                  :disabled="quickIntervening"
+                  @click="handleQuickIntervention('conservative')"
+                >
+                  保守继续
+                </button>
+                <button
+                  class="btn btn-xs btn-outline btn-info"
+                  :disabled="quickIntervening"
+                  @click="handleQuickIntervention('balanced')"
+                >
+                  平衡继续
+                </button>
+                <button
+                  class="btn btn-xs btn-outline btn-error"
+                  :disabled="quickIntervening"
+                  @click="handleQuickIntervention('aggressive')"
+                >
+                  激进继续
+                </button>
+              </div>
             </div>
 
             <!-- Completed -->
@@ -498,6 +525,21 @@
             />
             <span class="text-sm text-base-content/80">启用 Team 工具调用</span>
           </div>
+          <div class="space-y-1">
+            <label class="text-sm text-base-content/80" for="team-human-intervention-max">人工介入上限</label>
+            <div class="flex items-center gap-2">
+              <input
+                id="team-human-intervention-max"
+                v-model.number="teamMaxHumanInterventions"
+                type="number"
+                min="1"
+                max="10"
+                class="input input-bordered input-sm w-24"
+                @blur="normalizeTeamMaxHumanInterventions"
+              />
+              <span class="text-xs text-base-content/60">超过上限后将强制推进决策，避免死循环</span>
+            </div>
+          </div>
           <div v-if="localToolsEnabled" class="space-y-2">
             <div class="text-xs text-base-content/60">留空表示不限制（可使用全部工具）</div>
             <div class="relative w-full">
@@ -604,6 +646,7 @@ import { dialog } from '@/composables/useDialog'
 import type {
   AgentTeamTemplate,
   AgentTeamSession,
+  AgentTeamRound,
   AgentTeamMessage,
   AgentTeamBlackboardEntry,
   AgentTeamArtifact,
@@ -639,6 +682,7 @@ const props = defineProps<{
 
 const templates = ref<AgentTeamTemplate[]>([])
 const session = ref<AgentTeamSession | null>(null)
+const teamRounds = ref<AgentTeamRound[]>([])
 const teamMessages = ref<AgentTeamMessage[]>([])
 const blackboard = ref<AgentTeamBlackboardEntry[]>([])
 const artifacts = ref<AgentTeamArtifact[]>([])
@@ -671,6 +715,16 @@ const teamToolConfig = ref<{
   allowlist: [],
 })
 const TEAM_TOOL_CONFIG_STORAGE_KEY = 'sentinel:team:tool-config'
+const DEFAULT_TEAM_MAX_HUMAN_INTERVENTIONS = 2
+const MIN_TEAM_MAX_HUMAN_INTERVENTIONS = 1
+const MAX_TEAM_MAX_HUMAN_INTERVENTIONS = 10
+const DEFAULT_TEMPLATE_MAX_ROUNDS = 5
+const MIN_TEMPLATE_MAX_ROUNDS = 1
+const MAX_TEMPLATE_MAX_ROUNDS = 10
+const teamMaxHumanInterventions = ref<number>(DEFAULT_TEAM_MAX_HUMAN_INTERVENTIONS)
+const autoResumeSecondsLeft = ref<number | null>(null)
+const quickIntervening = ref(false)
+let autoResumeCountdownTimer: ReturnType<typeof setInterval> | null = null
 
 const showSidePanel = ref(false)
 const activeSideTab = ref<'blackboard' | 'artifacts' | 'timeline' | 'challenge'>('blackboard')
@@ -857,6 +911,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlistenFns.forEach(fn => fn())
+  stopAutoResumeCountdown()
 })
 
 watch(() => session.value?.id, () => {
@@ -891,11 +946,13 @@ async function loadTemplates() {
 
 async function loadSessionData(sessionId: string, clearStreaming = true) {
   try {
-    const [msgs, bb, arts] = await Promise.all([
+    const [rounds, msgs, bb, arts] = await Promise.all([
+      agentTeamApi.getRounds(sessionId),
       agentTeamApi.getMessages(sessionId),
       agentTeamApi.getBlackboard(sessionId),
       agentTeamApi.listArtifacts(sessionId),
     ])
+    teamRounds.value = rounds
     teamMessages.value = msgs
     blackboard.value = bb
     artifacts.value = arts
@@ -907,6 +964,7 @@ async function loadSessionData(sessionId: string, clearStreaming = true) {
       showSidePanel.value = true
       activeSideTab.value = 'artifacts'
     }
+    syncAutoResumeCountdown()
   } catch (e) {
     console.error('[AgentTeamView] Failed to load session data:', e)
     toast.error('加载会话数据失败')
@@ -1085,6 +1143,7 @@ async function handleRestoreSession(target: AgentTeamSession) {
 
 function handleCreateNewSession() {
   session.value = null
+  teamRounds.value = []
   teamMessages.value = []
   blackboard.value = []
   artifacts.value = []
@@ -1100,6 +1159,7 @@ function handleCreateNewSession() {
   divergenceAlert.value = null
   latestDivergenceScore.value = null
   preserveStreamingOnNextStateSync.value = false
+  stopAutoResumeCountdown()
 }
 
 function handleLibrarySessionCreated(sessionId: string) {
@@ -1123,6 +1183,20 @@ function handleLibrarySessionCreated(sessionId: string) {
     console.error('[AgentTeamView] Failed to load new session:', e)
     toast.error('加载新创建的会话失败')
   })
+}
+
+async function handleTemplatesUpdated(templateId?: string) {
+  const previousSelected = selectedTemplateId.value
+  await loadTemplates()
+  if (templateId && templates.value.some((tpl) => tpl.id === templateId)) {
+    selectedTemplateId.value = templateId
+    return
+  }
+  if (previousSelected && templates.value.some((tpl) => tpl.id === previousSelected)) {
+    selectedTemplateId.value = previousSelected
+    return
+  }
+  selectedTemplateId.value = templates.value[0]?.id ?? ''
 }
 
 async function handleStartExistingSession() {
@@ -1199,6 +1273,74 @@ async function persistStreamingMessagesBeforeStop() {
 
 // ==================== Team input ====================
 
+type QuickInterventionPolicy = 'conservative' | 'balanced' | 'aggressive'
+
+function getQuickInterventionPrompt(policy: QuickInterventionPolicy): string {
+  if (policy === 'conservative') {
+    return '请按保守收敛策略继续：优先安全与稳定，选择风险最低且可回滚方案。请输出唯一执行方案、放弃理由和执行步骤。'
+  }
+  if (policy === 'aggressive') {
+    return '请按激进推进策略继续：优先交付速度与产出，选择实现最快方案，同时给出关键风险与回滚预案。请输出唯一执行方案、放弃理由和执行步骤。'
+  }
+  return '请按平衡收敛策略继续：在风险、成本、质量间做均衡取舍，输出可执行的单一方案、放弃理由和执行步骤。'
+}
+
+async function handleQuickIntervention(policy: QuickInterventionPolicy) {
+  if (!session.value || session.value.state !== 'SUSPENDED_FOR_HUMAN' || quickIntervening.value) return
+  quickIntervening.value = true
+  try {
+    await agentTeamApi.submitMessage({
+      session_id: session.value.id,
+      content: getQuickInterventionPrompt(policy),
+      resume: true,
+    })
+    await refreshSession()
+    const label = policy === 'conservative' ? '保守' : policy === 'aggressive' ? '激进' : '平衡'
+    toast.info(`已按${label}策略继续执行`)
+  } catch (e) {
+    console.error('[AgentTeamView] Failed to submit quick intervention:', e)
+    toast.error('快速介入失败')
+  } finally {
+    quickIntervening.value = false
+  }
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const sec = Math.max(0, Math.trunc(totalSeconds))
+  const mm = String(Math.floor(sec / 60)).padStart(2, '0')
+  const ss = String(sec % 60).padStart(2, '0')
+  return `${mm}:${ss}`
+}
+
+function stopAutoResumeCountdown() {
+  if (autoResumeCountdownTimer !== null) {
+    clearInterval(autoResumeCountdownTimer)
+    autoResumeCountdownTimer = null
+  }
+  autoResumeSecondsLeft.value = null
+}
+
+function syncAutoResumeCountdown() {
+  stopAutoResumeCountdown()
+  const current = session.value
+  if (!current || current.state !== 'SUSPENDED_FOR_HUMAN') return
+  const autoResumeAt = (current.state_machine as any)?.human_intervention?.auto_resume_at
+  if (typeof autoResumeAt !== 'string' || !autoResumeAt) return
+  const autoResumeAtMs = new Date(autoResumeAt).getTime()
+  if (!Number.isFinite(autoResumeAtMs)) return
+
+  const update = () => {
+    const left = Math.ceil((autoResumeAtMs - Date.now()) / 1000)
+    autoResumeSecondsLeft.value = left > 0 ? left : 0
+    if (left <= 0) {
+      stopAutoResumeCountdown()
+    }
+  }
+
+  update()
+  autoResumeCountdownTimer = setInterval(update, 1000)
+}
+
 async function handleTeamSend() {
   const content = teamInput.value.trim()
   if (!content) return
@@ -1249,15 +1391,23 @@ async function handleTeamSend() {
 }
 
 async function createAndStartSession(goal: string, templateId: string): Promise<AgentTeamSession> {
+  let template = templates.value.find((tpl) => tpl.id === templateId)
+  try {
+    const latest = await agentTeamApi.getTemplate(templateId)
+    if (latest) {
+      template = latest
+    }
+  } catch (e) {
+    console.warn('[AgentTeamView] Failed to fetch latest template before session creation:', e)
+  }
+  const maxRounds = extractTemplateMaxRoundsFromConfig(template?.default_rounds_config)
   const newSession = await agentTeamApi.createSession({
     name: `Team: ${goal.slice(0, 30)}`,
     goal,
     template_id: templateId,
     conversation_id: props.conversationId,
-    max_rounds: 5,
-    state_machine: {
-      tool_policy: buildSessionToolPolicyPayload(),
-    },
+    max_rounds: maxRounds,
+    state_machine: buildSessionStateMachinePatch(),
   })
   await agentTeamApi.startRun(newSession.id)
   return newSession
@@ -1442,17 +1592,63 @@ function buildSessionToolPolicyPayload() {
   return payload
 }
 
+function normalizeHumanInterventionMax(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_TEAM_MAX_HUMAN_INTERVENTIONS
+  const normalized = Math.trunc(n)
+  return Math.max(MIN_TEAM_MAX_HUMAN_INTERVENTIONS, Math.min(MAX_TEAM_MAX_HUMAN_INTERVENTIONS, normalized))
+}
+
+function normalizeTemplateMaxRounds(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return DEFAULT_TEMPLATE_MAX_ROUNDS
+  const normalized = Math.trunc(n)
+  return Math.max(MIN_TEMPLATE_MAX_ROUNDS, Math.min(MAX_TEMPLATE_MAX_ROUNDS, normalized))
+}
+
+function extractTemplateMaxRoundsFromConfig(config: unknown): number {
+  if (typeof config === 'number') {
+    return normalizeTemplateMaxRounds(config)
+  }
+  if (config && typeof config === 'object') {
+    const obj = config as Record<string, unknown>
+    const candidate =
+      obj.max_rounds ??
+      obj.maxRounds ??
+      obj.default_rounds ??
+      obj.rounds
+    return normalizeTemplateMaxRounds(candidate)
+  }
+  return DEFAULT_TEMPLATE_MAX_ROUNDS
+}
+
+function normalizeTeamMaxHumanInterventions() {
+  teamMaxHumanInterventions.value = normalizeHumanInterventionMax(teamMaxHumanInterventions.value)
+}
+
+function buildSessionStateMachinePatch() {
+  return {
+    tool_policy: buildSessionToolPolicyPayload(),
+    max_human_interventions: normalizeHumanInterventionMax(teamMaxHumanInterventions.value),
+  }
+}
+
 function loadSavedGlobalTeamToolConfig() {
   try {
     const raw = localStorage.getItem(TEAM_TOOL_CONFIG_STORAGE_KEY)
     if (!raw) return
     const parsed = JSON.parse(raw)
-    const enabled = typeof parsed?.enabled === 'boolean' ? parsed.enabled : true
-    const allowlist = Array.isArray(parsed?.allowlist)
-      ? parsed.allowlist.filter((n: any) => typeof n === 'string' && n.trim().length > 0)
+    const policy = parsed?.tool_policy && typeof parsed.tool_policy === 'object'
+      ? parsed.tool_policy
+      : parsed
+    const enabled = typeof policy?.enabled === 'boolean' ? policy.enabled : true
+    const allowlist = Array.isArray(policy?.allowlist)
+      ? policy.allowlist.filter((n: any) => typeof n === 'string' && n.trim().length > 0)
       : []
+    const maxHumanInterventions = normalizeHumanInterventionMax(parsed?.max_human_interventions)
     localToolsEnabled.value = enabled
     teamToolConfig.value = { enabled, allowlist }
+    teamMaxHumanInterventions.value = maxHumanInterventions
   } catch (e) {
     console.warn('[AgentTeamView] Failed to load saved team tool config:', e)
   }
@@ -1460,7 +1656,8 @@ function loadSavedGlobalTeamToolConfig() {
 
 function saveGlobalTeamToolConfig() {
   try {
-    localStorage.setItem(TEAM_TOOL_CONFIG_STORAGE_KEY, JSON.stringify(buildSessionToolPolicyPayload()))
+    normalizeTeamMaxHumanInterventions()
+    localStorage.setItem(TEAM_TOOL_CONFIG_STORAGE_KEY, JSON.stringify(buildSessionStateMachinePatch()))
   } catch (e) {
     console.warn('[AgentTeamView] Failed to save global team tool config:', e)
   }
@@ -1468,16 +1665,21 @@ function saveGlobalTeamToolConfig() {
 
 function hydrateTeamToolConfigFromSession(nextSession: AgentTeamSession | null) {
   const policy = nextSession?.state_machine?.tool_policy
-  if (!policy || typeof policy !== 'object') return
-  const enabled = typeof policy?.enabled === 'boolean' ? policy.enabled : true
-  const allowlist = Array.isArray(policy?.allowlist)
-    ? policy.allowlist.filter((n: any) => typeof n === 'string' && n.trim().length > 0)
-    : []
-  localToolsEnabled.value = enabled
-  teamToolConfig.value = {
-    enabled,
-    allowlist,
+  if (policy && typeof policy === 'object') {
+    const enabled = typeof policy?.enabled === 'boolean' ? policy.enabled : true
+    const allowlist = Array.isArray(policy?.allowlist)
+      ? policy.allowlist.filter((n: any) => typeof n === 'string' && n.trim().length > 0)
+      : []
+    localToolsEnabled.value = enabled
+    teamToolConfig.value = {
+      enabled,
+      allowlist,
+    }
   }
+  const maxHumanInterventions = nextSession?.state_machine?.max_human_interventions
+  teamMaxHumanInterventions.value = normalizeHumanInterventionMax(
+    maxHumanInterventions ?? teamMaxHumanInterventions.value,
+  )
 }
 
 async function persistSessionToolPolicy(sessionId: string) {
@@ -1485,7 +1687,7 @@ async function persistSessionToolPolicy(sessionId: string) {
   if (!current) return
   const nextStateMachine = {
     ...(current.state_machine || {}),
-    tool_policy: buildSessionToolPolicyPayload(),
+    ...buildSessionStateMachinePatch(),
   }
   await agentTeamApi.updateSession(sessionId, {
     state_machine: nextStateMachine,
@@ -1531,7 +1733,7 @@ async function setupEventListeners() {
     if (!session.value || event.payload.session_id !== session.value.id) return
     session.value = { ...session.value, state: event.payload.state }
     const shouldClearStreaming = !(isStopping.value || preserveStreamingOnNextStateSync.value)
-    await loadSessionData(session.value.id, shouldClearStreaming)
+    await refreshSession(shouldClearStreaming)
     preserveStreamingOnNextStateSync.value = false
   })
 
@@ -1748,6 +1950,7 @@ async function refreshSession(clearStreaming = true) {
       hydrateTeamToolConfigFromSession(updated)
     }
     await loadSessionData(session.value.id, clearStreaming)
+    syncAutoResumeCountdown()
   } catch (e) {
     console.error('[AgentTeamView] Failed to refresh session:', e)
     toast.error('刷新会话状态失败')
@@ -1757,29 +1960,18 @@ async function refreshSession(clearStreaming = true) {
 // ==================== Timeline & Side Panel Data ====================
 
 const timelineRounds = computed(() => {
-  // Build round summaries from messages
-  const roundMap = new Map<string, { id: string; round_number: number; phase: string; divergence_score: number | null; status: string }>()
-  for (const msg of teamMessages.value) {
-    if (msg.round_id && !roundMap.has(msg.round_id)) {
-      roundMap.set(msg.round_id, {
-        id: msg.round_id,
-        round_number: roundMap.size + 1,
-        phase: 'completed',
-        divergence_score: null,
-        status: 'completed',
-      })
-    }
+  if (teamRounds.value.length > 0) {
+    return teamRounds.value.map((round) => ({
+      id: round.id,
+      round_number: round.round_number,
+      phase: round.phase,
+      divergence_score: round.divergence_score ?? null,
+      status: round.status,
+      started_at: round.started_at ?? null,
+      completed_at: round.completed_at ?? null,
+    }))
   }
-  // If session has divergence_scores, try to map them
-  if (session.value?.divergence_scores && Array.isArray(session.value.divergence_scores)) {
-    const rounds = Array.from(roundMap.values())
-    session.value.divergence_scores.forEach((score: number, idx: number) => {
-      if (rounds[idx]) {
-        rounds[idx].divergence_score = score
-      }
-    })
-  }
-  return Array.from(roundMap.values())
+  return []
 })
 
 // ==================== Blackboard Panel Handlers ====================

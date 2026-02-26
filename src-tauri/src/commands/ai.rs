@@ -1,6 +1,5 @@
-use sentinel_db::Database;
-use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
 use crate::commands::tool_commands;
+use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
 use crate::models::database::{AiConversation, AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
@@ -8,6 +7,7 @@ use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 use crate::utils::ordered_message::ChunkType;
 use anyhow::Result;
 use chrono::Utc;
+use sentinel_db::Database;
 use sentinel_llm::{
     parse_image_from_json, ChatMessage as LlmChatMessage, StreamContent, StreamingLlmClient,
 };
@@ -26,8 +26,8 @@ const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 50_000;
 
 // Re-export AI settings related types for backward compatibility
 pub use crate::commands::aisettings::{
-    TestConnectionRequest, TestConnectionResponse, SaveAiConfigRequest,
-    SetDefaultProviderRequest, AddCustomProviderRequest, AiProviderConfig,
+    AddCustomProviderRequest, AiProviderConfig, SaveAiConfigRequest, SetDefaultProviderRequest,
+    TestConnectionRequest, TestConnectionResponse,
 };
 
 // DTO for Tauri command argument to avoid CommandArg bound issues
@@ -139,24 +139,35 @@ async fn perform_rag_enhancement(
     let mut search_query = user_message.to_string();
     if !history_messages.is_empty() {
         // 使用默认模型重写
-        if let Ok(Some((provider, model))) = app_handle.state::<Arc<AiServiceManager>>().get_default_llm_model().await {
+        if let Ok(Some((provider, model))) = app_handle
+            .state::<Arc<AiServiceManager>>()
+            .get_default_llm_model()
+            .await
+        {
             // 获取 provider 配置
-            if let Ok(Some(provider_cfg)) = app_handle.state::<Arc<AiServiceManager>>().get_provider_config(&provider).await {
+            if let Ok(Some(provider_cfg)) = app_handle
+                .state::<Arc<AiServiceManager>>()
+                .get_provider_config(&provider)
+                .await
+            {
                 let llm_config = sentinel_llm::LlmConfig::new(&provider, &model)
                     .with_api_key(provider_cfg.api_key.as_deref().unwrap_or_default())
                     .with_base_url(provider_cfg.api_base.as_deref().unwrap_or_default());
 
                 let llm_config = apply_generation_settings_from_db(db.as_ref(), llm_config).await;
                 let client = sentinel_llm::LlmClient::new(llm_config);
-                
+
                 let rewrite_prompt = "you are a search query rewrite expert. Please rewrite the user's latest question into a independent and complete search query for retrieval in the vector database. If the user's question is already independent, return it as is. Only return the rewritten query text, no additional explanation.";
                 let mut history_text = String::new();
                 // 取最近几条历史
                 for msg in history_messages.iter().rev().take(6).rev() {
                     history_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
                 }
-                let input = format!("conversation history: \n{}\nuser question: {}", history_text, user_message);
-                
+                let input = format!(
+                    "conversation history: \n{}\nuser question: {}",
+                    history_text, user_message
+                );
+
                 if let Ok(rewritten) = client.completion(Some(rewrite_prompt), &input).await {
                     if !rewritten.trim().is_empty() {
                         search_query = rewritten.trim().to_string();
@@ -178,7 +189,8 @@ async fn perform_rag_enhancement(
     }
 
     // 4. 执行多集合检索
-    let rag_service = crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone()).await?;
+    let rag_service =
+        crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone()).await?;
 
     // 如果没有传入配置，尝试从数据库获取
     let effective_config = if let Some(cfg) = rag_config {
@@ -190,29 +202,31 @@ async fn perform_rag_enhancement(
         }
     };
 
-        let rag_req = sentinel_rag::models::AssistantRagRequest {
-            query: search_query.clone(),
-            conversation_id: Some(conversation_id.to_string()),
-            collection_id: None,
-            collection_ids: Some(active_collections.into_iter().map(|c| c.id).collect()),
-            conversation_history: None, // 我们已经重写了查询
-            top_k: Some(effective_config.top_k),
-            use_mmr: Some(effective_config.mmr_lambda < 1.0),
-            mmr_lambda: Some(effective_config.mmr_lambda as f64),
-            similarity_threshold: Some(effective_config.similarity_threshold as f64),
-            reranking_enabled: Some(effective_config.reranking_enabled),
-            model_provider: None,
-            model_name: None,
-            max_tokens: None,
-            temperature: None,
-            system_prompt: None,
-        };
+    let rag_req = sentinel_rag::models::AssistantRagRequest {
+        query: search_query.clone(),
+        conversation_id: Some(conversation_id.to_string()),
+        collection_id: None,
+        collection_ids: Some(active_collections.into_iter().map(|c| c.id).collect()),
+        conversation_history: None, // 我们已经重写了查询
+        top_k: Some(effective_config.top_k),
+        use_mmr: Some(effective_config.mmr_lambda < 1.0),
+        mmr_lambda: Some(effective_config.mmr_lambda as f64),
+        similarity_threshold: Some(effective_config.similarity_threshold as f64),
+        reranking_enabled: Some(effective_config.reranking_enabled),
+        model_provider: None,
+        model_name: None,
+        max_tokens: None,
+        temperature: None,
+        system_prompt: None,
+    };
 
     // 设置 5 秒超时支持多集合检索
     let (all_context, all_citations) = match tokio::time::timeout(
         std::time::Duration::from_secs(5),
         rag_service.query_for_assistant(&rag_req),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(res)) => res,
         Ok(Err(e)) => {
             tracing::warn!("RAG search error: {}", e);
@@ -230,7 +244,7 @@ async fn perform_rag_enhancement(
 /// 流式调用 LLM 并处理事件发送、消息保存
 ///
 /// 重新组合历史消息，将 role=tool 的消息转换为符合 DeepSeek API 的格式
-/// 
+///
 /// 当前数据库存储格式：
 /// - role=assistant: 文本片段（有 reasoning_content，无 tool_calls）
 /// - role=tool: 工具调用信息（metadata 中包含 tool_name, tool_args, tool_result）
@@ -241,19 +255,19 @@ async fn perform_rag_enhancement(
 pub(crate) fn reconstruct_chat_history(
     messages: &[sentinel_core::models::database::AiMessage],
 ) -> Vec<LlmChatMessage> {
-use serde_json::{json, Value};
+    use serde_json::{json, Value};
     use std::collections::HashSet;
-    
+
     let mut result = Vec::new();
     let mut i = 0;
-    
+
     // Track seen tool_call_ids to prevent duplicate tool_results
     // Anthropic API requires each tool_use to have exactly one tool_result
     let mut seen_tool_call_ids: HashSet<String> = HashSet::new();
-    
+
     while i < messages.len() {
         let msg = &messages[i];
-        
+
         match msg.role.as_str() {
             "user" => {
                 if !msg.content.trim().is_empty() {
@@ -267,33 +281,39 @@ use serde_json::{json, Value};
                 let mut tool_results = Vec::new();
                 let mut j = i + 1;
                 let reasoning_content = msg.reasoning_content.clone();
-                
+
                 // 收集所有连续的 tool 消息
                 while j < messages.len() && messages[j].role == "tool" {
                     if let Some(ref metadata_str) = messages[j].metadata {
                         if let Ok(metadata) = serde_json::from_str::<Value>(metadata_str) {
                             if metadata.get("kind").and_then(|v| v.as_str()) == Some("tool_call") {
-                                let tool_result = metadata.get("tool_result")
+                                let tool_result = metadata
+                                    .get("tool_result")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
 
                                 // 只在存在工具结果时才加入 tool_calls，避免 DeepSeek 要求的 tool_result 不足
                                 if let Some(result_str) = tool_result {
                                     // 这是一个完成的工具调用
-                                    let tool_call_id = metadata.get("tool_call_id")
+                                    let tool_call_id = metadata
+                                        .get("tool_call_id")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string();
-                                    
+
                                     // Skip duplicate tool_call_id
-                                    if !tool_call_id.is_empty() && !seen_tool_call_ids.contains(&tool_call_id) {
+                                    if !tool_call_id.is_empty()
+                                        && !seen_tool_call_ids.contains(&tool_call_id)
+                                    {
                                         seen_tool_call_ids.insert(tool_call_id.clone());
-                                        
-                                        let tool_name = metadata.get("tool_name")
+
+                                        let tool_name = metadata
+                                            .get("tool_name")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string();
-                                        let tool_args_raw = metadata.get("tool_args")
+                                        let tool_args_raw = metadata
+                                            .get("tool_args")
                                             .cloned()
                                             .unwrap_or(Value::Object(serde_json::Map::new()));
                                         // Normalize tool_args: some paths persist args as a JSON string.
@@ -322,7 +342,7 @@ use serde_json::{json, Value};
                     }
                     j += 1;
                 }
-                
+
                 let has_content = !msg.content.trim().is_empty();
                 let has_tool_calls = !tool_calls_json.is_empty();
                 let has_reasoning = reasoning_content
@@ -345,14 +365,14 @@ use serde_json::{json, Value};
 
                     result.push(chat_msg);
                 }
-                
+
                 // 添加 tool result 消息
                 for (tool_call_id, tool_result) in tool_results {
                     let mut tool_msg = LlmChatMessage::new("tool", &tool_result);
                     tool_msg.tool_call_id = Some(tool_call_id);
                     result.push(tool_msg);
                 }
-                
+
                 i = j;
             }
             "tool" => {
@@ -365,11 +385,9 @@ use serde_json::{json, Value};
             }
         }
     }
-    
+
     result
 }
-
-
 
 /// 使用 sentinel_llm::StreamingLlmClient 处理 LLM 调用
 async fn stream_chat_with_llm(
@@ -419,14 +437,18 @@ async fn stream_chat_with_llm(
     }
 
     // 创建 LLM 客户端
-    let llm_config = apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await;
+    let llm_config =
+        apply_generation_settings_from_db(db.as_ref(), service.service.to_llm_config()).await;
     let streaming_client = StreamingLlmClient::new(llm_config);
 
     // -------------------
-    
-    // 准备系统提示词
-    let final_system_prompt = system_prompt.unwrap_or("").to_string();
-    
+
+    // 过滤空系统提示词，避免下游组装出空 text 触发 400/1214。
+    let final_system_prompt = system_prompt
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     // 注意：RAG 增强逻辑已移至 agent_execute 中统一处理，通过 system_prompt 传入。
     // 这里保持 stream_chat_with_llm 职责单一，仅负责流式输出。
 
@@ -442,7 +464,7 @@ async fn stream_chat_with_llm(
 
     let content = streaming_client
         .stream_chat(
-            Some(&final_system_prompt),
+            final_system_prompt.as_deref(),
             user_message,
             &history,
             image.as_ref(),
@@ -483,8 +505,15 @@ async fn stream_chat_with_llm(
                             None,
                         );
                     }
-                    StreamContent::Usage { input_tokens, output_tokens } => {
-                        tracing::info!("Stream usage received: input={}, output={}", input_tokens, output_tokens);
+                    StreamContent::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } => {
+                        tracing::info!(
+                            "Stream usage received: input={}, output={}",
+                            input_tokens,
+                            output_tokens
+                        );
                         if let Ok(mut guard) = usage_data_clone.lock() {
                             *guard = Some((input_tokens, output_tokens));
                         }
@@ -572,7 +601,7 @@ async fn stream_chat_with_llm(
     // 保存助手消息
     if has_conversation && !content.is_empty() {
         use sentinel_core::models::database as core_db;
-        
+
         let (input_tokens, output_tokens) = if let Ok(guard) = usage_data.lock() {
             guard.unwrap_or((0, 0))
         } else {
@@ -602,16 +631,30 @@ async fn stream_chat_with_llm(
             if input_tokens > 0 || output_tokens > 0 {
                 let provider = &service.config.provider;
                 let model = &service.config.model;
-                
+
                 // 计算成本
-                let cost = sentinel_llm::calculate_cost(provider, model, input_tokens, output_tokens);
-                
-                if let Err(e) = db.update_ai_usage(provider, model, input_tokens as i32, output_tokens as i32, cost).await {
+                let cost =
+                    sentinel_llm::calculate_cost(provider, model, input_tokens, output_tokens);
+
+                if let Err(e) = db
+                    .update_ai_usage(
+                        provider,
+                        model,
+                        input_tokens as i32,
+                        output_tokens as i32,
+                        cost,
+                    )
+                    .await
+                {
                     tracing::warn!("Failed to update AI usage stats: {}", e);
                 } else {
                     tracing::debug!(
                         "Updated AI usage: provider={}, model={}, input={}, output={}, cost=${:.4}",
-                        provider, model, input_tokens, output_tokens, cost
+                        provider,
+                        model,
+                        input_tokens,
+                        output_tokens,
+                        cost
                     );
                 }
             }
@@ -685,8 +728,6 @@ pub struct AiModelInfo {
     pub models: Vec<String>,
 }
 
-
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AiServiceStatusResponse {
     pub provider: String,
@@ -751,11 +792,18 @@ pub async fn cancel_ai_stream(
 /// Cancel only current shell execution for an execution id (without cancelling the whole conversation).
 #[tauri::command]
 pub async fn cancel_shell_execution(execution_id: String) -> Result<(), String> {
-    let cancelled = sentinel_tools::buildin_tools::shell::cancel_shell_execution(&execution_id).await;
+    let cancelled =
+        sentinel_tools::buildin_tools::shell::cancel_shell_execution(&execution_id).await;
     if cancelled {
-        tracing::info!("Cancelled shell execution for execution_id: {}", execution_id);
+        tracing::info!(
+            "Cancelled shell execution for execution_id: {}",
+            execution_id
+        );
     } else {
-        tracing::warn!("No active shell execution found for execution_id: {}", execution_id);
+        tracing::warn!(
+            "No active shell execution found for execution_id: {}",
+            execution_id
+        );
     }
     Ok(())
 }
@@ -778,9 +826,12 @@ pub async fn generate_plugin_stream(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
     // Get actual default LLM provider and model from database config
-    let mut service_name = request.service_name.clone().unwrap_or_else(|| "default".to_string());
+    let mut service_name = request
+        .service_name
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
     let mut override_model: Option<String> = None;
-    
+
     // If using default, try to get the actual provider name and model from config
     if service_name == "default" {
         if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
@@ -791,14 +842,20 @@ pub async fn generate_plugin_stream(
                     if ai_manager.get_service(&provider_lc).is_some() {
                         service_name = provider_lc;
                         override_model = Some(model.to_string());
-                        tracing::debug!("Using default LLM model from config: {}/{}", service_name, model);
+                        tracing::debug!(
+                            "Using default LLM model from config: {}/{}",
+                            service_name,
+                            model
+                        );
                     }
                 }
             }
-            
+
             // Fallback to default_llm_provider if model not set
             if override_model.is_none() {
-                if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+                if let Ok(Some(default_llm_provider)) =
+                    db.get_config("ai", "default_llm_provider").await
+                {
                     let provider_lc = default_llm_provider.to_lowercase();
                     if ai_manager.get_service(&provider_lc).is_some() {
                         service_name = provider_lc;
@@ -813,12 +870,15 @@ pub async fn generate_plugin_stream(
         .get_service(&service_name)
         .or_else(|| ai_manager.get_service("default"))
         .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
-    
+
     // Use override model if available, otherwise use service's configured model
     let model_to_use = override_model.unwrap_or_else(|| service.get_config().model.clone());
-    
-    tracing::info!("Plugin generation using provider: {}, model: {}", 
-        service.get_config().provider, model_to_use);
+
+    tracing::info!(
+        "Plugin generation using provider: {}, model: {}",
+        service.get_config().provider,
+        model_to_use
+    );
 
     let stream_id = request.stream_id.clone();
     let user_message = request.message.clone();
@@ -956,8 +1016,13 @@ ONLY return the JSON object, no other text."#;
             let json_start = cleaned.find('{').unwrap_or(0);
             let json_end = cleaned.rfind('}').map(|e| e + 1).unwrap_or(cleaned.len());
             let json_str = &cleaned[json_start..json_end];
-            
-            serde_json::from_str(json_str).map_err(|e| format!("Failed to parse generated role JSON: {}. Original response: {}", e, response))
+
+            serde_json::from_str(json_str).map_err(|e| {
+                format!(
+                    "Failed to parse generated role JSON: {}. Original response: {}",
+                    e, response
+                )
+            })
         }
         Err(e) => Err(format!("Failed to generate AI role: {}", e)),
     }
@@ -985,8 +1050,8 @@ pub struct PluginAssistantRequest {
     pub system_prompt: Option<String>,
     pub service_name: Option<String>,
     pub history: Option<Vec<LlmChatMessage>>,
-    pub current_code: Option<String>,  // 当前编辑的代码
-    pub code_context: Option<String>,  // 代码上下文（选中的代码片段）
+    pub current_code: Option<String>, // 当前编辑的代码
+    pub code_context: Option<String>, // 代码上下文（选中的代码片段）
 }
 
 // AI 助手对话流式响应（专门用于编辑器 AI 助手）
@@ -997,12 +1062,17 @@ pub async fn plugin_assistant_chat_stream(
     ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<String, String> {
     // Get actual default LLM provider from database config
-    let mut service_name = request.service_name.clone().unwrap_or_else(|| "default".to_string());
-    
+    let mut service_name = request
+        .service_name
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+
     // If using default, try to get the actual provider name from config
     if service_name == "default" {
         if let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() {
-            if let Ok(Some(default_llm_provider)) = db.get_config("ai", "default_llm_provider").await {
+            if let Ok(Some(default_llm_provider)) =
+                db.get_config("ai", "default_llm_provider").await
+            {
                 let provider_lc = default_llm_provider.to_lowercase();
                 if ai_manager.get_service(&provider_lc).is_some() {
                     service_name = provider_lc;
@@ -1016,9 +1086,12 @@ pub async fn plugin_assistant_chat_stream(
         .get_service(&service_name)
         .or_else(|| ai_manager.get_service("default"))
         .ok_or_else(|| format!("AI service '{}' not found", service_name))?;
-    
-    tracing::info!("Plugin assistant chat using provider: {}, model: {}", 
-        service.get_config().provider, service.get_config().model);
+
+    tracing::info!(
+        "Plugin assistant chat using provider: {}, model: {}",
+        service.get_config().provider,
+        service.get_config().model
+    );
 
     let stream_id = request.stream_id.clone();
     let user_message = request.message.clone();
@@ -1038,7 +1111,10 @@ pub async fn plugin_assistant_chat_stream(
     tokio::spawn(async move {
         let _guard = CancellationGuard(sid.clone(), cancel_gen);
         // Start event
-        let _ = app_clone.emit("plugin_assistant_start", &serde_json::json!({ "stream_id": sid }));
+        let _ = app_clone.emit(
+            "plugin_assistant_start",
+            &serde_json::json!({ "stream_id": sid }),
+        );
 
         // Create LLM client and stream
         let streaming_client = StreamingLlmClient::new(llm_config);
@@ -1251,7 +1327,8 @@ pub struct ProviderUsageStats {
 pub async fn get_ai_usage_stats(
     db: tauri::State<'_, Arc<DatabaseService>>,
 ) -> Result<std::collections::HashMap<String, ProviderUsageStats>, String> {
-    let aggregated = db.get_aggregated_ai_usage()
+    let aggregated = db
+        .get_aggregated_ai_usage()
         .await
         .map_err(|e| format!("Failed to get aggregated usage stats: {}", e))?;
 
@@ -1275,18 +1352,14 @@ pub async fn get_ai_usage_stats(
 pub async fn get_detailed_ai_usage_stats(
     db: tauri::State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<sentinel_core::models::database::AiUsageStats>, String> {
-    db.get_ai_usage_stats()
-        .await
-        .map_err(|e| e.to_string())
+    db.get_ai_usage_stats().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn clear_ai_usage_stats(
     db: tauri::State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    db.clear_ai_usage_stats()
-        .await
-        .map_err(|e| e.to_string())?;
+    db.clear_ai_usage_stats().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1517,16 +1590,25 @@ pub async fn delete_ai_messages_after(
     let deleted = db_service
         .delete_ai_messages_after(&conversation_id, &message_id)
         .await
-        .map_err(|e: anyhow::Error| format!("Failed to delete messages after {}: {}", message_id, e))?;
+        .map_err(|e: anyhow::Error| {
+            format!("Failed to delete messages after {}: {}", message_id, e)
+        })?;
 
     // Resend semantics delete tail messages; clear run_state to avoid stale "Recent Tool Digests".
     if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
-        tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
+        tracing::warn!(
+            "Failed to clear agent run_state for {}: {}",
+            conversation_id,
+            e
+        );
     }
 
     // Clear sliding window summaries to prevent stale LONG-TERM MEMORY / RECENT ACTIVITY SUMMARY
     // from being injected into the system prompt after message editing/resending.
-    if let Err(e) = db_service.delete_sliding_window_summaries(&conversation_id).await {
+    if let Err(e) = db_service
+        .delete_sliding_window_summaries(&conversation_id)
+        .await
+    {
         tracing::warn!(
             "Failed to clear sliding window summaries for {}: {}",
             conversation_id,
@@ -1562,7 +1644,12 @@ pub async fn get_subagent_runs(
     db_service
         .get_subagent_runs_by_parent_internal(&parent_execution_id)
         .await
-        .map_err(|e| format!("Failed to get subagent runs for {}: {}", parent_execution_id, e))
+        .map_err(|e| {
+            format!(
+                "Failed to get subagent runs for {}: {}",
+                parent_execution_id, e
+            )
+        })
 }
 
 #[tauri::command]
@@ -1573,7 +1660,12 @@ pub async fn get_subagent_messages(
     db_service
         .get_subagent_messages_by_run_internal(&subagent_run_id)
         .await
-        .map_err(|e| format!("Failed to get subagent messages for {}: {}", subagent_run_id, e))
+        .map_err(|e| {
+            format!(
+                "Failed to get subagent messages for {}: {}",
+                subagent_run_id, e
+            )
+        })
 }
 
 #[tauri::command]
@@ -1583,10 +1675,11 @@ pub async fn delete_subagent_runs_after(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<u64, String> {
     use chrono::{TimeZone, Utc};
-    let timestamp = Utc.timestamp_millis_opt(after_timestamp_ms)
+    let timestamp = Utc
+        .timestamp_millis_opt(after_timestamp_ms)
         .single()
         .ok_or_else(|| "Invalid timestamp".to_string())?;
-    
+
     db_service
         .delete_subagent_runs_after_internal(&parent_execution_id, timestamp)
         .await
@@ -1610,7 +1703,10 @@ pub async fn clear_conversation_messages(
         })?;
 
     // Clear sliding window summaries to avoid stale RECENT ACTIVITY SUMMARY on empty chats.
-    if let Err(e) = db_service.delete_sliding_window_summaries(&conversation_id).await {
+    if let Err(e) = db_service
+        .delete_sliding_window_summaries(&conversation_id)
+        .await
+    {
         tracing::warn!(
             "Failed to clear sliding window summaries for {}: {}",
             conversation_id,
@@ -1620,7 +1716,11 @@ pub async fn clear_conversation_messages(
 
     // Also clear agent run state to prevent cross-run leakage (tool digests, etc).
     if let Err(e) = db_service.delete_agent_run_state(&conversation_id).await {
-        tracing::warn!("Failed to clear agent run_state for {}: {}", conversation_id, e);
+        tracing::warn!(
+            "Failed to clear agent run_state for {}: {}",
+            conversation_id,
+            e
+        );
     }
 
     Ok(())
@@ -1767,8 +1867,6 @@ pub async fn get_audit_gate_for_ci(
 
     Ok(result)
 }
-
-
 
 /// 通过自然语言描述生成工作流图
 #[tauri::command(rename_all = "snake_case")]
@@ -1947,8 +2045,6 @@ CRITICAL RULES:
 
 /// 生成默认的AI提供商配置（与前端 `AiProviderConfig` 结构兼容）
 
-
-
 // 保存模型配置配置
 #[tauri::command]
 pub async fn save_scheduler_config(
@@ -2103,7 +2199,6 @@ pub async fn save_scheduler_config(
     tracing::info!("Successfully saved scheduler configuration");
     Ok(())
 }
-
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HandleTaskExecutionStreamRequest {
@@ -2280,7 +2375,8 @@ pub struct AgentExecuteConfig {
     pub attachments: Option<serde_json::Value>,
     /// Uploaded file attachments (file-id based)
     #[serde(default)]
-    pub document_attachments: Option<Vec<crate::commands::document_commands::ProcessedDocumentResult>>,
+    pub document_attachments:
+        Option<Vec<crate::commands::document_commands::ProcessedDocumentResult>>,
     #[serde(default)]
     pub tool_config: Option<crate::agents::ToolConfig>,
     /// Traffic context to prepend to the task (not shown in user message display)
@@ -2476,9 +2572,7 @@ pub async fn agent_execute(
             (provider, model)
         }
         Some(_) => {
-            return Err(
-                "Invalid model_override format, expected 'provider/model_name'".to_string(),
-            )
+            return Err("Invalid model_override format, expected 'provider/model_name'".to_string())
         }
         None => match ai_manager.get_default_llm_model().await {
             Ok(Some((p, m))) => {
@@ -2511,24 +2605,27 @@ pub async fn agent_execute(
     service.set_app_handle(app_handle.clone());
 
     // 从数据库读取并应用输出存储阈值配置（动态上下文发现）
-    if let Ok(threshold_str_opt) = db_service.get_config_internal("ai", "output_storage_threshold").await {
+    if let Ok(threshold_str_opt) = db_service
+        .get_config_internal("ai", "output_storage_threshold")
+        .await
+    {
         if let Some(threshold_str) = threshold_str_opt {
-             if let Ok(threshold) = threshold_str.parse::<usize>() {
-                 let effective_threshold = threshold.min(MAX_SAFE_OUTPUT_STORAGE_THRESHOLD);
-                 if effective_threshold != threshold {
+            if let Ok(threshold) = threshold_str.parse::<usize>() {
+                let effective_threshold = threshold.min(MAX_SAFE_OUTPUT_STORAGE_THRESHOLD);
+                if effective_threshold != threshold {
                     tracing::warn!(
                         "Configured output storage threshold {} is too high, clamped to {} bytes for stream stability",
                         threshold,
                         effective_threshold
                     );
-                 } else {
+                } else {
                     tracing::info!(
                         "Setting output storage threshold to {} bytes (Dynamic Context Discovery)",
                         effective_threshold
                     );
-                 }
-                 sentinel_tools::set_storage_threshold(effective_threshold);
-             }
+                }
+                sentinel_tools::set_storage_threshold(effective_threshold);
+            }
         }
     }
 
@@ -2599,7 +2696,7 @@ pub async fn agent_execute(
             use sentinel_core::models::database as core_db;
             let user_msg_id = Uuid::new_v4().to_string();
             let display_text = display_content_clone.as_ref().unwrap_or(&task_clone);
-            
+
             // Build structured_data with display_content and document_attachments
             let structured_data = {
                 let mut data = serde_json::json!({});
@@ -2608,7 +2705,8 @@ pub async fn agent_execute(
                 }
                 if let Some(ref doc_atts) = document_attachments_for_save {
                     if !doc_atts.is_empty() {
-                        data["document_attachments"] = serde_json::to_value(doc_atts).unwrap_or_default();
+                        data["document_attachments"] =
+                            serde_json::to_value(doc_atts).unwrap_or_default();
                     }
                 }
                 if data.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -2617,7 +2715,7 @@ pub async fn agent_execute(
                     Some(data.to_string())
                 }
             };
-            
+
             // Build metadata with image attachments and document_attachments
             let metadata = {
                 let mut meta = serde_json::json!({});
@@ -2626,7 +2724,8 @@ pub async fn agent_execute(
                 }
                 if let Some(ref doc_atts) = document_attachments_for_save {
                     if !doc_atts.is_empty() {
-                        meta["document_attachments"] = serde_json::to_value(doc_atts).unwrap_or_default();
+                        meta["document_attachments"] =
+                            serde_json::to_value(doc_atts).unwrap_or_default();
                     }
                 }
                 if meta.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -2635,7 +2734,7 @@ pub async fn agent_execute(
                     Some(meta.to_string())
                 }
             };
-            
+
             let user_msg = core_db::AiMessage {
                 id: user_msg_id.clone(),
                 conversation_id: conv_id.clone(),
@@ -2716,7 +2815,9 @@ pub async fn agent_execute(
         // This enables the model to access images via shell tool in container (e.g. /workspace/context/attachments/...).
         if let Some(ref raw) = raw_attachments {
             let shell_cfg = sentinel_tools::buildin_tools::shell::get_shell_config().await;
-            if shell_cfg.default_execution_mode == sentinel_tools::buildin_tools::shell::ShellExecutionMode::Docker {
+            if shell_cfg.default_execution_mode
+                == sentinel_tools::buildin_tools::shell::ShellExecutionMode::Docker
+            {
                 match crate::utils::image_ocr::stage_images_to_docker_context(raw).await {
                     Ok(paths) => {
                         if !paths.is_empty() {
@@ -2743,7 +2844,9 @@ pub async fn agent_execute(
             }
         }
 
-        let effective_mode = if image_mode == EffectiveImageAttachmentMode::ModelVision && allow_image_upload_to_model {
+        let effective_mode = if image_mode == EffectiveImageAttachmentMode::ModelVision
+            && allow_image_upload_to_model
+        {
             EffectiveImageAttachmentMode::ModelVision
         } else {
             EffectiveImageAttachmentMode::LocalOcr
@@ -2756,7 +2859,8 @@ pub async fn agent_execute(
                         Ok(results) => {
                             let ctx = crate::utils::image_ocr::format_ocr_context(&results, 8000);
                             if !ctx.trim().is_empty() {
-                                augmented_task = format!("[Image OCR]\n{}\n\n{}", ctx, augmented_task);
+                                augmented_task =
+                                    format!("[Image OCR]\n{}\n\n{}", ctx, augmented_task);
                             }
                         }
                         Err(e) => {
@@ -2787,13 +2891,24 @@ pub async fn agent_execute(
                 let rag_query = display_content_clone.as_ref().unwrap_or(&task_clone);
 
                 // 执行统一的 RAG 增强逻辑
-                match perform_rag_enhancement(&app_handle, &conv_id, rag_query, &history_messages, None).await {
+                match perform_rag_enhancement(
+                    &app_handle,
+                    &conv_id,
+                    rag_query,
+                    &history_messages,
+                    None,
+                )
+                .await
+                {
                     Ok((context, citations)) => {
                         if !context.trim().is_empty() {
                             let base = base_system_prompt.unwrap_or_default();
                             let policy = "you must strictly answer the question based on the evidence. When citing evidence in your response, use the [SOURCE n] format. If the evidence is insufficient, please answer directly and avoid fabricating. ";
                             let augmented = if base.trim().is_empty() {
-                                format!("[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}", policy, context)
+                                format!(
+                                    "[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}",
+                                    policy, context
+                                )
                             } else {
                                 format!(
                                     "{}\n\n[rule of knowledge]\n{}\n\n[Source Evidence Block]\n{}",
@@ -2876,7 +2991,7 @@ pub async fn agent_execute(
                 } else {
                     None
                 };
-                
+
                 let executor_params = crate::agents::executor::AgentExecuteParams {
                     execution_id: conv_id.clone(),
                     model: model_name_for_closure.clone(),
@@ -2885,7 +3000,10 @@ pub async fn agent_execute(
                     rig_provider: provider_for_closure.clone(),
                     api_key: provider_config_for_closure.api_key.clone(),
                     api_base: provider_config_for_closure.api_base.clone(),
-                    max_iterations: config.max_iterations.unwrap_or(provider_config.max_turns.unwrap_or(50)).max(200),
+                    max_iterations: config
+                        .max_iterations
+                        .unwrap_or(provider_config.max_turns.unwrap_or(50))
+                        .max(200),
                     timeout_secs: config.timeout_secs.unwrap_or(300),
                     tool_config: effective_tool_config.clone(),
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),
@@ -2918,9 +3036,10 @@ pub async fn agent_execute(
                                 "success": true
                             }),
                         );
-                        
+
                         // Cleanup todos for this execution
-                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id).await;
+                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id)
+                            .await;
                     }
                     Err(e) => {
                         tracing::error!("Agent with tools execution failed: {}", e);
@@ -2931,9 +3050,10 @@ pub async fn agent_execute(
                                 "error": e.to_string()
                             }),
                         );
-                        
+
                         // Cleanup todos for this execution even on error
-                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id).await;
+                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id)
+                            .await;
                     }
                 }
 
@@ -2967,7 +3087,6 @@ pub async fn agent_execute(
 
     Ok(message_id)
 }
-
 
 /// 从数据库加载全局工具配置
 async fn load_tool_config_from_db(app_handle: &AppHandle) -> Option<crate::agents::ToolConfig> {

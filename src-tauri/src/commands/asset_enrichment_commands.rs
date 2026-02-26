@@ -1,9 +1,9 @@
 //! Asset Enrichment Commands
 
-use tauri::State;
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use sentinel_bounty::services::AssetEnrichmentService;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrichAssetRequest {
@@ -42,7 +42,10 @@ pub async fn enrich_asset(
 pub async fn start_asset_enrichment(
     enrichment_service: State<'_, Arc<AssetEnrichmentService>>,
 ) -> Result<bool, String> {
-    enrichment_service.start().await.map_err(|e| e.to_string())?;
+    enrichment_service
+        .start()
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 

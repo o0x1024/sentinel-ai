@@ -1,7 +1,6 @@
-
 use crate::services::database::DatabaseService;
-use sentinel_db::Database;
 use sentinel_core::global_proxy::GlobalProxyConfig;
+use sentinel_db::Database;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -55,17 +54,28 @@ pub async fn set_global_proxy_config(
     cfg: GlobalProxyConfig,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<(), String> {
-    tracing::info!("Setting global proxy configuration: enabled={}, host={:?}, port={:?}", 
-                   cfg.enabled, cfg.host, cfg.port);
-    
+    tracing::info!(
+        "Setting global proxy configuration: enabled={}, host={:?}, port={:?}",
+        cfg.enabled,
+        cfg.host,
+        cfg.port
+    );
+
     let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
-    db.set_config("network", "global_proxy", &json, Some("Global HTTP proxy settings")).await.map_err(|e| e.to_string())?;
-    
+    db.set_config(
+        "network",
+        "global_proxy",
+        &json,
+        Some("Global HTTP proxy settings"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     // 应用到全局代理配置（包括主 crate）
     if cfg.enabled {
         // 设置主 crate 的全局代理
         sentinel_core::global_proxy::set_global_proxy(cfg.clone()).await;
-        
+
         tracing::info!("Global proxy configuration applied to runtime");
     } else {
         // 清除全局代理
@@ -85,7 +95,15 @@ pub async fn get_global_proxy_config(
             return Ok(cfg);
         }
     }
-    Ok(GlobalProxyConfig { enabled: false, scheme: None, host: None, port: None, username: None, password: None, no_proxy: None })
+    Ok(GlobalProxyConfig {
+        enabled: false,
+        scheme: None,
+        host: None,
+        port: None,
+        username: None,
+        password: None,
+        no_proxy: None,
+    })
 }
 
 // 获取配置

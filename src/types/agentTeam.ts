@@ -94,6 +94,20 @@ export interface AgentTeamSession {
     members: AgentTeamMember[]
 }
 
+// ==================== 轮次 ====================
+
+export interface AgentTeamRound {
+    id: string
+    session_id: string
+    round_number: number
+    phase: string
+    status: string
+    divergence_score?: number
+    started_at?: string
+    completed_at?: string
+    created_at: string
+}
+
 // ==================== 消息 ====================
 
 export interface AgentTeamMessage {

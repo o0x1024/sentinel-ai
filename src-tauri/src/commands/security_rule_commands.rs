@@ -3,10 +3,10 @@
 //! 提供前端调用的自定义审计规则 CRUD 命令
 
 use chrono::Utc;
+use sentinel_db::DatabaseService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
-use sentinel_db::DatabaseService;
 
 /// 命令响应
 #[derive(Debug, Serialize, Deserialize)]
@@ -177,14 +177,10 @@ pub async fn save_cpg_security_rule(
     rule: SecurityRuleInput,
 ) -> Result<RuleCommandResponse<SecurityRuleView>, String> {
     let now = Utc::now();
-    let id = rule
-        .id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let id = rule.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let sources_json =
-        serde_json::to_string(&rule.sources).unwrap_or_else(|_| "[]".to_string());
-    let sinks_json =
-        serde_json::to_string(&rule.sinks).unwrap_or_else(|_| "[]".to_string());
+    let sources_json = serde_json::to_string(&rule.sources).unwrap_or_else(|_| "[]".to_string());
+    let sinks_json = serde_json::to_string(&rule.sinks).unwrap_or_else(|_| "[]".to_string());
     let sanitizers_json =
         serde_json::to_string(&rule.sanitizers).unwrap_or_else(|_| "[]".to_string());
 
@@ -262,9 +258,7 @@ pub async fn seed_builtin_cpg_rules(
 }
 
 /// Internal impl: seed all built-in rules from the hardcoded definitions
-pub async fn seed_builtin_rules_impl(
-    db_service: &Arc<DatabaseService>,
-) -> Result<usize, String> {
+pub async fn seed_builtin_rules_impl(db_service: &Arc<DatabaseService>) -> Result<usize, String> {
     use sentinel_tools::buildin_tools::cpg::security_rules::{all_rules, SecurityRule};
 
     let rules: Vec<SecurityRule> = all_rules();
@@ -272,12 +266,11 @@ pub async fn seed_builtin_rules_impl(
     let mut count = 0usize;
 
     for rule in &rules {
-        let sources_json = serde_json::to_string(&rule.sources)
-            .unwrap_or_else(|_| "[]".to_string());
-        let sinks_json = serde_json::to_string(&rule.sinks)
-            .unwrap_or_else(|_| "[]".to_string());
-        let sanitizers_json = serde_json::to_string(&rule.sanitizers)
-            .unwrap_or_else(|_| "[]".to_string());
+        let sources_json =
+            serde_json::to_string(&rule.sources).unwrap_or_else(|_| "[]".to_string());
+        let sinks_json = serde_json::to_string(&rule.sinks).unwrap_or_else(|_| "[]".to_string());
+        let sanitizers_json =
+            serde_json::to_string(&rule.sanitizers).unwrap_or_else(|_| "[]".to_string());
 
         let record = sentinel_db::CpgSecurityRuleRecord {
             id: rule.id.clone(),

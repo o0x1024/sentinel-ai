@@ -63,9 +63,7 @@ pub async fn list_assets(
 
 /// 获取资产统计信息
 #[tauri::command]
-pub async fn get_asset_stats(
-    asset_service: State<'_, AssetService>,
-) -> Result<AssetStats, String> {
+pub async fn get_asset_stats(asset_service: State<'_, AssetService>) -> Result<AssetStats, String> {
     asset_service.get_asset_stats().await
 }
 
@@ -78,7 +76,14 @@ pub async fn create_asset_relationship(
     relationship_type: RelationshipType,
     created_by: String,
 ) -> Result<AssetRelationship, String> {
-    asset_service.create_relationship(source_asset_id, target_asset_id, relationship_type, created_by).await
+    asset_service
+        .create_relationship(
+            source_asset_id,
+            target_asset_id,
+            relationship_type,
+            created_by,
+        )
+        .await
 }
 
 /// 批量导入资产
@@ -99,7 +104,9 @@ pub async fn extract_assets_from_scan(
     scan_results: HashMap<String, Value>,
     created_by: String,
 ) -> Result<Vec<Asset>, String> {
-    asset_service.extract_assets_from_scan(&scan_id, &scan_results, created_by).await
+    asset_service
+        .extract_assets_from_scan(&scan_id, &scan_results, created_by)
+        .await
 }
 
 /// 搜索资产
@@ -110,7 +117,9 @@ pub async fn search_assets(
     asset_types: Option<Vec<AssetType>>,
     limit: Option<u32>,
 ) -> Result<Vec<Asset>, String> {
-    asset_service.search_assets(&query, asset_types, limit).await
+    asset_service
+        .search_assets(&query, asset_types, limit)
+        .await
 }
 
 /// 获取相关资产

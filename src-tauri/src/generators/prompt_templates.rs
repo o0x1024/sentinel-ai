@@ -34,9 +34,7 @@ impl PromptTemplateBuilder {
                 Ok("".to_string())
             }
             TemplateType::PluginFix => Ok("".to_string()),
-            TemplateType::AgentPluginFix => {
-                Ok("".to_string())
-            }
+            TemplateType::AgentPluginFix => Ok("".to_string()),
         }
     }
 
@@ -174,9 +172,7 @@ impl PromptTemplateBuilder {
         prompt.push_str("## Common Issues to Check\n\n");
         prompt.push_str("- Missing or incorrect function signatures\n");
         prompt.push_str("- Undefined variables or functions\n");
-        prompt.push_str(
-            "- Incorrect API usage (return findings array, not using Deno APIs)\n",
-        );
+        prompt.push_str("- Incorrect API usage (return findings array, not using Deno APIs)\n");
         prompt.push_str("- Syntax errors (missing brackets, semicolons, etc.)\n");
         prompt.push_str("- Type errors in TypeScript\n");
         prompt.push_str("- Accessing undefined properties on context objects\n\n");
@@ -896,7 +892,8 @@ const bodyText = decoder.decode(new Uint8Array(ctx.request.body));
 
 // Logging
 console.log('Processing request...');
-```"#.to_string()
+```"#
+            .to_string()
     }
 
     fn build_output_format(&self) -> String {

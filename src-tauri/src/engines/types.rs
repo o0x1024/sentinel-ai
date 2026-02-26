@@ -1,5 +1,5 @@
 //! Plan-and-Execute 引擎的核心数据类型定义
-//! 
+//!
 //! 这个模块定义了Plan-and-Execute架构中使用的所有核心数据结构，
 //! 包括执行计划、步骤、会话、监控指标等。
 
@@ -128,7 +128,6 @@ pub enum StepType {
     ManualConfirmation,
 }
 
-
 /// 流式消息类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StreamMessageType {
@@ -165,23 +164,23 @@ pub struct UnifiedStreamMessage {
     /// 阶段标识（planner/executor/evaluator ...）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage: Option<String>,
-    
+
     /// 内容块 (用于 Content 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_delta: Option<String>,
-    
+
     /// 工具执行信息 (用于 ToolUpdate 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_execution: Option<serde_json::Value>,
-    
+
     /// 执行计划 (用于 PlanUpdate 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_plan: Option<serde_json::Value>,
-    
+
     /// 最终内容 (用于 FinalResult 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_content: Option<String>,
-    
+
     /// 错误信息 (用于 Error 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -189,12 +188,10 @@ pub struct UnifiedStreamMessage {
     /// 元数据 (用于 Meta 类型)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
-    
+
     /// 是否为流的最后一个消息
     pub is_complete: bool,
 }
-
-
 
 /// 工具配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -691,10 +688,7 @@ impl Default for RetryConfig {
             max_retries: 3,
             retry_interval: 5,
             backoff_strategy: BackoffStrategy::Exponential,
-            retry_conditions: vec![
-                RetryCondition::NetworkError,
-                RetryCondition::Timeout,
-            ],
+            retry_conditions: vec![RetryCondition::NetworkError, RetryCondition::Timeout],
         }
     }
 }
@@ -800,31 +794,31 @@ impl ExecutionPlan {
             ..Default::default()
         }
     }
-    
+
     /// 添加步骤
     pub fn add_step(&mut self, step: PlanStep) {
         self.steps.push(step);
     }
-    
+
     /// 验证计划的有效性
     pub fn validate(&self) -> Result<(), String> {
         if self.steps.is_empty() {
             return Err("计划必须包含至少一个步骤".to_string());
         }
-        
+
         // 验证依赖关系
         for (step_id, deps) in &self.dependencies {
             if !self.steps.iter().any(|s| s.id == *step_id) {
                 return Err(format!("依赖关系中的步骤ID {} 不存在", step_id));
             }
-            
+
             for dep_id in deps {
                 if !self.steps.iter().any(|s| s.id == *dep_id) {
                     return Err(format!("依赖的步骤ID {} 不存在", dep_id));
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -875,24 +869,24 @@ impl ExecutionSession {
             },
         }
     }
-    
+
     /// 更新执行进度
     pub fn update_progress(&mut self, progress: f32) {
         self.progress = progress.clamp(0.0, 100.0) as u32;
     }
-    
+
     /// 标记会话完成
     pub fn mark_completed(&mut self) {
         self.status = ExecutionStatus::Completed;
         self.completed_at = Some(SystemTime::now());
         self.progress = 100;
     }
-    
+
     /// 标记会话失败
     pub fn mark_failed(&mut self, error: ExecutionError) {
         self.status = ExecutionStatus::Failed;
         self.completed_at = Some(SystemTime::now());
-        
+
         // 将错误信息添加到当前步骤的结果中
         if let Some(current_step) = &self.current_step {
             let step_key = current_step.to_string();

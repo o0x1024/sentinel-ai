@@ -8,10 +8,10 @@ use sentinel_db::Database;
 use sentinel_llm::LlmConfig;
 use sentinel_tools::{get_tool_server, mcp_adapter};
 
-use crate::agents::ContextPolicy;
-use crate::agents::DocumentAttachmentInfo;
 use crate::agents::tenth_man::TenthManConfig;
 use crate::agents::tool_router::ToolConfig;
+use crate::agents::ContextPolicy;
+use crate::agents::DocumentAttachmentInfo;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 use self::run_simple::execute_agent_simple;
@@ -24,7 +24,9 @@ pub mod tool_exec;
 pub mod types;
 pub mod utils;
 
-pub use tool_exec::{execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool};
+pub use tool_exec::{
+    execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool,
+};
 pub use types::ToolCallRecord;
 
 /// Agent execution parameters.
@@ -84,11 +86,14 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         audit_mode: params.audit_mode,
         audit_verification_level: params.audit_verification_level.clone(),
     };
-    crate::agents::subagent_executor::set_parent_context(execution_id.clone(), parent_context).await;
+    crate::agents::subagent_executor::set_parent_context(execution_id.clone(), parent_context)
+        .await;
 
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
         if let Ok(client) = db.get_db() {
-            sentinel_memory::get_global_memory().set_database_client(client).await;
+            sentinel_memory::get_global_memory()
+                .set_database_client(client)
+                .await;
         }
 
         if let Ok(api_key) = db.get_config("ai", "tavily_api_key").await {
@@ -117,10 +122,12 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
     }
 
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
-        tenth_man_llm_config = apply_generation_settings_from_db(db.as_ref(), tenth_man_llm_config).await;
+        tenth_man_llm_config =
+            apply_generation_settings_from_db(db.as_ref(), tenth_man_llm_config).await;
     }
 
-    tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config).await;
+    tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config)
+        .await;
     tenth_man_executor::set_task_context(params.execution_id.clone(), params.task.clone()).await;
 
     tracing::info!(
@@ -135,14 +142,17 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         tracing::info!("Refreshing MCP tools before execution...");
         mcp_adapter::refresh_mcp_tools(&tool_server).await;
 
-        if tool_config.enabled && !tool_config.disabled_tools.contains(&"web_explorer".to_string())
+        if tool_config.enabled
+            && !tool_config
+                .disabled_tools
+                .contains(&"web_explorer".to_string())
         {
             if let Some(_mcp_service) =
                 app_handle.try_state::<std::sync::Arc<crate::services::mcp::McpService>>()
             {
                 use crate::engines::web_explorer::WebExplorerTool;
-                use sentinel_tools::dynamic_tool::{DynamicToolBuilder, ToolSource};
                 use rig::tool::Tool;
+                use sentinel_tools::dynamic_tool::{DynamicToolBuilder, ToolSource};
 
                 let rig_provider = params.rig_provider.to_lowercase();
                 let mut llm_config = sentinel_llm::LlmConfig::new(&rig_provider, &params.model)

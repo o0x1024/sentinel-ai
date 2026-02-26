@@ -75,10 +75,7 @@ pub async fn execute_mcp_tool(
 }
 
 /// Execute plugin tool.
-pub async fn execute_plugin_tool(
-    plugin_id: &str,
-    arguments: &serde_json::Value,
-) -> Result<String> {
+pub async fn execute_plugin_tool(plugin_id: &str, arguments: &serde_json::Value) -> Result<String> {
     let tool_name = format!("plugin::{}", plugin_id);
     let tool_server = get_tool_server();
 
@@ -96,4 +93,3 @@ pub async fn execute_plugin_tool(
         ))
     }
 }
-

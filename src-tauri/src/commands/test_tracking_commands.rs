@@ -12,13 +12,13 @@ pub async fn test_plugin_tracking(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let tracker = crate::trackers::get_tracker();
-    
+
     if tracker.is_none() {
         return Err("Tracker not initialized".to_string());
     }
-    
+
     let tracker = tracker.unwrap();
-    
+
     // Start tracking
     let log_id = tracker
         .track_start(
@@ -33,10 +33,10 @@ pub async fn test_plugin_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Simulate execution
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    
+
     // Complete tracking
     tracker
         .track_complete(
@@ -52,7 +52,7 @@ pub async fn test_plugin_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     Ok(log_id)
 }
 
@@ -65,15 +65,15 @@ pub async fn test_mcp_tracking(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let tracker = crate::trackers::get_tracker();
-    
+
     if tracker.is_none() {
         return Err("Tracker not initialized".to_string());
     }
-    
+
     let tracker = tracker.unwrap();
-    
+
     let tool_id = format!("mcp:{}:{}", connection_id, tool_name);
-    
+
     // Start tracking
     let log_id = tracker
         .track_start(
@@ -88,10 +88,10 @@ pub async fn test_mcp_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Simulate execution
     tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-    
+
     // Complete tracking
     tracker
         .track_complete(
@@ -106,7 +106,7 @@ pub async fn test_mcp_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     Ok(log_id)
 }
 
@@ -118,15 +118,15 @@ pub async fn test_builtin_tracking(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let tracker = crate::trackers::get_tracker();
-    
+
     if tracker.is_none() {
         return Err("Tracker not initialized".to_string());
     }
-    
+
     let tracker = tracker.unwrap();
-    
+
     let tool_id = format!("builtin:{}", tool_name);
-    
+
     // Start tracking
     let log_id = tracker
         .track_start(
@@ -141,10 +141,10 @@ pub async fn test_builtin_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Simulate execution
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    
+
     // Complete tracking
     tracker
         .track_complete(
@@ -159,7 +159,7 @@ pub async fn test_builtin_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     Ok(log_id)
 }
 
@@ -172,13 +172,13 @@ pub async fn test_error_tracking(
     _db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
     let tracker = crate::trackers::get_tracker();
-    
+
     if tracker.is_none() {
         return Err("Tracker not initialized".to_string());
     }
-    
+
     let tracker = tracker.unwrap();
-    
+
     // Start tracking
     let log_id = tracker
         .track_start(
@@ -192,10 +192,10 @@ pub async fn test_error_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Simulate execution failure
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    
+
     // Track error
     tracker
         .track_error(
@@ -206,6 +206,6 @@ pub async fn test_error_tracking(
         )
         .await
         .map_err(|e| e.to_string())?;
-    
+
     Ok(log_id)
 }

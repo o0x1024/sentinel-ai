@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 /// Security task type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -16,7 +16,6 @@ pub enum SecurityTaskKind {
     OtherSecurity,
 }
 
-
 /// Test session stage
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -27,27 +26,27 @@ pub enum TestStage {
     APIMapping,
     VulnScan,
     Exploit,
-    
+
     // Forensics stages
     LogCollection,
     TimelineReconstruction,
     IOCExtraction,
     BehaviorAnalysis,
-    
+
     // CTF stages
     ChallengeAnalysis,
     VulnIdentification,
     PayloadCrafting,
     FlagExtraction,
     Writeup,
-    
+
     // Reverse Engineering stages
     BinaryLoading,
     StaticAnalysis,
     DynamicAnalysis,
     Deobfuscation,
     BehaviorSummary,
-    
+
     // Common stages
     Report,
     Completed,
@@ -66,28 +65,28 @@ pub enum TestStepType {
     TestAuthorization,
     TestInputValidation,
     CraftExploit,
-    
+
     // Forensics steps
     CollectLogs,
     ParseTimeline,
     ExtractIOC,
     AnalyzeBehavior,
     CorrelateEvents,
-    
+
     // CTF steps
     AnalyzeChallenge,
     IdentifyVulnerability,
     DevelopExploit,
     ExtractFlag,
     WriteReport,
-    
+
     // Reverse Engineering steps
     LoadBinary,
     PerformStaticAnalysis,
     PerformDynamicAnalysis,
     DeobfuscateCode,
     SummarizeBehavior,
-    
+
     // Common steps
     GenerateScript,
     GeneratePayload,
@@ -99,10 +98,10 @@ pub enum TestStepType {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum SubAgentKind {
-    ReAct,           // 泛化引擎（推荐）
-    ReWOO,           // 已内嵌到 ReAct
-    PlanAndExecute,  // 已内嵌到 ReAct
-    LLMCompiler,     // 已内嵌到 ReAct
+    ReAct,          // 泛化引擎（推荐）
+    ReWOO,          // 已内嵌到 ReAct
+    PlanAndExecute, // 已内嵌到 ReAct
+    LLMCompiler,    // 已内嵌到 ReAct
     Copilot,
     Other,
 }
@@ -121,7 +120,6 @@ pub enum RiskImpact {
     Critical,
 }
 
-
 /// Step status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -133,7 +131,6 @@ pub enum StepStatus {
     Completed,
     Failed,
 }
-
 
 /// Authentication context
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -148,26 +145,26 @@ impl AuthContext {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn with_credentials(username: String, password: String) -> Self {
         Self {
             credentials: Some(Credentials { username, password }),
             ..Default::default()
         }
     }
-    
+
     pub fn add_cookie(&mut self, name: String, value: String) {
         self.cookies.insert(name, value);
     }
-    
+
     pub fn add_header(&mut self, name: String, value: String) {
         self.headers.insert(name, value);
     }
-    
+
     pub fn add_token(&mut self, token_type: String, token: String) {
         self.tokens.insert(token_type, token);
     }
-    
+
     pub fn is_authenticated(&self) -> bool {
         !self.cookies.is_empty() || !self.tokens.is_empty() || self.credentials.is_some()
     }
@@ -214,12 +211,12 @@ impl Finding {
             created_at: Utc::now(),
         }
     }
-    
+
     pub fn with_method(mut self, method: String) -> Self {
         self.method = Some(method);
         self
     }
-    
+
     pub fn with_reproduction_steps(mut self, steps: Vec<String>) -> Self {
         self.reproduction_steps = steps;
         self
@@ -263,24 +260,24 @@ impl TestStep {
             output: None,
         }
     }
-    
+
     pub fn start(&mut self) {
         self.status = StepStatus::Running;
         self.started_at = Some(Utc::now());
     }
-    
+
     pub fn complete(&mut self, output: Option<String>) {
         self.status = StepStatus::Completed;
         self.finished_at = Some(Utc::now());
         self.output = output;
     }
-    
+
     pub fn fail(&mut self, error: String) {
         self.status = StepStatus::Failed;
         self.finished_at = Some(Utc::now());
         self.output = Some(error);
     }
-    
+
     pub fn with_risk_impact(mut self, risk: RiskImpact) -> Self {
         self.risk_impact = risk;
         self
@@ -323,38 +320,38 @@ impl TestSession {
             task_parameters: HashMap::new(),
         }
     }
-    
+
     pub fn add_step(&mut self, step: TestStep) {
         self.steps.push(step);
         self.updated_at = Utc::now();
     }
-    
+
     pub fn add_finding(&mut self, finding: Finding) {
         self.findings.push(finding);
         self.updated_at = Utc::now();
     }
-    
+
     pub fn update_stage(&mut self, stage: TestStage) {
         self.stage = stage;
         self.updated_at = Utc::now();
     }
-    
+
     pub fn update_auth_context(&mut self, auth_context: AuthContext) {
         self.auth_context = auth_context;
         self.updated_at = Utc::now();
     }
-    
+
     pub fn get_high_risk_findings(&self) -> Vec<&Finding> {
         self.findings
             .iter()
             .filter(|f| f.risk_level >= RiskImpact::High)
             .collect()
     }
-    
+
     pub fn get_step_by_id(&self, id: &str) -> Option<&TestStep> {
         self.steps.iter().find(|s| s.id == id)
     }
-    
+
     pub fn get_step_by_id_mut(&mut self, id: &str) -> Option<&mut TestStep> {
         self.steps.iter_mut().find(|s| s.id == id)
     }
@@ -380,31 +377,31 @@ impl TestCoverage {
             progress_percentage: 0.0,
         }
     }
-    
+
     pub fn add_tested_url(&mut self, url: String) {
         if !self.tested_urls.contains(&url) {
             self.tested_urls.push(url);
         }
     }
-    
+
     pub fn add_tested_endpoint(&mut self, endpoint: String) {
         if !self.tested_endpoints.contains(&endpoint) {
             self.tested_endpoints.push(endpoint);
         }
     }
-    
+
     pub fn add_tested_parameter(&mut self, param: String) {
         if !self.tested_parameters.contains(&param) {
             self.tested_parameters.push(param);
         }
     }
-    
+
     pub fn add_tested_vuln_type(&mut self, vuln_type: String) {
         if !self.tested_vuln_types.contains(&vuln_type) {
             self.tested_vuln_types.push(vuln_type);
         }
     }
-    
+
     pub fn update_progress(&mut self, percentage: f32) {
         self.progress_percentage = percentage.clamp(0.0, 100.0);
     }
@@ -415,4 +412,3 @@ impl Default for TestCoverage {
         Self::new()
     }
 }
-

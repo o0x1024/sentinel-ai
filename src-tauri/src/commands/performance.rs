@@ -54,7 +54,9 @@ pub async fn update_performance_config(config: PerformanceConfig) -> Result<(), 
 
     // 替换为新实例
     {
-        let mut guard = lock.write().map_err(|_| "optimizer lock poisoned".to_string())?;
+        let mut guard = lock
+            .write()
+            .map_err(|_| "optimizer lock poisoned".to_string())?;
         *guard = new_optimizer.clone();
     }
 

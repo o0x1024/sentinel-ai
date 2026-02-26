@@ -1,7 +1,7 @@
 //! Agent configuration commands
 
-use std::sync::Arc;
 use sentinel_db::Database;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -123,8 +123,7 @@ impl Default for SubagentConfig {
 }
 
 /// Agent configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentConfig {
     /// Shell/terminal configuration
     pub shell: ShellConfig,
@@ -152,7 +151,7 @@ pub async fn get_agent_config(
     // Load subagent config from database
     let subagent_config = load_subagent_config_from_db(db_service.inner()).await;
 
-    Ok(AgentConfig { 
+    Ok(AgentConfig {
         shell: shell_config,
         terminal: terminal_config,
         image_attachments: image_config,
@@ -196,7 +195,9 @@ pub async fn save_agent_config(
     set_shell_config(shell_cfg).await;
 
     // Update global subagent timeout
-    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(config.subagent.timeout_secs);
+    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(
+        config.subagent.timeout_secs,
+    );
 
     tracing::info!("Agent config saved successfully");
     Ok(())
@@ -210,7 +211,7 @@ pub async fn init_agent_config(db: &sentinel_db::DatabaseService) -> Result<(), 
 
     // Unify execution mode with terminal setting.
     shell_cfg.default_execution_mode = terminal_config.default_execution_mode.into();
-    
+
     // Ensure docker_config exists and matches selected docker image/resources.
     if shell_cfg.docker_config.is_none() {
         shell_cfg.docker_config = Some(DockerSandboxConfig::default());
@@ -225,12 +226,14 @@ pub async fn init_agent_config(db: &sentinel_db::DatabaseService) -> Result<(), 
             "bridge".to_string()
         };
     }
-    
+
     set_shell_config(shell_cfg).await;
-    
+
     // Set global subagent timeout
-    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(subagent_config.timeout_secs);
-    
+    sentinel_tools::buildin_tools::subagent_tool::set_default_subagent_timeout(
+        subagent_config.timeout_secs,
+    );
+
     tracing::info!("Agent configuration initialized from database");
     Ok(())
 }
@@ -242,7 +245,9 @@ pub async fn load_shell_config_from_db(db: &sentinel_db::DatabaseService) -> She
     // Load default_policy
     if let Ok(Some(value)) = db.get_config("agent", "shell_default_policy").await {
         config.default_policy = match value.as_str() {
-            "AlwaysProceed" => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed,
+            "AlwaysProceed" => {
+                sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::AlwaysProceed
+            }
             _ => sentinel_tools::buildin_tools::shell::ShellDefaultPolicy::RequestReview,
         };
     }
@@ -363,7 +368,9 @@ pub async fn load_terminal_config_from_db(db: &sentinel_db::DatabaseService) -> 
 }
 
 /// Load image attachment config from database
-pub async fn load_image_attachment_config_from_db(db: &sentinel_db::DatabaseService) -> ImageAttachmentConfig {
+pub async fn load_image_attachment_config_from_db(
+    db: &sentinel_db::DatabaseService,
+) -> ImageAttachmentConfig {
     let mut cfg = ImageAttachmentConfig::default();
 
     if let Ok(Some(value)) = db.get_config("agent", "image_attachment_mode").await {
@@ -402,7 +409,11 @@ async fn save_image_attachment_config_to_db(
     db.set_config(
         "agent",
         "allow_image_upload_to_model",
-        if config.allow_upload_to_model { "true" } else { "false" },
+        if config.allow_upload_to_model {
+            "true"
+        } else {
+            "false"
+        },
         Some("Whether uploading image attachments to model is allowed"),
     )
     .await
@@ -463,7 +474,11 @@ async fn save_terminal_config_to_db(
     db.set_config(
         "agent",
         "docker_use_host_network",
-        if config.docker_use_host_network { "true" } else { "false" },
+        if config.docker_use_host_network {
+            "true"
+        } else {
+            "false"
+        },
         Some("Whether Docker should use host network mode"),
     )
     .await
@@ -508,7 +523,10 @@ async fn save_subagent_config_to_db(
     .await
     .map_err(|e| e.to_string())?;
 
-    tracing::info!("Subagent config saved: timeout_secs={}", config.timeout_secs);
+    tracing::info!(
+        "Subagent config saved: timeout_secs={}",
+        config.timeout_secs
+    );
 
     Ok(())
 }

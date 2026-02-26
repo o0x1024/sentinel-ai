@@ -55,8 +55,8 @@ pub fn parse_skill_markdown(content: &str) -> Result<SkillDocument> {
     }
 
     let yaml_str = yaml_lines.join("\n");
-    let frontmatter: SkillFrontmatter = serde_yaml::from_str(&yaml_str)
-        .context("Failed to parse SKILL.md YAML frontmatter")?;
+    let frontmatter: SkillFrontmatter =
+        serde_yaml::from_str(&yaml_str).context("Failed to parse SKILL.md YAML frontmatter")?;
 
     let body = lines.collect::<Vec<_>>().join("\n").trim().to_string();
 
@@ -102,7 +102,11 @@ pub fn validate_skill_with_skills_ref(skill_dir: &Path) -> Result<()> {
     }
 }
 
-pub fn resolve_skill_file_path(root: &Path, skill_id: &str, relative_path: &str) -> Result<PathBuf> {
+pub fn resolve_skill_file_path(
+    root: &Path,
+    skill_id: &str,
+    relative_path: &str,
+) -> Result<PathBuf> {
     let skill_dir = root.join(skill_id);
     let candidate = skill_dir.join(relative_path);
     let canonical_root = fs::canonicalize(&skill_dir)
@@ -218,12 +222,10 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
 // ── Built-in Skills ─────────────────────────────────────────────────────────
 
 /// Embedded built-in skills that ship with the binary.
-const BUILTIN_SKILLS: &[(&str, &str)] = &[
-    (
-        "code-audit",
-        include_str!("../../skills/code-audit/SKILL.md"),
-    ),
-];
+const BUILTIN_SKILLS: &[(&str, &str)] = &[(
+    "code-audit",
+    include_str!("../../skills/code-audit/SKILL.md"),
+)];
 
 /// Install built-in skills to the skills directory if not already present.
 fn install_builtin_skills(skills_root: &Path) {

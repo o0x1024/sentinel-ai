@@ -1,11 +1,11 @@
 //! The Tenth Man Rule - Adversarial Review Logic
-//! 
-//! "If nine of us with the same information arrived at the exact same conclusion, 
+//!
+//! "If nine of us with the same information arrived at the exact same conclusion,
 //! it's the duty of the tenth man to disagree. No matter how unlikely it may seem."
 //! -- World War Z
 
-use anyhow::Result;
 use crate::agents::executor::AgentExecuteParams;
+use anyhow::Result;
 use sentinel_llm::{LlmClient, LlmConfig};
 use serde::{Deserialize, Serialize};
 
@@ -147,7 +147,6 @@ impl Default for TenthManConfig {
     }
 }
 
-
 pub struct TenthMan {
     config: LlmConfig,
     intervention_mode: InterventionMode,
@@ -187,9 +186,13 @@ impl TenthMan {
                 // Always trigger on final response
                 matches!(context.trigger_reason, TriggerReason::FinalResponse)
             }
-            InterventionMode::Hybrid { force_final_review, .. } => {
+            InterventionMode::Hybrid {
+                force_final_review, ..
+            } => {
                 // Trigger on final response if forced
-                if *force_final_review && matches!(context.trigger_reason, TriggerReason::FinalResponse) {
+                if *force_final_review
+                    && matches!(context.trigger_reason, TriggerReason::FinalResponse)
+                {
                     return true;
                 }
                 false
@@ -229,7 +232,7 @@ impl TenthMan {
             InterventionMode::Realtime => true,
         }
     }
-    
+
     /// Check if tool is available for LLM to call
     pub fn is_tool_available(&self) -> bool {
         match &self.intervention_mode {
@@ -242,10 +245,22 @@ impl TenthMan {
     /// Detect conclusion markers in content
     pub fn contains_conclusion_markers(content: &str) -> bool {
         let markers = [
-            "因此", "所以", "综上所述", "总结", "结论",
-            "我建议", "应该", "必须", "最佳方案",
-            "therefore", "in conclusion", "to summarize",
-            "I recommend", "should", "must", "best approach",
+            "因此",
+            "所以",
+            "综上所述",
+            "总结",
+            "结论",
+            "我建议",
+            "应该",
+            "必须",
+            "最佳方案",
+            "therefore",
+            "in conclusion",
+            "to summarize",
+            "I recommend",
+            "should",
+            "must",
+            "best approach",
         ];
         markers.iter().any(|m| content.contains(m))
     }
@@ -295,22 +310,25 @@ impl TenthMan {
 
         Ok(critique)
     }
-    
+
     /// Review with complete history (System mode uses this)
     pub async fn review_with_history(&self, execution_id: &str) -> Result<String> {
         use crate::agents::tenth_man_executor::execute_tenth_man_review;
-        use sentinel_tools::buildin_tools::tenth_man_tool::{TenthManToolArgs, ReviewMode};
-        
+        use sentinel_tools::buildin_tools::tenth_man_tool::{ReviewMode, TenthManToolArgs};
+
         let args = TenthManToolArgs {
             execution_id: execution_id.to_string(),
             review_mode: ReviewMode::FullHistory,
             review_type: "full".to_string(),
             focus_area: Some("final solution and complete execution process".to_string()),
         };
-        
-        let output = execute_tenth_man_review(args).await
+
+        let output = execute_tenth_man_review(args)
+            .await
             .map_err(|e| anyhow::anyhow!("Review failed: {}", e))?;
-        
-        output.critique.ok_or_else(|| anyhow::anyhow!("No critique generated"))
+
+        output
+            .critique
+            .ok_or_else(|| anyhow::anyhow!("No critique generated"))
     }
 }

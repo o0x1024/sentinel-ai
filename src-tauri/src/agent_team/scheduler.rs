@@ -1,10 +1,10 @@
 //! Agent Team DAG 并发调度器
 //! 支持多角色并发执行（Challenge 阶段）以及角色依赖图管理
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use anyhow::Result;
 use futures::future::join_all;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use super::models::AgentTeamMember;
@@ -76,10 +76,14 @@ impl SchedulePlan {
             // 默认：第 0 层为第一个成员（Proposer），其余并发
             let first = vec![members[0].id.clone()];
             if members.len() == 1 {
-                Self { layers: vec![first] }
+                Self {
+                    layers: vec![first],
+                }
             } else {
                 let rest: Vec<String> = members[1..].iter().map(|m| m.id.clone()).collect();
-                Self { layers: vec![first, rest] }
+                Self {
+                    layers: vec![first, rest],
+                }
             }
         }
     }
@@ -119,10 +123,7 @@ where
     }
 
     let results = join_all(handles).await;
-    results
-        .into_iter()
-        .filter_map(|r| r.ok())
-        .collect()
+    results.into_iter().filter_map(|r| r.ok()).collect()
 }
 
 /// 分歧度量化器
@@ -137,10 +138,8 @@ impl DivergenceCalculator {
         }
 
         // 1. 提取各个 review 的关键词集合
-        let keyword_sets: Vec<HashSet<String>> = reviews
-            .iter()
-            .map(|text| extract_keywords(text))
-            .collect();
+        let keyword_sets: Vec<HashSet<String>> =
+            reviews.iter().map(|text| extract_keywords(text)).collect();
 
         // 2. 计算 pairwise Jaccard 距离
         let mut total_distance = 0.0;
@@ -250,7 +249,10 @@ impl ToolGovernance {
             self.global_call_limit = Some(max_calls as u32);
         }
 
-        if let Some(sensitive_tools) = tool_policy.get("sensitive_tools").and_then(|v| v.as_array()) {
+        if let Some(sensitive_tools) = tool_policy
+            .get("sensitive_tools")
+            .and_then(|v| v.as_array())
+        {
             self.sensitive_tools = sensitive_tools
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -275,7 +277,8 @@ impl ToolGovernance {
             self.role_denylist.insert(member_id.to_string(), tools);
         }
         if let Some(max_calls) = tool_policy.get("max_calls").and_then(|v| v.as_u64()) {
-            self.call_limits.insert(member_id.to_string(), max_calls as u32);
+            self.call_limits
+                .insert(member_id.to_string(), max_calls as u32);
         }
     }
 
@@ -334,7 +337,8 @@ impl ToolGovernance {
     pub fn try_acquire_mutex(&mut self, tool_name: &str, member_id: &str) -> bool {
         match self.mutex_locks.get(tool_name) {
             None | Some(None) => {
-                self.mutex_locks.insert(tool_name.to_string(), Some(member_id.to_string()));
+                self.mutex_locks
+                    .insert(tool_name.to_string(), Some(member_id.to_string()));
                 true
             }
             Some(Some(holder)) => holder == member_id,
@@ -361,10 +365,7 @@ impl ToolGovernance {
 
     /// 获取调用统计摘要
     pub fn get_stats(&self, member_id: &str) -> HashMap<String, u32> {
-        self.call_counts
-            .get(member_id)
-            .cloned()
-            .unwrap_or_default()
+        self.call_counts.get(member_id).cloned().unwrap_or_default()
     }
 }
 
@@ -381,11 +382,11 @@ pub enum ToolPermissionResult {
 /// 从文本提取关键词（中英文分词简化版）
 fn extract_keywords(text: &str) -> HashSet<String> {
     let stop_words: HashSet<&str> = [
-        "的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上",
-        "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这",
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has",
-        "had", "do", "does", "did", "will", "would", "could", "should", "may", "might",
-        "that", "this", "these", "those", "with", "from", "they", "we", "you", "it",
+        "的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上", "也",
+        "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这", "the",
+        "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do",
+        "does", "did", "will", "would", "could", "should", "may", "might", "that", "this", "these",
+        "those", "with", "from", "they", "we", "you", "it",
     ]
     .iter()
     .copied()
@@ -421,15 +422,35 @@ fn extract_keywords(text: &str) -> HashSet<String> {
 
 /// 计算情感倾向方差（简化：统计积极/消极词占比方差）
 fn calculate_sentiment_variance(reviews: &[&str]) -> f64 {
-    let positive_markers = ["同意", "赞同", "支持", "可行", "good", "agree", "yes", "approve", "✓", "correct"];
-    let negative_markers = ["反对", "问题", "风险", "不可行", "bad", "disagree", "no", "reject", "×", "incorrect", "concern"];
+    let positive_markers = [
+        "同意", "赞同", "支持", "可行", "good", "agree", "yes", "approve", "✓", "correct",
+    ];
+    let negative_markers = [
+        "反对",
+        "问题",
+        "风险",
+        "不可行",
+        "bad",
+        "disagree",
+        "no",
+        "reject",
+        "×",
+        "incorrect",
+        "concern",
+    ];
 
     let scores: Vec<f64> = reviews
         .iter()
         .map(|text| {
             let lower = text.to_lowercase();
-            let pos = positive_markers.iter().filter(|&&m| lower.contains(m)).count() as f64;
-            let neg = negative_markers.iter().filter(|&&m| lower.contains(m)).count() as f64;
+            let pos = positive_markers
+                .iter()
+                .filter(|&&m| lower.contains(m))
+                .count() as f64;
+            let neg = negative_markers
+                .iter()
+                .filter(|&&m| lower.contains(m))
+                .count() as f64;
             if pos + neg == 0.0 {
                 0.5 // 中性
             } else {
@@ -454,8 +475,14 @@ mod tests {
     #[test]
     fn test_divergence_identical() {
         let reviews = vec!["同意这个方案，技术可行", "同意这个方案，技术可行"];
-        let score = DivergenceCalculator::calculate(&reviews.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-        assert!(score < 0.3, "Identical reviews should have low divergence, got {}", score);
+        let score = DivergenceCalculator::calculate(
+            &reviews.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        );
+        assert!(
+            score < 0.3,
+            "Identical reviews should have low divergence, got {}",
+            score
+        );
     }
 
     #[test]
@@ -464,21 +491,39 @@ mod tests {
             "完全同意，这个方案非常好，技术可行，安全无虞，推荐实施",
             "完全反对，这个方案存在严重风险，技术不可行，安全漏洞，不应实施",
         ];
-        let score = DivergenceCalculator::calculate(&reviews.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-        assert!(score > 0.3, "Opposite reviews should have high divergence, got {}", score);
+        let score = DivergenceCalculator::calculate(
+            &reviews.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        );
+        assert!(
+            score > 0.3,
+            "Opposite reviews should have high divergence, got {}",
+            score
+        );
     }
 
     #[test]
     fn test_tool_permission() {
         let mut gov = ToolGovernance::new();
-        assert_eq!(gov.check_permission("m1", "web_search"), ToolPermissionResult::Allowed);
-        assert_eq!(gov.check_permission("m1", "shell"), ToolPermissionResult::Allowed);
+        assert_eq!(
+            gov.check_permission("m1", "web_search"),
+            ToolPermissionResult::Allowed
+        );
+        assert_eq!(
+            gov.check_permission("m1", "shell"),
+            ToolPermissionResult::Allowed
+        );
         gov.load_session_policy(&serde_json::json!({
             "allowlist": ["web_search"],
             "denylist": ["browser_control"]
         }));
-        assert_eq!(gov.check_permission("m1", "shell"), ToolPermissionResult::Denied("不在会话工具白名单中".to_string()));
-        assert_eq!(gov.check_permission("m1", "browser_control"), ToolPermissionResult::Denied("不在会话工具白名单中".to_string()));
+        assert_eq!(
+            gov.check_permission("m1", "shell"),
+            ToolPermissionResult::Denied("不在会话工具白名单中".to_string())
+        );
+        assert_eq!(
+            gov.check_permission("m1", "browser_control"),
+            ToolPermissionResult::Denied("不在会话工具白名单中".to_string())
+        );
     }
 
     #[test]
@@ -506,7 +551,15 @@ mod tests {
 
         let plan = SchedulePlan::build(&members, None);
         assert_eq!(plan.layers.len(), 2, "Should have 2 layers");
-        assert_eq!(plan.layers[0].len(), 1, "First layer has 1 member (proposer)");
-        assert_eq!(plan.layers[1].len(), 3, "Second layer has 3 members (concurrent)");
+        assert_eq!(
+            plan.layers[0].len(),
+            1,
+            "First layer has 1 member (proposer)"
+        );
+        assert_eq!(
+            plan.layers[1].len(),
+            3,
+            "Second layer has 3 members (concurrent)"
+        );
     }
 }

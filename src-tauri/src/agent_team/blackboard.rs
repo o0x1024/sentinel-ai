@@ -3,10 +3,10 @@
 //! Blackboard 是结构化 KV 存储，记录阶段性讨论共识与结论。
 //! 防止多轮讨论导致 Token 爆炸的核心机制。
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use super::models::{AgentTeamBlackboardEntry, BlackboardEntryType};
@@ -44,10 +44,11 @@ impl BlackboardSnapshot {
         if !self.consensus_items.is_empty() {
             parts.push("\n【已达成共识】".to_string());
             for (i, item) in self.consensus_items.iter().enumerate() {
-                parts.push(format!("{}. [{}] {}: {}", 
-                    i + 1, 
+                parts.push(format!(
+                    "{}. [{}] {}: {}",
+                    i + 1,
                     item.contributed_by.as_deref().unwrap_or("未知"),
-                    item.title, 
+                    item.title,
                     item.content
                 ));
             }
@@ -56,10 +57,11 @@ impl BlackboardSnapshot {
         if !self.dispute_items.is_empty() {
             parts.push("\n【当前分歧点】".to_string());
             for (i, item) in self.dispute_items.iter().enumerate() {
-                parts.push(format!("{}. [{}] {}: {}", 
-                    i + 1, 
+                parts.push(format!(
+                    "{}. [{}] {}: {}",
+                    i + 1,
                     item.contributed_by.as_deref().unwrap_or("未知"),
-                    item.title, 
+                    item.title,
                     item.content
                 ));
             }
@@ -69,7 +71,13 @@ impl BlackboardSnapshot {
             parts.push("\n【待决事项】".to_string());
             for (i, item) in self.action_items.iter().enumerate() {
                 let status = if item.is_resolved { "✓" } else { "○" };
-                parts.push(format!("{}. {} {}: {}", i + 1, status, item.title, item.content));
+                parts.push(format!(
+                    "{}. {} {}: {}",
+                    i + 1,
+                    status,
+                    item.title,
+                    item.content
+                ));
             }
         }
 
@@ -145,7 +153,11 @@ impl BlackboardManager {
 
         let mut snapshots = self.snapshots.write().await;
         snapshots.insert(session_id.to_string(), snapshot);
-        info!("Blackboard rebuilt for session {} with {} entries", session_id, entries.len());
+        info!(
+            "Blackboard rebuilt for session {} with {} entries",
+            session_id,
+            entries.len()
+        );
     }
 
     /// 向白板追加新条目

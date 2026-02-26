@@ -1,7 +1,7 @@
 //! Agent Team 数据结构定义
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 // ==================== 状态机枚举 ====================
 
@@ -411,12 +411,15 @@ impl BuiltinTeamRoles {
             CreateAgentTeamTemplateMemberRequest {
                 name: "产品经理".to_string(),
                 responsibility: Some("负责需求分析、PRD 撰写与用户价值评估".to_string()),
-                system_prompt: Some(r#"你是一位资深产品经理。你的职责是：
+                system_prompt: Some(
+                    r#"你是一位资深产品经理。你的职责是：
 1. 深度理解并挖掘用户真实需求
 2. 撰写清晰的产品需求文档（PRD）
 3. 平衡技术可行性与商业价值
 4. 为讨论中的功能优先级提供量化依据
-在讨论中，请从用户需求与商业价值角度出发，提出有据可查的观点。"#.to_string()),
+在讨论中，请从用户需求与商业价值角度出发，提出有据可查的观点。"#
+                        .to_string(),
+                ),
                 decision_style: Some("balanced".to_string()),
                 risk_preference: Some("medium".to_string()),
                 weight: Some(1.0),
@@ -427,12 +430,15 @@ impl BuiltinTeamRoles {
             CreateAgentTeamTemplateMemberRequest {
                 name: "架构师".to_string(),
                 responsibility: Some("负责系统架构设计、技术选型与可扩展性评估".to_string()),
-                system_prompt: Some(r#"你是一位资深软件架构师。你的职责是：
+                system_prompt: Some(
+                    r#"你是一位资深软件架构师。你的职责是：
 1. 设计模块化、可扩展的系统架构
 2. 评估技术方案的可行性与性能影响
 3. 识别潜在的技术债务与架构风险
 4. 提供数据库设计、API 设计规范建议
-在讨论中，请从技术可行性与系统质量角度出发，对方案提出建设性修改意见。"#.to_string()),
+在讨论中，请从技术可行性与系统质量角度出发，对方案提出建设性修改意见。"#
+                        .to_string(),
+                ),
                 decision_style: Some("conservative".to_string()),
                 risk_preference: Some("low".to_string()),
                 weight: Some(1.2),
@@ -443,12 +449,15 @@ impl BuiltinTeamRoles {
             CreateAgentTeamTemplateMemberRequest {
                 name: "安全专家".to_string(),
                 responsibility: Some("负责安全威胁建模、漏洞识别与合规审查".to_string()),
-                system_prompt: Some(r#"你是一位资深安全专家。你的职责是：
+                system_prompt: Some(
+                    r#"你是一位资深安全专家。你的职责是：
 1. 对系统设计进行威胁建模（STRIDE/PASTA）
 2. 识别 OWASP Top 10 等常见安全漏洞
 3. 确保方案符合行业合规要求（SOC2/ISO27001 等）
 4. 提出具体的安全加固与数据隐私保护建议
-在讨论中，请以"安全左移"原则，对每个功能模块进行安全审查并给出量化风险等级。"#.to_string()),
+在讨论中，请以"安全左移"原则，对每个功能模块进行安全审查并给出量化风险等级。"#
+                        .to_string(),
+                ),
                 decision_style: Some("conservative".to_string()),
                 risk_preference: Some("low".to_string()),
                 weight: Some(1.1),
@@ -459,12 +468,15 @@ impl BuiltinTeamRoles {
             CreateAgentTeamTemplateMemberRequest {
                 name: "测试工程师".to_string(),
                 responsibility: Some("负责测试策略制定、边界条件识别与质量保障".to_string()),
-                system_prompt: Some(r#"你是一位资深测试工程师。你的职责是：
+                system_prompt: Some(
+                    r#"你是一位资深测试工程师。你的职责是：
 1. 制定全面的测试策略（单元/集成/E2E/性能）
 2. 识别功能边界条件与异常路径
 3. 评估方案的可测试性与可观测性
 4. 提出具体的测试用例与自动化建议
-在讨论中，请从质量保障角度出发，挑战方案中的不确定性与缺失的错误处理。"#.to_string()),
+在讨论中，请从质量保障角度出发，挑战方案中的不确定性与缺失的错误处理。"#
+                        .to_string(),
+                ),
                 decision_style: Some("aggressive".to_string()),
                 risk_preference: Some("medium".to_string()),
                 weight: Some(0.9),

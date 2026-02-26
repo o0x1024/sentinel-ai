@@ -25,10 +25,7 @@ pub struct ExecutionOutcome {
 
 /// Generate and store a reflection memory item after execution.
 /// Only generates reflections for failures or partial failures.
-pub async fn record_execution_reflection(
-    app_handle: &AppHandle,
-    outcome: &ExecutionOutcome,
-) {
+pub async fn record_execution_reflection(app_handle: &AppHandle, outcome: &ExecutionOutcome) {
     if outcome.success && outcome.error.is_none() {
         // Successful executions: only reflect if noteworthy tools were used
         if outcome.tool_names_used.len() < 3 {
@@ -62,10 +59,7 @@ fn build_failure_reflection(outcome: &ExecutionOutcome) -> String {
         outcome.tool_names_used.join(", ")
     };
 
-    let mut reflection = format!(
-        "REFLECTION(failure): Task '{}' failed.",
-        task_brief
-    );
+    let mut reflection = format!("REFLECTION(failure): Task '{}' failed.", task_brief);
 
     if !error_brief.is_empty() {
         reflection.push_str(&format!(" Error: {}.", error_brief));
@@ -104,11 +98,7 @@ fn build_success_reflection(outcome: &ExecutionOutcome) -> String {
     truncate_str(&reflection, MAX_REFLECTION_LENGTH).to_string()
 }
 
-async fn persist_reflection(
-    app_handle: &AppHandle,
-    execution_id: &str,
-    reflection_text: &str,
-) {
+async fn persist_reflection(app_handle: &AppHandle, execution_id: &str, reflection_text: &str) {
     let mut state = match load_run_state(app_handle, execution_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return,
@@ -157,17 +147,14 @@ async fn persist_reflection_to_vector_store(app_handle: &AppHandle, reflection_t
         None => return,
     };
 
-    let rag_service = match crate::commands::rag_commands::get_or_init_rag_service(
-        db.inner().clone(),
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::debug!("RAG service unavailable for reflection persistence: {}", e);
-            return;
-        }
-    };
+    let rag_service =
+        match crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone()).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::debug!("RAG service unavailable for reflection persistence: {}", e);
+                return;
+            }
+        };
 
     let collection_id =
         match crate::commands::rag_commands::ensure_memory_collection_exists(db.inner().clone())
@@ -180,10 +167,7 @@ async fn persist_reflection_to_vector_store(app_handle: &AppHandle, reflection_t
             }
         };
 
-    let title = format!(
-        "[reflection] {}",
-        truncate_str(reflection_text, 80)
-    );
+    let title = format!("[reflection] {}", truncate_str(reflection_text, 80));
     let mut metadata = HashMap::new();
     metadata.insert("type".to_string(), "agent_memory".to_string());
     metadata.insert("kind".to_string(), "reflection".to_string());
@@ -193,7 +177,12 @@ async fn persist_reflection_to_vector_store(app_handle: &AppHandle, reflection_t
     );
 
     if let Err(e) = rag_service
-        .ingest_text(&title, reflection_text, Some(&collection_id), Some(metadata))
+        .ingest_text(
+            &title,
+            reflection_text,
+            Some(&collection_id),
+            Some(metadata),
+        )
         .await
     {
         tracing::warn!("Failed to persist reflection to vector store: {}", e);

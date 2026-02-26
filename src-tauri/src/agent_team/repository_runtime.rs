@@ -13,8 +13,12 @@ pub async fn create_agent_team_template(
     created_by: Option<&str>,
 ) -> Result<AgentTeamTemplate> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::create_agent_team_template(p, req, created_by).await,
-        DatabasePool::SQLite(p) => sqlite_repo::create_agent_team_template(p, req, created_by).await,
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::create_agent_team_template(p, req, created_by).await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::create_agent_team_template(p, req, created_by).await
+        }
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -80,7 +84,10 @@ pub async fn create_agent_team_session(
     }
 }
 
-pub async fn get_agent_team_session(pool: &DatabasePool, id: &str) -> Result<Option<AgentTeamSession>> {
+pub async fn get_agent_team_session(
+    pool: &DatabasePool,
+    id: &str,
+) -> Result<Option<AgentTeamSession>> {
     match pool {
         DatabasePool::PostgreSQL(p) => pg_repo::get_agent_team_session(p, id).await,
         DatabasePool::SQLite(p) => sqlite_repo::get_agent_team_session(p, id).await,
@@ -95,8 +102,12 @@ pub async fn list_agent_team_sessions(
     offset: i64,
 ) -> Result<Vec<AgentTeamSession>> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::list_agent_team_sessions(p, conversation_id, limit, offset).await,
-        DatabasePool::SQLite(p) => sqlite_repo::list_agent_team_sessions(p, conversation_id, limit, offset).await,
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::list_agent_team_sessions(p, conversation_id, limit, offset).await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::list_agent_team_sessions(p, conversation_id, limit, offset).await
+        }
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -121,7 +132,11 @@ pub async fn delete_agent_team_session(pool: &DatabasePool, id: &str) -> Result<
     }
 }
 
-pub async fn update_session_state(pool: &DatabasePool, session_id: &str, state: &str) -> Result<()> {
+pub async fn update_session_state(
+    pool: &DatabasePool,
+    session_id: &str,
+    state: &str,
+) -> Result<()> {
     match pool {
         DatabasePool::PostgreSQL(p) => pg_repo::update_session_state(p, session_id, state).await,
         DatabasePool::SQLite(p) => sqlite_repo::update_session_state(p, session_id, state).await,
@@ -136,8 +151,12 @@ pub async fn create_round(
     phase: &str,
 ) -> Result<AgentTeamRound> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::create_round(p, session_id, round_number, phase).await,
-        DatabasePool::SQLite(p) => sqlite_repo::create_round(p, session_id, round_number, phase).await,
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::create_round(p, session_id, round_number, phase).await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::create_round(p, session_id, round_number, phase).await
+        }
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -154,6 +173,14 @@ pub async fn complete_round(
     }
 }
 
+pub async fn get_rounds(pool: &DatabasePool, session_id: &str) -> Result<Vec<AgentTeamRound>> {
+    match pool {
+        DatabasePool::PostgreSQL(p) => pg_repo::get_rounds(p, session_id).await,
+        DatabasePool::SQLite(p) => sqlite_repo::get_rounds(p, session_id).await,
+        DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
+    }
+}
+
 pub async fn create_message(
     pool: &DatabasePool,
     session_id: &str,
@@ -165,28 +192,32 @@ pub async fn create_message(
     token_count: Option<i32>,
 ) -> Result<AgentTeamMessage> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::create_message(
-            p,
-            session_id,
-            round_id,
-            member_id,
-            member_name,
-            role,
-            content,
-            token_count,
-        )
-        .await,
-        DatabasePool::SQLite(p) => sqlite_repo::create_message(
-            p,
-            session_id,
-            round_id,
-            member_id,
-            member_name,
-            role,
-            content,
-            token_count,
-        )
-        .await,
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::create_message(
+                p,
+                session_id,
+                round_id,
+                member_id,
+                member_name,
+                role,
+                content,
+                token_count,
+            )
+            .await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::create_message(
+                p,
+                session_id,
+                round_id,
+                member_id,
+                member_name,
+                role,
+                content,
+                token_count,
+            )
+            .await
+        }
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -197,8 +228,12 @@ pub async fn update_message_tool_calls(
     tool_calls: &serde_json::Value,
 ) -> Result<()> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::update_message_tool_calls(p, message_id, tool_calls).await,
-        DatabasePool::SQLite(p) => sqlite_repo::update_message_tool_calls(p, message_id, tool_calls).await,
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::update_message_tool_calls(p, message_id, tool_calls).await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::update_message_tool_calls(p, message_id, tool_calls).await
+        }
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
@@ -244,33 +279,40 @@ pub async fn create_artifact(
     diff_summary: Option<&str>,
 ) -> Result<AgentTeamArtifact> {
     match pool {
-        DatabasePool::PostgreSQL(p) => pg_repo::create_artifact(
-            p,
-            session_id,
-            artifact_type,
-            title,
-            content,
-            created_by,
-            parent_artifact_id,
-            diff_summary,
-        )
-        .await,
-        DatabasePool::SQLite(p) => sqlite_repo::create_artifact(
-            p,
-            session_id,
-            artifact_type,
-            title,
-            content,
-            created_by,
-            parent_artifact_id,
-            diff_summary,
-        )
-        .await,
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::create_artifact(
+                p,
+                session_id,
+                artifact_type,
+                title,
+                content,
+                created_by,
+                parent_artifact_id,
+                diff_summary,
+            )
+            .await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::create_artifact(
+                p,
+                session_id,
+                artifact_type,
+                title,
+                content,
+                created_by,
+                parent_artifact_id,
+                diff_summary,
+            )
+            .await
+        }
         DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
     }
 }
 
-pub async fn list_artifacts(pool: &DatabasePool, session_id: &str) -> Result<Vec<AgentTeamArtifact>> {
+pub async fn list_artifacts(
+    pool: &DatabasePool,
+    session_id: &str,
+) -> Result<Vec<AgentTeamArtifact>> {
     match pool {
         DatabasePool::PostgreSQL(p) => pg_repo::list_artifacts(p, session_id).await,
         DatabasePool::SQLite(p) => sqlite_repo::list_artifacts(p, session_id).await,
@@ -278,7 +320,10 @@ pub async fn list_artifacts(pool: &DatabasePool, session_id: &str) -> Result<Vec
     }
 }
 
-pub async fn get_artifact_detail(pool: &DatabasePool, artifact_id: &str) -> Result<Option<AgentTeamArtifact>> {
+pub async fn get_artifact_detail(
+    pool: &DatabasePool,
+    artifact_id: &str,
+) -> Result<Option<AgentTeamArtifact>> {
     match pool {
         DatabasePool::PostgreSQL(p) => pg_repo::get_artifact_detail(p, artifact_id).await,
         DatabasePool::SQLite(p) => sqlite_repo::get_artifact_detail(p, artifact_id).await,

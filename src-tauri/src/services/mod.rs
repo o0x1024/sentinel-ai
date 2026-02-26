@@ -3,17 +3,17 @@
 pub mod ai_manager;
 pub mod asset_service;
 pub mod database {
-    pub use sentinel_db::DatabaseService;
     pub use sentinel_db::Database;
+    pub use sentinel_db::DatabaseService;
 }
-pub mod vulnerability;
-pub mod mcp;
 pub mod http_gateway;
+pub mod mcp;
+pub mod vulnerability;
 
 // Re-export from sentinel-services
+pub use sentinel_services::dictionary;
 pub use sentinel_services::message_emitter;
 pub use sentinel_services::performance;
-pub use sentinel_services::dictionary;
 
 // AI services
 pub use ai_manager::{AiServiceManager, AiServiceWrapper};
@@ -23,9 +23,8 @@ pub use sentinel_llm::{AiConfig, AiService, SchedulerConfig, SchedulerStage};
 pub mod ai {
     pub use super::ai_manager::{AiServiceManager, AiServiceWrapper, ModelInfo};
     pub use sentinel_llm::{
-        AiConfig, AiToolCall, SchedulerConfig, SchedulerStage,
-        StreamError, StreamMessage, TaskProgressMessage, TaskStreamMessage,
-        ToolCallResultMessage,
+        AiConfig, AiToolCall, SchedulerConfig, SchedulerStage, StreamError, StreamMessage,
+        TaskProgressMessage, TaskStreamMessage, ToolCallResultMessage,
     };
     pub type AiService = super::ai_manager::AiServiceWrapper;
 }
@@ -35,11 +34,11 @@ pub use asset_service::AssetService;
 pub use database::DatabaseService;
 
 // Re-export from sentinel-services
+pub use sentinel_services::dictionary::DictionaryService;
+pub use sentinel_services::message_emitter::TauriMessageEmitter;
 pub use sentinel_services::performance::{
     PerformanceConfig, PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer,
 };
-pub use sentinel_services::message_emitter::TauriMessageEmitter;
-pub use sentinel_services::dictionary::DictionaryService;
 
 pub use vulnerability::VulnerabilityService;
 

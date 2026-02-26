@@ -1,5 +1,5 @@
 //! 统一的有序消息流模块
-//! 
+//!
 //! 用于替代复杂的UnifiedStreamMessage，提供简化的时序消息处理
 
 use serde::{Deserialize, Serialize};
@@ -13,11 +13,11 @@ use tauri::{AppHandle, Emitter};
 /// ReWOO, LLMCompiler, PlanAndExecute, Travel 保留用于向后兼容（实际执行都通过 ReAct）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ArchitectureType {
-    ReAct,           // 泛化引擎（推荐）
-    ReWOO,           // 已内嵌到 ReAct
-    LLMCompiler,     // 已内嵌到 ReAct
-    PlanAndExecute,  // 已内嵌到 ReAct
-    VisionExplorer,  // 视觉探索引擎
+    ReAct,          // 泛化引擎（推荐）
+    ReWOO,          // 已内嵌到 ReAct
+    LLMCompiler,    // 已内嵌到 ReAct
+    PlanAndExecute, // 已内嵌到 ReAct
+    VisionExplorer, // 视觉探索引擎
     Unknown,
 }
 
@@ -80,7 +80,10 @@ fn next_sequence_for(execution_id: &str) -> u64 {
         *entry += 1;
         *entry
     } else {
-        log::error!("Failed to acquire sequence counter lock for execution_id: {}", execution_id);
+        log::error!(
+            "Failed to acquire sequence counter lock for execution_id: {}",
+            execution_id
+        );
         1
     }
 }
@@ -89,7 +92,10 @@ fn next_sequence_for(execution_id: &str) -> u64 {
 pub fn cleanup_sequence_counter(execution_id: &str) {
     if let Ok(mut counters) = SEQUENCE_COUNTERS.lock() {
         counters.remove(execution_id);
-        log::debug!("Cleaned up sequence counter for execution_id: {}", execution_id);
+        log::debug!(
+            "Cleaned up sequence counter for execution_id: {}",
+            execution_id
+        );
     }
 }
 
@@ -138,7 +144,7 @@ pub fn emit_message_chunk_with_arch(
     // 共享一个严格递增的序列，从根本上消除跨 execution_id 的交错问题
     let sequence_key = format!("msg:{}", message_id);
     let sequence = next_sequence_for(&sequence_key);
-    
+
     let chunk = OrderedMessageChunk {
         execution_id: execution_id.to_string(),
         message_id: message_id.to_string(),
@@ -280,7 +286,6 @@ pub fn emit_tool_result_chunk(
         false,
         stage,
         tool_name,
-
     );
 }
 
@@ -381,12 +386,12 @@ impl OrderedMessageChunk {
             self.content.clone()
         }
     }
-    
+
     /// 检查是否为错误块
     pub fn is_error(&self) -> bool {
         matches!(self.chunk_type, ChunkType::Error)
     }
-    
+
     /// 检查是否为内容块
     pub fn is_content(&self) -> bool {
         matches!(self.chunk_type, ChunkType::Content)
@@ -400,17 +405,17 @@ mod tests {
     #[test]
     fn test_sequence_generation() {
         let exec_id = "test_exec_1";
-        
+
         let seq1 = next_sequence_for(exec_id);
         let seq2 = next_sequence_for(exec_id);
         let seq3 = next_sequence_for(exec_id);
-        
+
         assert_eq!(seq1, 1);
         assert_eq!(seq2, 2);
         assert_eq!(seq3, 3);
-        
+
         cleanup_sequence_counter(exec_id);
-        
+
         let seq4 = next_sequence_for(exec_id);
         assert_eq!(seq4, 1);
     }
@@ -421,7 +426,7 @@ mod tests {
         assert_eq!(ChunkType::Thinking.display_label(), "🤔 **思考过程**");
         assert_eq!(ChunkType::ToolResult.display_label(), "🔧 **工具执行**");
         assert_eq!(ChunkType::Error.display_label(), "❌ **错误**");
-        
+
         assert!(!ChunkType::Content.needs_label());
         assert!(ChunkType::Thinking.needs_label());
         assert!(ChunkType::Error.needs_label());
@@ -443,7 +448,7 @@ mod tests {
             architecture: None,
             structured_data: None,
         };
-        
+
         let thinking_chunk = OrderedMessageChunk {
             execution_id: "test".to_string(),
             message_id: "msg1".to_string(),
@@ -458,8 +463,11 @@ mod tests {
             architecture: None,
             structured_data: None,
         };
-        
+
         assert_eq!(content_chunk.to_markdown(), "Hello world");
-        assert_eq!(thinking_chunk.to_markdown(), "🤔 **思考过程**\nLet me think...");
+        assert_eq!(
+            thinking_chunk.to_markdown(),
+            "🤔 **思考过程**\nLet me think..."
+        );
     }
 }

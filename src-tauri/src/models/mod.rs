@@ -6,8 +6,8 @@ pub mod dictionary;
 pub mod mcp;
 pub mod scan;
 pub mod scan_session;
-pub mod vulnerability;
 pub mod security_testing;
+pub mod vulnerability;
 pub mod workflow_graph;
 
 // 通用类型定义

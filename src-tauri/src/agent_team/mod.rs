@@ -11,11 +11,11 @@ pub mod repository_sqlite;
 pub mod role_context;
 pub mod scheduler;
 
-pub use engine::{AgentTeamEngine, start_agent_team_run_async};
+pub use advanced::{
+    extract_workflow_tasks, get_builtin_scenarios, InjectionContext, JudgeConfig, JudgeVerdict,
+    PromptInjectionGuard, TeamSessionFinOps,
+};
 pub use blackboard::BlackboardManager;
+pub use engine::{start_agent_team_run_async, AgentTeamEngine};
 pub use models::*;
 pub use scheduler::{DivergenceCalculator, SchedulePlan, ToolGovernance, ToolPermissionResult};
-pub use advanced::{
-    JudgeConfig, JudgeVerdict, PromptInjectionGuard, InjectionContext,
-    TeamSessionFinOps, get_builtin_scenarios, extract_workflow_tasks,
-};

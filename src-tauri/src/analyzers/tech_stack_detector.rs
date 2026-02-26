@@ -1,8 +1,8 @@
 //! Technology stack detection from HTTP responses
 
+use super::website_analyzer::ProxyRequest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use super::website_analyzer::ProxyRequest;
 
 /// Technology stack information
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -30,11 +30,11 @@ impl TechStackDetector {
     /// Detect technology stack from requests
     pub fn detect(&self, requests: &[ProxyRequest]) -> TechStack {
         let mut tech_stack = TechStack::default();
-        
+
         // Collect all headers
         let mut all_headers: Vec<HashMap<String, String>> = Vec::new();
         let mut all_bodies: Vec<String> = Vec::new();
-        
+
         for req in requests {
             if let Some(ref headers_str) = req.response_headers {
                 if let Ok(headers) = serde_json::from_str::<HashMap<String, String>>(headers_str) {
@@ -48,16 +48,16 @@ impl TechStackDetector {
 
         // Detect server
         tech_stack.server = self.detect_server(&all_headers);
-        
+
         // Detect framework
         tech_stack.framework = self.detect_framework(&all_headers, &all_bodies);
-        
+
         // Detect database
         tech_stack.database = self.detect_database(&all_bodies);
-        
+
         // Detect language
         tech_stack.language = self.detect_language(&all_headers, &all_bodies);
-        
+
         // Detect other technologies
         tech_stack.others = self.detect_others(&all_headers, &all_bodies);
 
@@ -70,7 +70,7 @@ impl TechStackDetector {
             for (key, value) in header_map {
                 if key.to_lowercase() == "server" {
                     let value_lower = value.to_lowercase();
-                    
+
                     if value_lower.contains("nginx") {
                         return Some("nginx".to_string());
                     } else if value_lower.contains("apache") {
@@ -95,7 +95,11 @@ impl TechStackDetector {
     }
 
     /// Detect backend framework
-    fn detect_framework(&self, headers: &[HashMap<String, String>], bodies: &[String]) -> Option<String> {
+    fn detect_framework(
+        &self,
+        headers: &[HashMap<String, String>],
+        bodies: &[String],
+    ) -> Option<String> {
         // Check headers first
         for header_map in headers {
             for (key, value) in header_map {
@@ -137,7 +141,9 @@ impl TechStackDetector {
 
             if body_lower.contains("django") {
                 return Some("Django".to_string());
-            } else if body_lower.contains("spring framework") || body_lower.contains("springframework") {
+            } else if body_lower.contains("spring framework")
+                || body_lower.contains("springframework")
+            {
                 return Some("Spring".to_string());
             } else if body_lower.contains("laravel") {
                 return Some("Laravel".to_string());
@@ -161,35 +167,36 @@ impl TechStackDetector {
             let body_lower = body.to_lowercase();
 
             // MySQL
-            if body_lower.contains("mysql") || 
-               body_lower.contains("you have an error in your sql syntax") ||
-               body_lower.contains("mysqli") {
+            if body_lower.contains("mysql")
+                || body_lower.contains("you have an error in your sql syntax")
+                || body_lower.contains("mysqli")
+            {
                 return Some("MySQL".to_string());
             }
 
             // PostgreSQL
-            if body_lower.contains("postgresql") || 
-               body_lower.contains("psql") ||
-               body_lower.contains("pg_") {
+            if body_lower.contains("postgresql")
+                || body_lower.contains("psql")
+                || body_lower.contains("pg_")
+            {
                 return Some("PostgreSQL".to_string());
             }
 
             // MongoDB
-            if body_lower.contains("mongodb") || 
-               body_lower.contains("mongo error") {
+            if body_lower.contains("mongodb") || body_lower.contains("mongo error") {
                 return Some("MongoDB".to_string());
             }
 
             // Oracle
-            if body_lower.contains("ora-") || 
-               body_lower.contains("oracle") {
+            if body_lower.contains("ora-") || body_lower.contains("oracle") {
                 return Some("Oracle".to_string());
             }
 
             // Microsoft SQL Server
-            if body_lower.contains("mssql") || 
-               body_lower.contains("sql server") ||
-               body_lower.contains("microsoft ole db provider") {
+            if body_lower.contains("mssql")
+                || body_lower.contains("sql server")
+                || body_lower.contains("microsoft ole db provider")
+            {
                 return Some("MSSQL".to_string());
             }
 
@@ -208,7 +215,11 @@ impl TechStackDetector {
     }
 
     /// Detect programming language
-    fn detect_language(&self, headers: &[HashMap<String, String>], bodies: &[String]) -> Option<String> {
+    fn detect_language(
+        &self,
+        headers: &[HashMap<String, String>],
+        bodies: &[String],
+    ) -> Option<String> {
         // Check headers
         for header_map in headers {
             for (key, value) in header_map {
@@ -244,7 +255,8 @@ impl TechStackDetector {
                 return Some("PHP".to_string());
             } else if body_lower.contains("traceback") && body_lower.contains(".py") {
                 return Some("Python".to_string());
-            } else if body_lower.contains("at java.") || body_lower.contains("exception in thread") {
+            } else if body_lower.contains("at java.") || body_lower.contains("exception in thread")
+            {
                 return Some("Java".to_string());
             } else if body_lower.contains("error") && body_lower.contains(".rb") {
                 return Some("Ruby".to_string());
@@ -272,26 +284,28 @@ impl TechStackDetector {
 
                 // CDN detection
                 if (key_lower.contains("cf-ray") || value_lower.contains("cloudflare"))
-                    && !others.contains(&"Cloudflare CDN".to_string()) {
-                        others.push("Cloudflare CDN".to_string());
-                    }
+                    && !others.contains(&"Cloudflare CDN".to_string())
+                {
+                    others.push("Cloudflare CDN".to_string());
+                }
 
                 if (key_lower.contains("x-amz") || value_lower.contains("amazons3"))
-                    && !others.contains(&"AWS".to_string()) {
-                        others.push("AWS".to_string());
-                    }
+                    && !others.contains(&"AWS".to_string())
+                {
+                    others.push("AWS".to_string());
+                }
 
                 // WordPress
-                if value_lower.contains("wordpress")
-                    && !others.contains(&"WordPress".to_string()) {
-                        others.push("WordPress".to_string());
-                    }
+                if value_lower.contains("wordpress") && !others.contains(&"WordPress".to_string()) {
+                    others.push("WordPress".to_string());
+                }
 
                 // Load balancer
                 if (key_lower.contains("x-lb") || value_lower.contains("load-balancer"))
-                    && !others.contains(&"Load Balancer".to_string()) {
-                        others.push("Load Balancer".to_string());
-                    }
+                    && !others.contains(&"Load Balancer".to_string())
+                {
+                    others.push("Load Balancer".to_string());
+                }
             }
         }
 
@@ -300,29 +314,30 @@ impl TechStackDetector {
             let body_lower = body.to_lowercase();
 
             if (body_lower.contains("wp-content") || body_lower.contains("wp-includes"))
-                && !others.contains(&"WordPress".to_string()) {
-                    others.push("WordPress".to_string());
-                }
+                && !others.contains(&"WordPress".to_string())
+            {
+                others.push("WordPress".to_string());
+            }
 
-            if body_lower.contains("jquery")
-                && !others.contains(&"jQuery".to_string()) {
-                    others.push("jQuery".to_string());
-                }
+            if body_lower.contains("jquery") && !others.contains(&"jQuery".to_string()) {
+                others.push("jQuery".to_string());
+            }
 
             if (body_lower.contains("react") || body_lower.contains("reactjs"))
-                && !others.contains(&"React".to_string()) {
-                    others.push("React".to_string());
-                }
+                && !others.contains(&"React".to_string())
+            {
+                others.push("React".to_string());
+            }
 
             if (body_lower.contains("vue") || body_lower.contains("vuejs"))
-                && !others.contains(&"Vue.js".to_string()) {
-                    others.push("Vue.js".to_string());
-                }
+                && !others.contains(&"Vue.js".to_string())
+            {
+                others.push("Vue.js".to_string());
+            }
 
-            if body_lower.contains("angular")
-                && !others.contains(&"Angular".to_string()) {
-                    others.push("Angular".to_string());
-                }
+            if body_lower.contains("angular") && !others.contains(&"Angular".to_string()) {
+                others.push("Angular".to_string());
+            }
         }
 
         others
@@ -344,7 +359,7 @@ mod tests {
         let detector = TechStackDetector::new();
         let mut headers = HashMap::new();
         headers.insert("server".to_string(), "nginx/1.18.0".to_string());
-        
+
         let result = detector.detect_server(&[headers]);
         assert_eq!(result, Some("nginx".to_string()));
     }
@@ -354,7 +369,7 @@ mod tests {
         let detector = TechStackDetector::new();
         let mut headers = HashMap::new();
         headers.insert("X-Powered-By".to_string(), "Express".to_string());
-        
+
         let result = detector.detect_framework(&[headers], &[]);
         assert_eq!(result, Some("Express.js".to_string()));
     }
@@ -363,9 +378,8 @@ mod tests {
     fn test_detect_database() {
         let detector = TechStackDetector::new();
         let body = "Error: MySQL syntax error at line 1".to_string();
-        
+
         let result = detector.detect_database(&[body]);
         assert_eq!(result, Some("MySQL".to_string()));
     }
 }
-

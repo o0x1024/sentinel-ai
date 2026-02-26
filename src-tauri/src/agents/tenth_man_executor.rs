@@ -3,27 +3,26 @@
 //! This module contains the actual LLM execution logic for the Tenth Man tool.
 //! It's separated from the tool definition to avoid dependency issues.
 
+use once_cell::sync::Lazy;
 use sentinel_llm::{LlmClient, LlmConfig};
 use sentinel_tools::buildin_tools::tenth_man_tool::{
-    TenthManToolArgs, TenthManToolOutput, TenthManToolError, ReviewMode
+    ReviewMode, TenthManToolArgs, TenthManToolError, TenthManToolOutput,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use once_cell::sync::Lazy;
 use tauri::Manager;
+use tokio::sync::RwLock;
 
 /// Global LLM config storage for Tenth Man reviews (set per execution)
-static TENTH_MAN_CONFIGS: Lazy<Arc<RwLock<HashMap<String, LlmConfig>>>> = 
+static TENTH_MAN_CONFIGS: Lazy<Arc<RwLock<HashMap<String, LlmConfig>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// Global task context storage (for providing context to reviews)
-static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, String>>>> = 
+static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// Global AppHandle storage (for accessing database and sliding window)
-static APP_HANDLE: once_cell::sync::OnceCell<tauri::AppHandle> = 
-    once_cell::sync::OnceCell::new();
+static APP_HANDLE: once_cell::sync::OnceCell<tauri::AppHandle> = once_cell::sync::OnceCell::new();
 
 /// System prompt for quick review
 const TENTH_MAN_QUICK_REVIEW_PROMPT: &str = r#"You are the "Tenth Man" performing a rapid risk assessment.
@@ -93,24 +92,30 @@ async fn build_history_context(
     execution_id: &str,
     review_mode: &ReviewMode,
 ) -> Result<String, TenthManToolError> {
-    let app_handle = APP_HANDLE.get()
+    let app_handle = APP_HANDLE
+        .get()
         .ok_or_else(|| TenthManToolError::InternalError("AppHandle not initialized".to_string()))?;
-    
+
     match review_mode {
         ReviewMode::FullHistory => {
             // Use SlidingWindow to get complete context with smart summarization
             use crate::agents::sliding_window::SlidingWindowManager;
-            
+
             let sw = SlidingWindowManager::new(app_handle, execution_id, None)
                 .await
-                .map_err(|e| TenthManToolError::InternalError(format!("Failed to create SlidingWindow: {}", e)))?;
-            
+                .map_err(|e| {
+                    TenthManToolError::InternalError(format!(
+                        "Failed to create SlidingWindow: {}",
+                        e
+                    ))
+                })?;
+
             // Build context (includes global summary, segment summaries, recent messages)
             let context_messages = sw.build_context("");
-            
+
             // Format as text
             let mut history = String::new();
-            
+
             // Extract global summary from first system message
             if let Some(first) = context_messages.first() {
                 if first.role == "system" {
@@ -119,73 +124,77 @@ async fn build_history_context(
                     history.push_str("\n\n");
                 }
             }
-            
+
             // Format conversation history
             history.push_str("=== Conversation History ===\n");
             for (idx, msg) in context_messages.iter().enumerate().skip(1) {
-                history.push_str(&format!("\n[Message #{}] {}:\n", idx, msg.role.to_uppercase()));
+                history.push_str(&format!(
+                    "\n[Message #{}] {}:\n",
+                    idx,
+                    msg.role.to_uppercase()
+                ));
                 history.push_str(&msg.content);
-                
+
                 if let Some(ref tool_calls) = msg.tool_calls {
                     history.push_str(&format!("\n[Tool Calls]: {}", tool_calls));
                 }
-                
+
                 if let Some(ref reasoning) = msg.reasoning_content {
                     let reasoning_str: &str = reasoning;
                     if !reasoning_str.trim().is_empty() {
                         history.push_str(&format!("\n[Reasoning]: {}", reasoning));
                     }
                 }
-                
+
                 history.push_str("\n");
             }
-            
+
             Ok(history)
         }
-        
+
         ReviewMode::RecentMessages { count } => {
             // Get recent N messages from database
             use sentinel_db::Database;
-            
+
             let db = app_handle.state::<Arc<sentinel_db::DatabaseService>>();
-            let messages: Vec<sentinel_core::models::database::AiMessage> = db.get_ai_messages_by_conversation(execution_id)
+            let messages: Vec<sentinel_core::models::database::AiMessage> = db
+                .get_ai_messages_by_conversation(execution_id)
                 .await
-                .map_err(|e| TenthManToolError::InternalError(format!("Failed to get messages: {}", e)))?;
-            
-            let recent = messages.iter()
-                .rev()
-                .take(*count)
-                .rev()
-                .collect::<Vec<_>>();
-            
+                .map_err(|e| {
+                    TenthManToolError::InternalError(format!("Failed to get messages: {}", e))
+                })?;
+
+            let recent = messages.iter().rev().take(*count).rev().collect::<Vec<_>>();
+
             let mut history = String::new();
             history.push_str(&format!("=== Recent {} Messages ===\n", count));
-            
+
             for (idx, msg) in recent.iter().enumerate() {
-                history.push_str(&format!("\n[Message #{}] {} at {}:\n", 
-                    idx + 1, 
+                history.push_str(&format!(
+                    "\n[Message #{}] {} at {}:\n",
+                    idx + 1,
                     msg.role.to_uppercase(),
                     msg.timestamp.format("%Y-%m-%d %H:%M:%S")
                 ));
                 history.push_str(&msg.content);
-                
+
                 if let Some(ref tool_calls) = msg.tool_calls {
                     history.push_str(&format!("\n[Tool Calls]: {}", tool_calls));
                 }
-                
+
                 if let Some(ref reasoning) = msg.reasoning_content {
                     let reasoning_str: &str = reasoning;
                     if !reasoning_str.trim().is_empty() {
                         history.push_str(&format!("\n[Reasoning]: {}", reasoning));
                     }
                 }
-                
+
                 history.push_str("\n");
             }
-            
+
             Ok(history)
         }
-        
+
         ReviewMode::SpecificContent { content } => {
             // Backward compatible: directly return specified content
             Ok(content.clone())
@@ -196,74 +205,81 @@ async fn build_history_context(
 /// Assess risk level from critique content
 fn assess_risk_level(critique: &str) -> String {
     let critique_lower = critique.to_lowercase();
-    
+
     if critique.contains("无严重风险") || critique.contains("no significant risk") {
         return "none".to_string();
     }
-    
+
     // Critical risk indicators
-    if critique_lower.contains("critical") 
+    if critique_lower.contains("critical")
         || critique_lower.contains("严重")
         || critique_lower.contains("致命")
         || critique_lower.contains("危险")
-        || critique_lower.contains("disaster") {
+        || critique_lower.contains("disaster")
+    {
         return "critical".to_string();
     }
-    
+
     // High risk indicators
     if critique_lower.contains("high risk")
         || critique_lower.contains("高风险")
         || critique_lower.contains("重大缺陷")
-        || critique_lower.contains("major flaw") {
+        || critique_lower.contains("major flaw")
+    {
         return "high".to_string();
     }
-    
+
     // Medium risk indicators
     if critique_lower.contains("medium")
         || critique_lower.contains("中等")
-        || critique_lower.contains("potential issue") {
+        || critique_lower.contains("potential issue")
+    {
         return "medium".to_string();
     }
-    
+
     // Default to low risk if critique exists
     "low".to_string()
 }
 
 /// Execute Tenth Man review
-pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthManToolOutput, TenthManToolError> {
+pub async fn execute_tenth_man_review(
+    args: TenthManToolArgs,
+) -> Result<TenthManToolOutput, TenthManToolError> {
     tracing::info!(
         "Executing Tenth Man review - execution_id: {}, review_type: {}, review_mode: {:?}",
         args.execution_id,
         args.review_type,
         args.review_mode
     );
-    
+
     // Get LLM config for this execution
     let config = {
         let configs = TENTH_MAN_CONFIGS.read().await;
         configs.get(&args.execution_id).cloned()
     };
-    
+
     let Some(config) = config else {
         return Err(TenthManToolError::ConfigNotFound(args.execution_id.clone()));
     };
-    
+
     // Get task context
     let task_context = {
         let contexts = TASK_CONTEXTS.read().await;
-        contexts.get(&args.execution_id)
+        contexts
+            .get(&args.execution_id)
             .cloned()
             .unwrap_or_else(|| "Unknown task".to_string())
     };
-    
+
     // Build history context based on review mode
     let history_context = build_history_context(&args.execution_id, &args.review_mode).await?;
-    
+
     // Build review prompt
-    let focus_area = args.focus_area
+    let focus_area = args
+        .focus_area
         .as_deref()
         .unwrap_or("overall approach and execution process");
-    
+
     let review_prompt = match args.review_type.as_str() {
         "quick" => {
             format!(
@@ -278,22 +294,22 @@ pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthMan
             )
         }
     };
-    
+
     let system_prompt = match args.review_type.as_str() {
         "quick" => TENTH_MAN_QUICK_REVIEW_PROMPT,
         "full" | _ => TENTH_MAN_FULL_REVIEW_PROMPT,
     };
-    
+
     // Perform review
     let client = LlmClient::new(config);
     let critique = client
         .completion(Some(system_prompt), &review_prompt)
         .await
         .map_err(|e| TenthManToolError::ReviewFailed(e.to_string()))?;
-    
+
     // Assess risk level
     let risk_level = assess_risk_level(&critique);
-    
+
     // Check if no risk found
     let success = !critique.trim().is_empty();
     let message = if risk_level == "none" {
@@ -301,7 +317,7 @@ pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthMan
     } else {
         format!("Review completed - Risk level: {}", risk_level)
     };
-    
+
     tracing::info!(
         "Tenth Man review completed - execution_id: {}, risk_level: {}, history_length: {}, critique_length: {}",
         args.execution_id,
@@ -309,7 +325,7 @@ pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthMan
         history_context.len(),
         critique.len()
     );
-    
+
     Ok(TenthManToolOutput {
         success,
         critique: Some(critique),
@@ -321,11 +337,12 @@ pub async fn execute_tenth_man_review(args: TenthManToolArgs) -> Result<TenthMan
 /// Initialize Tenth Man executor
 pub fn init_tenth_man_executor() {
     use sentinel_tools::buildin_tools::tenth_man_tool::set_tenth_man_executor;
-    
+
     let executor = std::sync::Arc::new(|args: TenthManToolArgs| {
-        Box::pin(execute_tenth_man_review(args)) as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+        Box::pin(execute_tenth_man_review(args))
+            as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
     });
-    
+
     set_tenth_man_executor(executor);
     tracing::info!("Tenth Man executor initialized");
 }

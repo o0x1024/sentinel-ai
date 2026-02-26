@@ -276,6 +276,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'session-created', sessionId: string): void
+  (e: 'templates-updated', templateId?: string): void
 }>()
 
 // ==================== State ====================
@@ -343,7 +344,7 @@ function handleEditTemplate(tpl: AgentTeamTemplate) {
 
 async function handleClone(tpl: AgentTeamTemplate) {
   try {
-    await agentTeamApi.createTemplate({
+    const created = await agentTeamApi.createTemplate({
       name: `${tpl.name} (副本)`,
       description: tpl.description,
       domain: tpl.domain,
@@ -357,7 +358,9 @@ async function handleClone(tpl: AgentTeamTemplate) {
         sort_order: m.sort_order,
       })),
     })
+    selectedId.value = created.id
     await loadTemplates()
+    emit('templates-updated', created.id)
   } catch (e) {
     console.error('[TemplateLibrary] Clone failed:', e)
   }
@@ -374,6 +377,7 @@ async function confirmDelete() {
     await agentTeamApi.deleteTemplate(deletingTemplate.value.id)
     templates.value = templates.value.filter(t => t.id !== deletingTemplate.value!.id)
     deletingTemplate.value = null
+    emit('templates-updated')
   } catch (e) {
     console.error('[TemplateLibrary] Delete failed:', e)
   } finally {
@@ -381,15 +385,20 @@ async function confirmDelete() {
   }
 }
 
-async function handleTemplateSaved() {
+async function handleTemplateSaved(template: AgentTeamTemplate) {
   showCreateModal.value = false
   editingTemplate.value = null
+  if (template?.id) {
+    selectedId.value = template.id
+  }
   await loadTemplates()
+  emit('templates-updated', template?.id)
 }
 
 async function handleAiTemplateSaved(template: AgentTeamTemplate) {
   templates.value.unshift(template)
   selectedId.value = template.id
+  emit('templates-updated', template.id)
 }
 
 function handleSessionCreated(sessionId: string) {

@@ -7,17 +7,23 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{ChatMessage, LlmConfig};
-use sentinel_tools::output_storage::{get_host_context_dir, get_history_path, CONTAINER_CONTEXT_DIR};
+use sentinel_tools::output_storage::{
+    get_history_path, get_host_context_dir, CONTAINER_CONTEXT_DIR,
+};
 use sentinel_tools::shell::ShellExecutionMode;
 
-use crate::agents::context_engineering::checkpoint::{load_or_init_run_state, save_run_state, ContextRunState};
+use crate::agents::context_engineering::checkpoint::{
+    load_or_init_run_state, save_run_state, ContextRunState,
+};
 use crate::agents::context_engineering::memory_index::{
-    ingest_memory_items_persistent,
-    retrieve_memory_items_hybrid, evict_low_value_items, MemoryQuery,
+    evict_low_value_items, ingest_memory_items_persistent, retrieve_memory_items_hybrid,
+    MemoryQuery,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
-use crate::agents::context_engineering::token_utils::{estimate_tokens, estimate_message_tokens, SYSTEM_MESSAGE_OVERHEAD_TOKENS};
+use crate::agents::context_engineering::token_utils::{
+    estimate_message_tokens, estimate_tokens, SYSTEM_MESSAGE_OVERHEAD_TOKENS,
+};
 use crate::agents::context_engineering::tool_digest::condense_text;
 use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
 use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
@@ -56,7 +62,8 @@ struct ExecutionContext {
 }
 
 async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
-    let shell_config = if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+    let shell_config = if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()
+    {
         crate::commands::tool_commands::agent_config::load_shell_config_from_db(&db).await
     } else {
         sentinel_tools::shell::get_shell_config().await
@@ -95,9 +102,15 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let mut system_prompt = input.base_system_prompt;
     let execution_context = resolve_execution_context(&input.app_handle).await;
     let mut policy = input.policy.clone();
-    if let Some(db) = input.app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+    if let Some(db) = input
+        .app_handle
+        .try_state::<Arc<sentinel_db::DatabaseService>>()
+    {
         if let Ok(Some(raw)) = db.get_config("agent", "context_packet_v2_enabled").await {
-            let enabled = matches!(raw.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on");
+            let enabled = matches!(
+                raw.trim().to_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
             policy.feature_context_packet_v2 = enabled;
         }
     }
@@ -211,7 +224,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     if policy.include_working_dir {
-        if let Some(db) = input.app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        if let Some(db) = input
+            .app_handle
+            .try_state::<Arc<sentinel_db::DatabaseService>>()
+        {
             let configured_dir_agent = db
                 .get_config("agent", "working_directory")
                 .await
@@ -225,8 +241,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 .flatten()
                 .filter(|dir| !dir.trim().is_empty());
             let configured_dir = configured_dir_agent.or(configured_dir_legacy_ai);
-            let working_dir = configured_dir
-                .unwrap_or_else(|| execution_context.context_dir.clone());
+            let working_dir =
+                configured_dir.unwrap_or_else(|| execution_context.context_dir.clone());
 
             system_prompt.push_str(&format!(
                 "\n\n[Execution Environment]\n\
@@ -239,7 +255,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 execution_context.os_name,
                 working_dir
             ));
-            tracing::info!("Injected working directory into system prompt: {}", working_dir);
+            tracing::info!(
+                "Injected working directory into system prompt: {}",
+                working_dir
+            );
         }
     }
 
@@ -331,12 +350,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         ..Default::default()
     };
 
-    let mut sliding_window = SlidingWindowManager::new(
-        &input.app_handle,
-        &input.execution_id,
-        Some(sw_config),
-    )
-    .await?;
+    let mut sliding_window =
+        SlidingWindowManager::new(&input.app_handle, &input.execution_id, Some(sw_config)).await?;
 
     if let Err(e) = sliding_window.compress_if_needed(&input.llm_config).await {
         tracing::warn!("Sliding window compression failed: {}", e);
@@ -348,12 +363,16 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 ExecutionEnvironment::Docker => {
                     if let Some(ref docker_config) = execution_context.docker_config {
                         let sandbox = sentinel_tools::DockerSandbox::new(docker_config.clone());
-                        let history_path = get_history_path(CONTAINER_CONTEXT_DIR, Some(&input.execution_id));
-                        if let Err(e) = sentinel_tools::output_storage::store_history_in_container_with_id(
-                            &sandbox,
-                            &history_content,
-                            Some(&input.execution_id),
-                        ).await {
+                        let history_path =
+                            get_history_path(CONTAINER_CONTEXT_DIR, Some(&input.execution_id));
+                        if let Err(e) =
+                            sentinel_tools::output_storage::store_history_in_container_with_id(
+                                &sandbox,
+                                &history_content,
+                                Some(&input.execution_id),
+                            )
+                            .await
+                        {
                             tracing::warn!("Failed to store history in container: {}", e);
                         } else {
                             tracing::info!(
@@ -364,17 +383,17 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                     }
                 }
                 ExecutionEnvironment::Host => {
-                    let history_path = get_history_path(&execution_context.context_dir, Some(&input.execution_id));
+                    let history_path =
+                        get_history_path(&execution_context.context_dir, Some(&input.execution_id));
                     if let Err(e) = sentinel_tools::output_storage::store_history_on_host(
                         &history_content,
                         Some(&input.execution_id),
-                    ).await {
+                    )
+                    .await
+                    {
                         tracing::warn!("Failed to store history on host: {}", e);
                     } else {
-                        tracing::info!(
-                            "Conversation history exported to host: {}",
-                            history_path
-                        );
+                        tracing::info!("Conversation history exported to host: {}", history_path);
                     }
                 }
             }
@@ -382,13 +401,13 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     }
 
     let context_messages = sliding_window.build_context(&packet.system_instructions);
-    let (mut system_prompt_content, mut history_messages) = split_context_messages(
-        &packet.system_instructions,
-        context_messages,
-    );
+    let (mut system_prompt_content, mut history_messages) =
+        split_context_messages(&packet.system_instructions, context_messages);
 
     if history_messages.is_empty() {
-        if let Some(fallback) = load_fallback_history(&input.app_handle, &input.execution_id, 6).await {
+        if let Some(fallback) =
+            load_fallback_history(&input.app_handle, &input.execution_id, 6).await
+        {
             history_messages = fallback;
         }
     }
@@ -398,12 +417,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     // Single system prompt trim pass (after sliding window summaries are included)
     let summary_stats = sliding_window.summary_stats();
-    let summary_overhead = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
+    let summary_overhead =
+        summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
     let effective_system_budget = budget.system_max_tokens + summary_overhead;
     let system_budget_cap = (safe_limit as f64 * 0.55) as usize;
     let final_system_budget = effective_system_budget.min(system_budget_cap);
 
-    let mut system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
+    let mut system_tokens =
+        estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
     if system_tokens > final_system_budget {
         let current_chars = system_prompt_content.chars().count().max(1);
         let ratio = final_system_budget as f64 / system_tokens as f64;
@@ -455,9 +476,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         trim_trace.push("trimmed_tool_digests".to_string());
     }
 
-    let history_tokens: usize = history_messages.iter()
-        .map(estimate_message_tokens)
-        .sum();
+    let history_tokens: usize = history_messages.iter().map(estimate_message_tokens).sum();
     let available_for_history = safe_limit
         .saturating_sub(system_tokens)
         .saturating_sub(run_state_tokens)
@@ -478,9 +497,14 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     packet.system_instructions = system_prompt_content.clone();
     packet.window_messages = history_messages.clone();
 
-    let system_prompt_tokens = estimate_tokens(&packet.render_system_prompt()) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
+    let system_prompt_tokens =
+        estimate_tokens(&packet.render_system_prompt()) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
     let summary_tokens = summary_stats.global_summary_tokens + summary_stats.segment_summary_tokens;
-    let history_tokens: usize = packet.window_messages.iter().map(estimate_message_tokens).sum();
+    let history_tokens: usize = packet
+        .window_messages
+        .iter()
+        .map(estimate_message_tokens)
+        .sum();
     let used_tokens = system_prompt_tokens + history_tokens;
     let usage_percentage = if max_tokens > 0 {
         (used_tokens as f64 / max_tokens as f64 * 100.0).min(100.0)
@@ -609,11 +633,7 @@ fn render_run_state(
         if !items.is_empty() {
             out.push_str("Todos Summary:\n");
             for item in items.iter().take(8) {
-                out.push_str(&format!(
-                    "- [{}] {}",
-                    item.status,
-                    item.description.trim()
-                ));
+                out.push_str(&format!("- [{}] {}", item.status, item.description.trim()));
                 if let Some(result) = item.result.as_ref().filter(|r| !r.trim().is_empty()) {
                     out.push_str(&format!(" (result: {})", condense_text(result, 120)));
                 }
@@ -625,7 +645,11 @@ fn render_run_state(
         }
     }
     out.push_str(&format!("Task Brief: {}\n", state.task_brief));
-    if let Some(plan) = state.current_plan.as_ref().filter(|plan| !plan.trim().is_empty()) {
+    if let Some(plan) = state
+        .current_plan
+        .as_ref()
+        .filter(|plan| !plan.trim().is_empty())
+    {
         out.push_str(&format!("Current Plan: {}\n", condense_text(plan, 280)));
     }
     if !state.selected_tools.is_empty() {
@@ -643,11 +667,7 @@ fn build_todos_context(items: &[AgentTodoItem], max_chars: usize) -> String {
     let mut out = String::new();
     out.push_str("\n\n[Todos]\n");
     for item in items.iter().take(20) {
-        out.push_str(&format!(
-            "- [{}] {}",
-            item.status,
-            item.description.trim()
-        ));
+        out.push_str(&format!("- [{}] {}", item.status, item.description.trim()));
         if let Some(result) = item.result.as_ref().filter(|r| !r.trim().is_empty()) {
             out.push_str(&format!(" (result: {})", condense_text(result, 160)));
         }
@@ -680,7 +700,10 @@ async fn load_fallback_history(
     limit: usize,
 ) -> Option<Vec<ChatMessage>> {
     let db = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()?;
-    let messages = db.get_ai_messages_by_conversation(execution_id).await.ok()?;
+    let messages = db
+        .get_ai_messages_by_conversation(execution_id)
+        .await
+        .ok()?;
     if messages.is_empty() {
         return None;
     }
@@ -741,16 +764,12 @@ fn run_state_block_target_chars(max_tokens: usize, target_tokens: usize) -> usiz
     chars.max(200)
 }
 
-async fn get_provider_max_context_length(
-    app_handle: &AppHandle,
-    provider: &str,
-) -> Result<u32> {
+async fn get_provider_max_context_length(app_handle: &AppHandle, provider: &str) -> Result<u32> {
     if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
         if let Ok(Some(config_str)) = db.get_config_internal("ai", "providers_config").await {
-            if let Ok(providers) =
-                serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(
-                    &config_str,
-                )
+            if let Ok(providers) = serde_json::from_str::<
+                std::collections::HashMap<String, serde_json::Value>,
+            >(&config_str)
             {
                 for (key, value) in providers.iter() {
                     if key.to_lowercase() == provider.to_lowercase() {

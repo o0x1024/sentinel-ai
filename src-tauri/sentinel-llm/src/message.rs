@@ -374,17 +374,21 @@ impl ImageAttachment {
 
 /// 构建用户消息（可能包含图片）
 pub fn build_user_message(user_prompt: &str, image: Option<&ImageAttachment>) -> Message {
+    // Some OpenAI-compatible providers reject empty text content.
+    let safe_prompt = user_prompt.trim();
+    let text = if safe_prompt.is_empty() { "." } else { safe_prompt };
+
     if let Some(img) = image {
         Message::User {
             content: OneOrMany::many(vec![
                 UserContent::Image(img.to_rig_image()),
-                UserContent::text(user_prompt.to_string()),
+                UserContent::text(text.to_string()),
             ])
             .expect("Failed to create multi-content message"),
         }
     } else {
         Message::User {
-            content: OneOrMany::one(UserContent::text(user_prompt.to_string())),
+            content: OneOrMany::one(UserContent::text(text.to_string())),
         }
     }
 }

@@ -1,13 +1,13 @@
 use anyhow::anyhow;
 use chrono::Utc;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use sentinel_core::global_proxy;
 use sentinel_db::core::models::scan_session::{
     CreateScanSessionRequest, ScanSession, ScanSessionStatus, UpdateScanSessionRequest,
 };
 use sentinel_db::Database;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
@@ -231,23 +231,34 @@ pub async fn llm_test_create_run(
     request: CreateLlmTestRunRequest,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<LlmTestResponse<LlmTestRunCreated>, String> {
-    log::info!("llm_test_create_run: suite_id={}, endpoint={}", request.suite_id, request.target.endpoint);
-    log::debug!("llm_test_create_run: auth type = {:?}, adapter present = {}",
+    log::info!(
+        "llm_test_create_run: suite_id={}, endpoint={}",
+        request.suite_id,
+        request.target.endpoint
+    );
+    log::debug!(
+        "llm_test_create_run: auth type = {:?}, adapter present = {}",
         request.auth.as_ref().map(|a| &a.auth_type),
-        request.adapter.is_some());
+        request.adapter.is_some()
+    );
 
     let summary = format!(
         "LLM security run for suite {} ({})",
         request.suite_id, request.target.endpoint
     );
 
-    let config = serde_json::to_value(&request)
-        .map_err(|e| format!("序列化测试运行配置失败: {}", e))?;
+    let config =
+        serde_json::to_value(&request).map_err(|e| format!("序列化测试运行配置失败: {}", e))?;
 
-    log::debug!("llm_test_create_run: stored config keys = {:?}",
-        config.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    log::debug!(
+        "llm_test_create_run: stored config keys = {:?}",
+        config.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
     if let Some(adapter_val) = config.get("adapter") {
-        log::debug!("llm_test_create_run: adapter value in config = {}", adapter_val);
+        log::debug!(
+            "llm_test_create_run: adapter value in config = {}",
+            adapter_val
+        );
     }
 
     let session_req = CreateScanSessionRequest {
@@ -268,7 +279,10 @@ pub async fn llm_test_create_run(
             status: "created".to_string(),
             created_at: session.created_at,
         })),
-        Err(e) => Ok(LlmTestResponse::err(format!("创建 LLM 测试运行失败: {}", e))),
+        Err(e) => Ok(LlmTestResponse::err(format!(
+            "创建 LLM 测试运行失败: {}",
+            e
+        ))),
     }
 }
 
@@ -429,8 +443,11 @@ pub async fn llm_test_execute_cases(
                         stopped_early = true;
                     }
                 }
-                summary =
-                    append_case_result_to_summary(Some(summary), &case_result, batch_case.owasp.as_ref());
+                summary = append_case_result_to_summary(
+                    Some(summary),
+                    &case_result,
+                    batch_case.owasp.as_ref(),
+                );
                 results.push(case_result);
             }
             Err(e) => {
@@ -449,8 +466,11 @@ pub async fn llm_test_execute_cases(
                     assertion_results: vec![],
                     evidence_ref: format!("evd_{}", Uuid::new_v4()),
                 };
-                summary =
-                    append_case_result_to_summary(Some(summary), &err_case, batch_case.owasp.as_ref());
+                summary = append_case_result_to_summary(
+                    Some(summary),
+                    &err_case,
+                    batch_case.owasp.as_ref(),
+                );
                 results.push(err_case);
             }
         }
@@ -670,23 +690,46 @@ async fn execute_case_with_adapter(
     case_id: &str,
     request: &ExecuteLlmTestCaseRequest,
 ) -> anyhow::Result<ExecuteLlmTestCaseResponse> {
-    log::info!("execute_case_with_adapter: run_id={}, case_id={}", run_id, case_id);
-    log::debug!("execute_case_with_adapter: session config keys = {:?}", session.config.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    log::info!(
+        "execute_case_with_adapter: run_id={}, case_id={}",
+        run_id,
+        case_id
+    );
+    log::debug!(
+        "execute_case_with_adapter: session config keys = {:?}",
+        session
+            .config
+            .as_object()
+            .map(|o| o.keys().collect::<Vec<_>>())
+    );
 
     let target = parse_target_from_config(&session.config)?;
-    log::debug!("execute_case_with_adapter: target endpoint = {}", target.endpoint);
+    log::debug!(
+        "execute_case_with_adapter: target endpoint = {}",
+        target.endpoint
+    );
 
     let execution = parse_execution_from_config(&session.config)?;
     let auth = parse_auth_from_config(&session.config)?;
-    log::debug!("execute_case_with_adapter: auth present = {}", auth.is_some());
+    log::debug!(
+        "execute_case_with_adapter: auth present = {}",
+        auth.is_some()
+    );
 
     let adapter = parse_adapter_from_config(&session.config)?.unwrap_or_default();
-    log::debug!("execute_case_with_adapter: adapter template present = {}, custom_headers present = {}",
-        adapter.message_template.is_some(), adapter.custom_headers.is_some());
+    log::debug!(
+        "execute_case_with_adapter: adapter template present = {}, custom_headers present = {}",
+        adapter.message_template.is_some(),
+        adapter.custom_headers.is_some()
+    );
 
     let timeout_ms = execution.timeout_ms.unwrap_or(30_000);
     let max_retries = execution.max_retries.unwrap_or(0);
-    log::debug!("execute_case_with_adapter: timeout_ms={}, max_retries={}", timeout_ms, max_retries);
+    log::debug!(
+        "execute_case_with_adapter: timeout_ms={}, max_retries={}",
+        timeout_ms,
+        max_retries
+    );
 
     let idempotency_key = request
         .idempotency_key
@@ -695,9 +738,11 @@ async fn execute_case_with_adapter(
 
     let adapter_payload =
         build_adapter_payload(&session.config, run_id, case_id, request, &adapter)?;
-    let rendered_header_values = build_render_placeholders(&session.config, run_id, case_id, request)?;
+    let rendered_header_values =
+        build_render_placeholders(&session.config, run_id, case_id, request)?;
 
-    let client_builder = reqwest::Client::builder().timeout(std::time::Duration::from_millis(timeout_ms));
+    let client_builder =
+        reqwest::Client::builder().timeout(std::time::Duration::from_millis(timeout_ms));
     let client_builder = global_proxy::apply_proxy_to_client(client_builder).await;
     let client = client_builder
         .build()
@@ -708,7 +753,12 @@ async fn execute_case_with_adapter(
     let mut latency_ms = 0_u128;
 
     for attempt in 0..=max_retries {
-        log::info!("execute_case_with_adapter: attempt {}/{} for case {}", attempt, max_retries, case_id);
+        log::info!(
+            "execute_case_with_adapter: attempt {}/{} for case {}",
+            attempt,
+            max_retries,
+            case_id
+        );
         let start = std::time::Instant::now();
         let mut req = client
             .post(&target.endpoint)
@@ -719,28 +769,49 @@ async fn execute_case_with_adapter(
             .header("Idempotency-Key", &idempotency_key)
             .json(&adapter_payload);
 
-        req = apply_custom_headers(req, adapter.custom_headers.as_ref(), &rendered_header_values)?;
+        req = apply_custom_headers(
+            req,
+            adapter.custom_headers.as_ref(),
+            &rendered_header_values,
+        )?;
         req = apply_auth(req, auth.as_ref())?;
 
-        log::debug!("execute_case_with_adapter: sending POST to {}", target.endpoint);
+        log::debug!(
+            "execute_case_with_adapter: sending POST to {}",
+            target.endpoint
+        );
         let resp = req.send().await;
 
         match resp {
             Ok(response) => {
                 latency_ms = start.elapsed().as_millis();
                 let status = response.status().as_u16();
-                log::info!("execute_case_with_adapter: case {} got HTTP {} in {}ms", case_id, status, latency_ms);
+                log::info!(
+                    "execute_case_with_adapter: case {} got HTTP {} in {}ms",
+                    case_id,
+                    status,
+                    latency_ms
+                );
 
                 if response.status().is_success() {
                     raw_output = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-                    log::debug!("execute_case_with_adapter: case {} response body length = {}", case_id, raw_output.to_string().len());
+                    log::debug!(
+                        "execute_case_with_adapter: case {} response body length = {}",
+                        case_id,
+                        raw_output.to_string().len()
+                    );
                     last_error = None;
                     break;
                 }
 
                 if !is_retryable_status(status) || attempt == max_retries {
                     let body_text = response.text().await.unwrap_or_default();
-                    log::warn!("execute_case_with_adapter: case {} non-retryable error {}: {}", case_id, status, body_text.chars().take(200).collect::<String>());
+                    log::warn!(
+                        "execute_case_with_adapter: case {} non-retryable error {}: {}",
+                        case_id,
+                        status,
+                        body_text.chars().take(200).collect::<String>()
+                    );
                     last_error = Some(anyhow!(
                         "目标应用返回错误 {}: {}",
                         status,
@@ -748,11 +819,21 @@ async fn execute_case_with_adapter(
                     ));
                     break;
                 }
-                log::debug!("execute_case_with_adapter: case {} retryable status {}, will retry", case_id, status);
+                log::debug!(
+                    "execute_case_with_adapter: case {} retryable status {}, will retry",
+                    case_id,
+                    status
+                );
             }
             Err(e) => {
                 latency_ms = start.elapsed().as_millis();
-                log::warn!("execute_case_with_adapter: case {} request failed: {} (attempt {}/{})", case_id, e, attempt, max_retries);
+                log::warn!(
+                    "execute_case_with_adapter: case {} request failed: {} (attempt {}/{})",
+                    case_id,
+                    e,
+                    attempt,
+                    max_retries
+                );
                 if attempt == max_retries {
                     last_error = Some(anyhow!("请求目标应用失败: {}", e));
                     break;
@@ -850,8 +931,7 @@ fn evaluate_assertions(
     // Only match against the extracted model content to avoid false positives
     // from API metadata fields (role, model, id, finish_reason, etc.).
     let haystack = if let Some(path) = response_extract_path.filter(|p| !p.is_empty()) {
-        extract_by_path(output, path)
-            .unwrap_or_else(|| extract_output_text(output))
+        extract_by_path(output, path).unwrap_or_else(|| extract_output_text(output))
     } else {
         extract_output_text(output)
     };
@@ -863,7 +943,10 @@ fn evaluate_assertions(
                 let (passed, reason) = match Regex::new(&pattern) {
                     Ok(re) => {
                         if re.is_match(&haystack) {
-                            (false, Some("forbidden pattern found in model response".to_string()))
+                            (
+                                false,
+                                Some("forbidden pattern found in model response".to_string()),
+                            )
                         } else {
                             (true, None)
                         }
@@ -884,7 +967,10 @@ fn evaluate_assertions(
                         if re.is_match(&haystack) {
                             (true, None)
                         } else {
-                            (false, Some("required pattern not found in model response".to_string()))
+                            (
+                                false,
+                                Some("required pattern not found in model response".to_string()),
+                            )
                         }
                     }
                     Err(e) => (false, Some(format!("invalid regex pattern: {}", e))),
@@ -980,11 +1066,7 @@ fn append_case_result_to_summary(
         summary[pass_or_fail_key] = json!(1_u64);
     }
 
-    if !summary
-        .get("cases")
-        .and_then(Value::as_array)
-        .is_some()
-    {
+    if !summary.get("cases").and_then(Value::as_array).is_some() {
         summary["cases"] = json!([]);
     }
 
@@ -1291,16 +1373,19 @@ pub async fn llm_test_list_suites(
             .fetch_all(p)
             .await
             .map_err(|e| format!("查询测试套件失败: {}", e))?;
-            raw_rows.iter().map(|row| {
-                use sqlx::Row;
-                LlmTestSuiteRow {
-                    id: row.get("id"),
-                    name: row.get("name"),
-                    version: row.get("version"),
-                    description: row.get("description"),
-                    cases: row.get("cases"),
-                }
-            }).collect()
+            raw_rows
+                .iter()
+                .map(|row| {
+                    use sqlx::Row;
+                    LlmTestSuiteRow {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        version: row.get("version"),
+                        description: row.get("description"),
+                        cases: row.get("cases"),
+                    }
+                })
+                .collect()
         }
         sentinel_db::database_service::connection_manager::DatabasePool::SQLite(p) => {
             let raw_rows = sqlx::query(
@@ -1309,16 +1394,19 @@ pub async fn llm_test_list_suites(
             .fetch_all(p)
             .await
             .map_err(|e| format!("查询测试套件失败: {}", e))?;
-            raw_rows.iter().map(|row| {
-                use sqlx::Row;
-                LlmTestSuiteRow {
-                    id: row.get("id"),
-                    name: row.get("name"),
-                    version: row.get("version"),
-                    description: row.get("description"),
-                    cases: row.get("cases"),
-                }
-            }).collect()
+            raw_rows
+                .iter()
+                .map(|row| {
+                    use sqlx::Row;
+                    LlmTestSuiteRow {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        version: row.get("version"),
+                        description: row.get("description"),
+                        cases: row.get("cases"),
+                    }
+                })
+                .collect()
         }
         sentinel_db::database_service::connection_manager::DatabasePool::MySQL(p) => {
             let raw_rows = sqlx::query(
@@ -1327,16 +1415,19 @@ pub async fn llm_test_list_suites(
             .fetch_all(p)
             .await
             .map_err(|e| format!("查询测试套件失败: {}", e))?;
-            raw_rows.iter().map(|row| {
-                use sqlx::Row;
-                LlmTestSuiteRow {
-                    id: row.get("id"),
-                    name: row.get("name"),
-                    version: row.get("version"),
-                    description: row.get("description"),
-                    cases: row.get("cases"),
-                }
-            }).collect()
+            raw_rows
+                .iter()
+                .map(|row| {
+                    use sqlx::Row;
+                    LlmTestSuiteRow {
+                        id: row.get("id"),
+                        name: row.get("name"),
+                        version: row.get("version"),
+                        description: row.get("description"),
+                        cases: row.get("cases"),
+                    }
+                })
+                .collect()
         }
     };
 
@@ -1406,17 +1497,23 @@ pub async fn llm_test_delete_suite(
     match &pool {
         sentinel_db::database_service::connection_manager::DatabasePool::PostgreSQL(p) => {
             sqlx::query("DELETE FROM llm_test_suites WHERE id = $1")
-                .bind(&suite_id).execute(p).await
+                .bind(&suite_id)
+                .execute(p)
+                .await
                 .map_err(|e| format!("删除测试套件失败: {}", e))?;
         }
         sentinel_db::database_service::connection_manager::DatabasePool::SQLite(p) => {
             sqlx::query("DELETE FROM llm_test_suites WHERE id = ?")
-                .bind(&suite_id).execute(p).await
+                .bind(&suite_id)
+                .execute(p)
+                .await
                 .map_err(|e| format!("删除测试套件失败: {}", e))?;
         }
         sentinel_db::database_service::connection_manager::DatabasePool::MySQL(p) => {
             sqlx::query("DELETE FROM llm_test_suites WHERE id = ?")
-                .bind(&suite_id).execute(p).await
+                .bind(&suite_id)
+                .execute(p)
+                .await
                 .map_err(|e| format!("删除测试套件失败: {}", e))?;
         }
     }

@@ -203,8 +203,7 @@ impl MemoryKnowledgeGraph {
                 for j in (i + 1)..mentioners.len() {
                     let a = mentioners[i];
                     let b = mentioners[j];
-                    if self.graph.find_edge(a, b).is_none()
-                        && self.graph.find_edge(b, a).is_none()
+                    if self.graph.find_edge(a, b).is_none() && self.graph.find_edge(b, a).is_none()
                     {
                         self.graph.add_edge(
                             a,
@@ -314,7 +313,11 @@ impl MemoryKnowledgeGraph {
         }
 
         extra.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        extra.into_iter().take(max_extra).map(|(id, _)| id).collect()
+        extra
+            .into_iter()
+            .take(max_extra)
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// Find memories that contradict the given node.
@@ -412,7 +415,17 @@ fn extract_entities(text: &str) -> Vec<String> {
     // Extract file paths / URLs
     for word in lower.split_whitespace() {
         if (word.contains('/') || word.contains('\\')) && word.len() > 3 {
-            entities.push(word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '\\' && c != '.' && c != '_' && c != '-').to_string());
+            entities.push(
+                word.trim_matches(|c: char| {
+                    !c.is_alphanumeric()
+                        && c != '/'
+                        && c != '\\'
+                        && c != '.'
+                        && c != '_'
+                        && c != '-'
+                })
+                .to_string(),
+            );
         }
         if word.starts_with("http://") || word.starts_with("https://") {
             entities.push(word.to_string());
@@ -466,9 +479,27 @@ mod tests {
     fn basic_graph_operations() {
         let mut kg = MemoryKnowledgeGraph::new();
         let items = vec![
-            ("1".into(), "Use LanceDB for vector storage".into(), "decision".into(), 4u8, 1000i64),
-            ("2".into(), "LanceDB supports HNSW index".into(), "fact".into(), 3, 2000),
-            ("3".into(), "Remove LanceDB dependency".into(), "decision".into(), 3, 3000),
+            (
+                "1".into(),
+                "Use LanceDB for vector storage".into(),
+                "decision".into(),
+                4u8,
+                1000i64,
+            ),
+            (
+                "2".into(),
+                "LanceDB supports HNSW index".into(),
+                "fact".into(),
+                3,
+                2000,
+            ),
+            (
+                "3".into(),
+                "Remove LanceDB dependency".into(),
+                "decision".into(),
+                3,
+                3000,
+            ),
         ];
         kg.build_from_items(&items);
 
@@ -489,9 +520,27 @@ mod tests {
     fn expand_related_returns_extras() {
         let mut kg = MemoryKnowledgeGraph::new();
         let items = vec![
-            ("a".into(), "Configure petgraph for CPG analysis".into(), "fact".into(), 3u8, 100i64),
-            ("b".into(), "petgraph supports BFS traversal".into(), "fact".into(), 3, 200),
-            ("c".into(), "Unrelated memory about testing".into(), "fact".into(), 2, 300),
+            (
+                "a".into(),
+                "Configure petgraph for CPG analysis".into(),
+                "fact".into(),
+                3u8,
+                100i64,
+            ),
+            (
+                "b".into(),
+                "petgraph supports BFS traversal".into(),
+                "fact".into(),
+                3,
+                200,
+            ),
+            (
+                "c".into(),
+                "Unrelated memory about testing".into(),
+                "fact".into(),
+                2,
+                300,
+            ),
         ];
         kg.build_from_items(&items);
 
@@ -502,7 +551,8 @@ mod tests {
 
     #[test]
     fn entity_extraction() {
-        let entities = extract_entities("Use `LanceDB` for storage at /tmp/data with MyConfig setting");
+        let entities =
+            extract_entities("Use `LanceDB` for storage at /tmp/data with MyConfig setting");
         assert!(entities.iter().any(|e| e.contains("LanceDB")));
         assert!(entities.iter().any(|e| e.contains("MyConfig")));
         assert!(entities.iter().any(|e| e.contains("/tmp/data")));
