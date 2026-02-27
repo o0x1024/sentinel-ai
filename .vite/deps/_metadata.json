@@ -1,0 +1,55 @@
+{
+  "hash": "9ef9ce36",
+  "configHash": "997beec5",
+  "lockfileHash": "03525c62",
+  "browserHash": "f57ad5d2",
+  "optimized": {
+    "vue": {
+      "src": "../../node_modules/vue/dist/vue.runtime.esm-bundler.js",
+      "file": "vue.js",
+      "fileHash": "0d1f40ca",
+      "needsInterop": false
+    },
+    "pinia": {
+      "src": "../../node_modules/pinia/dist/pinia.mjs",
+      "file": "pinia.js",
+      "fileHash": "3efe9493",
+      "needsInterop": false
+    },
+    "vue-router": {
+      "src": "../../node_modules/vue-router/dist/vue-router.mjs",
+      "file": "vue-router.js",
+      "fileHash": "b88cf7ed",
+      "needsInterop": false
+    },
+    "@tauri-apps/plugin-shell": {
+      "src": "../../node_modules/@tauri-apps/plugin-shell/dist-js/index.js",
+      "file": "@tauri-apps_plugin-shell.js",
+      "fileHash": "f5fdabd7",
+      "needsInterop": false
+    },
+    "vue-i18n": {
+      "src": "../../node_modules/vue-i18n/dist/vue-i18n.mjs",
+      "file": "vue-i18n.js",
+      "fileHash": "0969f7d9",
+      "needsInterop": false
+    },
+    "@tauri-apps/api/core": {
+      "src": "../../node_modules/@tauri-apps/api/core.js",
+      "file": "@tauri-apps_api_core.js",
+      "fileHash": "2c795288",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-AYVSL3LM": {
+      "file": "chunk-AYVSL3LM.js"
+    },
+    "chunk-IDACCYAP": {
+      "file": "chunk-IDACCYAP.js"
+    },
+    "chunk-HHV3XBJ5": {
+      "file": "chunk-HHV3XBJ5.js"
+    }
+  }
+}

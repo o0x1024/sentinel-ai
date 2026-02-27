@@ -1,15 +1,321 @@
 //! Agent Team 数据库操作层（纯运行时查询，无需 DATABASE_URL）
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::postgres::PgPool;
 use sqlx::Row;
+use std::collections::HashSet;
 use tracing::info;
 use uuid::Uuid;
 
 use super::models::*;
-use super::orchestration::normalize_and_validate_orchestration_plan;
+
+pub(crate) const AGENT_TEAM_SCHEMA_V2: i32 = 2;
+
+fn normalize_agent_id(name: &str, index: usize) -> String {
+    let mut id = name
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    id = id.trim_matches('-').to_string();
+    if id.is_empty() {
+        format!("agent-{}", index + 1)
+    } else {
+        format!("agent-{}", id)
+    }
+}
+
+pub(crate) fn build_agents_from_members(
+    members: &[CreateAgentTeamTemplateMemberRequest],
+) -> Vec<AgentProfile> {
+    members
+        .iter()
+        .enumerate()
+        .map(|(idx, member)| AgentProfile {
+            id: normalize_agent_id(&member.name, idx),
+            name: member.name.clone(),
+            system_prompt: member.system_prompt.clone(),
+            model: member
+                .output_schema
+                .as_ref()
+                .and_then(|schema| schema.get("llm_model"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            tool_policy: member.tool_policy.clone(),
+            skills: vec![],
+            max_parallel_tasks: Some(1),
+        })
+        .collect()
+}
+
+pub(crate) fn make_member_requests_from_agents(
+    agents: &[AgentProfile],
+) -> Vec<CreateAgentTeamTemplateMemberRequest> {
+    agents
+        .iter()
+        .enumerate()
+        .map(|(idx, agent)| {
+            let output_schema = agent.model.as_ref().map(|m| {
+                let mut provider = String::new();
+                let mut model = m.clone();
+                if let Some((p, mm)) = m.split_once('/') {
+                    provider = p.to_string();
+                    model = mm.to_string();
+                }
+                json!({
+                    "llm_model": m,
+                    "model_provider": provider,
+                    "model_name": model,
+                })
+            });
+            CreateAgentTeamTemplateMemberRequest {
+                name: agent.name.clone(),
+                responsibility: None,
+                system_prompt: agent.system_prompt.clone(),
+                decision_style: Some("balanced".to_string()),
+                risk_preference: Some("medium".to_string()),
+                weight: Some(1.0),
+                tool_policy: agent.tool_policy.clone(),
+                output_schema,
+                sort_order: Some(idx as i32),
+            }
+        })
+        .collect()
+}
+
+fn parse_legacy_orchestration_plan(config: Option<&Value>) -> Option<Value> {
+    let obj = config?.as_object()?;
+    obj.get("orchestration_plan")
+        .or_else(|| obj.get("orchestrationPlan"))
+        .or_else(|| obj.get("plan"))
+        .cloned()
+}
+
+fn flatten_step_to_nodes(
+    step: &Value,
+    incoming_deps: &[String],
+    nodes: &mut Vec<TeamTaskNode>,
+    generated_ids: &mut HashSet<String>,
+    idx_seed: &mut usize,
+) -> Result<Vec<String>> {
+    let step_obj = step
+        .as_object()
+        .ok_or_else(|| anyhow!("legacy step must be object"))?;
+    let step_type = step_obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("agent");
+    let step_id = step_obj
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            let id = format!("task-{}", *idx_seed);
+            *idx_seed += 1;
+            id
+        });
+    if generated_ids.contains(&step_id) {
+        return Err(anyhow!("duplicate task id in legacy plan: {}", step_id));
+    }
+
+    match step_type {
+        "agent" => {
+            generated_ids.insert(step_id.clone());
+            let member = step_obj
+                .get("member")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let mut assignee_strategy = None;
+            if !member.is_empty() {
+                assignee_strategy = Some(json!({
+                    "mode": "fixed_agent",
+                    "agent_name": member,
+                }));
+            }
+            let retry = step_obj.get("retry").and_then(|v| {
+                v.as_object().map(|obj| TeamTaskRetryPolicy {
+                    max_attempts: obj
+                        .get("max_attempts")
+                        .and_then(|v| v.as_i64())
+                        .map(|n| n as i32),
+                    backoff_ms: obj.get("backoff_ms").and_then(|v| v.as_i64()),
+                })
+            });
+            let node = TeamTaskNode {
+                id: step_id.clone(),
+                title: step_obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&step_id)
+                    .to_string(),
+                instruction: step_obj
+                    .get("instruction")
+                    .or_else(|| step_obj.get("prompt"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                depends_on: incoming_deps.to_vec(),
+                assignee_strategy,
+                retry,
+                sla: None,
+                input_schema: None,
+                output_schema: None,
+                phase: step_obj
+                    .get("phase")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            };
+            nodes.push(node);
+            Ok(vec![step_id])
+        }
+        "serial" => {
+            let children = step_obj
+                .get("children")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow!("serial step missing children"))?;
+            let mut deps = incoming_deps.to_vec();
+            let mut latest = deps.clone();
+            for child in children {
+                latest = flatten_step_to_nodes(child, &deps, nodes, generated_ids, idx_seed)?;
+                deps = latest.clone();
+            }
+            Ok(latest)
+        }
+        "parallel" => {
+            let children = step_obj
+                .get("children")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow!("parallel step missing children"))?;
+            let mut endings: Vec<String> = Vec::new();
+            for child in children {
+                let child_endings =
+                    flatten_step_to_nodes(child, incoming_deps, nodes, generated_ids, idx_seed)?;
+                endings.extend(child_endings);
+            }
+            endings.sort();
+            endings.dedup();
+            Ok(endings)
+        }
+        other => Err(anyhow!("unsupported legacy step type: {}", other)),
+    }
+}
+
+pub(crate) fn convert_legacy_to_task_graph(
+    default_rounds_config: Option<&Value>,
+    members: &[CreateAgentTeamTemplateMemberRequest],
+) -> TeamTaskGraph {
+    let mut nodes: Vec<TeamTaskNode> = Vec::new();
+    if let Some(plan) = parse_legacy_orchestration_plan(default_rounds_config) {
+        if let Some(steps) = plan.get("steps").and_then(|v| v.as_array()) {
+            let mut idx_seed = 1usize;
+            let mut generated_ids = HashSet::new();
+            let mut deps: Vec<String> = Vec::new();
+            for step in steps {
+                if let Ok(endings) = flatten_step_to_nodes(
+                    step,
+                    &deps,
+                    &mut nodes,
+                    &mut generated_ids,
+                    &mut idx_seed,
+                ) {
+                    deps = endings;
+                }
+            }
+        }
+    }
+
+    if nodes.is_empty() {
+        let mut prev: Option<String> = None;
+        for (idx, member) in members.iter().enumerate() {
+            let id = format!("task-{}", idx + 1);
+            let mut depends_on = Vec::new();
+            if let Some(prev_id) = prev.as_ref() {
+                depends_on.push(prev_id.clone());
+            }
+            nodes.push(TeamTaskNode {
+                id: id.clone(),
+                title: format!("{} 执行任务", member.name),
+                instruction: member
+                    .responsibility
+                    .clone()
+                    .unwrap_or_else(|| "请基于目标完成该节点任务。".to_string()),
+                depends_on,
+                assignee_strategy: Some(json!({
+                    "mode": "fixed_agent",
+                    "agent_name": member.name,
+                })),
+                retry: Some(TeamTaskRetryPolicy {
+                    max_attempts: Some(1),
+                    backoff_ms: Some(800),
+                }),
+                sla: None,
+                input_schema: None,
+                output_schema: None,
+                phase: Some("orchestrating".to_string()),
+            });
+            prev = Some(id);
+        }
+    }
+
+    TeamTaskGraph {
+        version: Some(1),
+        nodes,
+    }
+}
+
+pub(crate) fn build_template_spec_v2(
+    req: &CreateAgentTeamTemplateRequest,
+) -> Result<TeamTemplateSpecV2> {
+    let agents = req.agents.clone();
+    if agents.is_empty() {
+        return Err(anyhow!("agents cannot be empty for schema v2 template"));
+    }
+
+    let task_graph = req.task_graph.clone();
+    if task_graph.nodes.is_empty() {
+        return Err(anyhow!(
+            "task_graph.nodes cannot be empty for schema v2 template"
+        ));
+    }
+
+    Ok(TeamTemplateSpecV2 {
+        schema_version: AGENT_TEAM_SCHEMA_V2,
+        agents,
+        task_graph,
+        hook_policy: req.hook_policy.clone(),
+    })
+}
+
+pub(crate) fn build_template_spec_v2_from_legacy(
+    default_rounds_config: Option<&Value>,
+    members: &[CreateAgentTeamTemplateMemberRequest],
+    hook_policy: Option<serde_json::Value>,
+) -> Result<TeamTemplateSpecV2> {
+    let agents = build_agents_from_members(members);
+    if agents.is_empty() {
+        return Err(anyhow!("template must include at least one agent"));
+    }
+
+    let task_graph = convert_legacy_to_task_graph(default_rounds_config, members);
+    if task_graph.nodes.is_empty() {
+        return Err(anyhow!(
+            "task_graph.nodes cannot be empty for schema v2 template"
+        ));
+    }
+
+    Ok(TeamTemplateSpecV2 {
+        schema_version: AGENT_TEAM_SCHEMA_V2,
+        agents,
+        task_graph,
+        hook_policy,
+    })
+}
 
 // ==================== 模板操作 ====================
 
@@ -20,12 +326,16 @@ pub async fn create_agent_team_template(
 ) -> Result<AgentTeamTemplate> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
+    let spec_v2 = build_template_spec_v2(req)?;
+    let spec_v2_json = serde_json::to_value(&spec_v2).ok();
+    let members_from_agents = make_member_requests_from_agents(&spec_v2.agents);
 
     sqlx::query(
         r#"INSERT INTO agent_team_templates
            (id, name, description, domain, default_rounds_config, default_tool_policy,
+            schema_version, template_spec_v2, upgrade_failed, upgrade_error,
             is_system, created_by, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
     )
     .bind(&id)
     .bind(&req.name)
@@ -33,6 +343,10 @@ pub async fn create_agent_team_template(
     .bind(&req.domain)
     .bind(req.default_rounds_config.as_ref().map(|v| v.to_string()))
     .bind(req.default_tool_policy.as_ref().map(|v| v.to_string()))
+    .bind(AGENT_TEAM_SCHEMA_V2)
+    .bind(spec_v2_json.as_ref().map(|v| v.to_string()))
+    .bind(false)
+    .bind(Option::<String>::None)
     .bind(false)
     .bind(created_by)
     .bind(now)
@@ -41,7 +355,7 @@ pub async fn create_agent_team_template(
     .await
     .context("Failed to create agent_team_template")?;
 
-    for (i, member_req) in req.members.iter().enumerate() {
+    for (i, member_req) in members_from_agents.iter().enumerate() {
         let member_id = Uuid::new_v4().to_string();
         sqlx::query(
             r#"INSERT INTO agent_team_template_members
@@ -78,6 +392,51 @@ pub async fn update_agent_team_template(
     req: &UpdateAgentTeamTemplateRequest,
 ) -> Result<()> {
     let now = Utc::now();
+    let schema_version = req
+        .schema_version
+        .unwrap_or(AGENT_TEAM_SCHEMA_V2)
+        .max(AGENT_TEAM_SCHEMA_V2);
+    let template_spec_v2 = if req.agents.is_some() || req.task_graph.is_some() || req.hook_policy.is_some() {
+        let existing_row = sqlx::query("SELECT template_spec_v2 FROM agent_team_templates WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+        let existing_row =
+            existing_row.ok_or_else(|| anyhow!("template not found: {}", id))?;
+        let mut merged_spec = existing_row
+            .try_get::<Option<String>, _>("template_spec_v2")?
+            .and_then(|s| serde_json::from_str::<TeamTemplateSpecV2>(&s).ok())
+            .unwrap_or(TeamTemplateSpecV2 {
+                schema_version: AGENT_TEAM_SCHEMA_V2,
+                agents: vec![],
+                task_graph: TeamTaskGraph {
+                    version: Some(1),
+                    nodes: vec![],
+                },
+                hook_policy: None,
+            });
+        if let Some(agents) = req.agents.clone() {
+            merged_spec.agents = agents;
+        }
+        if let Some(task_graph) = req.task_graph.clone() {
+            merged_spec.task_graph = task_graph;
+        }
+        if req.hook_policy.is_some() {
+            merged_spec.hook_policy = req.hook_policy.clone();
+        }
+        merged_spec.schema_version = AGENT_TEAM_SCHEMA_V2;
+        if merged_spec.agents.is_empty() {
+            return Err(anyhow!("template agents cannot be empty in schema v2"));
+        }
+        if merged_spec.task_graph.nodes.is_empty() {
+            return Err(anyhow!(
+                "template task_graph.nodes cannot be empty in schema v2"
+            ));
+        }
+        Some(json!(merged_spec))
+    } else {
+        None
+    };
     sqlx::query(
         r#"UPDATE agent_team_templates
            SET name = COALESCE($1, name),
@@ -85,29 +444,39 @@ pub async fn update_agent_team_template(
                domain = COALESCE($3, domain),
                default_rounds_config = COALESCE($4, default_rounds_config),
                default_tool_policy = COALESCE($5, default_tool_policy),
-               updated_at = $6
-           WHERE id = $7"#,
+               schema_version = COALESCE($6, schema_version),
+               template_spec_v2 = COALESCE($7, template_spec_v2),
+               upgrade_failed = FALSE,
+               upgrade_error = NULL,
+               updated_at = $8
+           WHERE id = $9"#,
     )
     .bind(&req.name)
     .bind(&req.description)
     .bind(&req.domain)
     .bind(req.default_rounds_config.as_ref().map(|v| v.to_string()))
     .bind(req.default_tool_policy.as_ref().map(|v| v.to_string()))
+    .bind(Some(schema_version))
+    .bind(template_spec_v2.as_ref().map(|v| v.to_string()))
     .bind(now)
     .bind(id)
     .execute(pool)
     .await
     .context("Failed to update agent_team_template")?;
 
-    // 若传入 members，则整体替换模板成员
-    if let Some(members) = &req.members {
+    // 若传入 agents，则同步替换模板 Agent 快照
+    let members_to_use = req
+        .agents
+        .as_ref()
+        .map(|agents| make_member_requests_from_agents(agents));
+    if let Some(members) = members_to_use {
         sqlx::query("DELETE FROM agent_team_template_members WHERE template_id = $1")
             .bind(id)
             .execute(pool)
             .await
             .context("Failed to clear template members")?;
 
-        for (i, member_req) in members.iter().enumerate() {
+        for (i, member_req) in members.into_iter().enumerate() {
             let member_id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
                 r#"INSERT INTO agent_team_template_members
@@ -157,7 +526,8 @@ pub async fn list_agent_team_templates(
     let rows = if let Some(domain) = domain {
         sqlx::query(
             r#"SELECT id, name, description, domain, default_rounds_config,
-                      default_tool_policy, is_system, created_by, created_at, updated_at
+                      default_tool_policy, schema_version, template_spec_v2,
+                      upgrade_failed, upgrade_error, is_system, created_by, created_at, updated_at
                FROM agent_team_templates WHERE domain = $1 ORDER BY created_at DESC"#,
         )
         .bind(domain)
@@ -166,7 +536,8 @@ pub async fn list_agent_team_templates(
     } else {
         sqlx::query(
             r#"SELECT id, name, description, domain, default_rounds_config,
-                      default_tool_policy, is_system, created_by, created_at, updated_at
+                      default_tool_policy, schema_version, template_spec_v2,
+                      upgrade_failed, upgrade_error, is_system, created_by, created_at, updated_at
                FROM agent_team_templates ORDER BY created_at DESC"#,
         )
         .fetch_all(pool)
@@ -186,6 +557,12 @@ pub async fn list_agent_team_templates(
                 default_tool_policy: row
                     .try_get::<Option<String>, _>("default_tool_policy")?
                     .and_then(|s| serde_json::from_str(&s).ok()),
+                schema_version: row.try_get::<i32, _>("schema_version").unwrap_or(1),
+                template_spec_v2: row
+                    .try_get::<Option<String>, _>("template_spec_v2")?
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                upgrade_failed: row.try_get::<bool, _>("upgrade_failed").unwrap_or(false),
+                upgrade_error: row.try_get("upgrade_error")?,
                 is_system: row.try_get("is_system")?,
                 created_by: row.try_get("created_by")?,
                 created_at: row.try_get("created_at")?,
@@ -202,7 +579,8 @@ pub async fn get_agent_team_template_detail(
 ) -> Result<Option<AgentTeamTemplate>> {
     let row_opt = sqlx::query(
         r#"SELECT id, name, description, domain, default_rounds_config,
-                  default_tool_policy, is_system, created_by, created_at, updated_at
+                  default_tool_policy, schema_version, template_spec_v2,
+                  upgrade_failed, upgrade_error, is_system, created_by, created_at, updated_at
            FROM agent_team_templates WHERE id = $1"#,
     )
     .bind(id)
@@ -224,6 +602,12 @@ pub async fn get_agent_team_template_detail(
         default_tool_policy: row
             .try_get::<Option<String>, _>("default_tool_policy")?
             .and_then(|s| serde_json::from_str(&s).ok()),
+        schema_version: row.try_get::<i32, _>("schema_version").unwrap_or(1),
+        template_spec_v2: row
+            .try_get::<Option<String>, _>("template_spec_v2")?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        upgrade_failed: row.try_get::<bool, _>("upgrade_failed").unwrap_or(false),
+        upgrade_error: row.try_get("upgrade_error")?,
         is_system: row.try_get("is_system")?,
         created_by: row.try_get("created_by")?,
         created_at: row.try_get("created_at")?,
@@ -277,21 +661,63 @@ pub async fn create_agent_team_session(
 ) -> Result<AgentTeamSession> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
-    let orchestration_plan = normalize_and_validate_orchestration_plan(req.orchestration_plan.as_ref())?;
+    let mut runtime_spec_v2 = req.runtime_spec_v2.clone();
+    let schema_version = req.schema_version.unwrap_or(AGENT_TEAM_SCHEMA_V2);
+
+    if let Some(template_id) = req.template_id.as_ref() {
+        let tpl_row = sqlx::query(
+            r#"SELECT schema_version, template_spec_v2, upgrade_failed, upgrade_error
+               FROM agent_team_templates WHERE id = $1"#,
+        )
+        .bind(template_id)
+        .fetch_optional(pool)
+        .await?;
+        let Some(tpl) = tpl_row else {
+            return Err(anyhow!("Template not found: {}", template_id));
+        };
+        let tpl_schema_version = tpl.try_get::<i32, _>("schema_version").unwrap_or(1);
+        let upgrade_failed = tpl.try_get::<bool, _>("upgrade_failed").unwrap_or(false);
+        let upgrade_error: Option<String> = tpl.try_get("upgrade_error").ok().flatten();
+        if upgrade_failed {
+            return Err(anyhow!(
+                "Template upgrade failed, cannot create session: {}",
+                upgrade_error.unwrap_or_else(|| "unknown reason".to_string())
+            ));
+        }
+        if tpl_schema_version < AGENT_TEAM_SCHEMA_V2 {
+            return Err(anyhow!(
+                "Template schema_version={} is not supported. Please upgrade templates to v2 first.",
+                tpl_schema_version
+            ));
+        }
+        if runtime_spec_v2.is_none() {
+            runtime_spec_v2 = tpl
+                .try_get::<Option<String>, _>("template_spec_v2")?
+                .and_then(|s| serde_json::from_str(&s).ok());
+        }
+    }
+
+    if runtime_spec_v2.is_none() {
+        return Err(anyhow!(
+            "runtime_spec_v2 is required for Agent Teams V2 sessions"
+        ));
+    }
 
     sqlx::query(
         r#"INSERT INTO agent_team_sessions
-           (id, conversation_id, template_id, name, goal, orchestration_plan, plan_version,
+           (id, conversation_id, template_id, name, goal, orchestration_plan, schema_version, runtime_spec_v2, plan_version,
             state, state_machine, current_round, max_rounds, total_tokens, estimated_cost, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"#,
     )
     .bind(&id)
     .bind(&req.conversation_id)
     .bind(&req.template_id)
     .bind(&req.name)
     .bind(&req.goal)
-    .bind(orchestration_plan.as_ref().map(|v| v.to_string()))
-    .bind(req.plan_version.unwrap_or(1))
+    .bind(Option::<String>::None)
+    .bind(schema_version.max(AGENT_TEAM_SCHEMA_V2))
+    .bind(runtime_spec_v2.as_ref().map(|v| v.to_string()))
+    .bind(1i32)
     .bind(TeamSessionState::Pending.to_string())
     .bind(req.state_machine.as_ref().map(|v| v.to_string()))
     .bind(0i32)
@@ -306,10 +732,12 @@ pub async fn create_agent_team_session(
 
     if let Some(ref template_id) = req.template_id {
         snapshot_members_from_template(pool, &id, template_id).await?;
-    } else if let Some(ref members) = req.members {
-        for (i, m) in members.iter().enumerate() {
-            create_agent_team_member_internal(pool, &id, m, i as i32).await?;
-        }
+    } else if let Some(runtime_spec) = runtime_spec_v2.as_ref() {
+        snapshot_members_from_runtime_spec(pool, &id, runtime_spec).await?;
+    }
+
+    if let Some(runtime_spec) = runtime_spec_v2.as_ref() {
+        ensure_session_tasks_from_runtime_spec(pool, &id, runtime_spec).await?;
     }
 
     get_agent_team_session(pool, &id)
@@ -373,10 +801,43 @@ async fn snapshot_members_from_template(
     Ok(())
 }
 
-async fn create_agent_team_member_internal(
+async fn snapshot_members_from_runtime_spec(
     pool: &PgPool,
     session_id: &str,
-    req: &CreateAgentTeamTemplateMemberRequest,
+    runtime_spec_v2: &Value,
+) -> Result<()> {
+    let spec: TeamTemplateSpecV2 = serde_json::from_value(runtime_spec_v2.clone())
+        .context("invalid runtime_spec_v2 when snapshotting session agents")?;
+    if spec.agents.is_empty() {
+        return Err(anyhow!("runtime_spec_v2.agents cannot be empty"));
+    }
+    for (i, agent) in spec.agents.iter().enumerate() {
+        create_agent_team_member_from_profile(pool, session_id, agent, i as i32).await?;
+    }
+    Ok(())
+}
+
+fn build_member_output_schema_from_model(model: Option<&str>) -> Option<Value> {
+    let model = model?.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let (provider, model_name) = if let Some((p, m)) = model.split_once('/') {
+        (p.trim().to_lowercase(), m.trim().to_string())
+    } else {
+        ("".to_string(), model.to_string())
+    };
+    Some(json!({
+        "llm_model": model,
+        "model_provider": provider,
+        "model_name": model_name,
+    }))
+}
+
+async fn create_agent_team_member_from_profile(
+    pool: &PgPool,
+    session_id: &str,
+    agent: &AgentProfile,
     sort_order: i32,
 ) -> Result<()> {
     let member_id = Uuid::new_v4().to_string();
@@ -390,15 +851,19 @@ async fn create_agent_team_member_internal(
     )
     .bind(&member_id)
     .bind(session_id)
-    .bind(&req.name)
-    .bind(&req.responsibility)
-    .bind(&req.system_prompt)
-    .bind(&req.decision_style)
-    .bind(&req.risk_preference)
-    .bind(req.weight.unwrap_or(1.0))
-    .bind(req.tool_policy.as_ref().map(|v| v.to_string()))
-    .bind(req.output_schema.as_ref().map(|v| v.to_string()))
-    .bind(req.sort_order.unwrap_or(sort_order))
+    .bind(&agent.name)
+    .bind(Option::<String>::None)
+    .bind(&agent.system_prompt)
+    .bind(Some("balanced".to_string()))
+    .bind(Some("medium".to_string()))
+    .bind(1.0f64)
+    .bind(agent.tool_policy.as_ref().map(|v| v.to_string()))
+    .bind(
+        build_member_output_schema_from_model(agent.model.as_deref())
+            .as_ref()
+            .map(|v| v.to_string()),
+    )
+    .bind(sort_order)
     .bind(0i64)
     .bind(0i32)
     .bind(true)
@@ -415,13 +880,13 @@ pub async fn update_agent_team_session(
     req: &UpdateAgentTeamSessionRequest,
 ) -> Result<()> {
     let now = Utc::now();
-    let orchestration_plan = normalize_and_validate_orchestration_plan(req.orchestration_plan.as_ref())?;
+    let schema_version = req.schema_version.map(|v| v.max(AGENT_TEAM_SCHEMA_V2));
     sqlx::query(
         r#"UPDATE agent_team_sessions
            SET name = COALESCE($1, name),
                goal = COALESCE($2, goal),
-               orchestration_plan = COALESCE($3, orchestration_plan),
-               plan_version = COALESCE($4, plan_version),
+               schema_version = COALESCE($3, schema_version),
+               runtime_spec_v2 = COALESCE($4, runtime_spec_v2),
                state = COALESCE($5, state),
                max_rounds = COALESCE($6, max_rounds),
                state_machine = COALESCE($7, state_machine),
@@ -431,8 +896,8 @@ pub async fn update_agent_team_session(
     )
     .bind(&req.name)
     .bind(&req.goal)
-    .bind(orchestration_plan.as_ref().map(|v| v.to_string()))
-    .bind(req.plan_version)
+    .bind(schema_version)
+    .bind(req.runtime_spec_v2.as_ref().map(|v| v.to_string()))
     .bind(&req.state)
     .bind(req.max_rounds)
     .bind(req.state_machine.as_ref().map(|v| v.to_string()))
@@ -483,7 +948,7 @@ pub async fn update_session_blackboard(
 
 pub async fn get_agent_team_session(pool: &PgPool, id: &str) -> Result<Option<AgentTeamSession>> {
     let row_opt = sqlx::query(
-        r#"SELECT id, conversation_id, template_id, name, goal, orchestration_plan, plan_version, state, state_machine,
+        r#"SELECT id, conversation_id, template_id, name, goal, orchestration_plan, schema_version, runtime_spec_v2, plan_version, state, state_machine,
                   current_round, max_rounds, blackboard_state, divergence_scores,
                   total_tokens, estimated_cost, suspended_reason, started_at, completed_at,
                   error_message, created_at, updated_at
@@ -505,6 +970,10 @@ pub async fn get_agent_team_session(pool: &PgPool, id: &str) -> Result<Option<Ag
         goal: row.try_get("goal")?,
         orchestration_plan: row
             .try_get::<Option<String>, _>("orchestration_plan")?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        schema_version: row.try_get::<i32, _>("schema_version").unwrap_or(1),
+        runtime_spec_v2: row
+            .try_get::<Option<String>, _>("runtime_spec_v2")?
             .and_then(|s| serde_json::from_str(&s).ok()),
         plan_version: row.try_get::<i32, _>("plan_version").unwrap_or(1),
         state: row.try_get("state")?,
@@ -1163,6 +1632,396 @@ pub async fn get_artifact_detail(
     }))
 }
 
+// ==================== V2 Task / Mailbox ====================
+
+pub async fn ensure_session_tasks_from_runtime_spec(
+    pool: &PgPool,
+    session_id: &str,
+    runtime_spec_v2: &Value,
+) -> Result<()> {
+    let task_graph = runtime_spec_v2
+        .get("task_graph")
+        .ok_or_else(|| anyhow!("runtime_spec_v2.task_graph missing"))?;
+    let nodes = task_graph
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow!("runtime_spec_v2.task_graph.nodes missing"))?;
+
+    for node in nodes {
+        let task_id = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("task node id missing"))?;
+        let title = node
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(task_id);
+        let instruction = node
+            .get("instruction")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let depends_on = node
+            .get("depends_on")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let max_attempts = node
+            .get("retry")
+            .and_then(|v| v.get("max_attempts"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1)
+            .clamp(1, 10) as i32;
+
+        let assignee_agent_id = node
+            .get("assignee_strategy")
+            .and_then(|v| v.get("agent_id").or_else(|| v.get("agent_name")))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_team_tasks WHERE session_id = $1 AND task_id = $2",
+        )
+        .bind(session_id)
+        .bind(task_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        if exists > 0 {
+            continue;
+        }
+
+        sqlx::query(
+            r#"INSERT INTO agent_team_tasks
+               (id, session_id, task_id, title, instruction, status, assignee_agent_id, depends_on, attempt, max_attempts, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, 0, $8, $9, $10)"#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(session_id)
+        .bind(task_id)
+        .bind(title)
+        .bind(instruction)
+        .bind(assignee_agent_id)
+        .bind(Value::Array(depends_on).to_string())
+        .bind(max_attempts)
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+pub async fn list_tasks(pool: &PgPool, session_id: &str) -> Result<Vec<TeamTask>> {
+    let rows = sqlx::query(
+        r#"SELECT id, session_id, task_id, title, instruction, status, assignee_agent_id, depends_on,
+                  attempt, max_attempts, last_error, started_at, completed_at, created_at, updated_at
+           FROM agent_team_tasks
+           WHERE session_id = $1
+           ORDER BY created_at ASC"#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(TeamTask {
+                id: row.try_get("id")?,
+                session_id: row.try_get("session_id")?,
+                task_id: row.try_get("task_id")?,
+                title: row.try_get("title")?,
+                instruction: row.try_get("instruction")?,
+                status: row.try_get("status")?,
+                assignee_agent_id: row.try_get("assignee_agent_id")?,
+                depends_on: row
+                    .try_get::<String, _>("depends_on")
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                    .unwrap_or_default(),
+                attempt: row.try_get::<i32, _>("attempt").unwrap_or(0),
+                max_attempts: row.try_get::<i32, _>("max_attempts").unwrap_or(1),
+                last_error: row.try_get("last_error")?,
+                started_at: row.try_get("started_at")?,
+                completed_at: row.try_get("completed_at")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn update_task(pool: &PgPool, session_id: &str, patch: &UpdateTaskRequest) -> Result<()> {
+    let now = Utc::now();
+    sqlx::query(
+        r#"UPDATE agent_team_tasks
+           SET status = COALESCE($1, status),
+               assignee_agent_id = COALESCE($2, assignee_agent_id),
+               last_error = CASE
+                   WHEN $3 IS NOT NULL THEN $3
+                   WHEN LOWER(COALESCE($1, '')) IN ('running', 'completed') THEN NULL
+                   ELSE last_error
+               END,
+               attempt = CASE
+                   WHEN LOWER(COALESCE($1, '')) = 'running' THEN attempt + 1
+                   ELSE attempt
+               END,
+               started_at = CASE
+                   WHEN LOWER(COALESCE($1, '')) = 'running' THEN COALESCE(started_at, $4)
+                   ELSE started_at
+               END,
+               completed_at = CASE
+                   WHEN LOWER(COALESCE($1, '')) = 'running' THEN NULL
+                   WHEN LOWER(COALESCE($1, '')) IN ('completed', 'failed', 'cancelled', 'blocked') THEN $4
+                   ELSE completed_at
+               END,
+               updated_at = $4
+           WHERE session_id = $5 AND task_id = $6"#,
+    )
+    .bind(&patch.status)
+    .bind(&patch.assignee_agent_id)
+    .bind(&patch.last_error)
+    .bind(now)
+    .bind(session_id)
+    .bind(&patch.task_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_mailbox(
+    pool: &PgPool,
+    session_id: &str,
+    agent_id: Option<&str>,
+) -> Result<Vec<MailboxMessage>> {
+    let rows = if let Some(agent_id) = agent_id {
+        sqlx::query(
+            r#"SELECT id, session_id, from_agent_id, to_agent_id, task_record_id, message_type, payload, is_acknowledged, created_at, acknowledged_at
+               FROM agent_team_mailbox
+               WHERE session_id = $1 AND (to_agent_id = $2 OR to_agent_id IS NULL)
+               ORDER BY created_at DESC"#,
+        )
+        .bind(session_id)
+        .bind(agent_id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"SELECT id, session_id, from_agent_id, to_agent_id, task_record_id, message_type, payload, is_acknowledged, created_at, acknowledged_at
+               FROM agent_team_mailbox
+               WHERE session_id = $1
+               ORDER BY created_at DESC"#,
+        )
+        .bind(session_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(MailboxMessage {
+                id: row.try_get("id")?,
+                session_id: row.try_get("session_id")?,
+                from_agent_id: row.try_get("from_agent_id")?,
+                to_agent_id: row.try_get("to_agent_id")?,
+                task_record_id: row.try_get("task_record_id")?,
+                message_type: row.try_get("message_type")?,
+                payload: row
+                    .try_get::<String, _>("payload")
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_else(|| json!({})),
+                is_acknowledged: row.try_get::<bool, _>("is_acknowledged").unwrap_or(false),
+                created_at: row.try_get("created_at")?,
+                acknowledged_at: row.try_get("acknowledged_at")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn ack_mailbox_message(pool: &PgPool, message_id: &str) -> Result<()> {
+    sqlx::query(
+        r#"UPDATE agent_team_mailbox
+           SET is_acknowledged = TRUE,
+               acknowledged_at = $1
+           WHERE id = $2"#,
+    )
+    .bind(Utc::now())
+    .bind(message_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn create_mailbox_message(
+    pool: &PgPool,
+    session_id: &str,
+    from_agent_id: Option<&str>,
+    to_agent_id: Option<&str>,
+    task_record_id: Option<&str>,
+    message_type: &str,
+    payload: &Value,
+) -> Result<()> {
+    sqlx::query(
+        r#"INSERT INTO agent_team_mailbox
+           (id, session_id, from_agent_id, to_agent_id, task_record_id, message_type, payload, is_acknowledged, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8)"#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(from_agent_id)
+    .bind(to_agent_id)
+    .bind(task_record_id)
+    .bind(message_type)
+    .bind(payload.to_string())
+    .bind(Utc::now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn append_task_attempt(
+    pool: &PgPool,
+    session_id: &str,
+    task_record_id: &str,
+    attempt: i32,
+    status: &str,
+    error: Option<&str>,
+    duration_ms: Option<i64>,
+) -> Result<()> {
+    sqlx::query(
+        r#"INSERT INTO agent_team_task_attempts
+           (id, session_id, task_record_id, attempt, status, error, duration_ms, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(task_record_id)
+    .bind(attempt)
+    .bind(status)
+    .bind(error)
+    .bind(duration_ms)
+    .bind(Utc::now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn append_task_event(
+    pool: &PgPool,
+    session_id: &str,
+    task_record_id: Option<&str>,
+    event_type: &str,
+    payload: &Value,
+) -> Result<()> {
+    sqlx::query(
+        r#"INSERT INTO agent_team_task_events
+           (id, session_id, task_record_id, event_type, payload, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(task_record_id)
+    .bind(event_type)
+    .bind(payload.to_string())
+    .bind(Utc::now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn upgrade_templates_to_v2(pool: &PgPool, force: bool) -> Result<i64> {
+    let rows = sqlx::query(
+        r#"SELECT id, name, domain, default_rounds_config, default_tool_policy
+           FROM agent_team_templates
+           WHERE schema_version < $1
+              OR schema_version IS NULL
+              OR (upgrade_failed = TRUE AND $2 = TRUE)"#,
+    )
+    .bind(AGENT_TEAM_SCHEMA_V2)
+    .bind(force)
+    .fetch_all(pool)
+    .await?;
+
+    let mut upgraded = 0i64;
+    for row in rows {
+        let template_id: String = row.try_get("id")?;
+        let default_rounds_config = row
+            .try_get::<Option<String>, _>("default_rounds_config")?
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+        let members = sqlx::query(
+            r#"SELECT name, responsibility, system_prompt, decision_style, risk_preference, weight, tool_policy, output_schema, sort_order
+               FROM agent_team_template_members
+               WHERE template_id = $1
+               ORDER BY sort_order ASC"#,
+        )
+        .bind(&template_id)
+        .fetch_all(pool)
+        .await?;
+
+        let member_reqs: Vec<CreateAgentTeamTemplateMemberRequest> = members
+            .into_iter()
+            .map(|m| CreateAgentTeamTemplateMemberRequest {
+                name: m.try_get("name").unwrap_or_default(),
+                responsibility: m.try_get("responsibility").ok().flatten(),
+                system_prompt: m.try_get("system_prompt").ok().flatten(),
+                decision_style: m.try_get("decision_style").ok().flatten(),
+                risk_preference: m.try_get("risk_preference").ok().flatten(),
+                weight: Some(m.try_get::<f64, _>("weight").unwrap_or(1.0)),
+                tool_policy: m
+                    .try_get::<Option<String>, _>("tool_policy")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                output_schema: m
+                    .try_get::<Option<String>, _>("output_schema")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                sort_order: Some(m.try_get::<i32, _>("sort_order").unwrap_or(0)),
+            })
+            .collect();
+
+        match build_template_spec_v2_from_legacy(default_rounds_config.as_ref(), &member_reqs, None)
+        {
+            Ok(spec_v2) => {
+                sqlx::query(
+                    r#"UPDATE agent_team_templates
+                       SET schema_version = $1,
+                           template_spec_v2 = $2,
+                           upgrade_failed = FALSE,
+                           upgrade_error = NULL,
+                           updated_at = $3
+                       WHERE id = $4"#,
+                )
+                .bind(AGENT_TEAM_SCHEMA_V2)
+                .bind(serde_json::to_string(&spec_v2).ok())
+                .bind(Utc::now())
+                .bind(&template_id)
+                .execute(pool)
+                .await?;
+                upgraded += 1;
+            }
+            Err(e) => {
+                sqlx::query(
+                    r#"UPDATE agent_team_templates
+                       SET upgrade_failed = TRUE,
+                           upgrade_error = $1,
+                           updated_at = $2
+                       WHERE id = $3"#,
+                )
+                .bind(e.to_string())
+                .bind(Utc::now())
+                .bind(&template_id)
+                .execute(pool)
+                .await?;
+            }
+        }
+    }
+
+    Ok(upgraded)
+}
+
 // ==================== 种子数据（内置模板） ====================
 
 pub async fn seed_builtin_templates(pool: &PgPool) -> Result<()> {
@@ -1183,17 +2042,33 @@ pub async fn seed_builtin_templates(pool: &PgPool) -> Result<()> {
     for template_req in templates {
         let id = template_req.id.to_string();
         let now = Utc::now();
+        let legacy_req = CreateAgentTeamTemplateRequest {
+            name: template_req.name.to_string(),
+            description: Some(template_req.description.to_string()),
+            domain: template_req.domain.to_string(),
+            default_rounds_config: None,
+            default_tool_policy: None,
+            schema_version: Some(AGENT_TEAM_SCHEMA_V2),
+            agents: build_agents_from_members(&template_req.members),
+            task_graph: convert_legacy_to_task_graph(None, &template_req.members),
+            hook_policy: None,
+        };
+        let spec_v2 = build_template_spec_v2(&legacy_req).ok();
 
         sqlx::query(
             r#"INSERT INTO agent_team_templates
-               (id, name, description, domain, is_system, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (id, name, description, domain, schema_version, template_spec_v2, upgrade_failed, upgrade_error, is_system, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                ON CONFLICT (id) DO NOTHING"#,
         )
         .bind(&id)
         .bind(template_req.name)
         .bind(template_req.description)
         .bind(template_req.domain)
+        .bind(AGENT_TEAM_SCHEMA_V2)
+        .bind(spec_v2.as_ref().and_then(|v| serde_json::to_string(v).ok()))
+        .bind(false)
+        .bind(Option::<String>::None)
         .bind(true)
         .bind(now)
         .bind(now)
@@ -1239,8 +2114,8 @@ pub(crate) struct BuiltinTemplateSeed {
 pub(crate) fn builtin_templates_seed() -> Vec<BuiltinTemplateSeed> {
     vec![BuiltinTemplateSeed {
         id: "builtin-product-dev-team",
-        name: "产品开发团队（4角色）",
-        description: "覆盖产品、架构、后端、测试四个核心角色的默认团队",
+        name: "产品开发团队（4-Agent）",
+        description: "覆盖产品、架构、后端、测试四个核心 Agent 的默认团队",
         domain: "product",
         members: vec![
             CreateAgentTeamTemplateMemberRequest {

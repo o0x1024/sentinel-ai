@@ -43,6 +43,9 @@ export interface MessageMetadata {
   tools?: any[]
   tools_preview?: string
   kind?: string  // 消息类型标识（如 'segment_summary', 'global_summary', 'tenth_man_critique'）
+  team_member_id?: string
+  team_member_name?: string
+  team_member_role?: string
   segment_index?: number  // 段落摘要：段落索引
   summary_tokens?: number  // 摘要：token数
   summary_content?: string  // 摘要：完整内容

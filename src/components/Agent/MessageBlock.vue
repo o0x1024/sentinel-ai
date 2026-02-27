@@ -212,6 +212,7 @@
     <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
       <div v-if="isTeamMessage" class="message-team-indicator inline-flex items-center gap-1 text-xs text-primary font-medium mb-1">
         <i class="fas fa-users"></i>
+        <span>{{ teamSpeakerLabel }}</span>
       </div>
       <!-- Actions (overlay) - hide when editing -->
       <div
@@ -702,6 +703,33 @@ const isTenthManCritique = computed(() => {
 const isTeamMessage = computed(() => {
   const kind = props.message.metadata?.kind
   return kind === 'team_member_output' || kind === 'team_bridge'
+})
+
+const readTeamMetaString = (key: string): string => {
+  const metadata = props.message.metadata as Record<string, unknown> | undefined
+  const value = metadata?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+const teamSpeakerName = computed(() => {
+  return (
+    readTeamMetaString('team_member_name') ||
+    readTeamMetaString('member_name') ||
+    readTeamMetaString('assignee_agent_name')
+  )
+})
+
+const teamSpeakerRole = computed(() => {
+  const role = readTeamMetaString('team_member_role') || readTeamMetaString('role')
+  const normalized = role.toLowerCase()
+  if (normalized === 'assistant' || normalized === 'user' || normalized === 'system') {
+    return ''
+  }
+  return role
+})
+
+const teamSpeakerLabel = computed(() => {
+  return teamSpeakerName.value || teamSpeakerRole.value || 'Team'
 })
 
 // Format number with commas

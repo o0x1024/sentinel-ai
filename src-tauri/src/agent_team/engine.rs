@@ -1,8 +1,10 @@
 //! Agent Team 核心引擎 - 轮次编排与状态机流转
 
 use anyhow::{Context, Result};
-use futures::future::{join_all, BoxFuture};
+use futures::future::BoxFuture;
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -14,7 +16,7 @@ use sentinel_db::{database_service::connection_manager::DatabasePool, DatabaseSe
 use sentinel_llm::{ChatMessage, LlmConfig, StreamContent, StreamingLlmClient};
 use sentinel_tools::dynamic_tool::{DynamicToolDef, ToolExecutor, ToolSource};
 use sentinel_tools::{
-    buildin_tools::{ShellTool, SkillsTool},
+    buildin_tools::ShellTool,
     get_tool_server, DynamicTool,
 };
 
@@ -91,6 +93,12 @@ impl AgentTeamEngine {
         if session.members.is_empty() {
             return Err(anyhow::anyhow!("Session has no members"));
         }
+        if session.schema_version < 2 {
+            return Err(anyhow::anyhow!(
+                "Team session schema_version={} is no longer supported. Please run template/session upgrade to v2 first.",
+                session.schema_version
+            ));
+        }
 
         info!(
             "Starting Agent Team run: session_id={}, goal={}",
@@ -127,77 +135,12 @@ impl AgentTeamEngine {
             }
         }
 
-        let resume_from_step_id = session
-            .state_machine
+        let runtime_spec_v2 = session
+            .runtime_spec_v2
             .as_ref()
-            .and_then(|sm| sm.get("orchestration_runtime"))
-            .and_then(|rt| rt.get("resume_from_step_id"))
-            .and_then(|v| v.as_str())
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-
-        if let Some(step_id) = resume_from_step_id.as_deref() {
-            if let Err(e) = self
-                .clear_orchestration_resume_marker(session_id, &session, step_id)
-                .await
-            {
-                warn!(
-                    "Failed to clear orchestration resume marker for session {}: {}",
-                    session_id, e
-                );
-            }
-        }
-
-        let plan = if let Some(plan) = session.orchestration_plan.as_ref() {
-            plan
-        } else {
-            let err = anyhow::anyhow!(
-                "Session {} missing orchestration_plan; workflow orchestration is required",
-                session_id
-            );
-            self.emit_event(
-                session_id,
-                "agent_team:orchestration_required",
-                json!({
-                    "session_id": session_id,
-                    "error": err.to_string()
-                }),
-            );
-            return Err(err);
-        };
-
-        let suspended = match self
-            .execute_orchestration_plan(
-                session_id,
-                &session,
-                plan,
-                resume_from_step_id.as_deref(),
-            )
-            .await
-        {
-            Ok(suspended) => suspended,
-            Err(e) => {
-                let err = anyhow::anyhow!(
-                    "Failed to execute orchestration plan for session {}: {}",
-                    session_id,
-                    e
-                );
-                warn!("{:#}", err);
-                self.emit_event(
-                    session_id,
-                    "agent_team:orchestration_failed",
-                    json!({
-                        "session_id": session_id,
-                        "error": err.to_string()
-                    }),
-                );
-                return Err(err);
-            }
-        };
-        if suspended {
-            // 等待 Human-in-the-Loop 恢复（resume 由 Tauri command 重入）
-            return Ok(());
-        }
+            .ok_or_else(|| anyhow::anyhow!("runtime_spec_v2 missing for v2 session"))?;
+        self.execute_task_graph_v2(session_id, &session, runtime_spec_v2)
+            .await?;
 
         // 生成标准文档产物
         self.generate_artifacts(session_id, &session).await?;
@@ -219,272 +162,589 @@ impl AgentTeamEngine {
         Ok(())
     }
 
-    async fn execute_orchestration_plan(
+    async fn execute_task_graph_v2(
         &self,
         session_id: &str,
         session: &AgentTeamSession,
-        plan: &Value,
-        resume_from_step_id: Option<&str>,
-    ) -> Result<bool> {
-        let steps = plan
-            .get("steps")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("orchestration_plan.steps must be array"))?;
-        if steps.is_empty() {
-            return Err(anyhow::anyhow!("orchestration_plan.steps cannot be empty"));
-        }
+        runtime_spec_v2: &Value,
+    ) -> Result<()> {
+        let db = self
+            .app_handle
+            .try_state::<Arc<DatabaseService>>()
+            .context("DatabaseService not available")?;
+        let pool = db.get_runtime_pool().context("Failed to get db pool")?;
 
-        let round_counter = Arc::new(AtomicI32::new(1));
+        repo_rt::ensure_session_tasks_from_runtime_spec(&pool, session_id, runtime_spec_v2).await?;
+
+        let node_map = Self::build_task_node_map(runtime_spec_v2);
+        let agent_limits = self.build_agent_concurrency_limits(session, runtime_spec_v2);
+        let global_max_parallel = runtime_spec_v2
+            .get("max_parallel_tasks")
+            .or_else(|| runtime_spec_v2.get("global_max_parallel_tasks"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(4)
+            .clamp(1, 32) as usize;
+        let round_counter = Arc::new(AtomicI32::new((session.current_round + 1).max(1)));
+
         self.transition_state(session_id, TeamSessionState::Revising)
             .await?;
         self.emit_event(
             session_id,
-            "agent_team:orchestration_started",
+            "agent_team:task_graph_started",
             json!({
                 "session_id": session_id,
-                "steps": steps.len(),
-                "version": plan.get("version").and_then(|v| v.as_i64()).unwrap_or(1),
-                "resume_from_step_id": resume_from_step_id
+                "global_max_parallel_tasks": global_max_parallel,
+                "node_count": node_map.len(),
             }),
         );
 
-        let resume_path = if let Some(step_id) = resume_from_step_id {
-            if let Some(path) = Self::find_orchestration_step_path(steps, step_id) {
-                self.emit_event(
-                    session_id,
-                    "agent_team:orchestration_resume_applied",
-                    json!({
-                        "session_id": session_id,
-                        "resume_from_step_id": step_id,
-                        "resume_path": path,
-                    }),
-                );
-                Some(path)
-            } else {
-                warn!(
-                    "resume_from_step_id '{}' not found in orchestration plan for session {}, fallback to full run",
-                    step_id, session_id
-                );
-                self.emit_event(
-                    session_id,
-                    "agent_team:orchestration_resume_ignored",
-                    json!({
-                        "session_id": session_id,
-                        "resume_from_step_id": step_id,
-                        "reason": "step_not_found"
-                    }),
-                );
-                None
+        let mut in_flight: FuturesUnordered<BoxFuture<'_, (String, String, Result<()>)>> =
+            FuturesUnordered::new();
+        let mut in_flight_by_member: HashMap<String, usize> = HashMap::new();
+        let mut in_flight_task_ids: HashSet<String> = HashSet::new();
+
+        loop {
+            let mut tasks = repo_rt::list_tasks(&pool, session_id).await?;
+            if tasks.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "No task rows found for session {} runtime_spec_v2",
+                    session_id
+                ));
             }
-        } else {
-            None
-        };
 
-        self.execute_orchestration_steps(
-            session_id,
-            session,
-            steps,
-            round_counter,
-            Vec::new(),
-            resume_path.as_deref(),
-        )
-        .await
-    }
+            let status_map: HashMap<String, String> = tasks
+                .iter()
+                .map(|t| (t.task_id.clone(), t.status.to_lowercase()))
+                .collect();
 
-    fn execute_orchestration_steps<'a>(
-        &'a self,
-        session_id: &'a str,
-        session: &'a AgentTeamSession,
-        steps: &'a [Value],
-        round_counter: Arc<AtomicI32>,
-        path_prefix: Vec<usize>,
-        resume_path: Option<&'a [usize]>,
-    ) -> BoxFuture<'a, Result<bool>> {
-        Box::pin(async move {
-            let start_index = Self::resolve_resume_start_index(resume_path, &path_prefix).unwrap_or(0);
-            let mut suspended = false;
-            for idx in start_index..steps.len() {
-                let step = &steps[idx];
-                let mut current_path = path_prefix.clone();
-                current_path.push(idx);
-                let path = Self::format_orchestration_path(&current_path);
-                let step_suspended = self
-                    .execute_orchestration_step(
+            for task in tasks.iter().filter(|t| Self::is_task_pending(&t.status)) {
+                let mut blocked_reason: Option<String> = None;
+                for dep in &task.depends_on {
+                    let dep_status = status_map
+                        .get(dep)
+                        .map(|s| s.as_str())
+                        .unwrap_or("missing_dependency");
+                    if Self::is_task_failed(dep_status) {
+                        blocked_reason = Some(format!(
+                            "Blocked by dependency '{}' status={}",
+                            dep, dep_status
+                        ));
+                        break;
+                    }
+                }
+
+                if let Some(reason) = blocked_reason {
+                    repo_rt::update_task(
+                        &pool,
                         session_id,
-                        session,
-                        step,
-                        round_counter.clone(),
-                        path,
-                        current_path,
-                        resume_path,
+                        &UpdateTaskRequest {
+                            task_id: task.task_id.clone(),
+                            status: Some("blocked".to_string()),
+                            assignee_agent_id: None,
+                            last_error: Some(reason.clone()),
+                        },
                     )
                     .await?;
-                if step_suspended {
-                    suspended = true;
+                    let payload = json!({
+                        "session_id": session_id,
+                        "task_id": task.task_id,
+                        "task_record_id": task.id,
+                        "reason": reason,
+                    });
+                    let _ = repo_rt::append_task_event(
+                        &pool,
+                        session_id,
+                        Some(&task.id),
+                        "task_blocked",
+                        &payload,
+                    )
+                    .await;
+                    self.emit_event(session_id, "agent_team:task_blocked", payload);
+                }
+            }
+
+            tasks = repo_rt::list_tasks(&pool, session_id).await?;
+            let status_map: HashMap<String, String> = tasks
+                .iter()
+                .map(|t| (t.task_id.clone(), t.status.to_lowercase()))
+                .collect();
+
+            let all_terminal = tasks.iter().all(|t| Self::is_task_terminal(&t.status));
+            if all_terminal {
+                let failed: Vec<String> = tasks
+                    .iter()
+                    .filter(|t| Self::is_task_failed(&t.status))
+                    .map(|t| t.task_id.clone())
+                    .collect();
+                if !failed.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "Task graph completed with failures: {}",
+                        failed.join(", ")
+                    ));
+                }
+                break;
+            }
+
+            let ready_tasks: Vec<TeamTask> = tasks
+                .iter()
+                .filter(|t| {
+                    Self::is_task_pending(&t.status)
+                        && !in_flight_task_ids.contains(&t.task_id)
+                        && t.depends_on.iter().all(|dep| {
+                            status_map
+                                .get(dep)
+                                .map(|s| Self::is_task_completed(s))
+                                .unwrap_or(false)
+                        })
+                })
+                .cloned()
+                .collect();
+
+            for task in ready_tasks {
+                if in_flight.len() >= global_max_parallel {
                     break;
                 }
-            }
-            Ok(suspended)
-        })
-    }
-
-    fn resolve_resume_start_index(
-        resume_path: Option<&[usize]>,
-        prefix: &[usize],
-    ) -> Option<usize> {
-        let path = resume_path?;
-        if path.len() <= prefix.len() {
-            return None;
-        }
-        if !path.starts_with(prefix) {
-            return None;
-        }
-        Some(path[prefix.len()])
-    }
-
-    fn format_orchestration_path(indices: &[usize]) -> String {
-        let mut path = String::new();
-        for (depth, index) in indices.iter().enumerate() {
-            if depth == 0 {
-                path.push_str(&format!("steps[{}]", index));
-            } else {
-                path.push_str(&format!(".children[{}]", index));
-            }
-        }
-        path
-    }
-
-    fn find_orchestration_step_path(steps: &[Value], target_step_id: &str) -> Option<Vec<usize>> {
-        fn walk(
-            steps: &[Value],
-            target_step_id: &str,
-            prefix: &mut Vec<usize>,
-        ) -> Option<Vec<usize>> {
-            for (idx, step) in steps.iter().enumerate() {
-                prefix.push(idx);
-                let matched = step
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|id| id == target_step_id)
-                    .unwrap_or(false);
-                if matched {
-                    return Some(prefix.clone());
+                let node = node_map.get(&task.task_id);
+                let Some(member) = self.select_task_assignee(
+                    session,
+                    &task,
+                    node,
+                    &in_flight_by_member,
+                    &agent_limits,
+                ) else {
+                    continue;
+                };
+                let used = *in_flight_by_member.get(&member.id).unwrap_or(&0);
+                let limit = *agent_limits.get(&member.id).unwrap_or(&1);
+                if used >= limit {
+                    continue;
                 }
-                if let Some(children) = step.get("children").and_then(|v| v.as_array()) {
-                    if let Some(found) = walk(children, target_step_id, prefix) {
-                        return Some(found);
+                let member_id = member.id.clone();
+                let member_name = member.name.clone();
+
+                repo_rt::update_task(
+                    &pool,
+                    session_id,
+                    &UpdateTaskRequest {
+                        task_id: task.task_id.clone(),
+                        status: Some("running".to_string()),
+                        assignee_agent_id: Some(member_id.clone()),
+                        last_error: None,
+                    },
+                )
+                .await?;
+
+                let dispatch_payload = json!({
+                    "session_id": session_id,
+                    "task_id": task.task_id,
+                    "task_record_id": task.id,
+                    "assignee_agent_id": member_id,
+                    "assignee_agent_name": member_name,
+                    "attempt": task.attempt + 1,
+                    "max_attempts": task.max_attempts,
+                });
+                let _ = repo_rt::append_task_event(
+                    &pool,
+                    session_id,
+                    Some(&task.id),
+                    "task_dispatch",
+                    &dispatch_payload,
+                )
+                .await;
+                self.emit_event(session_id, "agent_team:task_dispatched", dispatch_payload);
+
+                in_flight_by_member
+                    .entry(member_id.clone())
+                    .and_modify(|v| *v += 1)
+                    .or_insert(1);
+                in_flight_task_ids.insert(task.task_id.clone());
+                in_flight.push(self.execute_single_task_v2(
+                    &pool,
+                    session_id,
+                    session,
+                    task,
+                    member.clone(),
+                    node.cloned(),
+                    round_counter.clone(),
+                ));
+            }
+
+            if in_flight.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Task scheduler stalled for session {}. Check dependency graph / assignee strategy.",
+                    session_id
+                ));
+            }
+
+            if let Some((task_id, member_id, result)) = in_flight.next().await {
+                in_flight_task_ids.remove(&task_id);
+                if let Some(used) = in_flight_by_member.get_mut(&member_id) {
+                    if *used > 0 {
+                        *used -= 1;
                     }
                 }
-                prefix.pop();
+                result?;
             }
-            None
         }
 
-        walk(steps, target_step_id, &mut Vec::new())
+        self.emit_event(
+            session_id,
+            "agent_team:task_graph_completed",
+            json!({"session_id": session_id}),
+        );
+        Ok(())
     }
 
-    fn execute_orchestration_step<'a>(
+    fn execute_single_task_v2<'a>(
         &'a self,
+        pool: &'a DatabasePool,
         session_id: &'a str,
         session: &'a AgentTeamSession,
-        step: &'a Value,
+        task: TeamTask,
+        member: AgentTeamMember,
+        node: Option<Value>,
         round_counter: Arc<AtomicI32>,
-        path: String,
-        path_indices: Vec<usize>,
-        resume_path: Option<&'a [usize]>,
-    ) -> BoxFuture<'a, Result<bool>> {
+    ) -> BoxFuture<'a, (String, String, Result<()>)> {
         Box::pin(async move {
-            let step_obj = step
-                .as_object()
-                .ok_or_else(|| anyhow::anyhow!("orchestration step {} must be object", path))?;
-            let step_id = step_obj
-                .get("id")
+            let task_id = task.task_id.clone();
+            let member_id = member.id.clone();
+            let attempt = task.attempt + 1;
+            let phase = node
+                .as_ref()
+                .and_then(|n| n.get("phase"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("orchestration step {} missing id", path))?;
-            let step_type = step_obj
-                .get("type")
+                .unwrap_or("task_execution");
+            let step_label = node
+                .as_ref()
+                .and_then(|n| n.get("title"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("orchestration step {} missing type", path))?;
+                .unwrap_or(task.title.as_str());
+            let step_instruction = node
+                .as_ref()
+                .and_then(|n| n.get("instruction"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(task.instruction.as_str());
+            let backoff_ms = node
+                .as_ref()
+                .and_then(|n| n.get("retry"))
+                .and_then(|r| r.get("backoff_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(800)
+                .clamp(100, 30_000) as u64;
+            let round_number = round_counter.fetch_add(1, Ordering::SeqCst);
+            let started = Instant::now();
+            let step_obj = json!({
+                "id": task.task_id,
+                "type": "agent",
+                "name": step_label,
+                "phase": phase,
+                "member": member_id.clone(),
+                "instruction": step_instruction,
+            });
+            let step_map = step_obj.as_object().cloned().unwrap_or_default();
 
-            match step_type {
-                "agent" => {
-                    self.run_orchestration_agent_step_with_retry(
+            let result = match self
+                .run_orchestration_agent_step(
+                    session_id,
+                    session,
+                    &task_id,
+                    &step_map,
+                    round_number,
+                )
+                .await
+            {
+                Ok(_) => {
+                    let duration_ms = started.elapsed().as_millis() as i64;
+                    match repo_rt::update_task(
+                        pool,
                         session_id,
-                        session,
-                        step_id,
-                        step_obj,
-                        round_counter,
+                        &UpdateTaskRequest {
+                            task_id: task_id.clone(),
+                            status: Some("completed".to_string()),
+                            assignee_agent_id: Some(member_id.clone()),
+                            last_error: None,
+                        },
                     )
                     .await
-                }
-                "serial" => {
-                    let children = step_obj
-                        .get("children")
-                        .and_then(|v| v.as_array())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "orchestration step {} (id={}) missing children",
-                                path,
-                                step_id
+                    {
+                        Ok(_) => {
+                            let _ = repo_rt::append_task_attempt(
+                                pool,
+                                session_id,
+                                &task.id,
+                                attempt,
+                                "succeeded",
+                                None,
+                                Some(duration_ms),
                             )
-                        })?;
-                    self.execute_orchestration_steps(
+                            .await;
+                            let payload = json!({
+                                "session_id": session_id,
+                                "task_id": task_id,
+                                "task_record_id": task.id,
+                                "assignee_agent_id": member_id,
+                                "attempt": attempt,
+                                "duration_ms": duration_ms,
+                            });
+                            let _ = repo_rt::append_task_event(
+                                pool,
+                                session_id,
+                                Some(&task.id),
+                                "task_complete",
+                                &payload,
+                            )
+                            .await;
+                            self.emit_event(session_id, "agent_team:task_completed", payload);
+                            Ok(())
+                        }
+                        Err(err) => Err(err),
+                    }
+                }
+                Err(e) => {
+                    let duration_ms = started.elapsed().as_millis() as i64;
+                    let err_text = e.to_string();
+                    let _ = repo_rt::append_task_attempt(
+                        pool,
                         session_id,
-                        session,
-                        children,
-                        round_counter.clone(),
-                        path_indices.clone(),
-                        resume_path,
+                        &task.id,
+                        attempt,
+                        "failed",
+                        Some(err_text.as_str()),
+                        Some(duration_ms),
                     )
-                    .await
-                }
-                "parallel" => {
-                    let children = step_obj
-                        .get("children")
-                        .and_then(|v| v.as_array())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "orchestration step {} (id={}) missing children",
-                                path,
-                                step_id
-                            )
-                        })?;
-                    let child_start =
-                        Self::resolve_resume_start_index(resume_path, &path_indices).unwrap_or(0);
-                    let futures = children
-                        .iter()
-                        .enumerate()
-                        .skip(child_start)
-                        .map(|(idx, child)| {
-                        let child_path = format!("{}.children[{}]", path, idx);
-                        let mut child_indices = path_indices.clone();
-                        child_indices.push(idx);
-                        self.execute_orchestration_step(
+                    .await;
+
+                    if attempt < task.max_attempts {
+                        match repo_rt::update_task(
+                            pool,
                             session_id,
-                            session,
-                            child,
-                            round_counter.clone(),
-                            child_path,
-                            child_indices,
-                            resume_path,
+                            &UpdateTaskRequest {
+                                task_id: task_id.clone(),
+                                status: Some("pending".to_string()),
+                                assignee_agent_id: Some(member_id.clone()),
+                                last_error: Some(err_text.clone()),
+                            },
                         )
-                    });
-                    let results = join_all(futures).await;
-                    let mut suspended = false;
-                    for result in results {
-                        if result? {
-                            suspended = true;
+                        .await
+                        {
+                            Ok(_) => {
+                                let payload = json!({
+                                    "session_id": session_id,
+                                    "task_id": task_id,
+                                    "task_record_id": task.id,
+                                    "attempt": attempt,
+                                    "max_attempts": task.max_attempts,
+                                    "retry_in_ms": backoff_ms,
+                                    "error": err_text,
+                                });
+                                let _ = repo_rt::append_task_event(
+                                    pool,
+                                    session_id,
+                                    Some(&task.id),
+                                    "task_retry",
+                                    &payload,
+                                )
+                                .await;
+                                self.emit_event(session_id, "agent_team:task_retry", payload);
+                                tokio::time::sleep(StdDuration::from_millis(
+                                    backoff_ms * attempt as u64,
+                                ))
+                                .await;
+                                Ok(())
+                            }
+                            Err(err) => Err(err),
+                        }
+                    } else {
+                        match repo_rt::update_task(
+                            pool,
+                            session_id,
+                            &UpdateTaskRequest {
+                                task_id: task_id.clone(),
+                                status: Some("failed".to_string()),
+                                assignee_agent_id: Some(member_id.clone()),
+                                last_error: Some(err_text.clone()),
+                            },
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                let failed_payload = json!({
+                                    "session_id": session_id,
+                                    "task_id": task_id,
+                                    "task_record_id": task.id,
+                                    "assignee_agent_id": member_id,
+                                    "attempt": attempt,
+                                    "error": err_text,
+                                });
+                                let _ = repo_rt::append_task_event(
+                                    pool,
+                                    session_id,
+                                    Some(&task.id),
+                                    "task_failed",
+                                    &failed_payload,
+                                )
+                                .await;
+                                let _ = repo_rt::create_mailbox_message(
+                                    pool,
+                                    session_id,
+                                    Some(member_id.as_str()),
+                                    None,
+                                    Some(task.id.as_str()),
+                                    "task_failed",
+                                    &failed_payload,
+                                )
+                                .await;
+                                self.emit_event(session_id, "agent_team:task_failed", failed_payload);
+                                Ok(())
+                            }
+                            Err(err) => Err(err),
                         }
                     }
-                    Ok(suspended)
                 }
-                other => Err(anyhow::anyhow!(
-                    "orchestration step {} has unsupported type '{}'",
-                    path,
-                    other
-                )),
-            }
+            };
+
+            (task_id, member_id, result)
         })
+    }
+
+    fn build_task_node_map(runtime_spec_v2: &Value) -> HashMap<String, Value> {
+        runtime_spec_v2
+            .get("task_graph")
+            .and_then(|v| v.get("nodes"))
+            .and_then(|v| v.as_array())
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .filter_map(|node| {
+                        let task_id = node.get("id").and_then(|v| v.as_str())?;
+                        Some((task_id.to_string(), node.clone()))
+                    })
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default()
+    }
+
+    fn build_agent_concurrency_limits(
+        &self,
+        session: &AgentTeamSession,
+        runtime_spec_v2: &Value,
+    ) -> HashMap<String, usize> {
+        let mut limits: HashMap<String, usize> = session
+            .members
+            .iter()
+            .map(|m| (m.id.clone(), 1usize))
+            .collect();
+
+        if let Some(agents) = runtime_spec_v2.get("agents").and_then(|v| v.as_array()) {
+            for agent in agents {
+                let max_parallel = agent
+                    .get("max_parallel_tasks")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1)
+                    .clamp(1, 16) as usize;
+
+                let mut selectors: Vec<String> = Vec::new();
+                if let Some(id) = agent.get("id").and_then(|v| v.as_str()) {
+                    selectors.push(id.to_string());
+                }
+                if let Some(name) = agent.get("name").and_then(|v| v.as_str()) {
+                    selectors.push(name.to_string());
+                }
+
+                for selector in selectors {
+                    if let Some(member) = self.resolve_member(session, &selector) {
+                        limits.insert(member.id.clone(), max_parallel);
+                        break;
+                    }
+                }
+            }
+        }
+        limits
+    }
+
+    fn select_task_assignee<'a>(
+        &self,
+        session: &'a AgentTeamSession,
+        task: &TeamTask,
+        node: Option<&Value>,
+        in_flight_by_member: &HashMap<String, usize>,
+        agent_limits: &HashMap<String, usize>,
+    ) -> Option<&'a AgentTeamMember> {
+        let mut selectors: Vec<String> = Vec::new();
+        if let Some(selector) = task.assignee_agent_id.as_ref() {
+            selectors.push(selector.to_string());
+        }
+        if let Some(selector) = node.and_then(Self::extract_task_assignee_selector) {
+            selectors.push(selector);
+        }
+
+        for selector in selectors {
+            if let Some(member) = self.resolve_member(session, &selector) {
+                let used = *in_flight_by_member.get(&member.id).unwrap_or(&0);
+                let limit = *agent_limits.get(&member.id).unwrap_or(&1);
+                if used < limit {
+                    return Some(member);
+                }
+            }
+        }
+
+        session
+            .members
+            .iter()
+            .filter(|member| {
+                let used = *in_flight_by_member.get(&member.id).unwrap_or(&0);
+                let limit = *agent_limits.get(&member.id).unwrap_or(&1);
+                used < limit
+            })
+            .min_by_key(|member| in_flight_by_member.get(&member.id).copied().unwrap_or(0))
+    }
+
+    fn extract_task_assignee_selector(node: &Value) -> Option<String> {
+        let strategy = node.get("assignee_strategy")?;
+        if let Some(s) = strategy.as_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("auto") {
+                return Some(trimmed.to_string());
+            }
+        }
+        let strategy_obj = strategy.as_object()?;
+        for key in ["agent_id", "agent_name"] {
+            if let Some(v) = strategy_obj.get(key).and_then(|v| v.as_str()) {
+                let trimmed = v.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+        if let Some(fixed) = strategy_obj.get("fixed_agent").and_then(|v| v.as_object()) {
+            for key in ["agent_id", "agent_name"] {
+                if let Some(v) = fixed.get(key).and_then(|v| v.as_str()) {
+                    let trimmed = v.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn is_task_pending(status: &str) -> bool {
+        status.eq_ignore_ascii_case("pending")
+    }
+
+    fn is_task_completed(status: &str) -> bool {
+        status.eq_ignore_ascii_case("completed")
+    }
+
+    fn is_task_failed(status: &str) -> bool {
+        status.eq_ignore_ascii_case("failed")
+            || status.eq_ignore_ascii_case("blocked")
+            || status.eq_ignore_ascii_case("cancelled")
+    }
+
+    fn is_task_terminal(status: &str) -> bool {
+        Self::is_task_completed(status) || Self::is_task_failed(status)
     }
 
     async fn run_orchestration_agent_step(
@@ -545,16 +805,18 @@ impl AgentTeamEngine {
                 "member_name": member.name,
             }),
         );
-        self.emit_event(
-            session_id,
-            "agent_team:role_thinking",
-            json!({
-                "member_id": member.id,
-                "member_name": member.name,
-                "phase": phase,
-                "step_id": step_id,
-            }),
-        );
+        if !phase.to_lowercase().starts_with("task") {
+            self.emit_event(
+                session_id,
+                "agent_team:role_thinking",
+                json!({
+                    "member_id": member.id,
+                    "member_name": member.name,
+                    "phase": phase,
+                    "step_id": step_id,
+                }),
+            );
+        }
 
         let goal = session.goal.as_deref().unwrap_or("请讨论并制定方案");
         let llm_config = self.get_llm_config_for_member(Some(member)).await?;
@@ -672,626 +934,6 @@ impl AgentTeamEngine {
         Ok(false)
     }
 
-    async fn run_orchestration_agent_step_with_retry(
-        &self,
-        session_id: &str,
-        session: &AgentTeamSession,
-        step_id: &str,
-        step_obj: &serde_json::Map<String, Value>,
-        round_counter: Arc<AtomicI32>,
-    ) -> Result<bool> {
-        let max_attempts = step_obj
-            .get("retry")
-            .and_then(|v| v.get("max_attempts"))
-            .or_else(|| step_obj.get("retry_max_attempts"))
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1)
-            .clamp(1, 5) as i32;
-        let backoff_ms = step_obj
-            .get("retry")
-            .and_then(|v| v.get("backoff_ms"))
-            .or_else(|| step_obj.get("retry_backoff_ms"))
-            .and_then(|v| v.as_i64())
-            .unwrap_or(800)
-            .clamp(100, 10_000) as u64;
-
-        let db = self
-            .app_handle
-            .try_state::<Arc<DatabaseService>>()
-            .context("DatabaseService not available")?;
-        let pool = db.get_runtime_pool().context("Failed to get db pool")?;
-
-        let mut last_error: Option<anyhow::Error> = None;
-        for attempt in 1..=max_attempts {
-            let round_number = round_counter.fetch_add(1, Ordering::SeqCst);
-            let started_at = Instant::now();
-            match self
-                .run_orchestration_agent_step(session_id, session, step_id, step_obj, round_number)
-                .await
-            {
-                Ok(suspended) => {
-                    let duration_ms = started_at.elapsed().as_millis() as i64;
-                    self.persist_orchestration_checkpoint(
-                        &pool,
-                        session_id,
-                        step_id,
-                        "succeeded",
-                        attempt,
-                        round_number,
-                        Some(duration_ms),
-                        None,
-                    )
-                    .await;
-                    return Ok(suspended);
-                }
-                Err(e) => {
-                    let duration_ms = started_at.elapsed().as_millis() as i64;
-                    let err_text = e.to_string();
-                    self.persist_orchestration_checkpoint(
-                        &pool,
-                        session_id,
-                        step_id,
-                        "failed",
-                        attempt,
-                        round_number,
-                        Some(duration_ms),
-                        Some(err_text.as_str()),
-                    )
-                    .await;
-                    if attempt < max_attempts {
-                        warn!(
-                            "Orchestration step {} failed on attempt {}/{} for session {}: {}",
-                            step_id, attempt, max_attempts, session_id, err_text
-                        );
-                        self.emit_event(
-                            session_id,
-                            "agent_team:orchestration_step_retry",
-                            json!({
-                                "session_id": session_id,
-                                "step_id": step_id,
-                                "attempt": attempt,
-                                "max_attempts": max_attempts,
-                                "next_retry_in_ms": backoff_ms,
-                                "error": err_text,
-                            }),
-                        );
-                        tokio::time::sleep(StdDuration::from_millis(backoff_ms * attempt as u64))
-                            .await;
-                    }
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            anyhow::anyhow!(
-                "orchestration step {} failed after retries for session {}",
-                step_id,
-                session_id
-            )
-        }))
-    }
-
-    async fn clear_orchestration_resume_marker(
-        &self,
-        session_id: &str,
-        session: &AgentTeamSession,
-        consumed_step_id: &str,
-    ) -> Result<()> {
-        let db = self
-            .app_handle
-            .try_state::<Arc<DatabaseService>>()
-            .context("DatabaseService not available")?;
-        let pool = db.get_runtime_pool().context("Failed to get db pool")?;
-
-        let mut state_machine = session.state_machine.clone().unwrap_or_else(|| json!({}));
-        if !state_machine.is_object() {
-            state_machine = json!({});
-        }
-        let state_obj = state_machine
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("state_machine must be object"))?;
-        let runtime_value = state_obj
-            .entry("orchestration_runtime".to_string())
-            .or_insert_with(|| json!({}));
-        if !runtime_value.is_object() {
-            *runtime_value = json!({});
-        }
-        let runtime_obj = runtime_value
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("orchestration_runtime must be object"))?;
-        runtime_obj.remove("resume_from_step_id");
-        runtime_obj.insert(
-            "resume_consumed_step_id".to_string(),
-            json!(consumed_step_id.to_string()),
-        );
-        runtime_obj.insert(
-            "resume_consumed_at".to_string(),
-            json!(chrono::Utc::now().to_rfc3339()),
-        );
-
-        repo_rt::update_agent_team_session(
-            &pool,
-            session_id,
-            &UpdateAgentTeamSessionRequest {
-                name: None,
-                goal: None,
-                state: None,
-                max_rounds: None,
-                orchestration_plan: None,
-                plan_version: None,
-                state_machine: Some(state_machine),
-                error_message: None,
-            },
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    async fn persist_orchestration_checkpoint(
-        &self,
-        pool: &DatabasePool,
-        session_id: &str,
-        step_id: &str,
-        status: &str,
-        attempt: i32,
-        round_number: i32,
-        duration_ms: Option<i64>,
-        error: Option<&str>,
-    ) {
-        let session = match repo_rt::get_agent_team_session(pool, session_id).await {
-            Ok(Some(s)) => s,
-            Ok(None) => return,
-            Err(e) => {
-                warn!(
-                    "Failed to persist orchestration checkpoint for session {}: {}",
-                    session_id, e
-                );
-                return;
-            }
-        };
-
-        let mut state_machine = session.state_machine.unwrap_or_else(|| json!({}));
-        if !state_machine.is_object() {
-            state_machine = json!({});
-        }
-        let Some(state_obj) = state_machine.as_object_mut() else {
-            return;
-        };
-        let runtime_value = state_obj
-            .entry("orchestration_runtime".to_string())
-            .or_insert_with(|| json!({}));
-        if !runtime_value.is_object() {
-            *runtime_value = json!({});
-        }
-
-        if let Some(runtime_obj) = runtime_value.as_object_mut() {
-            runtime_obj.insert("last_step_id".to_string(), json!(step_id));
-            runtime_obj.insert("last_step_status".to_string(), json!(status));
-            runtime_obj.insert("last_attempt".to_string(), json!(attempt));
-            runtime_obj.insert("last_round".to_string(), json!(round_number));
-            if let Some(ms) = duration_ms {
-                runtime_obj.insert("last_duration_ms".to_string(), json!(ms));
-            }
-            runtime_obj.insert(
-                "updated_at".to_string(),
-                json!(chrono::Utc::now().to_rfc3339()),
-            );
-            if let Some(err) = error {
-                runtime_obj.insert("last_error".to_string(), json!(shorten_text(err, 500)));
-            } else {
-                runtime_obj.remove("last_error");
-            }
-            self.update_orchestration_runtime_stats(
-                runtime_obj,
-                step_id,
-                status,
-                attempt,
-                round_number,
-                duration_ms,
-                error,
-            );
-        }
-
-        if let Err(e) = repo_rt::update_agent_team_session(
-            pool,
-            session_id,
-            &UpdateAgentTeamSessionRequest {
-                name: None,
-                goal: None,
-                state: None,
-                max_rounds: None,
-                orchestration_plan: None,
-                plan_version: None,
-                state_machine: Some(state_machine),
-                error_message: None,
-            },
-        )
-        .await
-        {
-            warn!(
-                "Failed to update session state_machine checkpoint for session {}: {}",
-                session_id, e
-            );
-        }
-    }
-
-    fn update_orchestration_runtime_stats(
-        &self,
-        runtime_obj: &mut serde_json::Map<String, Value>,
-        step_id: &str,
-        status: &str,
-        attempt: i32,
-        round_number: i32,
-        duration_ms: Option<i64>,
-        error: Option<&str>,
-    ) {
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let mark_last_success = status == "succeeded";
-        let mark_suggested_resume = status == "failed";
-        {
-            let step_stats_value = runtime_obj
-                .entry("step_stats".to_string())
-                .or_insert_with(|| json!({}));
-            if !step_stats_value.is_object() {
-                *step_stats_value = json!({});
-            }
-            let Some(step_stats_obj) = step_stats_value.as_object_mut() else {
-                return;
-            };
-            let step_stat_value = step_stats_obj.entry(step_id.to_string()).or_insert_with(|| {
-                json!({
-                    "step_id": step_id,
-                    "total_attempts": 0,
-                    "success_count": 0,
-                    "failure_count": 0,
-                    "total_duration_ms": 0,
-                    "avg_duration_ms": 0,
-                })
-            });
-            if !step_stat_value.is_object() {
-                *step_stat_value = json!({
-                    "step_id": step_id,
-                    "total_attempts": 0,
-                    "success_count": 0,
-                    "failure_count": 0,
-                    "total_duration_ms": 0,
-                    "avg_duration_ms": 0,
-                });
-            }
-            let Some(step_stat_obj) = step_stat_value.as_object_mut() else {
-                return;
-            };
-
-            let mut total_attempts = step_stat_obj
-                .get("total_attempts")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-            let mut success_count = step_stat_obj
-                .get("success_count")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-            let mut failure_count = step_stat_obj
-                .get("failure_count")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-            let mut total_duration_ms = step_stat_obj
-                .get("total_duration_ms")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-
-            total_attempts += 1;
-            if mark_last_success {
-                success_count += 1;
-            } else if mark_suggested_resume {
-                failure_count += 1;
-            }
-            if let Some(ms) = duration_ms {
-                total_duration_ms += ms.max(0);
-                step_stat_obj.insert("last_duration_ms".to_string(), json!(ms.max(0)));
-            }
-
-            let avg_duration_ms = if total_attempts > 0 {
-                total_duration_ms / total_attempts
-            } else {
-                0
-            };
-            step_stat_obj.insert("step_id".to_string(), json!(step_id));
-            step_stat_obj.insert("total_attempts".to_string(), json!(total_attempts));
-            step_stat_obj.insert("success_count".to_string(), json!(success_count));
-            step_stat_obj.insert("failure_count".to_string(), json!(failure_count));
-            step_stat_obj.insert("total_duration_ms".to_string(), json!(total_duration_ms));
-            step_stat_obj.insert("avg_duration_ms".to_string(), json!(avg_duration_ms));
-            step_stat_obj.insert("last_status".to_string(), json!(status));
-            step_stat_obj.insert("last_attempt".to_string(), json!(attempt));
-            step_stat_obj.insert("last_round".to_string(), json!(round_number));
-            step_stat_obj.insert("updated_at".to_string(), json!(now.clone()));
-            if let Some(err) = error {
-                step_stat_obj.insert("last_error".to_string(), json!(shorten_text(err, 500)));
-            } else {
-                step_stat_obj.remove("last_error");
-            }
-        }
-
-        if mark_last_success {
-            runtime_obj.insert("last_success_step_id".to_string(), json!(step_id));
-        }
-        if mark_suggested_resume {
-            runtime_obj.insert("suggested_resume_step_id".to_string(), json!(step_id));
-        }
-        if mark_suggested_resume {
-            if let Some(err) = error {
-                let failure_mode = Self::classify_orchestration_failure_mode(err);
-                self.update_orchestration_failure_mode_stats(
-                    runtime_obj,
-                    failure_mode,
-                    step_id,
-                    err,
-                    now.as_str(),
-                );
-            } else {
-                self.update_orchestration_failure_mode_stats(
-                    runtime_obj,
-                    "unknown",
-                    step_id,
-                    "",
-                    now.as_str(),
-                );
-            }
-        }
-
-        {
-            let summary_value = runtime_obj
-                .entry("summary".to_string())
-                .or_insert_with(|| json!({}));
-            if !summary_value.is_object() {
-                *summary_value = json!({});
-            }
-            let Some(summary_obj) = summary_value.as_object_mut() else {
-                return;
-            };
-            let mut total_attempts_all = summary_obj
-                .get("total_attempts")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-            let mut total_success = summary_obj
-                .get("total_success")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-            let mut total_failed = summary_obj
-                .get("total_failed")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                .max(0);
-            total_attempts_all += 1;
-            if status == "succeeded" {
-                total_success += 1;
-            } else if status == "failed" {
-                total_failed += 1;
-            }
-
-            summary_obj.insert("total_attempts".to_string(), json!(total_attempts_all));
-            summary_obj.insert("total_success".to_string(), json!(total_success));
-            summary_obj.insert("total_failed".to_string(), json!(total_failed));
-            summary_obj.insert("updated_at".to_string(), json!(now.clone()));
-
-            if let Some(ms) = duration_ms {
-                let current_slowest = summary_obj
-                    .get("slowest_duration_ms")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                if ms > current_slowest {
-                    summary_obj.insert("slowest_duration_ms".to_string(), json!(ms));
-                    summary_obj.insert("slowest_step_id".to_string(), json!(step_id));
-                }
-            }
-        }
-        self.refresh_orchestration_recovery_suggestions(runtime_obj);
-    }
-
-    fn update_orchestration_failure_mode_stats(
-        &self,
-        runtime_obj: &mut serde_json::Map<String, Value>,
-        failure_mode: &str,
-        step_id: &str,
-        error: &str,
-        now: &str,
-    ) {
-        let modes_value = runtime_obj
-            .entry("failure_modes".to_string())
-            .or_insert_with(|| json!({}));
-        if !modes_value.is_object() {
-            *modes_value = json!({});
-        }
-        let Some(modes_obj) = modes_value.as_object_mut() else {
-            return;
-        };
-        let mode_value = modes_obj
-            .entry(failure_mode.to_string())
-            .or_insert_with(|| {
-                json!({
-                    "mode": failure_mode,
-                    "count": 0,
-                    "latest_step_id": "",
-                    "latest_error": "",
-                    "hint": Self::failure_mode_recovery_hint(failure_mode),
-                    "updated_at": now,
-                })
-            });
-        if !mode_value.is_object() {
-            *mode_value = json!({
-                "mode": failure_mode,
-                "count": 0,
-                "latest_step_id": "",
-                "latest_error": "",
-                "hint": Self::failure_mode_recovery_hint(failure_mode),
-                "updated_at": now,
-            });
-        }
-        let Some(mode_obj) = mode_value.as_object_mut() else {
-            return;
-        };
-
-        let mut count = mode_obj
-            .get("count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0)
-            .max(0);
-        count += 1;
-        mode_obj.insert("mode".to_string(), json!(failure_mode));
-        mode_obj.insert("count".to_string(), json!(count));
-        mode_obj.insert("latest_step_id".to_string(), json!(step_id));
-        mode_obj.insert(
-            "latest_error".to_string(),
-            json!(shorten_text(error, 500)),
-        );
-        mode_obj.insert(
-            "hint".to_string(),
-            json!(Self::failure_mode_recovery_hint(failure_mode)),
-        );
-        mode_obj.insert("updated_at".to_string(), json!(now));
-    }
-
-    fn refresh_orchestration_recovery_suggestions(
-        &self,
-        runtime_obj: &mut serde_json::Map<String, Value>,
-    ) {
-        let mut suggestions: Vec<String> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-
-        let push_unique = |msg: String,
-                           suggestions: &mut Vec<String>,
-                           seen: &mut std::collections::HashSet<String>| {
-            if msg.trim().is_empty() {
-                return;
-            }
-            if seen.insert(msg.clone()) {
-                suggestions.push(msg);
-            }
-        };
-
-        if let Some(step_id) = runtime_obj
-            .get("suggested_resume_step_id")
-            .and_then(|v| v.as_str())
-        {
-            push_unique(
-                format!("优先从失败节点 {} 恢复执行。", step_id),
-                &mut suggestions,
-                &mut seen,
-            );
-        }
-
-        if let Some(modes_obj) = runtime_obj
-            .get("failure_modes")
-            .and_then(|v| v.as_object())
-        {
-            let mut modes: Vec<(String, i64)> = modes_obj
-                .iter()
-                .map(|(mode, value)| {
-                    (
-                        mode.clone(),
-                        value.get("count").and_then(|v| v.as_i64()).unwrap_or(0),
-                    )
-                })
-                .collect();
-            modes.sort_by(|a, b| b.1.cmp(&a.1));
-
-            for (mode, _) in modes.into_iter().take(3) {
-                push_unique(
-                    Self::failure_mode_recovery_hint(&mode).to_string(),
-                    &mut suggestions,
-                    &mut seen,
-                );
-            }
-        }
-
-        if let Some(slowest_step_id) = runtime_obj
-            .get("summary")
-            .and_then(|v| v.get("slowest_step_id"))
-            .and_then(|v| v.as_str())
-        {
-            let slowest_ms = runtime_obj
-                .get("summary")
-                .and_then(|v| v.get("slowest_duration_ms"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            if slowest_ms >= 120_000 {
-                push_unique(
-                    format!(
-                        "慢节点 {} 耗时较高（约{}秒），建议拆分任务或改并行。",
-                        slowest_step_id,
-                        slowest_ms / 1000
-                    ),
-                    &mut suggestions,
-                    &mut seen,
-                );
-            }
-        }
-
-        if suggestions.is_empty() {
-            suggestions.push("当前暂无明显失败风险，可按既定编排继续运行。".to_string());
-        }
-        runtime_obj.insert("recovery_suggestions".to_string(), json!(suggestions));
-    }
-
-    fn classify_orchestration_failure_mode(error: &str) -> &'static str {
-        let lower = error.to_lowercase();
-        if lower.contains("timeout")
-            || lower.contains("timed out")
-            || lower.contains("deadline exceeded")
-        {
-            "timeout"
-        } else if lower.contains("rate limit")
-            || lower.contains("429")
-            || lower.contains("api key")
-            || lower.contains("provider")
-            || lower.contains("unauthorized")
-        {
-            "llm_provider"
-        } else if lower.contains("permission")
-            || lower.contains("denied")
-            || lower.contains("approval")
-        {
-            "permission"
-        } else if lower.contains("tool")
-            || lower.contains("shell")
-            || lower.contains("command")
-        {
-            "tool_execution"
-        } else if lower.contains("missing")
-            || lower.contains("invalid")
-            || lower.contains("required")
-            || lower.contains("json")
-        {
-            "input_validation"
-        } else if lower.contains("member") && lower.contains("not found") {
-            "member_mapping"
-        } else {
-            "unknown"
-        }
-    }
-
-    fn failure_mode_recovery_hint(mode: &str) -> &'static str {
-        match mode {
-            "timeout" => "超时失败较多，建议提高 backoff、降低单步任务复杂度，必要时拆分步骤。",
-            "llm_provider" => {
-                "模型/供应商失败较多，建议检查 API key、限流配额并切换备用模型。"
-            }
-            "permission" => "权限失败较多，建议调整工具策略或角色权限后再重试。",
-            "tool_execution" => "工具执行失败较多，建议先在单步验证工具输入，再恢复编排运行。",
-            "input_validation" => "输入校验失败较多，建议检查 step 配置字段与 JSON 结构。",
-            "member_mapping" => "成员映射失败，建议确认 step.member 与 Team 成员名称一致。",
-            _ => "未知失败较多，建议从最近失败 step 恢复并开启更小步长重试。",
-        }
-    }
 
     fn resolve_member<'a>(
         &self,
@@ -1308,9 +950,7 @@ impl AgentTeamEngine {
         let lower = phase.trim().to_lowercase();
         if lower.contains("propos") || lower.contains("draft") {
             TeamSessionState::Proposing
-        } else if lower.contains("challeng")
-            || lower.contains("review")
-            || lower.contains("audit")
+        } else if lower.contains("challeng") || lower.contains("review") || lower.contains("audit")
         {
             TeamSessionState::Challenging
         } else if lower.contains("decid") || lower.contains("merge") {
@@ -1868,8 +1508,8 @@ Input:\n\
                 goal: None,
                 state: None,
                 max_rounds: None,
-                orchestration_plan: None,
-                plan_version: None,
+                schema_version: None,
+                runtime_spec_v2: None,
                 state_machine: Some(state_machine),
                 error_message: None,
             },
@@ -2313,9 +1953,6 @@ Input:\n\
 
         if let Ok(gov) = self.tool_governance.lock() {
             for tool in tools {
-                if tool.name == SkillsTool::NAME {
-                    continue;
-                }
                 match gov.check_permission(&member.id, &tool.name) {
                     super::scheduler::ToolPermissionResult::Allowed => {
                         selected_names.push(tool.name);
@@ -2394,7 +2031,6 @@ Input:\n\
 
 // ==================== 全局引擎管理 ====================
 
-use std::collections::HashMap;
 use std::sync::OnceLock;
 use tokio::sync::RwLock;
 
@@ -2442,8 +2078,8 @@ pub async fn start_agent_team_run_async(app_handle: AppHandle, session_id: Strin
                             goal: None,
                             state: Some("FAILED".to_string()),
                             max_rounds: None,
-                            orchestration_plan: None,
-                            plan_version: None,
+                            schema_version: None,
+                            runtime_spec_v2: None,
                             state_machine: None,
                             error_message: Some(e.to_string()),
                         },

@@ -91,7 +91,7 @@
           <div class="text-[11px] text-base-content/65 bg-base-200/60 rounded px-2 py-1">
             <span class="font-medium">执行摘要：</span>
             <span v-if="step.type === 'agent'">
-              成员={{ step.member || '未绑定' }}，phase={{ step.phase || '-' }}，retry={{ step.retry?.max_attempts ?? 1 }}/{{ step.retry?.backoff_ms ?? 800 }}ms
+              Agent={{ step.member || '未绑定' }}，phase={{ step.phase || '-' }}，retry={{ step.retry?.max_attempts ?? 1 }}/{{ step.retry?.backoff_ms ?? 800 }}ms
             </span>
             <span v-else>
               {{ step.type === 'parallel' ? '并行分支' : '串行子流程' }}，children={{ step.children?.length || 0 }}
@@ -157,12 +157,12 @@
 
               <div v-if="step.type === 'agent'" class="space-y-2">
                 <label class="form-control">
-                  <div class="label py-0.5"><span class="label-text text-[11px]">执行成员（member）</span></div>
+                  <div class="label py-0.5"><span class="label-text text-[11px]">执行 Agent（member）</span></div>
                   <select
                     v-model="step.member"
                     class="select select-bordered select-xs w-full"
                   >
-                    <option value="">选择成员</option>
+                    <option value="">选择 Agent</option>
                     <option v-for="memberName in memberOptions" :key="`member-option-${memberName}`" :value="memberName">
                       {{ memberName }}
                     </option>

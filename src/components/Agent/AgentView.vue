@@ -234,35 +234,28 @@
                   :class="teamWorkspaceTab === 'templates' ? 'text-primary border-b-2 border-primary bg-primary/5' : 'text-base-content/50 hover:text-base-content'"
                   @click="teamWorkspaceTab = 'templates'"
                 >
-                  <i class="fas fa-layer-group mr-1"></i> 模板库
+                  <i class="fas fa-layer-group mr-1"></i> Team库
                 </button>
                 <button
                   class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'blackboard' ? 'text-secondary border-b-2 border-secondary bg-secondary/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'blackboard'"
+                  :class="teamWorkspaceTab === 'tasks' ? 'text-secondary border-b-2 border-secondary bg-secondary/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'tasks'"
                 >
-                  <i class="fas fa-chalkboard mr-1"></i> 白板
+                  <i class="fas fa-list-check mr-1"></i> Tasks
                 </button>
                 <button
                   class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'artifacts' ? 'text-accent border-b-2 border-accent bg-accent/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'artifacts'"
+                  :class="teamWorkspaceTab === 'inbox' ? 'text-accent border-b-2 border-accent bg-accent/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'inbox'"
                 >
-                  <i class="fas fa-file-alt mr-1"></i> 产物
+                  <i class="fas fa-inbox mr-1"></i> Inbox
                 </button>
                 <button
                   class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'timeline' ? 'text-info border-b-2 border-info bg-info/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'timeline'"
+                  :class="teamWorkspaceTab === 'agents' ? 'text-info border-b-2 border-info bg-info/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'agents'"
                 >
-                  <i class="fas fa-stream mr-1"></i> 时间线
-                </button>
-                <button
-                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'challenge' ? 'text-warning border-b-2 border-warning bg-warning/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'challenge'"
-                >
-                  <i class="fas fa-code-compare mr-1"></i> 对比
+                  <i class="fas fa-users mr-1"></i> Agents
                 </button>
               </div>
 
@@ -276,47 +269,79 @@
                 class="flex-1 overflow-hidden"
                 @close="isTeamWorkspaceActive = false"
                 @templates-updated="handleTeamTemplatesUpdated"
-                @session-created="handleTeamSessionCreated"
               />
-              <AgentTeamBlackboardPanel
-                v-else-if="teamWorkspaceTab === 'blackboard'"
-                class="flex-1 overflow-hidden"
-                :entries="teamBlackboardEntries"
-                :archive-entry-id="teamBlackboardArchiveEntryId"
-                :archive-messages="teamBlackboardArchiveMessages"
-                :archive-scope="teamBlackboardArchiveScope"
-                :archive-loading="teamBlackboardArchiveLoading"
-                :archive-error="teamBlackboardArchiveError"
-                :can-annotate="true"
-                @resolve="handleTeamResolveBlackboardEntry"
-                @view-archive="handleTeamViewBlackboardArchive"
-                @add-entry="handleTeamAddBlackboardEntry"
-                @annotate="handleTeamAnnotateBlackboardEntry"
-              />
-              <AgentTeamArtifactPanel
-                v-else-if="teamWorkspaceTab === 'artifacts'"
-                class="flex-1 overflow-hidden"
-                :artifacts="teamArtifacts"
-              />
-              <AgentTeamTimeline
-                v-else-if="teamWorkspaceTab === 'timeline'"
-                class="flex-1 overflow-hidden"
-                :rounds="teamRounds"
-                :messages="teamSessionMessages"
-                :is-running="isTeamRunActive"
-              />
-              <AgentTeamChallengeSplitView
-                v-else-if="teamWorkspaceTab === 'challenge'"
-                class="flex-1 overflow-hidden"
-                :messages="teamSessionMessages"
-                :round-id="latestTeamRoundId"
-                :divergence-score="latestTeamDivergence"
-                :threshold="0.6"
-              />
+              <div v-else-if="teamWorkspaceTab === 'tasks'" class="flex-1 overflow-auto p-3">
+                <div v-if="teamTasks.length === 0" class="text-sm text-base-content/50">暂无任务数据</div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="task in teamTasks"
+                    :key="task.id"
+                    class="rounded-lg border border-base-300 bg-base-100 p-2"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="text-sm font-medium truncate">{{ task.title || task.task_id }}</div>
+                      <span class="badge badge-xs" :class="taskStatusBadgeClass(task.status)">{{ task.status }}</span>
+                    </div>
+                    <div class="mt-1 text-xs text-base-content/55 line-clamp-2">{{ task.instruction || '—' }}</div>
+                    <div class="mt-1 flex items-center gap-2 text-[11px] text-base-content/50">
+                      <span>负责人: {{ resolveAgentName(task.assignee_agent_id) }}</span>
+                      <span>Attempt: {{ task.attempt }}/{{ task.max_attempts }}</span>
+                    </div>
+                    <div v-if="task.last_error" class="mt-1 text-[11px] text-error line-clamp-2">{{ task.last_error }}</div>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="teamWorkspaceTab === 'inbox'" class="flex-1 overflow-auto p-3">
+                <div v-if="teamMailbox.length === 0" class="text-sm text-base-content/50">暂无收件箱消息</div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="msg in teamMailbox"
+                    :key="msg.id"
+                    class="rounded-lg border border-base-300 bg-base-100 p-2"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="text-xs font-semibold">{{ msg.message_type }}</div>
+                      <button
+                        v-if="!msg.is_acknowledged"
+                        class="btn btn-xs btn-outline"
+                        @click="handleAckMailbox(msg.id)"
+                      >
+                        Ack
+                      </button>
+                      <span v-else class="badge badge-xs badge-success">已确认</span>
+                    </div>
+                    <div class="mt-1 text-[11px] text-base-content/60">
+                      From: {{ resolveAgentName(msg.from_agent_id) }} → To: {{ resolveAgentName(msg.to_agent_id) }}
+                    </div>
+                    <pre class="mt-1 text-[11px] bg-base-200/60 rounded p-1.5 overflow-auto max-h-24">{{ stringifySmallJson(msg.payload) }}</pre>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="teamWorkspaceTab === 'agents'" class="flex-1 overflow-auto p-3">
+                <div v-if="(teamSessionDetail?.members || []).length === 0" class="text-sm text-base-content/50">暂无 Agent</div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="member in (teamSessionDetail?.members || [])"
+                    :key="member.id"
+                    class="rounded-lg border border-base-300 bg-base-100 p-2"
+                  >
+                    <div class="flex items-center justify-between">
+                      <div class="text-sm font-medium">{{ member.name }}</div>
+                      <span class="badge badge-xs" :class="member.is_active ? 'badge-success' : 'badge-ghost'">
+                        {{ member.is_active ? 'ACTIVE' : 'IDLE' }}
+                      </span>
+                    </div>
+                    <div class="mt-1 text-[11px] text-base-content/55">{{ member.responsibility || '未设置职责' }}</div>
+                    <div class="mt-1 text-[11px] text-base-content/50">
+                      Tokens: {{ member.token_usage }} · Tools: {{ member.tool_calls_count }}
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div v-else class="flex-1 overflow-auto p-4">
                 <div class="rounded-xl border border-base-300 bg-base-100 p-4 text-sm text-base-content/70">
-                  编排入口已迁移到模板库。
-                  请在「模板库 → 编辑模板」中配置 `orchestration_plan`。
+                  编排入口已迁移到 Team库。
+                  请在「Team库 → 编辑模板」中配置 V2 `task_graph`。
                 </div>
               </div>
             </div>
@@ -405,6 +430,11 @@ import type {
   AgentTeamRoundEvent,
   AgentTeamArtifactEvent,
   AgentTeamStateChangedEvent,
+  AgentTeamMessageStreamStartEvent,
+  AgentTeamMessageStreamDeltaEvent,
+  AgentTeamMessageStreamDoneEvent,
+  TeamTask,
+  MailboxMessage,
 } from '@/types/agentTeam'
 import { agentTeamApi } from '@/api/agentTeam'
 import { useAgentEvents } from '@/composables/useAgentEvents'
@@ -462,6 +492,8 @@ interface UiToolConfigPayload {
   max_tools: number
   fixed_tools: string[]
   disabled_tools: string[]
+  manual_tools?: string[]
+  skills?: string[]
   audit_mode?: boolean
   audit_config?: Partial<AuditConfig>
 }
@@ -623,7 +655,7 @@ const referencedTraffic = ref<ReferencedTraffic[]>([])
 const activeTeamSessionId = ref<string | null>(null)
 const teamSessionState = ref<string>('PENDING')
 const isTeamWorkspaceActive = ref(false)
-const teamWorkspaceTab = ref<'templates' | 'blackboard' | 'artifacts' | 'timeline' | 'challenge'>('templates')
+const teamWorkspaceTab = ref<'templates' | 'tasks' | 'inbox' | 'agents'>('templates')
 const teamWorkspaceLoading = ref(false)
 const teamSessionMessages = ref<AgentTeamMessage[]>([])
 const teamRounds = ref<AgentTeamRound[]>([])
@@ -635,6 +667,8 @@ const teamBlackboardArchiveLoading = ref(false)
 const teamBlackboardArchiveError = ref<string | null>(null)
 const teamArtifacts = ref<AgentTeamArtifact[]>([])
 const teamSessionDetail = ref<AgentTeamSession | null>(null)
+const teamTasks = ref<TeamTask[]>([])
+const teamMailbox = ref<MailboxMessage[]>([])
 const teamOrchestrationPlanText = ref('{\n  "version": 1,\n  "steps": []\n}')
 const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
 const teamPlanDirty = ref(false)
@@ -802,9 +836,14 @@ let unlistenAiConfigUpdated: UnlistenFn | null = null
 let unlistenTeamStateChanged: UnlistenFn | null = null
 let unlistenTeamRoundCompleted: UnlistenFn | null = null
 let unlistenTeamArtifactGenerated: UnlistenFn | null = null
+let unlistenTeamMessageStreamStart: UnlistenFn | null = null
+let unlistenTeamMessageStreamDelta: UnlistenFn | null = null
+let unlistenTeamMessageStreamDone: UnlistenFn | null = null
 let teamRunStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let isPollingTeamRunStatus = false
 let teamMainFlowMessageIds = new Set<string>()
+const teamStreamTempMessageByStreamId = new Map<string, string>()
+const teamStreamDoneIdsBySignature = new Map<string, string[]>()
 
 const normalizeProviderName = (provider: string) => {
   const lower = provider.toLowerCase()
@@ -941,9 +980,17 @@ const handleAssistantModelChange = (value: string) => {
   }
 }
 
+const isTeamTemplateRunnable = (template?: AgentTeamTemplate | null) => {
+  if (!template) return false
+  if ((template.schema_version || 1) < 2) return false
+  if (template.upgrade_failed) return false
+  return !!template.template_spec_v2
+}
+
 const formatTeamTemplateTag = (template: AgentTeamTemplate): string => {
   const domain = (template.domain || 'custom').trim() || 'custom'
-  return `${domain} · ${template.is_system ? '内置' : '自定义'}`
+  const runnableTag = isTeamTemplateRunnable(template) ? 'V2' : '需升级'
+  return `${domain} · ${template.is_system ? '内置' : '自定义'} · ${runnableTag}`
 }
 
 const setSelectedTeamTemplate = (value: string) => {
@@ -986,10 +1033,14 @@ const loadTeamTemplateOptions = async (preferredTemplateId = ''): Promise<string
       stored = ''
     }
 
+    const runnableIds = new Set(
+      templates.filter((template) => isTeamTemplateRunnable(template)).map((template) => template.id),
+    )
+
     const preferred = preferredTemplateId || selectedTeamTemplateId.value || stored
-    const resolved = preferred && options.some((item) => item.value === preferred)
+    const resolved = preferred && options.some((item) => item.value === preferred) && runnableIds.has(preferred)
       ? preferred
-      : (options[0]?.value || '')
+      : (options.find((item) => runnableIds.has(item.value))?.value || options[0]?.value || '')
     setSelectedTeamTemplate(resolved)
     return resolved
   } catch (e) {
@@ -1092,6 +1143,90 @@ const buildEffectiveToolConfigForExecution = () => {
   }
 }
 
+const TEAM_SKILLS_BASE_TOOLS = [
+  'skills',
+  'shell',
+  'http_request',
+  'subagent_execute',
+  'subagent_await',
+  'subagent_channel',
+  'tenth_man',
+]
+
+const normalizeToolIdList = (items: unknown): string[] => {
+  if (!Array.isArray(items)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of items) {
+    if (typeof item !== 'string') continue
+    const normalized = item.trim().replace(/::/g, '__')
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(normalized)
+  }
+  return out
+}
+
+const parseToolSelectionStrategy = (
+  strategyRaw: unknown,
+  fallbackManualTools: string[],
+) => {
+  if (strategyRaw && typeof strategyRaw === 'object' && !Array.isArray(strategyRaw)) {
+    const strategyObj = strategyRaw as Record<string, unknown>
+    if (Array.isArray(strategyObj.Manual)) {
+      return { mode: 'Manual', manualTools: normalizeToolIdList(strategyObj.Manual) }
+    }
+    if (Array.isArray(strategyObj.Skills)) {
+      return { mode: 'Skills', manualTools: [] as string[] }
+    }
+  }
+
+  if (typeof strategyRaw === 'string') {
+    const mode = strategyRaw.trim() || 'Keyword'
+    if (mode === 'Manual') {
+      return { mode, manualTools: normalizeToolIdList(fallbackManualTools) }
+    }
+    return { mode, manualTools: [] as string[] }
+  }
+
+  return { mode: 'Keyword', manualTools: [] as string[] }
+}
+
+const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
+  const disabledSet = new Set(normalizeToolIdList(config.disabled_tools))
+  const fixedSet = new Set(normalizeToolIdList(config.fixed_tools))
+  const manualFallback = normalizeToolIdList(config.manual_tools)
+  const strategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
+
+  const denylist = [...disabledSet]
+  let allowlist: string[] | undefined
+
+  if (!config.enabled) {
+    allowlist = []
+  } else if (strategy.mode === 'Manual') {
+    const manualSet = new Set([...strategy.manualTools, ...fixedSet])
+    allowlist = [...manualSet].filter((tool) => !disabledSet.has(tool))
+  } else if (strategy.mode === 'Skills') {
+    const allowSet = new Set([...TEAM_SKILLS_BASE_TOOLS, ...fixedSet])
+    if (!disabledSet.has('memory_manager')) {
+      allowSet.add('memory_manager')
+    }
+    if (!disabledSet.has('todos')) {
+      allowSet.add('todos')
+    }
+    allowlist = [...allowSet].filter((tool) => !disabledSet.has(tool))
+  }
+
+  const policy: Record<string, unknown> = {
+    enabled: config.enabled,
+    allowlist: allowlist ?? null,
+    denylist,
+    selection_strategy: config.selection_strategy,
+  }
+
+  return policy
+}
+
 // Agent events
 const agentEvents = useAgentEvents(computed(() => conversationId.value || ''))
 const messages = computed(() => agentEvents.messages.value)
@@ -1106,8 +1241,29 @@ const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvent
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
 const teamWorkspaceBadgeCount = computed(
-  () => teamBlackboardEntries.value.length + teamArtifacts.value.length,
+  () => teamTasks.value.filter((task) => ['failed', 'blocked'].includes((task.status || '').toLowerCase())).length
+    + teamMailbox.value.filter((msg) => !msg.is_acknowledged).length,
 )
+const resolveAgentName = (agentId?: string | null) => {
+  if (!agentId) return 'broadcast'
+  const matched = (teamSessionDetail.value?.members || []).find((member) => member.id === agentId)
+  return matched?.name || agentId
+}
+const taskStatusBadgeClass = (status: string) => {
+  const normalized = (status || '').toLowerCase()
+  if (normalized === 'completed') return 'badge-success'
+  if (normalized === 'running') return 'badge-info'
+  if (normalized === 'failed') return 'badge-error'
+  if (normalized === 'blocked') return 'badge-warning'
+  return 'badge-ghost'
+}
+const stringifySmallJson = (value: unknown) => {
+  try {
+    return JSON.stringify(value ?? {}, null, 2)
+  } catch {
+    return String(value ?? '')
+  }
+}
 const latestTeamRoundId = computed(() => {
   if (teamRounds.value.length === 0) return null
   return teamRounds.value[teamRounds.value.length - 1]?.id || null
@@ -1835,6 +1991,145 @@ const parseTeamMessageTimestamp = (raw: string): number => {
   return Number.isFinite(parsed) ? parsed : Date.now()
 }
 
+const buildTeamMessageSignature = (
+  role: string | undefined,
+  memberName: string | undefined,
+  content: string,
+) => {
+  return `${(role || '').trim().toLowerCase()}\u0001${(memberName || '').trim()}\u0001${content.trim()}`
+}
+
+const upsertTeamStreamTempMessage = (
+  streamId: string,
+  memberId?: string,
+  memberName?: string,
+) => {
+  const tempMessageId = teamStreamTempMessageByStreamId.get(streamId) || `team-stream:${streamId}`
+  if (!teamStreamTempMessageByStreamId.has(streamId)) {
+    teamStreamTempMessageByStreamId.set(streamId, tempMessageId)
+    agentEvents.messages.value.push({
+      id: tempMessageId,
+      type: 'final',
+      content: '',
+      timestamp: Date.now(),
+      metadata: {
+        kind: 'team_member_output',
+        team_member_id: memberId,
+        team_member_name: memberName,
+        team_member_role: 'assistant',
+      },
+    })
+    return tempMessageId
+  }
+
+  const existing = agentEvents.messages.value.find((item) => item.id === tempMessageId)
+  if (!existing) {
+    agentEvents.messages.value.push({
+      id: tempMessageId,
+      type: 'final',
+      content: '',
+      timestamp: Date.now(),
+      metadata: {
+        kind: 'team_member_output',
+        team_member_id: memberId,
+        team_member_name: memberName,
+        team_member_role: 'assistant',
+      },
+    })
+  } else {
+    existing.metadata = {
+      ...(existing.metadata || {}),
+      kind: 'team_member_output',
+      team_member_id: memberId,
+      team_member_name: memberName,
+      team_member_role: 'assistant',
+    }
+  }
+
+  return tempMessageId
+}
+
+const handleTeamMessageStreamStart = (payload: AgentTeamMessageStreamStartEvent) => {
+  if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
+  upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name)
+}
+
+const handleTeamMessageStreamDelta = (payload: AgentTeamMessageStreamDeltaEvent) => {
+  if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
+  const tempMessageId = upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name)
+  const message = agentEvents.messages.value.find((item) => item.id === tempMessageId)
+  if (!message) return
+  message.content = `${message.content || ''}${payload.delta || ''}`
+}
+
+const markTeamStreamDoneForReconcile = (
+  tempMessageId: string,
+  memberName: string | undefined,
+  content: string,
+) => {
+  const signature = buildTeamMessageSignature('assistant', memberName, content)
+  const queue = teamStreamDoneIdsBySignature.get(signature) || []
+  queue.push(tempMessageId)
+  teamStreamDoneIdsBySignature.set(signature, queue)
+}
+
+const handleTeamMessageStreamDone = (payload: AgentTeamMessageStreamDoneEvent) => {
+  if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
+  const tempMessageId = upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name)
+  const message = agentEvents.messages.value.find((item) => item.id === tempMessageId)
+  if (!message) return
+
+  if (payload.error) {
+    message.type = 'error'
+    message.content = payload.error
+  } else if ((payload.had_delta ?? false) === false && typeof payload.content === 'string') {
+    message.content = payload.content
+  }
+
+  const finalContent = (message.content || '').trim()
+  if (finalContent.length > 0 && message.type !== 'error') {
+    markTeamStreamDoneForReconcile(tempMessageId, payload.member_name, finalContent)
+  } else {
+    if (finalContent.length === 0 && message.type !== 'error') {
+      const idx = agentEvents.messages.value.findIndex((item) => item.id === tempMessageId)
+      if (idx >= 0) {
+        agentEvents.messages.value.splice(idx, 1)
+      }
+    }
+    teamStreamTempMessageByStreamId.delete(payload.stream_id)
+  }
+
+  void syncTeamMessagesToMainFlow(payload.session_id)
+}
+
+const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage) => {
+  const signature = buildTeamMessageSignature(msg.role, msg.member_name, msg.content || '')
+  const queue = teamStreamDoneIdsBySignature.get(signature)
+  if (!queue || queue.length === 0) return
+
+  while (queue.length > 0) {
+    const tempId = queue.shift()
+    if (!tempId) break
+    const idx = agentEvents.messages.value.findIndex((item) => item.id === tempId)
+    if (idx >= 0) {
+      agentEvents.messages.value.splice(idx, 1)
+      for (const [streamId, mappedTempId] of teamStreamTempMessageByStreamId.entries()) {
+        if (mappedTempId === tempId) {
+          teamStreamTempMessageByStreamId.delete(streamId)
+          break
+        }
+      }
+      break
+    }
+  }
+
+  if (queue.length === 0) {
+    teamStreamDoneIdsBySignature.delete(signature)
+  } else {
+    teamStreamDoneIdsBySignature.set(signature, queue)
+  }
+}
+
 const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
   if (!Array.isArray(messagesResp) || messagesResp.length === 0) return
   const sorted = [...messagesResp].sort((a, b) => {
@@ -1846,6 +2141,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
   for (const msg of sorted) {
     if (!msg?.id || teamMainFlowMessageIds.has(msg.id)) continue
     if (!(msg.content || '').trim()) continue
+    consumeTeamStreamTempForPersistedMessage(msg)
     teamMainFlowMessageIds.add(msg.id)
     agentEvents.messages.value.push({
       id: `team:${msg.id}`,
@@ -1854,6 +2150,9 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
       timestamp: parseTeamMessageTimestamp(msg.timestamp),
       metadata: {
         kind: 'team_member_output',
+        team_member_id: msg.member_id,
+        team_member_name: msg.member_name,
+        team_member_role: msg.role,
       },
     })
   }
@@ -1986,12 +2285,19 @@ const createAndStartTeamSession = async (goal: string) => {
   if (!template) {
     throw new Error('所选 Team 模板不存在，请重新选择模板。')
   }
-  const orchestrationPlan = extractTemplateOrchestrationPlan(template.default_rounds_config)
-  if (!orchestrationPlan) {
-    throw new Error(`模板「${template.name}」未配置编排流程，请先在模板库编辑并保存工作流。`)
+  if ((template.schema_version || 1) < 2) {
+    throw new Error(`模板「${template.name}」不是 V2 模板，请在 Team库中编辑并保存后重试。`)
   }
-  const planVersion = extractTemplatePlanVersion(template.default_rounds_config)
+  if (template.upgrade_failed) {
+    throw new Error(`模板「${template.name}」升级失败：${template.upgrade_error || '请修复模板后重试。'}`)
+  }
+  if (!template.template_spec_v2) {
+    throw new Error(`模板「${template.name}」缺少 V2 结构，请重新保存模板或执行升级。`)
+  }
+  const runtimeSpecV2 = JSON.parse(JSON.stringify(template.template_spec_v2))
   const templateStateMachine = extractTemplateStateMachine(template.default_tool_policy)
+  const effectiveToolConfig = buildEffectiveToolConfigForExecution()
+  const runtimeToolPolicy = buildTeamToolPolicyFromUiConfig(effectiveToolConfig)
   const maxRounds = extractTemplateMaxRounds(template.default_rounds_config)
   const session = await agentTeamApi.createSession({
     name: `${goal}`,
@@ -1999,13 +2305,13 @@ const createAndStartTeamSession = async (goal: string) => {
     template_id: templateId,
     conversation_id: conversationId.value || undefined,
     max_rounds: maxRounds,
-    orchestration_plan: orchestrationPlan,
-    plan_version: planVersion,
+    schema_version: 2,
+    runtime_spec_v2: runtimeSpecV2,
     state_machine: {
       ...(templateStateMachine || {}),
       tool_policy: {
         ...((templateStateMachine as any)?.tool_policy || {}),
-        enabled: toolsEnabled.value,
+        ...runtimeToolPolicy,
       },
     },
   })
@@ -2044,22 +2350,21 @@ const routeTeamMessage = async (content: string) => {
   })
 
   if (currentSession.state === 'PENDING') {
-    if (!currentSession.orchestration_plan || !Array.isArray(currentSession.orchestration_plan.steps) || currentSession.orchestration_plan.steps.length === 0) {
-      const templateId = currentSession.template_id || selectedTeamTemplateId.value
-      if (templateId) {
-        const template = await agentTeamApi.getTemplate(templateId)
-        const templatePlan = extractTemplateOrchestrationPlan(template?.default_rounds_config)
-        if (!templatePlan) {
-          throw new Error('当前 Team 会话缺少编排流程，且模板未配置工作流。请到模板库先配置编排。')
-        }
-        await agentTeamApi.updateSession(currentSession.id, {
-          orchestration_plan: templatePlan,
-          plan_version: extractTemplatePlanVersion(template?.default_rounds_config),
-        })
-      } else {
-        throw new Error('当前 Team 会话缺少编排流程，请重新选择模板后重试。')
-      }
-    }
+    const effectiveToolConfig = buildEffectiveToolConfigForExecution()
+    const runtimeToolPolicy = buildTeamToolPolicyFromUiConfig(effectiveToolConfig)
+    const currentStateMachine =
+      currentSession.state_machine && typeof currentSession.state_machine === 'object' && !Array.isArray(currentSession.state_machine)
+        ? currentSession.state_machine
+        : {}
+    await agentTeamApi.updateSession(currentSession.id, {
+      state_machine: {
+        ...(currentStateMachine as Record<string, unknown>),
+        tool_policy: {
+          ...((currentStateMachine as any)?.tool_policy || {}),
+          ...runtimeToolPolicy,
+        },
+      },
+    })
     await agentTeamApi.startRun(currentSession.id)
     await syncTeamMessagesToMainFlow(currentSession.id)
     appendTeamBridgeMessage('[Team] 已启动待运行会话。')
@@ -2483,7 +2788,7 @@ const handleTeamApplyOrchestrationPreset = (presetId: TeamOrchestrationPresetId)
     .filter((step) => !step.member || !step.member.trim())
     .length
   if (missingMemberCount > 0) {
-    teamPlanSuccess.value = `已应用预设（${missingMemberCount} 个节点未匹配成员，请手动选择后保存）。`
+    teamPlanSuccess.value = `已应用预设（${missingMemberCount} 个节点未匹配 Agent，请手动选择后保存）。`
   } else {
     teamPlanSuccess.value = '已应用编排预设，请保存后运行。'
   }
@@ -2614,8 +2919,74 @@ const handleTeamSaveCurrentPlanAsTemplate = async () => {
     }
 
     if (memberPayload.length === 0) {
-      throw new Error('当前会话没有可用成员，至少需要 1 个成员才能保存模板。')
+      throw new Error('当前会话没有可用 Agent，至少需要 1 个 Agent 才能保存模板。')
     }
+
+    const usedIds = new Set<string>()
+    const agentsPayload = memberPayload.map((member, index) => {
+      const base = member.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+      let id = base ? `agent-${base}` : `agent-${index + 1}`
+      while (usedIds.has(id)) {
+        id = `${id}-${usedIds.size + 1}`
+      }
+      usedIds.add(id)
+
+      const outputSchema = member.output_schema && typeof member.output_schema === 'object'
+        ? member.output_schema
+        : undefined
+      const provider = typeof outputSchema?.model_provider === 'string'
+        ? outputSchema.model_provider.trim()
+        : ''
+      const modelName = typeof outputSchema?.model_name === 'string'
+        ? outputSchema.model_name.trim()
+        : ''
+      const llmModel = typeof outputSchema?.llm_model === 'string'
+        ? outputSchema.llm_model.trim()
+        : ''
+      const model = llmModel || (provider && modelName ? `${provider}/${modelName}` : undefined)
+
+      return {
+        id,
+        name: member.name,
+        system_prompt: member.system_prompt,
+        model,
+        tool_policy: member.tool_policy,
+        skills: [] as string[],
+        max_parallel_tasks: 1,
+      }
+    })
+
+    const agentIdByName = new Map(agentsPayload.map((agent) => [agent.name.trim(), agent.id]))
+    const planAgentSteps = getAllTeamAgentSteps(steps)
+    const taskNodes = (planAgentSteps.length > 0 ? planAgentSteps : memberPayload.map((member, i) => ({
+      id: `task-${i + 1}`,
+      member: member.name,
+      phase: 'task_execution',
+      instruction: member.responsibility || '',
+    } as TeamOrchestrationStep))).map((step, index, arr) => {
+      const taskId = step.id?.trim() || `task-${index + 1}`
+      const assigneeName = (step.member || '').trim()
+      const assigneeId = agentIdByName.get(assigneeName) || ''
+      const depends_on = index > 0 ? [arr[index - 1].id?.trim() || `task-${index}`] : []
+      return {
+        id: taskId,
+        title: step.name?.trim() || assigneeName || `Task ${index + 1}`,
+        instruction: step.instruction?.trim() || `请完成任务：${step.name || assigneeName || `Task ${index + 1}`}`,
+        depends_on,
+        assignee_strategy: assigneeId
+          ? { mode: 'fixed_agent', agent_id: assigneeId, agent_name: assigneeName }
+          : { mode: 'auto' },
+        retry: {
+          max_attempts: Math.max(1, Number(step.retry?.max_attempts || 1)),
+          backoff_ms: Math.max(0, Number(step.retry?.backoff_ms || 300)),
+        },
+        phase: step.phase || 'task_execution',
+      }
+    })
 
     const recoveryStateMachine = {
       no_human_input_policy: teamCurrentNoHumanInputPolicy.value,
@@ -2629,8 +3000,6 @@ const handleTeamSaveCurrentPlanAsTemplate = async () => {
 
     const maxRounds = Number(teamSessionDetail.value?.max_rounds || 5)
     const normalizedMaxRounds = Number.isFinite(maxRounds) ? Math.max(1, Math.floor(maxRounds)) : 5
-    const planVersionRaw = Number(plan?.version ?? teamOrchestrationDraft.value.version ?? 1)
-    const planVersion = Number.isFinite(planVersionRaw) ? Math.max(1, Math.floor(planVersionRaw)) : 1
 
     const created = await agentTeamApi.createTemplate({
       name: templateName,
@@ -2638,13 +3007,15 @@ const handleTeamSaveCurrentPlanAsTemplate = async () => {
       domain: templateDomain,
       default_rounds_config: {
         max_rounds: normalizedMaxRounds,
-        orchestration_plan: plan,
-        plan_version: planVersion,
       },
       default_tool_policy: {
         state_machine: recoveryStateMachine,
       },
-      members: memberPayload,
+      agents: agentsPayload,
+      task_graph: {
+        version: 1,
+        nodes: taskNodes,
+      },
     })
 
     teamPlanSuccess.value = `模板已创建：${created.name}`
@@ -2803,16 +3174,8 @@ const handleTeamSaveOrchestrationPlan = async () => {
   teamPlanError.value = null
   teamPlanSuccess.value = null
   try {
-    const plan = parseTeamOrchestrationPlanInput()
-    const planVersionRaw = Number(plan?.version ?? teamSessionDetail.value?.plan_version ?? 1)
-    const planVersion = Number.isFinite(planVersionRaw) ? Math.max(1, Math.floor(planVersionRaw)) : 1
-    await agentTeamApi.updateSession(activeTeamSessionId.value, {
-      orchestration_plan: plan,
-      plan_version: planVersion,
-    })
-    teamPlanDirty.value = false
-    await loadTeamWorkspaceData()
-    teamPlanSuccess.value = '编排计划已保存。'
+    parseTeamOrchestrationPlanInput()
+    teamPlanError.value = '会话编排直改入口已下线，请在 Team库编辑模板的 task_graph。'
   } catch (e: any) {
     teamPlanError.value = e?.message || String(e)
   } finally {
@@ -2913,6 +3276,8 @@ const loadTeamWorkspaceData = async () => {
     resetTeamBlackboardArchive()
     teamArtifacts.value = []
     teamSessionDetail.value = null
+    teamTasks.value = []
+    teamMailbox.value = []
     teamSelectedOrchestrationPresetId.value = null
     teamSelectedRecoveryPresetId.value = 'balanced'
     teamTemplateDraftName.value = ''
@@ -2922,12 +3287,14 @@ const loadTeamWorkspaceData = async () => {
   }
   teamWorkspaceLoading.value = true
   try {
-    const [sessionResp, messagesResp, roundsResp, blackboardResp, artifactsResp] = await Promise.all([
+    const [sessionResp, messagesResp, roundsResp, blackboardResp, artifactsResp, tasksResp, mailboxResp] = await Promise.all([
       agentTeamApi.getSession(activeTeamSessionId.value),
       agentTeamApi.getMessages(activeTeamSessionId.value),
       agentTeamApi.getRounds(activeTeamSessionId.value),
       agentTeamApi.getBlackboard(activeTeamSessionId.value),
       agentTeamApi.listArtifacts(activeTeamSessionId.value),
+      agentTeamApi.listTasks(activeTeamSessionId.value),
+      agentTeamApi.listMailbox(activeTeamSessionId.value),
     ])
     teamSessionDetail.value = sessionResp
     teamSessionMessages.value = messagesResp
@@ -2940,6 +3307,8 @@ const loadTeamWorkspaceData = async () => {
       resetTeamBlackboardArchive()
     }
     teamArtifacts.value = artifactsResp
+    teamTasks.value = tasksResp
+    teamMailbox.value = mailboxResp
     syncTeamOrchestrationEditorFromSession()
   } catch (e) {
     console.error('[AgentView] Failed to load team workspace data:', e)
@@ -2973,6 +3342,16 @@ const handleTeamResolveBlackboardEntry = async (entryId: string) => {
     teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
   } catch (e) {
     console.error('[AgentView] Failed to resolve team blackboard entry:', e)
+  }
+}
+
+const handleAckMailbox = async (messageId: string) => {
+  if (!messageId || !activeTeamSessionId.value) return
+  try {
+    await agentTeamApi.ackMailbox(messageId)
+    teamMailbox.value = await agentTeamApi.listMailbox(activeTeamSessionId.value)
+  } catch (e) {
+    console.error('[AgentView] Failed to ack mailbox message:', e)
   }
 }
 
@@ -3043,13 +3422,6 @@ const handleTeamTemplatesUpdated = async () => {
     await syncActiveTeamSession()
     await loadTeamWorkspaceData()
   }
-}
-
-const handleTeamSessionCreated = async (sessionId: string) => {
-  activeTeamSessionId.value = sessionId
-  await syncActiveTeamSession()
-  teamWorkspaceTab.value = 'blackboard'
-  await loadTeamWorkspaceData()
 }
 
 const buildPersistableToolConfig = (config: UiToolConfigPayload) => ({
@@ -4067,6 +4439,15 @@ onMounted(async () => {
       void loadTeamWorkspaceData()
     }
   })
+  unlistenTeamMessageStreamStart = await listen<AgentTeamMessageStreamStartEvent>('agent_team:message_stream_start', (event) => {
+    handleTeamMessageStreamStart(event.payload)
+  })
+  unlistenTeamMessageStreamDelta = await listen<AgentTeamMessageStreamDeltaEvent>('agent_team:message_stream_delta', (event) => {
+    handleTeamMessageStreamDelta(event.payload)
+  })
+  unlistenTeamMessageStreamDone = await listen<AgentTeamMessageStreamDoneEvent>('agent_team:message_stream_done', (event) => {
+    handleTeamMessageStreamDone(event.payload)
+  })
   
   // Load saved tool configuration from database
   await loadToolConfig()
@@ -4110,6 +4491,18 @@ onUnmounted(() => {
     unlistenTeamArtifactGenerated()
     unlistenTeamArtifactGenerated = null
   }
+  if (unlistenTeamMessageStreamStart) {
+    unlistenTeamMessageStreamStart()
+    unlistenTeamMessageStreamStart = null
+  }
+  if (unlistenTeamMessageStreamDelta) {
+    unlistenTeamMessageStreamDelta()
+    unlistenTeamMessageStreamDelta = null
+  }
+  if (unlistenTeamMessageStreamDone) {
+    unlistenTeamMessageStreamDone()
+    unlistenTeamMessageStreamDone = null
+  }
 })
 
 // When component is activated (e.g., switching back from another page)
@@ -4143,6 +4536,8 @@ watch(conversationId, async (newId) => {
 watch(activeTeamSessionId, async (newId, oldId) => {
   if (newId !== oldId) {
     teamMainFlowMessageIds = new Set<string>()
+    teamStreamTempMessageByStreamId.clear()
+    teamStreamDoneIdsBySignature.clear()
   }
   ensureTeamRunStatusPolling()
   if (newId) {

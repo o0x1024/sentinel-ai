@@ -25,7 +25,9 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+use tauri_plugin_dialog::{
+    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
+};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use services::{ai::AiServiceManager, database::DatabaseService};
@@ -1471,6 +1473,11 @@ pub fn run() {
             commands::agent_team_commands::agent_team_list_sessions,
             commands::agent_team_commands::agent_team_update_session,
             commands::agent_team_commands::agent_team_delete_session,
+            commands::agent_team_commands::agent_team_list_tasks,
+            commands::agent_team_commands::agent_team_update_task,
+            commands::agent_team_commands::agent_team_list_mailbox,
+            commands::agent_team_commands::agent_team_ack_mailbox,
+            commands::agent_team_commands::agent_team_upgrade_templates_to_v2,
             commands::agent_team_commands::agent_team_start_run,
             commands::agent_team_commands::agent_team_stop_run,
             commands::agent_team_commands::agent_team_get_messages,

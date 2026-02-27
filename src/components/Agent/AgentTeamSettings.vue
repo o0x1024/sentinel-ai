@@ -8,7 +8,7 @@
         </div>
         <div>
           <h3 class="font-bold text-sm text-base-content">{{ isEditMode ? '编辑模板' : '新建 Team 模板' }}</h3>
-          <p class="text-xs text-base-content/40">{{ isEditMode ? '修改团队角色配置' : '定义多角色协作团队' }}</p>
+          <p class="text-xs text-base-content/40">{{ isEditMode ? '修改 Agent 与任务图配置' : '定义任务驱动的 Agent Team 模板' }}</p>
         </div>
       </div>
       <button class="btn btn-xs btn-ghost text-base-content/50" @click="emit('cancel')">
@@ -29,7 +29,7 @@
               v-model="form.name"
               type="text"
               class="input input-bordered input-sm w-full focus:border-secondary"
-              placeholder="例：产品研发四角色团队"
+              placeholder="例：产品研发多 Agent 团队"
               id="template-name-input"
             />
           </div>
@@ -70,8 +70,8 @@
 
       <div class="px-5 py-4 border-b border-base-200 space-y-3">
         <div class="flex items-center justify-between">
-          <h4 class="text-xs font-bold text-base-content/60 uppercase tracking-wider">模板编排</h4>
-          <span class="text-[11px] text-base-content/45">在模板层定义串行/并行流程</span>
+          <h4 class="text-xs font-bold text-base-content/60 uppercase tracking-wider">任务图编排（V2）</h4>
+          <span class="text-[11px] text-base-content/45">定义 DAG 任务依赖与负责人</span>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div class="space-y-1">
@@ -108,7 +108,7 @@
               </div>
             </details>
             <p class="text-[11px] text-base-content/45">
-              保存时会写入模板 `default_rounds_config.orchestration_plan`，创建 Team 会话时自动生效。
+              保存时仅生成 V2 `task_graph`；JSON 视图仅用于查看和临时编辑。
             </p>
           </div>
         </div>
@@ -117,14 +117,14 @@
       <!-- Members -->
       <div class="px-5 py-4 space-y-3">
         <div class="flex items-center justify-between">
-          <h4 class="text-xs font-bold text-base-content/60 uppercase tracking-wider">角色配置 ({{ form.members.length }})</h4>
+          <h4 class="text-xs font-bold text-base-content/60 uppercase tracking-wider">Agent 配置 ({{ form.members.length }})</h4>
           <button
             class="btn btn-xs btn-secondary btn-outline gap-1"
             @click="addMember"
             id="add-member-btn"
           >
             <i class="fas fa-plus text-xs"></i>
-            添加角色
+            添加 Agent
           </button>
         </div>
 
@@ -150,7 +150,7 @@
                   {{ member.name.charAt(0) || '?' }}
                 </div>
                 <span class="text-sm font-medium flex-1 min-w-0 truncate">
-                  {{ member.name || `角色 ${idx + 1}` }}
+                  {{ member.name || `Agent ${idx + 1}` }}
                 </span>
                 <span class="text-xs text-base-content/40 truncate max-w-[120px]">{{ member.responsibility || '' }}</span>
                 <div class="flex items-center gap-1 ml-2 flex-shrink-0">
@@ -169,7 +169,7 @@
                   <button
                     class="btn btn-ghost btn-xs text-base-content/30 hover:text-error p-0 w-5 h-5 min-h-0"
                     @click.stop="removeMember(idx)"
-                    title="删除角色"
+                    title="删除 Agent"
                   >
                     <i class="fas fa-times text-[10px]"></i>
                   </button>
@@ -184,12 +184,12 @@
               <div v-if="expandedMember === idx" class="p-3 space-y-2.5 bg-base-100">
                 <div class="grid grid-cols-2 gap-2">
                   <div class="space-y-1">
-                    <label class="text-xs text-base-content/60">角色名称 *</label>
+                  <label class="text-xs text-base-content/60">Agent 名称 *</label>
                     <input
                       v-model="member.name"
                       type="text"
                       class="input input-bordered input-xs w-full focus:border-secondary"
-                      placeholder="例：产品经理"
+                      placeholder="例：Security Reviewer"
                     />
                   </div>
                   <div class="space-y-1">
@@ -218,7 +218,7 @@
                   <textarea
                     v-model="member.system_prompt"
                     class="textarea textarea-bordered textarea-xs w-full resize-none h-20 focus:border-secondary text-xs"
-                    placeholder="定义角色行为的系统提示词..."
+                    placeholder="定义 Agent 行为的系统提示词..."
                   ></textarea>
                 </div>
                 <div class="grid grid-cols-2 gap-2">
@@ -250,7 +250,7 @@
                   </div>
                 </div>
                 <div class="space-y-1">
-                  <label class="text-xs text-base-content/60">角色模型（留空=使用默认 LLM）</label>
+                  <label class="text-xs text-base-content/60">Agent 模型（留空=使用默认 LLM）</label>
                   <SearchableSelect
                     :model-value="member.model_override"
                     :options="memberModelOptions"
@@ -274,7 +274,7 @@
 
           <div v-if="form.members.length === 0" class="text-center py-6 text-base-content/30 text-sm border-2 border-dashed border-base-300 rounded-xl">
             <i class="fas fa-user-plus text-2xl mb-2 block"></i>
-            点击「添加角色」开始定义团队成员
+            点击「添加 Agent」开始定义执行资源
           </div>
         </div>
       </div>
@@ -287,8 +287,8 @@
     <!-- Footer -->
     <div class="px-5 py-3 border-t border-base-300 bg-base-50/50 flex items-center justify-between gap-3">
       <div class="text-xs text-base-content/40">
-        {{ form.members.length }} 个角色
-        <span v-if="form.members.length < 2" class="text-warning ml-1">（至少需要 2 个角色）</span>
+        {{ form.members.length }} 个 Agent
+        <span v-if="form.members.length < 1" class="text-warning ml-1">（至少需要 1 个 Agent）</span>
       </div>
       <div class="flex gap-2">
         <button class="btn btn-sm btn-ghost text-base-content/60" @click="emit('cancel')">取消</button>
@@ -311,7 +311,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { agentTeamApi } from '@/api/agentTeam'
-import type { AgentTeamTemplate } from '@/types/agentTeam'
+import type { AgentTeamTemplate, AgentProfile, TeamTaskGraph } from '@/types/agentTeam'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import TeamWorkflowCanvasEditor from './TeamWorkflowCanvasEditor.vue'
 import type { WorkflowNode, WorkflowEdge } from './TeamWorkflowCanvasEditor.vue'
@@ -370,13 +370,14 @@ const DEFAULT_TEMPLATE_ROUNDS = 5
 const MIN_TEMPLATE_ROUNDS = 1
 const MAX_TEMPLATE_ROUNDS = 10
 const DEFAULT_PLAN_VERSION = 1
+const AGENT_TEAM_SCHEMA_VERSION = 2
 
 // ==================== Computed ====================
 
 const isEditMode = computed(() => !!props.template)
 
 const isFormValid = computed(() =>
-  form.value.name.trim().length > 0 && form.value.members.length >= 2 && form.value.members.every(m => m.name.trim().length > 0)
+  form.value.name.trim().length > 0 && form.value.members.length >= 1 && form.value.members.every(m => m.name.trim().length > 0)
 )
 
 const memberModelOptions = computed<ModelOption[]>(() => [
@@ -405,20 +406,37 @@ onMounted(() => {
     form.value.defaultRounds = extractTemplateDefaultRounds(props.template.default_rounds_config)
     form.value.planVersion = extractTemplatePlanVersion(props.template.default_rounds_config)
     form.value.orchestrationPlanText = extractTemplateOrchestrationPlanText(props.template.default_rounds_config)
-    const workflow = extractTemplateWorkflow(props.template.default_rounds_config)
+    const workflow = extractTemplateWorkflow(
+      props.template.default_rounds_config,
+      props.template.template_spec_v2?.task_graph,
+    )
     form.value.workflowNodes = workflow.nodes
     form.value.workflowEdges = workflow.edges
-    form.value.members = props.template.members.map((m, i) => ({
-      _key: `${m.id}-${i}`,
-      name: m.name,
-      responsibility: m.responsibility ?? '',
-      system_prompt: m.system_prompt ?? '',
-      decision_style: m.decision_style ?? '',
-      risk_preference: m.risk_preference ?? '',
-      model_override: parseMemberModelOverride(m.output_schema),
-      weight: m.weight,
-      sort_order: m.sort_order,
-    }))
+    if (Array.isArray(props.template.template_spec_v2?.agents) && props.template.template_spec_v2!.agents.length > 0) {
+      form.value.members = props.template.template_spec_v2!.agents.map((agent, i) => ({
+        _key: `${agent.id || 'agent'}-${i}`,
+        name: agent.name || '',
+        responsibility: '',
+        system_prompt: agent.system_prompt || '',
+        decision_style: 'balanced',
+        risk_preference: 'medium',
+        model_override: typeof agent.model === 'string' ? agent.model : '',
+        weight: 1.0,
+        sort_order: i,
+      }))
+    } else {
+      form.value.members = (props.template.members || []).map((m, i) => ({
+        _key: `${m.id}-${i}`,
+        name: m.name,
+        responsibility: m.responsibility ?? '',
+        system_prompt: m.system_prompt ?? '',
+        decision_style: m.decision_style ?? '',
+        risk_preference: m.risk_preference ?? '',
+        model_override: parseMemberModelOverride(m.output_schema),
+        weight: m.weight,
+        sort_order: m.sort_order,
+      }))
+    }
     if (form.value.members.length > 0) expandedMember.value = 0
     syncOrchestrationTextFromWorkflow()
   }
@@ -521,22 +539,17 @@ async function handleSave() {
     }
     form.value.defaultRounds = normalizedRounds
     form.value.planVersion = normalizedPlanVersion
-    const memberPayload = form.value.members.map((m, i) => ({
-      name: m.name.trim(),
-      responsibility: m.responsibility || undefined,
-      system_prompt: m.system_prompt || undefined,
-      decision_style: m.decision_style || undefined,
-      risk_preference: m.risk_preference || undefined,
-      output_schema: buildMemberOutputSchema(m.model_override),
-      weight: m.weight,
-      sort_order: i,
-    }))
+    const agentsPayload = buildAgentsPayload(form.value.members)
+    const taskGraphPayload = buildTaskGraphPayload(
+      normalizedNodes,
+      normalizedEdges,
+      agentsPayload,
+    )
+    if (taskGraphPayload.nodes.length === 0) {
+      throw new Error('至少需要一个任务节点后才能保存模板。')
+    }
     const defaultRoundsConfig: Record<string, any> = {
       max_rounds: normalizedRounds,
-    }
-    if (orchestrationPlan) {
-      defaultRoundsConfig.orchestration_plan = orchestrationPlan
-      defaultRoundsConfig.plan_version = normalizedPlanVersion
     }
     if (hasWorkflow) {
       defaultRoundsConfig.workflow_v2 = {
@@ -551,8 +564,11 @@ async function handleSave() {
         name: form.value.name.trim(),
         description: form.value.description || undefined,
         domain: form.value.domain,
+        schema_version: AGENT_TEAM_SCHEMA_VERSION,
+        agents: agentsPayload,
+        task_graph: taskGraphPayload,
+        hook_policy: props.template?.template_spec_v2?.hook_policy,
         default_rounds_config: defaultRoundsConfig,
-        members: memberPayload,
       })
       const updated = await agentTeamApi.getTemplate(props.template.id)
       emit('save', updated!)
@@ -561,8 +577,11 @@ async function handleSave() {
         name: form.value.name.trim(),
         description: form.value.description || undefined,
         domain: form.value.domain,
+        schema_version: AGENT_TEAM_SCHEMA_VERSION,
+        agents: agentsPayload,
+        task_graph: taskGraphPayload,
+        hook_policy: undefined,
         default_rounds_config: defaultRoundsConfig,
-        members: memberPayload,
       })
       emit('save', created)
     }
@@ -712,6 +731,86 @@ function normalizeWorkflowEdges(edges: WorkflowEdge[], nodes: WorkflowNode[]): W
     .filter((edge): edge is WorkflowEdge => !!edge)
 }
 
+function normalizeAgentId(name: string, index: number): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return base ? `agent-${base}` : `agent-${index + 1}`
+}
+
+function buildAgentsPayload(members: MemberForm[]): AgentProfile[] {
+  const usedIds = new Set<string>()
+  return members.map((member, idx) => {
+    let id = normalizeAgentId(member.name, idx)
+    while (usedIds.has(id)) {
+      id = `${id}-${usedIds.size + 1}`
+    }
+    usedIds.add(id)
+    return {
+      id,
+      name: member.name.trim(),
+      system_prompt: member.system_prompt || undefined,
+      model: member.model_override || undefined,
+      tool_policy: undefined,
+      skills: [],
+      max_parallel_tasks: 1,
+    }
+  })
+}
+
+function buildTaskGraphPayload(
+  nodes: WorkflowNode[],
+  edges: WorkflowEdge[],
+  agents: AgentProfile[],
+): TeamTaskGraph {
+  const edgesByTarget = new Map<string, Set<string>>()
+  for (const edge of edges) {
+    if (!edgesByTarget.has(edge.target)) {
+      edgesByTarget.set(edge.target, new Set<string>())
+    }
+    edgesByTarget.get(edge.target)!.add(edge.source)
+  }
+  const agentIdByName = new Map<string, string>()
+  for (const agent of agents) {
+    agentIdByName.set(agent.name.trim(), agent.id)
+  }
+
+  const taskNodes = nodes.map((node, idx) => {
+    const agentName = node.member?.trim() || ''
+    const agentId = agentIdByName.get(agentName) || ''
+    const dependsOn = Array.from(edgesByTarget.get(node.id) || [])
+
+    return {
+      id: node.id || generateWorkflowId(`task-${idx}`),
+      title: node.title?.trim() || agentName || `Task ${idx + 1}`,
+      instruction: node.instruction?.trim() || `请完成任务：${node.title || agentName || `Task ${idx + 1}`}`,
+      depends_on: dependsOn,
+      assignee_strategy: agentId
+        ? { mode: 'fixed_agent', agent_id: agentId, agent_name: agentName }
+        : { mode: 'auto' },
+      retry: {
+        max_attempts: Number.isFinite(Number(node.retry?.max_attempts))
+          ? Math.max(1, Math.trunc(Number(node.retry?.max_attempts)))
+          : 1,
+        backoff_ms: Number.isFinite(Number(node.retry?.backoff_ms))
+          ? Math.max(0, Math.trunc(Number(node.retry?.backoff_ms)))
+          : 300,
+      },
+      sla: undefined,
+      input_schema: undefined,
+      output_schema: undefined,
+      phase: node.phase?.trim() || undefined,
+    }
+  })
+
+  return {
+    version: 1,
+    nodes: taskNodes,
+  }
+}
+
 function buildAgentStepFromWorkflowNode(node: WorkflowNode): Record<string, any> {
   const step: Record<string, any> = {
     id: node.id,
@@ -745,10 +844,10 @@ function compileWorkflowToOrchestrationPlan(
 
   for (const node of nodes) {
     if (!node.member) {
-      throw new Error(`节点 ${node.id} 尚未选择角色。`)
+      throw new Error(`节点 ${node.id} 尚未选择 Agent。`)
     }
     if (memberNameSet.size > 0 && !memberNameSet.has(node.member)) {
-      throw new Error(`节点 ${node.id} 使用了不存在的角色：${node.member}`)
+      throw new Error(`节点 ${node.id} 使用了不存在的 Agent：${node.member}`)
     }
   }
 
@@ -907,7 +1006,67 @@ function buildWorkflowFromPlan(config: unknown): { nodes: WorkflowNode[]; edges:
   }
 }
 
-function extractTemplateWorkflow(config: unknown): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+function buildWorkflowFromTaskGraph(taskGraph?: TeamTaskGraph): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+  if (!taskGraph || !Array.isArray(taskGraph.nodes) || taskGraph.nodes.length === 0) {
+    return { nodes: [], edges: [] }
+  }
+
+  const nodes: WorkflowNode[] = taskGraph.nodes.map((node: any, idx: number) => {
+    const strategy = node?.assignee_strategy && typeof node.assignee_strategy === 'object'
+      ? node.assignee_strategy
+      : {}
+    const member = typeof strategy.agent_name === 'string'
+      ? strategy.agent_name
+      : (typeof strategy.agent_id === 'string' ? strategy.agent_id : '')
+    return {
+      id: typeof node?.id === 'string' && node.id.trim() ? node.id.trim() : generateWorkflowId(`node-${idx}`),
+      member,
+      title: typeof node?.title === 'string' ? node.title : member,
+      phase: typeof node?.phase === 'string' ? node.phase : '',
+      instruction: typeof node?.instruction === 'string' ? node.instruction : '',
+      retry: {
+        max_attempts: Number.isFinite(Number(node?.retry?.max_attempts))
+          ? Number(node.retry.max_attempts)
+          : undefined,
+        backoff_ms: Number.isFinite(Number(node?.retry?.backoff_ms))
+          ? Number(node.retry.backoff_ms)
+          : undefined,
+      },
+      x: 24 + (idx % 4) * 200,
+      y: 24 + Math.floor(idx / 4) * 110,
+    }
+  })
+
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const edges: WorkflowEdge[] = []
+  for (const node of taskGraph.nodes as any[]) {
+    const targetId = typeof node?.id === 'string' ? node.id : ''
+    const dependsOn = Array.isArray(node?.depends_on) ? node.depends_on : []
+    for (const dep of dependsOn) {
+      if (typeof dep !== 'string') continue
+      if (!nodeIds.has(dep) || !nodeIds.has(targetId) || dep === targetId) continue
+      edges.push({
+        id: generateWorkflowId('edge'),
+        source: dep,
+        target: targetId,
+      })
+    }
+  }
+
+  return {
+    nodes: normalizeWorkflowNodes(nodes),
+    edges: normalizeWorkflowEdges(edges, nodes),
+  }
+}
+
+function extractTemplateWorkflow(
+  config: unknown,
+  taskGraph?: TeamTaskGraph,
+): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+  const v2Workflow = buildWorkflowFromTaskGraph(taskGraph)
+  if (v2Workflow.nodes.length > 0) {
+    return v2Workflow
+  }
   if (config && typeof config === 'object') {
     const obj = config as Record<string, unknown>
     const rawWorkflow = obj.workflow_v2

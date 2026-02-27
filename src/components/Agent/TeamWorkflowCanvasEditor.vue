@@ -2,7 +2,7 @@
   <div class="workflow-editor space-y-3">
     <div class="flex items-center justify-between">
       <div class="text-xs text-base-content/60">
-        拖拽左侧角色到画布，拖动节点调整位置，点击“连线”后再点目标节点建立依赖。
+        拖拽左侧任务负责人到画布，拖动节点调整位置，点击“连线”后再点目标节点建立依赖。
       </div>
       <div class="flex items-center gap-2">
         <button class="btn btn-xs btn-ghost" @click="handleAutoLayout">自动布局</button>
@@ -12,7 +12,7 @@
 
     <div class="grid grid-cols-1 gap-3 lg:grid-cols-[220px_1fr]">
       <div class="rounded-xl border border-base-300 bg-base-50/50 p-2">
-        <div class="mb-2 text-xs font-semibold text-base-content/70">角色节点库</div>
+        <div class="mb-2 text-xs font-semibold text-base-content/70">任务节点库</div>
         <div class="space-y-1.5 max-h-72 overflow-auto pr-1">
           <div
             v-for="(member, idx) in memberOptions"
@@ -33,7 +33,7 @@
             </button>
           </div>
           <div v-if="memberOptions.length === 0" class="text-xs text-base-content/40 p-2">
-            请先在下方“角色配置”中添加角色。
+            请先在下方“Agent 配置”中添加 Agent。
           </div>
         </div>
       </div>
@@ -109,7 +109,7 @@
               </div>
             </div>
             <div class="px-2 py-1.5 text-[11px] text-base-content/70">
-              <div class="truncate">角色：{{ node.member || '未设置' }}</div>
+              <div class="truncate">负责人：{{ node.member || '未设置' }}</div>
               <div class="truncate">Phase：{{ node.phase || '-' }}</div>
             </div>
           </div>
@@ -152,9 +152,9 @@
           />
         </label>
         <label class="form-control">
-          <span class="label-text text-xs">角色</span>
+          <span class="label-text text-xs">负责人 Agent</span>
           <select v-model="selectedNode.member" class="select select-bordered select-xs" @change="emitGraphChange">
-            <option value="">请选择角色</option>
+            <option value="">请选择负责人</option>
             <option v-for="member in memberOptions" :key="`node-member-${member}`" :value="member">{{ member }}</option>
           </select>
         </label>

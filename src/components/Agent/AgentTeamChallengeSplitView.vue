@@ -65,7 +65,7 @@
             <span class="text-primary text-xs font-bold">{{ proposalMessage.member_name?.charAt(0) || 'P' }}</span>
           </div>
           <div class="flex-1 min-w-0">
-            <span class="text-xs font-medium text-base-content/70">{{ proposalMessage.member_name || '提案角色' }} 的提案</span>
+            <span class="text-xs font-medium text-base-content/70">{{ proposalMessage.member_name || '提案 Agent' }} 的提案</span>
             <span class="text-xs text-base-content/40 ml-2">{{ formatTime(proposalMessage.timestamp) }}</span>
           </div>
           <i class="fas text-xs text-base-content/30" :class="showProposal ? 'fa-chevron-up' : 'fa-chevron-down'"></i>

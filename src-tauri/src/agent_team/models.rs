@@ -103,16 +103,26 @@ pub struct AgentTeamTemplate {
     pub default_rounds_config: Option<serde_json::Value>,
     /// JSON: 默认工具策略
     pub default_tool_policy: Option<serde_json::Value>,
+    /// 模板模式版本。V2=任务驱动 Team
+    #[serde(default)]
+    pub schema_version: i32,
+    /// JSON: Agent Teams V2 规格（agents + task_graph + hook_policy）
+    pub template_spec_v2: Option<serde_json::Value>,
+    /// 升级失败标记（仅用于强制升级阶段）
+    #[serde(default)]
+    pub upgrade_failed: bool,
+    /// 升级失败原因
+    pub upgrade_error: Option<String>,
     pub is_system: bool,
     pub created_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// 关联的角色（查询时填充）
+    /// 关联的 Agent 快照（查询时填充）
     #[serde(default)]
     pub members: Vec<AgentTeamTemplateMember>,
 }
 
-/// Agent Team 模板角色
+/// Agent Team 模板 Agent 快照
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTeamTemplateMember {
     pub id: String,
@@ -124,7 +134,7 @@ pub struct AgentTeamTemplateMember {
     pub decision_style: Option<String>,
     /// 风险偏好: low / medium / high
     pub risk_preference: Option<String>,
-    /// 角色权重（用于最终决策）
+    /// Agent 权重（用于最终决策）
     pub weight: f64,
     /// JSON: 工具策略（白名单/黑名单/调用上限）
     pub tool_policy: Option<serde_json::Value>,
@@ -147,6 +157,11 @@ pub struct AgentTeamSession {
     pub goal: Option<String>,
     /// JSON: 用户自定义串并行编排计划
     pub orchestration_plan: Option<serde_json::Value>,
+    /// 会话模式版本。V2=任务驱动 Team
+    #[serde(default)]
+    pub schema_version: i32,
+    /// JSON: Agent Teams V2 运行时规格（template snapshot + runtime graph）
+    pub runtime_spec_v2: Option<serde_json::Value>,
     /// 编排计划版本（用于升级与回放兼容）
     pub plan_version: i32,
     pub state: String,
@@ -168,12 +183,12 @@ pub struct AgentTeamSession {
     pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// 关联的成员（查询时填充）
+    /// 关联的 Agent 快照（查询时填充）
     #[serde(default)]
     pub members: Vec<AgentTeamMember>,
 }
 
-/// Agent Team 会话成员（模板角色快照）
+/// Agent Team 会话 Agent 快照
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTeamMember {
     pub id: String,
@@ -189,7 +204,7 @@ pub struct AgentTeamMember {
     /// JSON: 输出格式模板
     pub output_schema: Option<serde_json::Value>,
     pub sort_order: i32,
-    /// FinOps: 角色独立资源追踪
+    /// FinOps: Agent 独立资源追踪
     pub token_usage: i64,
     pub tool_calls_count: i32,
     pub is_active: bool,
@@ -298,10 +313,17 @@ pub struct CreateAgentTeamTemplateRequest {
     pub domain: String,
     pub default_rounds_config: Option<serde_json::Value>,
     pub default_tool_policy: Option<serde_json::Value>,
-    pub members: Vec<CreateAgentTeamTemplateMemberRequest>,
+    /// 模板版本，默认 2
+    pub schema_version: Option<i32>,
+    /// V2: Agent 资源池定义
+    pub agents: Vec<AgentProfile>,
+    /// V2: 任务图定义
+    pub task_graph: TeamTaskGraph,
+    /// V2: hooks 策略
+    pub hook_policy: Option<serde_json::Value>,
 }
 
-/// 创建模板角色请求
+/// 创建模板 Agent 快照请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAgentTeamTemplateMemberRequest {
     pub name: String,
@@ -323,8 +345,10 @@ pub struct UpdateAgentTeamTemplateRequest {
     pub domain: Option<String>,
     pub default_rounds_config: Option<serde_json::Value>,
     pub default_tool_policy: Option<serde_json::Value>,
-    /// 可选：若提供则整体替换模板角色列表
-    pub members: Option<Vec<CreateAgentTeamTemplateMemberRequest>>,
+    pub schema_version: Option<i32>,
+    pub agents: Option<Vec<AgentProfile>>,
+    pub task_graph: Option<TeamTaskGraph>,
+    pub hook_policy: Option<serde_json::Value>,
 }
 
 /// 创建会话请求
@@ -335,14 +359,12 @@ pub struct CreateAgentTeamSessionRequest {
     pub template_id: Option<String>,
     pub conversation_id: Option<String>,
     pub max_rounds: Option<i32>,
-    /// JSON: 用户定义的 Team 编排计划（串行/并行）
-    pub orchestration_plan: Option<serde_json::Value>,
-    /// 编排计划版本（默认 1）
-    pub plan_version: Option<i32>,
+    /// 会话版本，默认 2
+    pub schema_version: Option<i32>,
+    /// JSON: 会话运行图与状态快照（V2）
+    pub runtime_spec_v2: Option<serde_json::Value>,
     /// JSON: 会话级状态（含 Team 全局工具配置）
     pub state_machine: Option<serde_json::Value>,
-    /// 若不使用模板，手动指定成员列表
-    pub members: Option<Vec<CreateAgentTeamTemplateMemberRequest>>,
 }
 
 /// 更新会话请求
@@ -352,10 +374,8 @@ pub struct UpdateAgentTeamSessionRequest {
     pub goal: Option<String>,
     pub state: Option<String>,
     pub max_rounds: Option<i32>,
-    /// JSON: 用户定义的 Team 编排计划（串行/并行）
-    pub orchestration_plan: Option<serde_json::Value>,
-    /// 编排计划版本
-    pub plan_version: Option<i32>,
+    pub schema_version: Option<i32>,
+    pub runtime_spec_v2: Option<serde_json::Value>,
     /// JSON: 会话级状态（含 Team 全局工具配置）
     pub state_machine: Option<serde_json::Value>,
     pub error_message: Option<String>,
@@ -403,6 +423,148 @@ pub struct AgentTeamRunStatus {
     pub is_suspended: bool,
 }
 
+// ==================== V2 任务驱动模型 ====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamTaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Blocked,
+    Cancelled,
+}
+
+impl std::fmt::Display for TeamTaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v = serde_json::to_value(self)
+            .ok()
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "pending".to_string());
+        write!(f, "{}", v)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProfile {
+    pub id: String,
+    pub name: String,
+    pub system_prompt: Option<String>,
+    pub model: Option<String>,
+    pub tool_policy: Option<serde_json::Value>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub max_parallel_tasks: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTaskRetryPolicy {
+    #[serde(default)]
+    pub max_attempts: Option<i32>,
+    #[serde(default)]
+    pub backoff_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTaskSla {
+    #[serde(default)]
+    pub timeout_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTaskNode {
+    pub id: String,
+    pub title: String,
+    pub instruction: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub assignee_strategy: Option<serde_json::Value>,
+    #[serde(default)]
+    pub retry: Option<TeamTaskRetryPolicy>,
+    #[serde(default)]
+    pub sla: Option<TeamTaskSla>,
+    #[serde(default)]
+    pub input_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    pub output_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    pub phase: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTaskGraph {
+    #[serde(default)]
+    pub version: Option<i32>,
+    #[serde(default)]
+    pub nodes: Vec<TeamTaskNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTemplateSpecV2 {
+    pub schema_version: i32,
+    #[serde(default)]
+    pub agents: Vec<AgentProfile>,
+    pub task_graph: TeamTaskGraph,
+    #[serde(default)]
+    pub hook_policy: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTask {
+    pub id: String,
+    pub session_id: String,
+    pub task_id: String,
+    pub title: String,
+    pub instruction: String,
+    pub status: String,
+    pub assignee_agent_id: Option<String>,
+    pub depends_on: Vec<String>,
+    pub attempt: i32,
+    pub max_attempts: i32,
+    pub last_error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamTaskAttempt {
+    pub id: String,
+    pub session_id: String,
+    pub task_record_id: String,
+    pub attempt: i32,
+    pub status: String,
+    pub error: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailboxMessage {
+    pub id: String,
+    pub session_id: String,
+    pub from_agent_id: Option<String>,
+    pub to_agent_id: Option<String>,
+    pub task_record_id: Option<String>,
+    pub message_type: String,
+    pub payload: serde_json::Value,
+    pub is_acknowledged: bool,
+    pub created_at: DateTime<Utc>,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTaskRequest {
+    pub task_id: String,
+    pub status: Option<String>,
+    pub assignee_agent_id: Option<String>,
+    pub last_error: Option<String>,
+}
+
 // ==================== 事件定义 ====================
 
 /// Agent Team 事件载荷
@@ -423,7 +585,7 @@ impl AgentTeamEvent {
     }
 }
 
-// ==================== MVP 4角色模板种子数据 ====================
+// ==================== MVP 4-Agent 模板种子数据 ====================
 pub struct BuiltinTeamRoles;
 
 impl BuiltinTeamRoles {

@@ -43,11 +43,16 @@ export interface AgentTeamTemplate {
     domain: string
     default_rounds_config?: any
     default_tool_policy?: any
+    schema_version: number
+    template_spec_v2?: TeamTemplateSpecV2
+    upgrade_failed?: boolean
+    upgrade_error?: string
     is_system: boolean
     created_by?: string
     created_at: string
     updated_at: string
-    members: AgentTeamTemplateMember[]
+    // Legacy snapshot; V2 主流程请优先使用 template_spec_v2.agents
+    members?: AgentTeamTemplateMember[]
 }
 
 // ==================== 会话结构 ====================
@@ -78,6 +83,8 @@ export interface AgentTeamSession {
     name: string
     goal?: string
     orchestration_plan?: any
+    schema_version: number
+    runtime_spec_v2?: TeamTemplateSpecV2
     plan_version: number
     state: string
     state_machine?: any
@@ -93,7 +100,8 @@ export interface AgentTeamSession {
     error_message?: string
     created_at: string
     updated_at: string
-    members: AgentTeamMember[]
+    // Legacy snapshot; V2 主流程请优先使用 runtime_spec_v2.agents
+    members?: AgentTeamMember[]
 }
 
 // ==================== 轮次 ====================
@@ -194,7 +202,10 @@ export interface CreateAgentTeamTemplateRequest {
     domain: string
     default_rounds_config?: any
     default_tool_policy?: any
-    members: CreateAgentTeamTemplateMemberRequest[]
+    schema_version?: number
+    agents: AgentProfile[]
+    task_graph: TeamTaskGraph
+    hook_policy?: any
 }
 
 export interface UpdateAgentTeamTemplateRequest {
@@ -203,7 +214,10 @@ export interface UpdateAgentTeamTemplateRequest {
     domain?: string
     default_rounds_config?: any
     default_tool_policy?: any
-    members?: CreateAgentTeamTemplateMemberRequest[]
+    schema_version?: number
+    agents?: AgentProfile[]
+    task_graph?: TeamTaskGraph
+    hook_policy?: any
 }
 
 export interface CreateAgentTeamSessionRequest {
@@ -212,10 +226,9 @@ export interface CreateAgentTeamSessionRequest {
     template_id?: string
     conversation_id?: string
     max_rounds?: number
-    orchestration_plan?: any
-    plan_version?: number
+    schema_version?: number
+    runtime_spec_v2?: TeamTemplateSpecV2
     state_machine?: any
-    members?: CreateAgentTeamTemplateMemberRequest[]
 }
 
 export interface UpdateAgentTeamSessionRequest {
@@ -223,10 +236,92 @@ export interface UpdateAgentTeamSessionRequest {
     goal?: string
     state?: string
     max_rounds?: number
-    orchestration_plan?: any
-    plan_version?: number
+    schema_version?: number
+    runtime_spec_v2?: TeamTemplateSpecV2
     state_machine?: any
     error_message?: string
+}
+
+export interface AgentProfile {
+    id: string
+    name: string
+    system_prompt?: string
+    model?: string
+    tool_policy?: any
+    skills?: string[]
+    max_parallel_tasks?: number
+}
+
+export interface TeamTaskRetryPolicy {
+    max_attempts?: number
+    backoff_ms?: number
+}
+
+export interface TeamTaskSla {
+    timeout_secs?: number
+}
+
+export interface TeamTaskNode {
+    id: string
+    title: string
+    instruction: string
+    depends_on?: string[]
+    assignee_strategy?: any
+    retry?: TeamTaskRetryPolicy
+    sla?: TeamTaskSla
+    input_schema?: any
+    output_schema?: any
+    phase?: string
+}
+
+export interface TeamTaskGraph {
+    version?: number
+    nodes: TeamTaskNode[]
+}
+
+export interface TeamTemplateSpecV2 {
+    schema_version: number
+    agents: AgentProfile[]
+    task_graph: TeamTaskGraph
+    hook_policy?: any
+}
+
+export interface TeamTask {
+    id: string
+    session_id: string
+    task_id: string
+    title: string
+    instruction: string
+    status: string
+    assignee_agent_id?: string
+    depends_on: string[]
+    attempt: number
+    max_attempts: number
+    last_error?: string
+    started_at?: string
+    completed_at?: string
+    created_at: string
+    updated_at: string
+}
+
+export interface MailboxMessage {
+    id: string
+    session_id: string
+    from_agent_id?: string
+    to_agent_id?: string
+    task_record_id?: string
+    message_type: string
+    payload: any
+    is_acknowledged: boolean
+    created_at: string
+    acknowledged_at?: string
+}
+
+export interface UpdateTaskRequest {
+    task_id: string
+    status?: string
+    assignee_agent_id?: string
+    last_error?: string
 }
 
 export interface UpdateBlackboardRequest {

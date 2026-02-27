@@ -476,7 +476,7 @@ mod tests {
     fn test_divergence_identical() {
         let reviews = vec!["同意这个方案，技术可行", "同意这个方案，技术可行"];
         let score = DivergenceCalculator::calculate(
-            &reviews.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            &reviews.iter().copied().collect::<Vec<_>>(),
         );
         assert!(
             score < 0.3,
@@ -492,7 +492,7 @@ mod tests {
             "完全反对，这个方案存在严重风险，技术不可行，安全漏洞，不应实施",
         ];
         let score = DivergenceCalculator::calculate(
-            &reviews.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            &reviews.iter().copied().collect::<Vec<_>>(),
         );
         assert!(
             score > 0.3,

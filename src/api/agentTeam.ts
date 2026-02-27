@@ -11,6 +11,9 @@ import type {
     AgentTeamBlackboardArchive,
     AgentTeamArtifact,
     AgentTeamRunStatus,
+    TeamTask,
+    MailboxMessage,
+    UpdateTaskRequest,
     CreateAgentTeamTemplateRequest,
     UpdateAgentTeamTemplateRequest,
     CreateAgentTeamSessionRequest,
@@ -71,6 +74,40 @@ export const agentTeamApi = {
 
     async deleteSession(id: string): Promise<void> {
         return invoke('agent_team_delete_session', { sessionId: id })
+    },
+
+    async listTasks(sessionId: string): Promise<TeamTask[]> {
+        return invoke('agent_team_list_tasks', { sessionId })
+    },
+
+    async updateTask(
+        sessionId: string,
+        taskId: string,
+        patch: Omit<UpdateTaskRequest, 'task_id'>,
+    ): Promise<void> {
+        return invoke('agent_team_update_task', {
+            sessionId,
+            taskId,
+            patch: {
+                task_id: taskId,
+                ...patch,
+            },
+        })
+    },
+
+    async listMailbox(sessionId: string, agentId?: string): Promise<MailboxMessage[]> {
+        return invoke('agent_team_list_mailbox', {
+            sessionId,
+            agentId: agentId ?? null,
+        })
+    },
+
+    async ackMailbox(messageId: string): Promise<void> {
+        return invoke('agent_team_ack_mailbox', { messageId })
+    },
+
+    async upgradeTemplatesToV2(force = false): Promise<number> {
+        return invoke('agent_team_upgrade_templates_to_v2', { force })
     },
 
     // Run lifecycle
@@ -137,12 +174,12 @@ export const agentTeamApi = {
     async generateTemplate(req: {
         description: string
         domain?: string | null
-        role_count?: number
+        agent_count?: number
     }): Promise<{
         name: string
         description: string
         domain: string
-        members: Array<{
+        agents: Array<{
             name: string
             responsibility: string
             system_prompt: string
@@ -159,7 +196,7 @@ export const agentTeamApi = {
         name: string
         description: string
         domain: string
-        members: Array<{
+        agents: Array<{
             name: string
             responsibility: string
             system_prompt: string

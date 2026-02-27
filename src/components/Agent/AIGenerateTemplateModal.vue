@@ -20,7 +20,7 @@
             </div>
             <div>
               <h2 class="text-lg font-bold">AI 生成模板</h2>
-              <p class="text-xs text-base-content/60">描述你的场景，AI 自动设计专属的多角色协作团队</p>
+              <p class="text-xs text-base-content/60">描述你的场景，AI 自动设计专属的多 Agent 协作团队</p>
             </div>
             <button
               class="ml-auto btn btn-ghost btn-xs text-base-content/50 hover:text-base-content"
@@ -77,10 +77,10 @@
                 </select>
               </div>
 
-              <!-- Role count -->
+              <!-- Agent count -->
               <div>
                 <label class="block text-xs font-medium text-base-content/70 mb-1.5">
-                  角色数量：<span class="text-primary font-bold">{{ roleCount }}</span>
+                  Agent 数量：<span class="text-primary font-bold">{{ roleCount }}</span>
                 </label>
                 <div class="flex items-center gap-2">
                   <span class="text-xs text-base-content/45">2</span>
@@ -96,7 +96,7 @@
                   />
                   <span class="text-xs text-base-content/45">6</span>
                 </div>
-                <div class="mt-1 text-xs text-base-content/50">建议 3-4 个角色获得最佳讨论质量</div>
+                <div class="mt-1 text-xs text-base-content/50">建议 3-4 个 Agent 获得最佳讨论质量</div>
               </div>
             </div>
 
@@ -154,20 +154,20 @@
               </div>
             </div>
 
-            <!-- Roles -->
+            <!-- Agents -->
             <div>
               <div class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3 flex items-center gap-2">
                 <i class="fas fa-user-group"></i>
-                角色设计 ({{ generated.members.length }})
+                Agent 设计 ({{ generated.agents.length }})
               </div>
               <div class="space-y-3">
                 <div
-                  v-for="(member, i) in generated.members"
+                  v-for="(agent, i) in generated.agents"
                   :key="i"
                   class="rounded-xl border overflow-hidden transition-all"
                   :class="expandedMember === i ? 'bg-base-200/60 border-primary/30' : 'bg-base-100 border-base-300 hover:bg-base-200/30'"
                 >
-                  <!-- Role header -->
+                  <!-- Agent header -->
                   <div
                     class="flex items-center gap-3 px-4 py-3 cursor-pointer"
                     @click="expandedMember = expandedMember === i ? null : i"
@@ -177,24 +177,24 @@
                       {{ i + 1 }}
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="text-sm font-semibold text-base-content/90">{{ member.name }}</div>
-                      <div class="text-xs text-base-content/55 truncate">{{ member.responsibility }}</div>
+                      <div class="text-sm font-semibold text-base-content/90">{{ agent.name }}</div>
+                      <div class="text-xs text-base-content/55 truncate">{{ agent.responsibility }}</div>
                     </div>
                     <div class="flex items-center gap-1.5 flex-shrink-0">
                       <span class="badge badge-xs badge-ghost">
-                        {{ styleLabel(member.decision_style) }}
+                        {{ styleLabel(agent.decision_style) }}
                       </span>
                       <i class="fas text-base-content/40 text-xs transition-transform"
                         :class="expandedMember === i ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
                     </div>
                   </div>
 
-                  <!-- Role detail -->
+                  <!-- Agent detail -->
                   <div v-if="expandedMember === i" class="px-4 pb-4 border-t border-base-300">
-                    <div class="mt-3 text-xs text-base-content/70 leading-relaxed whitespace-pre-wrap bg-base-200/60 rounded-lg p-3 font-mono">{{ member.system_prompt }}</div>
+                    <div class="mt-3 text-xs text-base-content/70 leading-relaxed whitespace-pre-wrap bg-base-200/60 rounded-lg p-3 font-mono">{{ agent.system_prompt }}</div>
                     <div class="mt-2 flex items-center gap-3 text-xs text-base-content/55">
-                      <span>风险偏好: <span class="text-base-content/75">{{ riskLabel(member.risk_preference) }}</span></span>
-                      <span>权重: <span class="text-base-content/75">{{ member.weight }}</span></span>
+                      <span>风险偏好: <span class="text-base-content/75">{{ riskLabel(agent.risk_preference) }}</span></span>
+                      <span>权重: <span class="text-base-content/75">{{ agent.weight }}</span></span>
                     </div>
                   </div>
                 </div>
@@ -268,7 +268,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 // ==================== Types ====================
 
-interface GeneratedMember {
+interface GeneratedAgent {
   name: string
   responsibility: string
   system_prompt: string
@@ -281,7 +281,7 @@ interface GeneratedTemplate {
   name: string
   description: string
   domain: string
-  members: GeneratedMember[]
+  agents: GeneratedAgent[]
   raw_json: string
 }
 
@@ -310,9 +310,9 @@ const expandedMember = ref<number | null>(0)
 
 const generatingHints = [
   '正在分析场景特征...',
-  '正在设计角色职责分工...',
+  '正在设计 Agent 职责分工...',
   '正在编写专属 System Prompt...',
-  '正在优化角色互补性...',
+  '正在优化 Agent 互补性...',
   '即将完成，稍等片刻...',
 ]
 const generatingHint = ref(generatingHints[0])
@@ -394,7 +394,7 @@ async function generate() {
       request: {
         description: description.value.trim(),
         domain: domain.value || null,
-        role_count: roleCount.value,
+        agent_count: roleCount.value,
       },
     })
     generated.value = result

@@ -4,7 +4,7 @@
     <div class="flex items-center justify-between px-4 py-3 border-b border-base-300 bg-base-100/80 backdrop-blur-sm">
       <div class="flex items-center gap-2">
         <i class="fas fa-layer-group text-primary"></i>
-        <h2 class="text-sm font-bold text-base-content">Team 模板库</h2>
+        <h2 class="text-sm font-bold text-base-content">Team库</h2>
         <span class="badge badge-sm badge-primary">{{ filteredTemplates.length }}</span>
       </div>
       <div class="flex items-center gap-2">
@@ -80,6 +80,9 @@
         >自定义</button>
       </div>
     </div>
+    <div v-if="errorMessage" class="mx-4 mt-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+      {{ errorMessage }}
+    </div>
 
     <!-- Template Grid -->
     <div class="flex-1 overflow-y-auto p-4">
@@ -123,7 +126,9 @@
                   <div class="flex items-center gap-1 mt-0.5">
                     <span v-if="tpl.is_system" class="badge badge-xs badge-info">内置</span>
                     <span class="badge badge-xs badge-ghost capitalize">{{ tpl.domain }}</span>
-                    <span class="badge badge-xs badge-ghost">{{ tpl.members.length }} 角色</span>
+                    <span class="badge badge-xs badge-ghost">{{ templateAgentCount(tpl) }} Agents</span>
+                    <span v-if="(tpl.schema_version || 1) < 2" class="badge badge-xs badge-warning">需升级</span>
+                    <span v-if="tpl.upgrade_failed" class="badge badge-xs badge-error">升级失败</span>
                   </div>
                 </div>
               </div>
@@ -159,33 +164,27 @@
             <p v-if="tpl.description" class="text-xs text-base-content/55 mb-2.5 line-clamp-2 leading-relaxed">
               {{ tpl.description }}
             </p>
+            <p v-if="tpl.upgrade_failed && tpl.upgrade_error" class="text-[11px] text-error mb-2.5 line-clamp-2">
+              {{ tpl.upgrade_error }}
+            </p>
 
             <!-- Member chips -->
             <div class="flex flex-wrap gap-1 mb-3">
               <span
-                v-for="m in tpl.members"
-                :key="m.id"
+                v-for="agent in templateAgentNames(tpl)"
+                :key="agent"
                 class="badge badge-xs px-2 py-0.5 font-normal"
-                :style="{ backgroundColor: memberColor(m.name) + '20', color: memberColor(m.name), borderColor: memberColor(m.name) + '40' }"
+                :style="{ backgroundColor: memberColor(agent) + '20', color: memberColor(agent), borderColor: memberColor(agent) + '40' }"
               >
-                {{ m.name }}
+                {{ agent }}
               </span>
             </div>
 
-            <!-- Footer: Use template button -->
+            <!-- Footer -->
             <div class="flex items-center justify-between">
               <span class="text-xs text-base-content/30">
                 {{ formatDate(tpl.updated_at) }}
               </span>
-              <button
-                class="btn btn-xs btn-primary gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                :class="selectedId === tpl.id ? 'opacity-100' : ''"
-                @click.stop="handleUseTemplate(tpl)"
-                :id="`use-template-${tpl.id}`"
-              >
-                <i class="fas fa-play text-xs"></i>
-                使用此模板
-              </button>
             </div>
           </div>
         </TransitionGroup>
@@ -226,17 +225,6 @@
       @saved="handleAiTemplateSaved"
     />
 
-    <!-- Use Template Modal -->
-    <Teleport to="body">
-      <CreateTeamFromTemplateModal
-        v-if="usingTemplate"
-        :template="usingTemplate"
-        :conversation-id="conversationId"
-        @created="handleSessionCreated"
-        @cancel="usingTemplate = null"
-      />
-    </Teleport>
-
     <!-- Delete confirm toast -->
     <Teleport to="body">
       <div v-if="deletingTemplate" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] animate-in slide-in-from-bottom-4">
@@ -264,7 +252,6 @@ import { ref, computed, onMounted } from 'vue'
 import { agentTeamApi } from '@/api/agentTeam'
 import type { AgentTeamTemplate } from '@/types/agentTeam'
 import AgentTeamSettings from './AgentTeamSettings.vue'
-import CreateTeamFromTemplateModal from './CreateTeamFromTemplateModal.vue'
 import AIGenerateTemplateModal from './AIGenerateTemplateModal.vue'
 
 // ==================== Props / Emits ====================
@@ -275,7 +262,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'session-created', sessionId: string): void
   (e: 'templates-updated', templateId?: string): void
 }>()
 
@@ -291,9 +277,9 @@ const selectedId = ref<string | null>(null)
 const showCreateModal = ref(false)
 const showAiGenerateModal = ref(false)
 const editingTemplate = ref<AgentTeamTemplate | null>(null)
-const usingTemplate = ref<AgentTeamTemplate | null>(null)
 const deletingTemplate = ref<AgentTeamTemplate | null>(null)
 const isDeleting = ref(false)
+const errorMessage = ref('')
 
 // ==================== Computed ====================
 
@@ -318,6 +304,7 @@ onMounted(loadTemplates)
 
 async function loadTemplates() {
   isLoading.value = true
+  errorMessage.value = ''
   try {
     let list = await agentTeamApi.listTemplates()
     if (list.length === 0) {
@@ -334,31 +321,48 @@ async function loadTemplates() {
 
 // ==================== Actions ====================
 
-function handleUseTemplate(tpl: AgentTeamTemplate) {
-  usingTemplate.value = tpl
-}
-
 function handleEditTemplate(tpl: AgentTeamTemplate) {
   editingTemplate.value = tpl
 }
 
 async function handleClone(tpl: AgentTeamTemplate) {
   try {
+    const fallbackAgents = (tpl.members || []).map((m, index) => ({
+      id: `agent-${index + 1}`,
+      name: m.name,
+      system_prompt: m.system_prompt,
+      model: undefined,
+      tool_policy: m.tool_policy,
+      skills: [],
+      max_parallel_tasks: 1,
+    }))
+    const fallbackNodes = fallbackAgents.map((agent, index) => ({
+      id: `task-${index + 1}`,
+      title: `${agent.name} 执行任务`,
+      instruction: `请作为 ${agent.name} 执行该节点任务。`,
+      depends_on: index > 0 ? [`task-${index}`] : [],
+      assignee_strategy: { mode: 'fixed_agent', agent_id: agent.id, agent_name: agent.name },
+    }))
+    const specV2 = tpl.template_spec_v2 || {
+      schema_version: 2,
+      agents: fallbackAgents,
+      task_graph: {
+        version: 1,
+        nodes: fallbackNodes,
+      },
+      hook_policy: undefined,
+    }
+
     const created = await agentTeamApi.createTemplate({
       name: `${tpl.name} (副本)`,
       description: tpl.description,
       domain: tpl.domain,
       default_rounds_config: tpl.default_rounds_config,
       default_tool_policy: tpl.default_tool_policy,
-      members: tpl.members.map(m => ({
-        name: m.name,
-        responsibility: m.responsibility,
-        system_prompt: m.system_prompt,
-        decision_style: m.decision_style,
-        risk_preference: m.risk_preference,
-        weight: m.weight,
-        sort_order: m.sort_order,
-      })),
+      schema_version: 2,
+      agents: specV2.agents,
+      task_graph: specV2.task_graph,
+      hook_policy: specV2.hook_policy,
     })
     selectedId.value = created.id
     await loadTemplates()
@@ -403,12 +407,6 @@ async function handleAiTemplateSaved(template: AgentTeamTemplate) {
   emit('templates-updated', template.id)
 }
 
-function handleSessionCreated(sessionId: string) {
-  usingTemplate.value = null
-  emit('session-created', sessionId)
-  emit('close')
-}
-
 // ==================== Display helpers ====================
 
 function domainIcon(domain: string): string {
@@ -431,6 +429,20 @@ function domainBgClass(domain: string): string {
     custom: 'bg-secondary/10',
   }
   return map[domain] ?? 'bg-base-200'
+}
+
+function templateAgentNames(template: AgentTeamTemplate): string[] {
+  const fromSpec = template.template_spec_v2?.agents
+    ?.map((agent) => (agent?.name || '').trim())
+    .filter((name) => name.length > 0) || []
+  if (fromSpec.length > 0) return fromSpec
+  return (template.members || [])
+    .map((member) => (member?.name || '').trim())
+    .filter((name) => name.length > 0)
+}
+
+function templateAgentCount(template: AgentTeamTemplate): number {
+  return templateAgentNames(template).length
 }
 
 const MEMBER_COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444']

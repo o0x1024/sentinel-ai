@@ -161,10 +161,110 @@ pub async fn agent_team_delete_session(db: DbState<'_>, session_id: String) -> R
         .map_err(|e| e.to_string())
 }
 
+/// 列出 V2 任务看板
+#[tauri::command]
+pub async fn agent_team_list_tasks(
+    db: DbState<'_>,
+    session_id: String,
+) -> Result<Vec<TeamTask>, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::list_tasks(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新 V2 任务
+#[tauri::command]
+pub async fn agent_team_update_task(
+    db: DbState<'_>,
+    session_id: String,
+    task_id: String,
+    patch: UpdateTaskRequest,
+) -> Result<(), String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    let req = UpdateTaskRequest {
+        task_id,
+        status: patch.status,
+        assignee_agent_id: patch.assignee_agent_id,
+        last_error: patch.last_error,
+    };
+    repo_rt::update_task(&runtime_pool, &session_id, &req)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 列出 Agent 收件箱
+#[tauri::command]
+pub async fn agent_team_list_mailbox(
+    db: DbState<'_>,
+    session_id: String,
+    agent_id: Option<String>,
+) -> Result<Vec<MailboxMessage>, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::list_mailbox(&runtime_pool, &session_id, agent_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 确认收件箱消息
+#[tauri::command]
+pub async fn agent_team_ack_mailbox(db: DbState<'_>, message_id: String) -> Result<(), String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::ack_mailbox_message(&runtime_pool, &message_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 强制升级模板到 V2
+#[tauri::command]
+pub async fn agent_team_upgrade_templates_to_v2(
+    db: DbState<'_>,
+    force: Option<bool>,
+) -> Result<i64, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::upgrade_templates_to_v2(&runtime_pool, force.unwrap_or(false))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 启动 Agent Team 运行（异步后台执行）
 #[tauri::command]
-pub async fn agent_team_start_run(app_handle: AppHandle, session_id: String) -> Result<(), String> {
+pub async fn agent_team_start_run(
+    app_handle: AppHandle,
+    db: DbState<'_>,
+    session_id: String,
+) -> Result<(), String> {
     info!("Starting Agent Team run for session: {}", session_id);
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    let session = repo_rt::get_agent_team_session(&runtime_pool, &session_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Session not found".to_string())?;
+    if session.schema_version < 2 {
+        return Err(format!(
+            "Session schema_version={} is not supported. Please upgrade to V2 first.",
+            session.schema_version
+        ));
+    }
+    let runtime_spec = session
+        .runtime_spec_v2
+        .as_ref()
+        .ok_or_else(|| "runtime_spec_v2 is required".to_string())?;
+    let agents = runtime_spec
+        .get("agents")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "runtime_spec_v2.agents is missing".to_string())?;
+    if agents.is_empty() {
+        return Err("runtime_spec_v2.agents cannot be empty".to_string());
+    }
+    let nodes = runtime_spec
+        .get("task_graph")
+        .and_then(|v| v.get("nodes"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "runtime_spec_v2.task_graph.nodes is missing".to_string())?;
+    if nodes.is_empty() {
+        return Err("runtime_spec_v2.task_graph.nodes cannot be empty".to_string());
+    }
     start_agent_team_run_async(app_handle, session_id)
         .await
         .map_err(|e| {
@@ -205,8 +305,8 @@ pub async fn agent_team_stop_run(db: DbState<'_>, session_id: String) -> Result<
                 goal: None,
                 state: Some("FAILED".to_string()),
                 max_rounds: None,
-                orchestration_plan: None,
-                plan_version: None,
+                schema_version: None,
+                runtime_spec_v2: None,
                 state_machine: None,
                 error_message: Some("Execution stopped by user".to_string()),
             },
@@ -475,8 +575,8 @@ pub struct GenerateTemplateRequest {
     pub description: String,
     /// 领域提示（可选，例如 product / security / audit）
     pub domain: Option<String>,
-    /// 期望的角色数量（可选，默认 3）
-    pub role_count: Option<u8>,
+    /// 期望的 Agent 数量（可选，默认 3）
+    pub agent_count: Option<u8>,
 }
 
 /// AI 生成的模板预览（保存前返回给前端确认）
@@ -485,13 +585,13 @@ pub struct GeneratedTemplate {
     pub name: String,
     pub description: String,
     pub domain: String,
-    pub members: Vec<GeneratedMember>,
+    pub agents: Vec<GeneratedAgent>,
     /// LLM 原始输出（供调试）
     pub raw_json: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct GeneratedMember {
+pub struct GeneratedAgent {
     pub name: String,
     pub responsibility: String,
     pub system_prompt: String,
@@ -514,11 +614,11 @@ pub async fn agent_team_generate_template(
         .await
         .map_err(|e| e.to_string())?;
 
-    let role_count = request.role_count.unwrap_or(3).clamp(2, 6);
+    let agent_count = request.agent_count.unwrap_or(3).clamp(2, 6);
     let domain_hint = request.domain.as_deref().unwrap_or("custom");
 
     let system_prompt = format!(
-        r#"你是一个专业的 AI Agent Team 架构师。你的任务是根据用户的场景描述，设计一个高质量的多角色协作团队模板。
+        r#"你是一个专业的 AI Agent Team 架构师。你的任务是根据用户的场景描述，设计一个高质量的多 Agent 协作团队模板。
 
 ## 输出要求
 必须严格输出 **合法 JSON**，格式如下（不要包含任何其他文字）：
@@ -527,11 +627,11 @@ pub async fn agent_team_generate_template(
   "name": "模板名称（简洁、专业，≤30字）",
   "description": "模板说明（≤100字，说明适用场景和能解决的问题）",
   "domain": "领域（product / security / audit / ops / redblue / custom 之一）",
-  "members": [
+  "agents": [
     {{
-      "name": "角色名称（如：产品经理、安全分析师）",
-      "responsibility": "该角色的核心职责（≤80字）",
-      "system_prompt": "专属 System Prompt（150-300字，使用第一人称，包含角色定位、分析框架、输出要求）",
+      "name": "Agent 名称（如：产品经理、安全分析师）",
+      "responsibility": "该 Agent 的核心职责（≤80字）",
+      "system_prompt": "专属 System Prompt（150-300字，使用第一人称，包含 Agent 定位、分析框架、输出要求）",
       "decision_style": "conservative | balanced | aggressive | pragmatic | risk_aware",
       "risk_preference": "low | medium | high",
       "weight": 1.0
@@ -540,20 +640,20 @@ pub async fn agent_team_generate_template(
 }}
 
 ## 设计原则
-1. **角色互补**：每个角色必须有独特的视角和专业领域，避免重叠
-2. **代表核心利益**：第一个角色通常是主提案人，其余角色代表不同立场（技术/业务/风险）
+1. **Agent 互补**：每个 Agent 必须有独特的视角和专业领域，避免重叠
+2. **代表核心利益**：第一个 Agent 通常是主提案人，其余 Agent 代表不同立场（技术/业务/风险）
 3. **system_prompt 专业度**：包含具体的分析方法论（如 STRIDE、CVSS、ITIL 等）
-4. **分歧设计**：角色之间应有天然的视角分歧，推动高质量讨论
-5. **正好 {role_count} 个角色**
+4. **分歧设计**：Agent 之间应有天然的视角分歧，推动高质量讨论
+5. **正好 {agent_count} 个 Agent**
 
 领域参考：`{domain_hint}`"#,
-        role_count = role_count,
+        agent_count = agent_count,
         domain_hint = domain_hint
     );
 
     let user_msg = format!(
-        "请为以下场景设计 {} 个角色的协作团队模板：\n\n{}",
-        role_count, request.description
+        "请为以下场景设计 {} 个 Agent 的协作团队模板：\n\n{}",
+        agent_count, request.description
     );
 
     let history = vec![sentinel_llm::ChatMessage {
@@ -591,18 +691,18 @@ pub async fn agent_team_generate_template(
     let description = parsed["description"].as_str().unwrap_or("").to_string();
     let domain = parsed["domain"].as_str().unwrap_or(domain_hint).to_string();
 
-    let members_raw = parsed["members"]
+    let agents_raw = parsed["agents"]
         .as_array()
-        .ok_or_else(|| "生成结果缺少 members 字段".to_string())?;
+        .ok_or_else(|| "生成结果缺少 agents 字段".to_string())?;
 
-    if members_raw.is_empty() {
-        return Err("AI 生成的模板没有角色，请重试".to_string());
+    if agents_raw.is_empty() {
+        return Err("AI 生成的模板没有 Agent，请重试".to_string());
     }
 
-    let members: Vec<GeneratedMember> = members_raw
+    let agents: Vec<GeneratedAgent> = agents_raw
         .iter()
-        .map(|m| GeneratedMember {
-            name: m["name"].as_str().unwrap_or("角色").to_string(),
+        .map(|m| GeneratedAgent {
+            name: m["name"].as_str().unwrap_or("Agent").to_string(),
             responsibility: m["responsibility"].as_str().unwrap_or("").to_string(),
             system_prompt: m["system_prompt"].as_str().unwrap_or("").to_string(),
             decision_style: m["decision_style"]
@@ -618,9 +718,9 @@ pub async fn agent_team_generate_template(
         .collect();
 
     info!(
-        "AI generated template '{}' with {} members for domain '{}'",
+        "AI generated template '{}' with {} agents for domain '{}'",
         name,
-        members.len(),
+        agents.len(),
         domain
     );
 
@@ -628,7 +728,7 @@ pub async fn agent_team_generate_template(
         name,
         description,
         domain,
-        members,
+        agents,
         raw_json: json_str,
     })
 }
@@ -639,9 +739,66 @@ pub async fn agent_team_save_generated_template(
     db: DbState<'_>,
     generated: GeneratedTemplate,
 ) -> Result<AgentTeamTemplate, String> {
-    use crate::agent_team::models::CreateAgentTeamTemplateMemberRequest;
-
     let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    let mut agents: Vec<AgentProfile> = Vec::new();
+    let mut nodes: Vec<TeamTaskNode> = Vec::new();
+    let mut prev_task_id: Option<String> = None;
+
+    for (i, agent) in generated.agents.into_iter().enumerate() {
+        let base = agent
+            .name
+            .trim()
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        let agent_id = if base.is_empty() {
+            format!("agent-{}", i + 1)
+        } else {
+            format!("agent-{}", base)
+        };
+        agents.push(AgentProfile {
+            id: agent_id.clone(),
+            name: agent.name.clone(),
+            system_prompt: Some(agent.system_prompt.clone()),
+            model: None,
+            tool_policy: None,
+            skills: vec![],
+            max_parallel_tasks: Some(1),
+        });
+
+        let task_id = format!("task-{}", i + 1);
+        let mut depends_on = Vec::new();
+        if let Some(prev) = prev_task_id.as_ref() {
+            depends_on.push(prev.clone());
+        }
+        nodes.push(TeamTaskNode {
+            id: task_id.clone(),
+            title: format!("{} 执行任务", agent.name),
+            instruction: if agent.responsibility.trim().is_empty() {
+                format!("请作为 {} 完成当前任务。", agent.name)
+            } else {
+                agent.responsibility.clone()
+            },
+            depends_on,
+            assignee_strategy: Some(serde_json::json!({
+                "mode": "fixed_agent",
+                "agent_id": agent_id,
+                "agent_name": agent.name,
+            })),
+            retry: Some(TeamTaskRetryPolicy {
+                max_attempts: Some(1),
+                backoff_ms: Some(300),
+            }),
+            sla: None,
+            input_schema: None,
+            output_schema: None,
+            phase: Some("task_execution".to_string()),
+        });
+        prev_task_id = Some(task_id);
+    }
 
     let request = CreateAgentTeamTemplateRequest {
         name: generated.name,
@@ -649,22 +806,13 @@ pub async fn agent_team_save_generated_template(
         domain: generated.domain,
         default_rounds_config: None,
         default_tool_policy: None,
-        members: generated
-            .members
-            .into_iter()
-            .enumerate()
-            .map(|(i, m)| CreateAgentTeamTemplateMemberRequest {
-                name: m.name,
-                responsibility: Some(m.responsibility),
-                system_prompt: Some(m.system_prompt),
-                decision_style: Some(m.decision_style),
-                risk_preference: Some(m.risk_preference),
-                weight: Some(m.weight),
-                tool_policy: None,
-                output_schema: None,
-                sort_order: Some(i as i32),
-            })
-            .collect(),
+        schema_version: Some(2),
+        agents,
+        task_graph: TeamTaskGraph {
+            version: Some(1),
+            nodes,
+        },
+        hook_policy: None,
     };
 
     repo_rt::create_agent_team_template(&runtime_pool, &request, None)

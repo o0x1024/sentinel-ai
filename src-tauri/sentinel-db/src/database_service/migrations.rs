@@ -17,8 +17,10 @@ impl AsmEnhancementMigration {
         Self::add_column_if_not_exists(pool, "bounty_assets", "isp", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "country", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "city", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "latitude", "DOUBLE PRECISION").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "longitude", "DOUBLE PRECISION").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "latitude", "DOUBLE PRECISION")
+            .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "longitude", "DOUBLE PRECISION")
+            .await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "is_cloud", "BOOLEAN").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "cloud_provider", "TEXT").await?;
 
@@ -43,7 +45,8 @@ impl AsmEnhancementMigration {
 
         // Add Web/URL Attributes
         Self::add_column_if_not_exists(pool, "bounty_assets", "http_status", "INTEGER").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "response_time_ms", "INTEGER").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "response_time_ms", "INTEGER")
+            .await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "content_length", "INTEGER").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "content_type", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "title", "TEXT").await?;
@@ -57,18 +60,31 @@ impl AsmEnhancementMigration {
         // Add Certificate Attributes
         Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_id", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "ssl_enabled", "BOOLEAN").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_subject", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_subject", "TEXT")
+            .await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_issuer", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_valid_from", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_valid_to", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_san_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_valid_from", "TEXT")
+            .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_valid_to", "TEXT")
+            .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "certificate_san_json", "TEXT")
+            .await?;
 
         // Add Attack Surface & Risk
         Self::add_column_if_not_exists(pool, "bounty_assets", "exposure_level", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "attack_surface_score", "DOUBLE PRECISION").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "vulnerability_count", "INTEGER").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "cvss_max_score", "DOUBLE PRECISION").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "exploit_available", "BOOLEAN").await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "bounty_assets",
+            "attack_surface_score",
+            "DOUBLE PRECISION",
+        )
+        .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "vulnerability_count", "INTEGER")
+            .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "cvss_max_score", "DOUBLE PRECISION")
+            .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "exploit_available", "BOOLEAN")
+            .await?;
 
         // Add Asset Classification
         Self::add_column_if_not_exists(pool, "bounty_assets", "asset_category", "TEXT").await?;
@@ -79,14 +95,22 @@ impl AsmEnhancementMigration {
         // Add Discovery & Monitoring
         Self::add_column_if_not_exists(pool, "bounty_assets", "discovery_method", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "data_sources_json", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "confidence_score", "DOUBLE PRECISION").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "monitoring_enabled", "BOOLEAN").await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "bounty_assets",
+            "confidence_score",
+            "DOUBLE PRECISION",
+        )
+        .await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "monitoring_enabled", "BOOLEAN")
+            .await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "scan_frequency", "TEXT").await?;
         Self::add_column_if_not_exists(pool, "bounty_assets", "last_scan_type", "TEXT").await?;
 
         // Add Asset Relationships
         Self::add_column_if_not_exists(pool, "bounty_assets", "parent_asset_id", "TEXT").await?;
-        Self::add_column_if_not_exists(pool, "bounty_assets", "related_assets_json", "TEXT").await?;
+        Self::add_column_if_not_exists(pool, "bounty_assets", "related_assets_json", "TEXT")
+            .await?;
 
         // Add indices for new columns
         let indices = vec![
@@ -127,7 +151,10 @@ impl AsmEnhancementMigration {
 
         if !exists {
             info!("Adding column '{}' to table '{}'", column, table);
-            let alter_query = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type);
+            let alter_query = format!(
+                "ALTER TABLE {} ADD COLUMN {} {}",
+                table, column, column_type
+            );
             sqlx::query(&alter_query).execute(pool).await?;
         }
 
@@ -162,8 +189,10 @@ impl TaskToolIntegrationMigration {
                 metadata TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 2. Create task_tool_execution_logs for individual execution records
         sqlx::query(
@@ -183,8 +212,10 @@ impl TaskToolIntegrationMigration {
                 error_message TEXT,
                 metadata TEXT,
                 created_at TIMESTAMPTZ NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 3. Add indices for performance
         let indices = vec![
@@ -206,15 +237,17 @@ impl TaskToolIntegrationMigration {
             pool,
             "scan_tasks",
             "active_tools_count",
-            "INTEGER DEFAULT 0"
-        ).await?;
+            "INTEGER DEFAULT 0",
+        )
+        .await?;
 
         AsmEnhancementMigration::add_column_if_not_exists(
             pool,
             "scan_tasks",
             "tool_statistics",
-            "TEXT"
-        ).await?;
+            "TEXT",
+        )
+        .await?;
 
         info!("Task-tool integration migration completed successfully");
         Ok(())
@@ -259,8 +292,10 @@ impl SubagentRunsMigration {
                 completed_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         let indices = vec![
             "CREATE INDEX IF NOT EXISTS idx_subagent_runs_parent ON ai_subagent_runs(parent_execution_id)",
@@ -296,8 +331,10 @@ impl SubagentMessagesMigration {
                 reasoning_content TEXT,
                 timestamp TIMESTAMPTZ NOT NULL,
                 structured_data TEXT
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         let indices = vec![
             "CREATE INDEX IF NOT EXISTS idx_subagent_messages_run ON ai_subagent_messages(subagent_run_id)",
@@ -331,8 +368,10 @@ impl AgentTodosMigration {
                 result TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         let indices = vec![
             "CREATE INDEX IF NOT EXISTS idx_agent_todos_execution ON agent_todos(execution_id)",
@@ -406,17 +445,13 @@ impl FloatTypeMigration {
     }
 
     /// Migrate a single column from REAL to DOUBLE PRECISION
-    async fn migrate_column_to_double(
-        pool: &PgPool,
-        table: &str,
-        column: &str,
-    ) -> Result<()> {
+    async fn migrate_column_to_double(pool: &PgPool, table: &str, column: &str) -> Result<()> {
         // Check if column exists and is REAL type
         let column_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -433,7 +468,7 @@ impl FloatTypeMigration {
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
                 AND data_type = 'double precision'
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -441,7 +476,10 @@ impl FloatTypeMigration {
         .await?;
 
         if is_double {
-            info!("Column {}.{} is already DOUBLE PRECISION, skipping", table, column);
+            info!(
+                "Column {}.{} is already DOUBLE PRECISION, skipping",
+                table, column
+            );
             return Ok(());
         }
 
@@ -451,7 +489,7 @@ impl FloatTypeMigration {
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
                 AND (data_type = 'real' OR data_type = 'double precision')
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -461,7 +499,7 @@ impl FloatTypeMigration {
         // Check if column is REAL or FLOAT4 (numeric_precision = 24 for REAL/FLOAT4)
         let numeric_precision: Option<i32> = sqlx::query_scalar(
             "SELECT numeric_precision FROM information_schema.columns
-             WHERE table_name = $1 AND column_name = $2"
+             WHERE table_name = $1 AND column_name = $2",
         )
         .bind(table)
         .bind(column)
@@ -477,12 +515,18 @@ impl FloatTypeMigration {
         };
 
         if !needs_migration {
-            info!("Column {}.{} does not need migration (not REAL/FLOAT4), skipping", table, column);
+            info!(
+                "Column {}.{} does not need migration (not REAL/FLOAT4), skipping",
+                table, column
+            );
             return Ok(());
         }
 
         // Alter column type from REAL/FLOAT4 to DOUBLE PRECISION
-        info!("Migrating column {}.{} from REAL/FLOAT4 to DOUBLE PRECISION", table, column);
+        info!(
+            "Migrating column {}.{} from REAL/FLOAT4 to DOUBLE PRECISION",
+            table, column
+        );
         let alter_sql = format!(
             "ALTER TABLE {} ALTER COLUMN {} TYPE DOUBLE PRECISION USING {}::DOUBLE PRECISION",
             table, column, column
@@ -561,17 +605,13 @@ impl TimestampTypeMigration {
     }
 
     /// Migrate a single column from TEXT to TIMESTAMP WITH TIME ZONE
-    async fn migrate_column_to_timestamp(
-        pool: &PgPool,
-        table: &str,
-        column: &str,
-    ) -> Result<()> {
+    async fn migrate_column_to_timestamp(pool: &PgPool, table: &str, column: &str) -> Result<()> {
         // Check if column exists
         let column_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -588,7 +628,7 @@ impl TimestampTypeMigration {
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
                 AND data_type = 'timestamp with time zone'
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -596,7 +636,10 @@ impl TimestampTypeMigration {
         .await?;
 
         if is_timestamp {
-            info!("Column {}.{} is already TIMESTAMP WITH TIME ZONE, skipping", table, column);
+            info!(
+                "Column {}.{} is already TIMESTAMP WITH TIME ZONE, skipping",
+                table, column
+            );
             return Ok(());
         }
 
@@ -606,7 +649,7 @@ impl TimestampTypeMigration {
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
                 AND data_type = 'text'
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -619,7 +662,10 @@ impl TimestampTypeMigration {
         }
 
         // Alter column type from TEXT to TIMESTAMP WITH TIME ZONE
-        info!("Migrating column {}.{} from TEXT to TIMESTAMP WITH TIME ZONE", table, column);
+        info!(
+            "Migrating column {}.{} from TEXT to TIMESTAMP WITH TIME ZONE",
+            table, column
+        );
         let alter_sql = format!(
             "ALTER TABLE {} ALTER COLUMN {} TYPE TIMESTAMP WITH TIME ZONE USING {}::TIMESTAMP WITH TIME ZONE",
             table, column, column
@@ -666,17 +712,13 @@ impl IntegerTypeMigration {
     }
 
     /// Migrate a single column from INTEGER to BIGINT
-    async fn migrate_column_to_bigint(
-        pool: &PgPool,
-        table: &str,
-        column: &str,
-    ) -> Result<()> {
+    async fn migrate_column_to_bigint(pool: &PgPool, table: &str, column: &str) -> Result<()> {
         // Check if column exists
         let column_exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -693,7 +735,7 @@ impl IntegerTypeMigration {
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
                 AND data_type = 'bigint'
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -711,7 +753,7 @@ impl IntegerTypeMigration {
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = $1 AND column_name = $2
                 AND data_type = 'integer'
-            )"
+            )",
         )
         .bind(table)
         .bind(column)
@@ -724,7 +766,10 @@ impl IntegerTypeMigration {
         }
 
         // Alter column type from INTEGER to BIGINT
-        info!("Migrating column {}.{} from INTEGER to BIGINT", table, column);
+        info!(
+            "Migrating column {}.{} from INTEGER to BIGINT",
+            table, column
+        );
         let alter_sql = format!(
             "ALTER TABLE {} ALTER COLUMN {} TYPE BIGINT USING {}::BIGINT",
             table, column, column
@@ -756,12 +801,36 @@ impl AgentTeamMigration {
                 domain TEXT NOT NULL DEFAULT 'product',
                 default_rounds_config TEXT,
                 default_tool_policy TEXT,
+                schema_version INTEGER NOT NULL DEFAULT 1,
+                template_spec_v2 TEXT,
+                upgrade_failed BOOLEAN NOT NULL DEFAULT FALSE,
+                upgrade_error TEXT,
                 is_system BOOLEAN NOT NULL DEFAULT FALSE,
                 created_by TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "agent_team_templates",
+            "schema_version",
+            "INTEGER NOT NULL DEFAULT 1",
+        )
+        .await?;
+        Self::add_column_if_not_exists(pool, "agent_team_templates", "template_spec_v2", "TEXT")
+            .await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "agent_team_templates",
+            "upgrade_failed",
+            "BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .await?;
+        Self::add_column_if_not_exists(pool, "agent_team_templates", "upgrade_error", "TEXT")
+            .await?;
 
         // agent_team_template_members - 模板角色表
         sqlx::query(
@@ -779,8 +848,10 @@ impl AgentTeamMigration {
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // agent_team_sessions - 会话表
         sqlx::query(
@@ -791,6 +862,8 @@ impl AgentTeamMigration {
                 name TEXT NOT NULL,
                 goal TEXT,
                 orchestration_plan TEXT,
+                schema_version INTEGER NOT NULL DEFAULT 1,
+                runtime_spec_v2 TEXT,
                 plan_version INTEGER NOT NULL DEFAULT 1,
                 state TEXT NOT NULL DEFAULT 'PENDING',
                 state_machine TEXT,
@@ -806,15 +879,12 @@ impl AgentTeamMigration {
                 error_message TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
-        Self::add_column_if_not_exists(
-            pool,
-            "agent_team_sessions",
-            "orchestration_plan",
-            "TEXT",
+            )"#,
         )
+        .execute(pool)
         .await?;
+        Self::add_column_if_not_exists(pool, "agent_team_sessions", "orchestration_plan", "TEXT")
+            .await?;
         Self::add_column_if_not_exists(
             pool,
             "agent_team_sessions",
@@ -822,6 +892,15 @@ impl AgentTeamMigration {
             "INTEGER NOT NULL DEFAULT 1",
         )
         .await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "agent_team_sessions",
+            "schema_version",
+            "INTEGER NOT NULL DEFAULT 1",
+        )
+        .await?;
+        Self::add_column_if_not_exists(pool, "agent_team_sessions", "runtime_spec_v2", "TEXT")
+            .await?;
 
         // agent_team_members - 会话成员快照（从模板复制）
         sqlx::query(
@@ -842,8 +921,10 @@ impl AgentTeamMigration {
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // agent_team_blackboard_entries - 白板明细表
         sqlx::query(
@@ -873,8 +954,10 @@ impl AgentTeamMigration {
                 started_at TIMESTAMPTZ,
                 completed_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // agent_team_messages - 消息记录（每个角色每轮发言）
         sqlx::query(
@@ -889,8 +972,10 @@ impl AgentTeamMigration {
                 tool_calls TEXT,
                 token_count INTEGER,
                 timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // agent_team_decisions - 最终决策记录
         sqlx::query(
@@ -903,8 +988,10 @@ impl AgentTeamMigration {
                 decided_by TEXT,
                 confidence_score DOUBLE PRECISION,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // agent_team_artifacts - 产物文档与版本链
         sqlx::query(
@@ -920,17 +1007,92 @@ impl AgentTeamMigration {
                 created_by TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        // agent_team_tasks - V2 任务运行主表
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_tasks (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                task_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                instruction TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                assignee_agent_id TEXT,
+                depends_on TEXT NOT NULL DEFAULT '[]',
+                attempt INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                last_error TEXT,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        // agent_team_task_attempts - V2 任务重试历史
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_task_attempts (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                task_record_id TEXT NOT NULL REFERENCES agent_team_tasks(id) ON DELETE CASCADE,
+                attempt INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                duration_ms BIGINT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        // agent_team_mailbox - V2 Agent inbox
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_mailbox (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                from_agent_id TEXT,
+                to_agent_id TEXT,
+                task_record_id TEXT REFERENCES agent_team_tasks(id) ON DELETE SET NULL,
+                message_type TEXT NOT NULL DEFAULT 'handoff',
+                payload TEXT NOT NULL DEFAULT '{}',
+                is_acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                acknowledged_at TIMESTAMPTZ
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
+        // agent_team_task_events - V2 任务事件流
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS agent_team_task_events (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+                task_record_id TEXT REFERENCES agent_team_tasks(id) ON DELETE SET NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 创建关键索引
         let indices = vec![
             "CREATE INDEX IF NOT EXISTS idx_agent_team_templates_domain ON agent_team_templates(domain)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_templates_is_system ON agent_team_templates(is_system)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_templates_schema_version ON agent_team_templates(schema_version)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_template_members_template_id ON agent_team_template_members(template_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_state ON agent_team_sessions(state)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_conversation_id ON agent_team_sessions(conversation_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_updated ON agent_team_sessions(updated_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_sessions_schema_version ON agent_team_sessions(schema_version)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_members_session_id ON agent_team_members(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_blackboard_session_id ON agent_team_blackboard_entries(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_blackboard_entry_type ON agent_team_blackboard_entries(entry_type)",
@@ -940,6 +1102,13 @@ impl AgentTeamMigration {
             "CREATE INDEX IF NOT EXISTS idx_agent_team_messages_timestamp ON agent_team_messages(timestamp ASC)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_artifacts_session_id ON agent_team_artifacts(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_agent_team_artifacts_type ON agent_team_artifacts(artifact_type)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_tasks_session_status ON agent_team_tasks(session_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_tasks_assignee_status ON agent_team_tasks(assignee_agent_id, status)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_tasks_created_at ON agent_team_tasks(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_task_attempts_task_record_id ON agent_team_task_attempts(task_record_id)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_mailbox_session_to_ack ON agent_team_mailbox(session_id, to_agent_id, is_acknowledged)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_mailbox_created_at ON agent_team_mailbox(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_team_task_events_session_created_at ON agent_team_task_events(session_id, created_at ASC)",
         ];
 
         for index_sql in indices {
@@ -965,7 +1134,10 @@ impl AgentTeamMigration {
         .await?;
 
         if !exists {
-            let alter_query = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type);
+            let alter_query = format!(
+                "ALTER TABLE {} ADD COLUMN {} {}",
+                table, column, column_type
+            );
             sqlx::query(&alter_query).execute(pool).await?;
         }
 
