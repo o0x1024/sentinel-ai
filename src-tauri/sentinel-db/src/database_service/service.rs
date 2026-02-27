@@ -889,6 +889,11 @@ impl DatabaseService {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )"#,
+            r#"CREATE TABLE IF NOT EXISTS agent_run_states (
+                execution_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                updated_at BIGINT NOT NULL
+            )"#,
             r#"CREATE TABLE IF NOT EXISTS agent_session_logs (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
