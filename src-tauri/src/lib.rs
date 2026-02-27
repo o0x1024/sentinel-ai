@@ -25,6 +25,7 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use services::{ai::AiServiceManager, database::DatabaseService};
@@ -50,6 +51,117 @@ use sentinel_workflow::{WorkflowEngine, WorkflowScheduler};
 use sentinel_core::global_proxy::{set_global_proxy as set_proxy_async, GlobalProxyConfig};
 
 struct TrayProxyMenuItem(MenuItem<tauri::Wry>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseButtonAction {
+    Hide,
+    Minimize,
+    Exit,
+}
+
+impl CloseButtonAction {
+    fn from_config(value: &str) -> Option<Self> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "hide" | "tray" | "close_to_tray" => Some(Self::Hide),
+            "minimize" | "minimise" => Some(Self::Minimize),
+            "exit" | "quit" | "close" => Some(Self::Exit),
+            _ => None,
+        }
+    }
+
+    fn as_config_value(self) -> &'static str {
+        match self {
+            Self::Hide => "hide",
+            Self::Minimize => "minimize",
+            Self::Exit => "exit",
+        }
+    }
+}
+
+fn apply_hide_close_behavior(window: &tauri::Window) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.set_skip_taskbar(true);
+    }
+    let _ = window.hide();
+}
+
+fn apply_minimize_close_behavior(window: &tauri::Window) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.set_skip_taskbar(false);
+    }
+    let _ = window.minimize();
+}
+
+async fn execute_close_button_action(
+    app: &tauri::AppHandle,
+    window: &tauri::Window,
+    action: CloseButtonAction,
+) {
+    match action {
+        CloseButtonAction::Hide => apply_hide_close_behavior(window),
+        CloseButtonAction::Minimize => apply_minimize_close_behavior(window),
+        CloseButtonAction::Exit => cleanup_and_exit(app).await,
+    }
+}
+
+fn prompt_and_apply_close_button_action(
+    app_handle: tauri::AppHandle,
+    db_service: Arc<DatabaseService>,
+    window: tauri::Window,
+) {
+    const HIDE_LABEL: &str = "隐藏窗口";
+    const EXIT_LABEL: &str = "退出程序";
+
+    app_handle
+        .dialog()
+        .message("点击关闭按钮时请选择行为：隐藏窗口（后台运行）或退出程序。")
+        .title("关闭行为设置")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            HIDE_LABEL.to_string(),
+            EXIT_LABEL.to_string(),
+        ))
+        .show_with_result(move |result| {
+            let selected = match result {
+                MessageDialogResult::Custom(label) if label == HIDE_LABEL => {
+                    Some(CloseButtonAction::Hide)
+                }
+                MessageDialogResult::Custom(label) if label == EXIT_LABEL => {
+                    Some(CloseButtonAction::Exit)
+                }
+                MessageDialogResult::Ok | MessageDialogResult::Yes => Some(CloseButtonAction::Hide),
+                MessageDialogResult::No => Some(CloseButtonAction::Exit),
+                MessageDialogResult::Cancel => None,
+                _ => None,
+            };
+
+            let app_for_action = app_handle.clone();
+            let db_for_action = db_service.clone();
+            let window_for_action = window.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(action) = selected {
+                    if let Err(e) = db_for_action
+                        .set_config(
+                            "ui",
+                            "close_button_action",
+                            action.as_config_value(),
+                            Some("Window close button action: hide, minimize or exit"),
+                        )
+                        .await
+                    {
+                        tracing::warn!("Failed to save close button action: {}", e);
+                    }
+                    execute_close_button_action(&app_for_action, &window_for_action, action).await;
+                } else {
+                    // Dialog dismissed: keep app running and avoid accidental exit.
+                    apply_hide_close_behavior(&window_for_action);
+                }
+            });
+        });
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -130,18 +242,61 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
             if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+
                 let app_handle = window.app_handle();
                 let _ = app_handle.save_window_state(StateFlags::all());
-                
-                // Hide taskbar icon on Windows/Linux before hiding window
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let _ = window.set_skip_taskbar(true);
+                let window_for_action = window.clone();
+
+                let db_service = app_handle
+                    .try_state::<Arc<DatabaseService>>()
+                    .map(|state| state.inner().clone());
+
+                if let Some(db_service) = db_service {
+                    let app_for_action = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match db_service.get_config("ui", "close_button_action").await {
+                            Ok(Some(value)) => {
+                                if let Some(action) = CloseButtonAction::from_config(&value) {
+                                    execute_close_button_action(
+                                        &app_for_action,
+                                        &window_for_action,
+                                        action,
+                                    )
+                                    .await;
+                                } else {
+                                    prompt_and_apply_close_button_action(
+                                        app_for_action,
+                                        db_service.clone(),
+                                        window_for_action,
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                prompt_and_apply_close_button_action(
+                                    app_for_action,
+                                    db_service.clone(),
+                                    window_for_action,
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to load close button action, fallback to minimize: {}",
+                                    e
+                                );
+                                apply_minimize_close_behavior(&window_for_action);
+                            }
+                        }
+                    });
+                } else {
+                    // Database state unavailable, fallback to minimize to keep app running.
+                    apply_minimize_close_behavior(&window_for_action);
                 }
-                
-                let _ = window.hide();
-                api.prevent_close();
             }
         })
         .setup(move |app| {
@@ -1324,6 +1479,8 @@ pub fn run() {
             commands::agent_team_commands::agent_team_append_partial_message,
             commands::agent_team_commands::agent_team_get_blackboard,
             commands::agent_team_commands::agent_team_add_blackboard_entry,
+            commands::agent_team_commands::agent_team_resolve_blackboard_entry,
+            commands::agent_team_commands::agent_team_get_blackboard_entry_archive,
             commands::agent_team_commands::agent_team_list_artifacts,
             commands::agent_team_commands::agent_team_get_artifact,
             commands::agent_team_commands::agent_team_get_run_status,

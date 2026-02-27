@@ -145,6 +145,10 @@ pub struct AgentTeamSession {
     pub template_id: Option<String>,
     pub name: String,
     pub goal: Option<String>,
+    /// JSON: 用户自定义串并行编排计划
+    pub orchestration_plan: Option<serde_json::Value>,
+    /// 编排计划版本（用于升级与回放兼容）
+    pub plan_version: i32,
     pub state: String,
     /// JSON: 状态机追踪
     pub state_machine: Option<serde_json::Value>,
@@ -243,6 +247,15 @@ pub struct AgentTeamBlackboardEntry {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 白板条目关联的原始归档（消息明细）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTeamBlackboardArchive {
+    pub entry: AgentTeamBlackboardEntry,
+    pub messages: Vec<AgentTeamMessage>,
+    /// round / session_recent / session_recent_fallback
+    pub retrieval_scope: String,
+}
+
 // ==================== 决策与产物 ====================
 
 /// 最终决策
@@ -322,6 +335,10 @@ pub struct CreateAgentTeamSessionRequest {
     pub template_id: Option<String>,
     pub conversation_id: Option<String>,
     pub max_rounds: Option<i32>,
+    /// JSON: 用户定义的 Team 编排计划（串行/并行）
+    pub orchestration_plan: Option<serde_json::Value>,
+    /// 编排计划版本（默认 1）
+    pub plan_version: Option<i32>,
     /// JSON: 会话级状态（含 Team 全局工具配置）
     pub state_machine: Option<serde_json::Value>,
     /// 若不使用模板，手动指定成员列表
@@ -335,6 +352,10 @@ pub struct UpdateAgentTeamSessionRequest {
     pub goal: Option<String>,
     pub state: Option<String>,
     pub max_rounds: Option<i32>,
+    /// JSON: 用户定义的 Team 编排计划（串行/并行）
+    pub orchestration_plan: Option<serde_json::Value>,
+    /// 编排计划版本
+    pub plan_version: Option<i32>,
     /// JSON: 会话级状态（含 Team 全局工具配置）
     pub state_machine: Option<serde_json::Value>,
     pub error_message: Option<String>,

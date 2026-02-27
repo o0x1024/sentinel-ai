@@ -196,7 +196,7 @@
     <Teleport to="body">
       <div v-if="showCreateModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showCreateModal = false"></div>
-        <div class="relative z-10 bg-base-100 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+        <div class="relative z-10 bg-base-100 rounded-2xl shadow-2xl w-[min(96vw,1200px)] max-w-none overflow-hidden">
           <AgentTeamSettings
             @save="handleTemplateSaved"
             @cancel="showCreateModal = false"
@@ -209,7 +209,7 @@
     <Teleport to="body">
       <div v-if="editingTemplate" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="editingTemplate = null"></div>
-        <div class="relative z-10 bg-base-100 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+        <div class="relative z-10 bg-base-100 rounded-2xl shadow-2xl w-[min(96vw,1200px)] max-w-none overflow-hidden">
           <AgentTeamSettings
             :template="editingTemplate"
             @save="handleTemplateSaved"
@@ -348,6 +348,8 @@ async function handleClone(tpl: AgentTeamTemplate) {
       name: `${tpl.name} (副本)`,
       description: tpl.description,
       domain: tpl.domain,
+      default_rounds_config: tpl.default_rounds_config,
+      default_tool_policy: tpl.default_tool_policy,
       members: tpl.members.map(m => ({
         name: m.name,
         responsibility: m.responsibility,

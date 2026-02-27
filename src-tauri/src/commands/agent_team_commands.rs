@@ -205,6 +205,8 @@ pub async fn agent_team_stop_run(db: DbState<'_>, session_id: String) -> Result<
                 goal: None,
                 state: Some("FAILED".to_string()),
                 max_rounds: None,
+                orchestration_plan: None,
+                plan_version: None,
                 state_machine: None,
                 error_message: Some("Execution stopped by user".to_string()),
             },
@@ -354,6 +356,38 @@ pub async fn agent_team_add_blackboard_entry(
     repo_rt::upsert_blackboard_entry(&runtime_pool, &request)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 标记白板条目为已解决
+#[tauri::command]
+pub async fn agent_team_resolve_blackboard_entry(
+    db: DbState<'_>,
+    session_id: String,
+    entry_id: String,
+) -> Result<AgentTeamBlackboardEntry, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::resolve_blackboard_entry(&runtime_pool, &session_id, &entry_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取白板条目关联的原始归档（消息明细）
+#[tauri::command]
+pub async fn agent_team_get_blackboard_entry_archive(
+    db: DbState<'_>,
+    session_id: String,
+    entry_id: String,
+    limit: Option<i64>,
+) -> Result<AgentTeamBlackboardArchive, String> {
+    let runtime_pool = db.get_runtime_pool().map_err(|e| e.to_string())?;
+    repo_rt::get_blackboard_entry_archive(
+        &runtime_pool,
+        &session_id,
+        &entry_id,
+        limit.unwrap_or(80),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 列出产物

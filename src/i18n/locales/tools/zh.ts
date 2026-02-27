@@ -1,13 +1,13 @@
 export default {
   // 页面标题和描述
   serversTitle: '工具管理',
-  serversDescription: '管理内置工具、工作流、插件和MCP服务器',
+  serversDescription: '管理内置工具、工作流、插件和MCP工具',
 
   // 选项卡
   builtinTools: '内置工具',
   workflowTools: '工作流工具',
   pluginTools: '插件工具',
-  mcpServers: 'MCP服务器',
+  mcpServers: 'MCP工具',
   marketplace: 'MCP市场',
   skills: 'Skills',
   skillsDescription: '管理本地 SKILL.md 与索引',
@@ -96,7 +96,7 @@ export default {
 
   // 添加服务器模态框
   addServer: {
-    title: '添加MCP服务器',
+    title: '添加MCP工具',
     quickCreate: '快速创建',
     importFromJson: '从JSON导入',
     jsonPaste: '粘贴JSON配置',
@@ -129,7 +129,7 @@ export default {
   testingTool: '正在测试插件...',
   testCompleted: '工具测试完成',
   testFailed: '工具测试失败',
-  cleanupConfirm: '确定要清理重复的MCP服务器配置吗？这将删除重复的配置，只保留最新的。',
+  cleanupConfirm: '确定要清理重复的MCP工具配置吗？这将删除重复的配置，只保留最新的。',
   cleanedDuplicates: '已清理 {count} 个重复配置',
   noDuplicates: '没有发现重复的服务器配置',
   cleanupFailed: '清理失败',
@@ -137,7 +137,7 @@ export default {
   // 旧版字段
   title: 'MCP工具',
   description: '管理和使用MCP工具和服务',
-  mcpServer: 'MCP服务器',
+  mcpServer: 'MCP工具',
   endpoint: '端点',
   startServer: '启动服务器',
   stopServer: '停止服务器',
@@ -175,7 +175,7 @@ export default {
     security: '安全测试工具',
     automation: '自动化实用程序'
   },
-  
+
   // 插件管理
   plugins: {
     allStatus: '全部状态',

@@ -37,33 +37,19 @@
         {{ $t('Tools.builtinTools') }}
       </button>
       <button 
-        @click="activeTab = 'workflow_tools'"
-        :class="['tab', { 'tab-active': activeTab === 'workflow_tools' }]"
-      >
-        <i class="fas fa-project-diagram mr-2"></i>
-        {{ $t('Tools.workflowTools') }}
-      </button>
-      <button 
-        @click="activeTab = 'plugin_tools'"
-        :class="['tab', { 'tab-active': activeTab === 'plugin_tools' }]"
-      >
-        <i class="fas fa-plug mr-2"></i>
-        {{ $t('Tools.pluginTools') }}
-      </button>
-      <button 
         @click="activeTab = 'my_servers'"
         :class="['tab', { 'tab-active': activeTab === 'my_servers' }]"
       >
         <i class="fas fa-server mr-2"></i>
         {{ $t('Tools.mcpServers') }}
       </button>
-      <button 
+      <!-- <button 
         @click="activeTab = 'marketplace'"
         :class="['tab', { 'tab-active': activeTab === 'marketplace' }]"
       >
         <i class="fas fa-store mr-2"></i>
         {{ $t('Tools.marketplace') }}
-      </button>
+      </button> -->
       <button
         @click="activeTab = 'skills'"
         :class="['tab', { 'tab-active': activeTab === 'skills' }]"
@@ -75,8 +61,24 @@
     </div>
 
     <!-- Tab 内容 -->
-    <BuiltinToolsTab v-if="activeTab === 'builtin_tools'" ref="builtinToolsRef" />
-    <WorkflowToolsTab v-if="activeTab === 'workflow_tools'" ref="workflowToolsRef" />
+    <div v-if="activeTab === 'builtin_tools'" class="space-y-8">
+      <BuiltinToolsTab
+        ref="builtinToolsRef"
+        :source-filter="builtinSourceFilter"
+        :show-content="builtinSourceFilter === 'builtin'"
+        @source-filter-change="handleBuiltinSourceFilterChange"
+      />
+      <template v-if="builtinSourceFilter === 'workflow'">
+        <WorkflowToolsTab ref="workflowToolsRef" :embedded="true" />
+      </template>
+      <template v-if="builtinSourceFilter === 'plugin'">
+        <PluginToolsTab 
+          ref="pluginToolsRef"
+          :embedded="true"
+          @show-upload="showUploadPluginModal = true"
+        />
+      </template>
+    </div>
     <McpServersTab 
       v-if="activeTab === 'my_servers'" 
       ref="mcpServersRef"
@@ -87,11 +89,6 @@
       v-if="activeTab === 'marketplace'" 
       ref="marketplaceRef"
       :added-server-names="addedServerNames"
-    />
-    <PluginToolsTab 
-      v-if="activeTab === 'plugin_tools'" 
-      ref="pluginToolsRef"
-      @show-upload="showUploadPluginModal = true"
     />
     <SkillsTab v-if="activeTab === 'skills'" ref="skillsRef" />
 
@@ -385,13 +382,28 @@ const skillsRef = ref<InstanceType<typeof SkillsTab> | null>(null)
 
 // 状态
 const activeTab = ref('builtin_tools')
-const validTabs = new Set(['builtin_tools', 'workflow_tools', 'plugin_tools', 'my_servers', 'marketplace', 'skills'])
+const builtinSourceFilter = ref<'builtin' | 'workflow' | 'plugin'>('builtin')
+const validTabs = new Set(['builtin_tools', 'my_servers', 'marketplace', 'skills'])
 
 const syncTabFromRoute = () => {
   const tabQuery = route.query.tab
+  if (tabQuery === 'workflow_tools') {
+    activeTab.value = 'builtin_tools'
+    builtinSourceFilter.value = 'workflow'
+    return
+  }
+  if (tabQuery === 'plugin_tools') {
+    activeTab.value = 'builtin_tools'
+    builtinSourceFilter.value = 'plugin'
+    return
+  }
   if (typeof tabQuery === 'string' && validTabs.has(tabQuery)) {
     activeTab.value = tabQuery
   }
+}
+
+function handleBuiltinSourceFilterChange(filter: 'builtin' | 'workflow' | 'plugin') {
+  builtinSourceFilter.value = filter
 }
 const showAddServerModal = ref(false)
 const showUploadPluginModal = ref(false)

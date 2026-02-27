@@ -172,14 +172,6 @@ const mainMenuItems = computed(() => [
     badgeClass: ''
   },
   {
-    path: '/ai-team',
-    name: t('sidebar.aiTeam', 'AI Team'),
-    icon: 'fas fa-users',
-    badge: null,
-    badgeClass: ''
-  },
-
-  {
     path: '/workflow-studio',
     name: t('sidebar.workflowStudio', '工作流'),
     icon: 'fas fa-project-diagram',
@@ -188,7 +180,7 @@ const mainMenuItems = computed(() => [
   },
   {
     path: '/bug-bounty',
-    name: t('sidebar.bugBounty', 'Bug Bounty'),
+    name: t('sidebar.bugBounty', 'BBounty'),
     icon: 'fas fa-trophy',
     badge: null,
     badgeClass: ''

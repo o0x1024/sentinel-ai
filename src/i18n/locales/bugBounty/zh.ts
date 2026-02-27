@@ -1,5 +1,5 @@
 export default {
-  title: 'Bug Bounty',
+  title: 'BBounty',
   createProgram: '创建项目',
   editProgram: '编辑项目',
   createFirstProgram: '创建第一个项目',
@@ -17,7 +17,7 @@ export default {
   featureInDevelopment: '该功能正在开发中，敬请期待',
   selected: '已选择',
   search: '搜索...',
-   
+
   stats: {
     totalPrograms: '总项目数',
     active: '活跃',
@@ -30,7 +30,7 @@ export default {
     acceptanceRate: '接受率',
     successRate: '成功率',
   },
-  
+
   tabs: {
     programs: '项目管理',
     assets: '资产管理',
@@ -43,7 +43,7 @@ export default {
     workflows: '自动化工作流',
     monitor: '监控调度',
   },
-  
+
   assets: {
     attackSurface: '攻击面评分',
     exposure: '暴露级别',
@@ -52,19 +52,19 @@ export default {
     service: '服务',
     discoveryMethod: '发现方式',
   },
-  
+
   programs: {
     title: '我的 Bug Bounty 项目',
     empty: '暂无项目，立即创建一个开始挖洞之旅',
     submissions: '提交数',
     earnings: '收益',
   },
-  
+
   findings: {
     title: '漏洞发现列表',
     empty: '暂无发现记录',
   },
-  
+
   submissions: {
     title: '提交记录列表',
     empty: '暂无提交记录',
@@ -290,7 +290,7 @@ export default {
     reportGenerated: '报告已生成',
     reportError: '报告生成失败',
   },
-  
+
   table: {
     title: '标题',
     type: '类型',
@@ -302,12 +302,12 @@ export default {
     reward: '奖励',
     submittedAt: '提交时间',
   },
-  
+
   filter: {
     allSeverities: '所有严重程度',
     allStatuses: '所有状态',
   },
-  
+
   severity: {
     critical: '严重',
     high: '高危',
@@ -315,7 +315,7 @@ export default {
     low: '低危',
     info: '信息',
   },
-  
+
   status: {
     new: '新发现',
     verified: '已验证',
@@ -324,7 +324,7 @@ export default {
     fixed: '已修复',
     wontfix: '不修复',
   },
-  
+
   form: {
     programName: '项目名称',
     programNamePlaceholder: '输入项目名称',
@@ -356,13 +356,13 @@ export default {
     tagsPlaceholder: '输入标签，用逗号分隔',
     tagsHint: '多个标签用逗号分隔',
   },
-  
+
   platforms: {
     private: '私有项目',
     src: 'SRC平台',
     other: '其他平台',
   },
-  
+
   success: {
     programCreated: '项目创建成功',
     programUpdated: '项目更新成功',
@@ -377,7 +377,7 @@ export default {
     submissionUpdated: '提交更新成功',
     submissionDeleted: '提交已删除',
   },
-  
+
   errors: {
     loadFailed: '加载失败',
     createFailed: '创建失败',
@@ -385,7 +385,7 @@ export default {
     deleteFailed: '删除失败',
     duplicateFinding: '已存在相同的发现记录',
   },
-  
+
   confirm: {
     deleteProgram: '确定要删除这个项目吗？',
     deleteScope: '确定要删除这个范围吗？',
@@ -731,7 +731,7 @@ export default {
     pluginsLoading: '正在加载插件列表...',
     pluginsLoadFailed: '加载插件列表失败，使用默认插件列表',
   },
-  
+
   assetManagement: {
     title: '资产管理',
     name: '资产名称',
@@ -768,25 +768,25 @@ export default {
     sslDisabled: 'SSL 未启用',
     titleFilter: '标题',
     fingerprintFilter: '指纹',
-    
+
     riskLevel: {
       title: '风险等级',
       high: '高风险',
       medium: '中风险',
       low: '低风险',
     },
-    
+
     status: {
       active: '活跃',
       inactive: '不活跃',
     },
-    
+
     exposureLevel: {
       internet: '互联网',
       intranet: '内网',
       private: '私有',
     },
-    
+
     columnGroups: {
       basic: '基础信息',
       ip: 'IP 资产',
@@ -795,7 +795,7 @@ export default {
       web: 'Web/URL',
       certificate: '证书',
     },
-    
+
     columns: {
       name: '名称',
       type: '类型',
@@ -806,7 +806,7 @@ export default {
       attack_surface_score: '攻击面评分',
       exposure_level: '暴露级别',
       discovery_method: '发现方式',
-      
+
       // IP Asset
       ipVersion: 'IP 版本',
       asn: 'ASN',
@@ -814,25 +814,25 @@ export default {
       country: '国家',
       city: '城市',
       cloudProvider: '云服务商',
-      
+
       // Port/Service
       port: '端口',
       serviceName: '服务名称',
       serviceVersion: '服务版本',
       transportProtocol: '传输协议',
-      
+
       // Domain
       domainRegistrar: '域名注册商',
       expirationDate: '过期时间',
       parentDomain: '父域名',
-      
+
       // Web/URL
       httpStatus: 'HTTP 状态',
       title: '页面标题',
       cdn: 'CDN',
       waf: 'WAF',
       techStack: '技术栈',
-      
+
       // Certificate
       ssl: 'SSL',
       certIssuer: '证书颁发者',

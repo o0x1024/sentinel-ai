@@ -114,7 +114,7 @@ export default {
   },
   toolTypes: {
     plugin: '插件',
-    mcpServer: 'MCP服务器',
+    mcpServer: 'MCP工具',
     builtin: '内置工具',
     workflow: '工作流'
   }

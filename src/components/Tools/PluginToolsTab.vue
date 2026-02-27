@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-4">
-    <div class="flex justify-between items-center">
+    <div v-if="!embedded" class="flex justify-between items-center">
       <div class="alert alert-info flex-1 mr-4">
         <i class="fas fa-info-circle"></i>
         <span>管理 Agent 插件工具，可在创建 Agent 时选择启用的插件工具</span>
@@ -22,7 +22,25 @@
     </div>
     
     <div v-else-if="plugins.length > 0" class="space-y-4">
-      <div class="flex justify-end mb-4">
+      <div v-if="!embedded" class="flex flex-wrap gap-2">
+        <button
+          @click="selectedCategory = ''"
+          :class="['btn btn-sm', selectedCategory === '' ? 'btn-primary' : 'btn-ghost']"
+        >
+          全部 ({{ plugins.length }})
+        </button>
+        <button
+          v-for="cat in pluginCategories"
+          :key="cat.key"
+          @click="selectedCategory = cat.key"
+          :class="['btn btn-sm', selectedCategory === cat.key ? cat.btnClass : 'btn-ghost']"
+        >
+          <i :class="cat.icon" class="mr-1"></i>
+          {{ cat.label }} ({{ cat.count }})
+        </button>
+      </div>
+
+      <div v-if="!embedded" class="flex justify-end mb-4">
         <button @click="$emit('show-upload')" class="btn btn-primary btn-sm">
           <i class="fas fa-upload mr-2"></i>
           上传插件
@@ -30,9 +48,9 @@
       </div>
       
       <!-- 卡片视图 -->
-      <div v-if="viewMode === 'card'" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div v-if="!embedded && viewMode === 'card' && filteredPlugins.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div 
-          v-for="plugin in plugins" 
+          v-for="plugin in filteredPlugins" 
           :key="plugin.metadata.id"
           class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow"
         >
@@ -115,7 +133,7 @@
       </div>
       
       <!-- 列表视图 -->
-      <div v-if="viewMode === 'list'" class="overflow-x-auto">
+      <div v-else-if="viewMode === 'list' && filteredPlugins.length > 0" class="overflow-x-auto">
         <table class="table w-full">
           <thead>
             <tr>
@@ -129,7 +147,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="plugin in plugins" :key="plugin.metadata.id">
+            <tr v-for="plugin in filteredPlugins" :key="plugin.metadata.id">
               <td>
                 <input 
                   type="checkbox" 
@@ -187,6 +205,14 @@
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div v-else-if="!embedded" class="text-center p-8">
+        <i class="fas fa-filter text-3xl text-base-content/30 mb-3"></i>
+        <p class="font-semibold">当前分类下暂无插件工具</p>
+        <button @click="selectedCategory = ''" class="btn btn-sm btn-outline mt-3">
+          清除筛选
+        </button>
       </div>
     </div>
     
@@ -253,7 +279,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, nextTick, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { dialog } from '@/composables/useDialog'
@@ -268,6 +294,12 @@ import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 
 const { t } = useI18n()
+
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false
+})
 
 // 类型定义
 interface PluginMetadata {
@@ -299,6 +331,57 @@ defineEmits<{
 const plugins = ref<PluginRecord[]>([])
 const isLoading = ref(false)
 const viewMode = ref('list')
+const selectedCategory = ref('')
+const embedded = computed(() => props.embedded)
+
+const UNCATEGORIZED_KEY = '__uncategorized__'
+
+const pluginCategoryMeta: Record<string, { label: string; icon: string; btnClass: string }> = {
+  scanner: { label: '扫描工具', icon: 'fas fa-radar', btnClass: 'btn-info' },
+  analyzer: { label: '分析工具', icon: 'fas fa-microscope', btnClass: 'btn-success' },
+  utility: { label: '实用工具', icon: 'fas fa-toolbox', btnClass: 'btn-warning' },
+  custom: { label: '自定义', icon: 'fas fa-wrench', btnClass: 'btn-accent' },
+  [UNCATEGORIZED_KEY]: { label: '未分类', icon: 'fas fa-folder-open', btnClass: 'btn-neutral' }
+}
+
+const pluginCategories = computed(() => {
+  const counts = new Map<string, number>()
+
+  for (const plugin of plugins.value) {
+    const category = (plugin.metadata.category || '').trim() || UNCATEGORIZED_KEY
+    counts.set(category, (counts.get(category) || 0) + 1)
+  }
+
+  return Array.from(counts.entries())
+    .map(([key, count]) => {
+      const meta = pluginCategoryMeta[key] || { label: key, icon: 'fas fa-tag', btnClass: 'btn-secondary' }
+      return {
+        key,
+        count,
+        label: meta.label,
+        icon: meta.icon,
+        btnClass: meta.btnClass
+      }
+    })
+    .sort((a, b) => b.count - a.count)
+})
+
+const filteredPlugins = computed(() => {
+  if (!selectedCategory.value) {
+    return plugins.value
+  }
+  if (selectedCategory.value === UNCATEGORIZED_KEY) {
+    return plugins.value.filter(plugin => !(plugin.metadata.category || '').trim())
+  }
+  return plugins.value.filter(plugin => (plugin.metadata.category || '').trim() === selectedCategory.value)
+})
+
+watch(pluginCategories, categories => {
+  if (!selectedCategory.value) return
+  if (!categories.some(category => category.key === selectedCategory.value)) {
+    selectedCategory.value = ''
+  }
+})
 
 // 测试相关状态
 const showTestModal = ref(false)
@@ -1122,4 +1205,3 @@ onMounted(() => {
   fetchPlugins()
 })
 </script>
-

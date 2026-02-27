@@ -5,6 +5,7 @@ pub mod artifact;
 pub mod blackboard;
 pub mod engine;
 pub mod models;
+pub mod orchestration;
 pub mod repository;
 pub mod repository_runtime;
 pub mod repository_sqlite;

@@ -163,6 +163,17 @@ const clampOutputStorageThreshold = (value: number): number => {
   )
 }
 
+const normalizeCloseAction = (value: unknown): 'hide' | 'minimize' | 'exit' => {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'hide' || normalized === 'tray' || normalized === 'close_to_tray') {
+    return 'hide'
+  }
+  if (normalized === 'exit' || normalized === 'quit' || normalized === 'close') {
+    return 'exit'
+  }
+  return 'minimize'
+}
+
 // 响应式数据
 const activeCategory = ref('ai')
 const saving = ref(false)
@@ -242,6 +253,7 @@ const settings = ref({
     startMinimized: false,
     restoreSession: true,
     checkUpdates: true,
+    closeAction: 'minimize',
     closeToTray: false,
     minimizeToTray: false,
     alwaysOnTop: false,
@@ -578,6 +590,19 @@ const loadSettings = async () => {
       } catch (e) {
         console.warn('Failed to parse saved settings:', e)
       }
+    }
+
+    // 从数据库加载窗口关闭行为（覆盖 localStorage，保证与后端一致）
+    try {
+      const items = await invoke('get_config', { request: { category: 'ui', key: 'close_button_action' } }) as Array<{ key: string, value: string }>
+      if (items && items.length > 0) {
+        settings.value.general.closeAction = normalizeCloseAction(items[0].value)
+      } else {
+        settings.value.general.closeAction = normalizeCloseAction(settings.value.general.closeAction)
+      }
+    } catch (e) {
+      console.warn('Failed to load close button action from backend', e)
+      settings.value.general.closeAction = normalizeCloseAction(settings.value.general.closeAction)
     }
     
     // 应用已保存的设置
@@ -1498,6 +1523,19 @@ const saveGeneralConfig = async () => {
       console.log('Saved Tavily config to backend')
     } catch (e) {
       console.warn('Failed to save Tavily config to backend', e)
+    }
+
+    // 同步关闭按钮行为到数据库（hide / minimize / exit）
+    try {
+      const closeAction = normalizeCloseAction((settings.value as any).general?.closeAction);
+      (settings.value as any).general.closeAction = closeAction
+      await invoke('set_config', {
+        category: 'ui',
+        key: 'close_button_action',
+        value: closeAction
+      })
+    } catch (e) {
+      console.warn('Failed to save close button action to backend', e)
     }
     
     dialog.toast.success('通用设置已保存并应用')

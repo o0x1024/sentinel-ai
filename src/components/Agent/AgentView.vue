@@ -127,6 +127,17 @@
             <span>{{ t('agent.auditFindings') }}</span>
             <span v-if="auditFindings.length > 0" class="badge badge-xs badge-primary">{{ auditFindings.length }}</span>
           </button>
+          <button
+            v-if="teamModeEnabled"
+            @click="handleToggleTeamWorkspace()"
+            class="btn btn-sm gap-1"
+            :class="isTeamWorkspaceActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            title="Team 工作台"
+          >
+            <i class="fas fa-users"></i>
+            <span>Team</span>
+            <span v-if="teamWorkspaceBadgeCount > 0" class="badge badge-xs badge-primary">{{ teamWorkspaceBadgeCount }}</span>
+          </button>
           <button 
             @click="handleCreateConversation()"
             class="btn btn-sm btn-ghost gap-1"
@@ -172,6 +183,7 @@
             :show-debug-info="false"
             :rag-enabled="ragEnabled"
             :tools-enabled="toolsEnabled"
+            :team-enabled="teamModeEnabled"
             :pending-attachments="pendingAttachments"
             :pending-documents="pendingDocuments"
             :processed-documents="processedDocuments"
@@ -180,11 +192,16 @@
             :available-models="assistantModelOptions"
             :selected-model="assistantSelectedModel"
             :model-loading="isLoadingAssistantModels"
+            :team-template-options="teamTemplateOptions"
+            :selected-team-template="selectedTeamTemplateId"
+            :team-template-loading="isLoadingTeamTemplates"
             @send-message="handleSubmit"
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
             @toggle-tools="handleToggleTools"
+            @toggle-team="handleToggleTeamMode"
             @change-model="handleAssistantModelChange"
+            @change-team-template="handleTeamTemplateChange"
             @add-attachments="handleAddAttachments"
             @remove-attachment="handleRemoveAttachment"
             @add-documents="handleAddDocuments"
@@ -200,7 +217,7 @@
         
         <!-- Right: Side Panel (WebExplorer, Todo, HTML, or Terminal) -->
         <div 
-          v-if="isWebExplorerActive || isTodosPanelActive || isHtmlPanelActive || isTerminalActive || isAuditFindingsPanelActive"
+          v-if="isWebExplorerActive || isTodosPanelActive || isHtmlPanelActive || isTerminalActive || isAuditFindingsPanelActive || isTeamWorkspaceActive"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
           :style="{ width: sidebarWidth + 'px' }"
         >
@@ -210,8 +227,102 @@
               @mousedown="startResize"
             ></div>
             
+            <div v-if="isTeamWorkspaceActive" class="h-full flex flex-col overflow-hidden">
+              <div class="flex border-b border-base-300 overflow-x-auto">
+                <button
+                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
+                  :class="teamWorkspaceTab === 'templates' ? 'text-primary border-b-2 border-primary bg-primary/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'templates'"
+                >
+                  <i class="fas fa-layer-group mr-1"></i> 模板库
+                </button>
+                <button
+                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
+                  :class="teamWorkspaceTab === 'blackboard' ? 'text-secondary border-b-2 border-secondary bg-secondary/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'blackboard'"
+                >
+                  <i class="fas fa-chalkboard mr-1"></i> 白板
+                </button>
+                <button
+                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
+                  :class="teamWorkspaceTab === 'artifacts' ? 'text-accent border-b-2 border-accent bg-accent/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'artifacts'"
+                >
+                  <i class="fas fa-file-alt mr-1"></i> 产物
+                </button>
+                <button
+                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
+                  :class="teamWorkspaceTab === 'timeline' ? 'text-info border-b-2 border-info bg-info/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'timeline'"
+                >
+                  <i class="fas fa-stream mr-1"></i> 时间线
+                </button>
+                <button
+                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
+                  :class="teamWorkspaceTab === 'challenge' ? 'text-warning border-b-2 border-warning bg-warning/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'challenge'"
+                >
+                  <i class="fas fa-code-compare mr-1"></i> 对比
+                </button>
+              </div>
+
+              <div v-if="teamWorkspaceLoading" class="flex-1 flex items-center justify-center text-sm text-base-content/50">
+                <i class="fas fa-spinner fa-spin mr-2"></i> Team 工作台加载中...
+              </div>
+
+              <AgentTeamTemplateLibrary
+                v-else-if="teamWorkspaceTab === 'templates'"
+                :conversation-id="conversationId || undefined"
+                class="flex-1 overflow-hidden"
+                @close="isTeamWorkspaceActive = false"
+                @templates-updated="handleTeamTemplatesUpdated"
+                @session-created="handleTeamSessionCreated"
+              />
+              <AgentTeamBlackboardPanel
+                v-else-if="teamWorkspaceTab === 'blackboard'"
+                class="flex-1 overflow-hidden"
+                :entries="teamBlackboardEntries"
+                :archive-entry-id="teamBlackboardArchiveEntryId"
+                :archive-messages="teamBlackboardArchiveMessages"
+                :archive-scope="teamBlackboardArchiveScope"
+                :archive-loading="teamBlackboardArchiveLoading"
+                :archive-error="teamBlackboardArchiveError"
+                :can-annotate="true"
+                @resolve="handleTeamResolveBlackboardEntry"
+                @view-archive="handleTeamViewBlackboardArchive"
+                @add-entry="handleTeamAddBlackboardEntry"
+                @annotate="handleTeamAnnotateBlackboardEntry"
+              />
+              <AgentTeamArtifactPanel
+                v-else-if="teamWorkspaceTab === 'artifacts'"
+                class="flex-1 overflow-hidden"
+                :artifacts="teamArtifacts"
+              />
+              <AgentTeamTimeline
+                v-else-if="teamWorkspaceTab === 'timeline'"
+                class="flex-1 overflow-hidden"
+                :rounds="teamRounds"
+                :messages="teamSessionMessages"
+                :is-running="isTeamRunActive"
+              />
+              <AgentTeamChallengeSplitView
+                v-else-if="teamWorkspaceTab === 'challenge'"
+                class="flex-1 overflow-hidden"
+                :messages="teamSessionMessages"
+                :round-id="latestTeamRoundId"
+                :divergence-score="latestTeamDivergence"
+                :threshold="0.6"
+              />
+              <div v-else class="flex-1 overflow-auto p-4">
+                <div class="rounded-xl border border-base-300 bg-base-100 p-4 text-sm text-base-content/70">
+                  编排入口已迁移到模板库。
+                  请在「模板库 → 编辑模板」中配置 `orchestration_plan`。
+                </div>
+              </div>
+            </div>
+
             <WebExplorerPanel 
-               v-if="isWebExplorerActive"
+               v-else-if="isWebExplorerActive"
                :steps="webExplorerEvents.steps.value" 
                :coverage="webExplorerEvents.coverage.value"
                :discovered-apis="webExplorerEvents.discoveredApis.value"
@@ -283,6 +394,19 @@ import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
+import type {
+  AgentTeamTemplate,
+  AgentTeamRound,
+  AgentTeamMessage,
+  AgentTeamArtifact,
+  AgentTeamBlackboardEntry,
+  AgentTeamBlackboardArchive,
+  AgentTeamSession,
+  AgentTeamRoundEvent,
+  AgentTeamArtifactEvent,
+  AgentTeamStateChangedEvent,
+} from '@/types/agentTeam'
+import { agentTeamApi } from '@/api/agentTeam'
 import { useAgentEvents } from '@/composables/useAgentEvents'
 import { useWebExplorerEvents } from '@/composables/useWebExplorerEvents'
 import { useTodos } from '@/composables/useTodos'
@@ -295,6 +419,11 @@ import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
 import AuditFindingsPanel from './AuditFindingsPanel.vue'
+import AgentTeamTemplateLibrary from './AgentTeamTemplateLibrary.vue'
+import AgentTeamBlackboardPanel from './AgentTeamBlackboardPanel.vue'
+import AgentTeamArtifactPanel from './AgentTeamArtifactPanel.vue'
+import AgentTeamTimeline from './AgentTeamTimeline.vue'
+import AgentTeamChallengeSplitView from './AgentTeamChallengeSplitView.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -374,6 +503,83 @@ interface AssistantModelOption {
   description?: string
 }
 
+interface TeamTemplateOption {
+  value: string
+  label: string
+  description?: string
+}
+
+type TeamOrchestrationStepType = 'agent' | 'serial' | 'parallel'
+
+interface TeamOrchestrationRetry {
+  max_attempts?: number
+  backoff_ms?: number
+}
+
+interface TeamOrchestrationStep {
+  id: string
+  type: TeamOrchestrationStepType
+  name?: string
+  member?: string
+  phase?: string
+  instruction?: string
+  retry?: TeamOrchestrationRetry
+  children?: TeamOrchestrationStep[]
+}
+
+interface TeamOrchestrationPlan {
+  version: number
+  steps: TeamOrchestrationStep[]
+}
+
+interface TeamStepMovePayload {
+  sourcePath: number[]
+  targetPath: number[]
+  mode: 'before' | 'inside'
+}
+
+interface TeamRuntimeStepStat {
+  step_id: string
+  total_attempts: number
+  success_count: number
+  failure_count: number
+  avg_duration_ms: number
+  last_duration_ms?: number
+  last_status?: string
+  last_error?: string
+}
+
+interface TeamRuntimeFailureMode {
+  mode: string
+  count: number
+  latest_step_id?: string
+  latest_error?: string
+  hint?: string
+}
+
+type TeamOrchestrationPresetId =
+  | 'product_delivery_chain'
+  | 'security_audit_matrix'
+  | 'incident_response_flow'
+
+type TeamRecoveryPresetId = 'conservative' | 'balanced' | 'aggressive'
+
+interface TeamOrchestrationPresetMeta {
+  id: TeamOrchestrationPresetId
+  label: string
+  description: string
+}
+
+interface TeamRecoveryPreset {
+  id: TeamRecoveryPresetId
+  label: string
+  description: string
+  max_attempts: number
+  backoff_ms: number
+  human_intervention_timeout_secs: number
+  max_human_interventions: number
+  no_human_input_policy: TeamRecoveryPresetId
+}
 
 const props = withDefaults(defineProps<{
   executionId?: string
@@ -408,16 +614,101 @@ const historyLoadToken = ref(0)
 // Feature toggles
 const ragEnabled = ref(false)
 const toolsEnabled = ref(false)
+const teamModeEnabled = ref(false)
 const tenthManEnabled = ref(false)
 const pendingAttachments = ref<any[]>([])
 const pendingDocuments = ref<PendingDocumentAttachment[]>([])
 const processedDocuments = ref<ProcessedDocumentResult[]>([])
 const referencedTraffic = ref<ReferencedTraffic[]>([])
+const activeTeamSessionId = ref<string | null>(null)
+const teamSessionState = ref<string>('PENDING')
+const isTeamWorkspaceActive = ref(false)
+const teamWorkspaceTab = ref<'templates' | 'blackboard' | 'artifacts' | 'timeline' | 'challenge'>('templates')
+const teamWorkspaceLoading = ref(false)
+const teamSessionMessages = ref<AgentTeamMessage[]>([])
+const teamRounds = ref<AgentTeamRound[]>([])
+const teamBlackboardEntries = ref<AgentTeamBlackboardEntry[]>([])
+const teamBlackboardArchiveEntryId = ref<string | null>(null)
+const teamBlackboardArchiveMessages = ref<AgentTeamMessage[]>([])
+const teamBlackboardArchiveScope = ref<string | null>(null)
+const teamBlackboardArchiveLoading = ref(false)
+const teamBlackboardArchiveError = ref<string | null>(null)
+const teamArtifacts = ref<AgentTeamArtifact[]>([])
+const teamSessionDetail = ref<AgentTeamSession | null>(null)
+const teamOrchestrationPlanText = ref('{\n  "version": 1,\n  "steps": []\n}')
+const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
+const teamPlanDirty = ref(false)
+const teamPlanSaving = ref(false)
+const teamPlanError = ref<string | null>(null)
+const teamPlanSuccess = ref<string | null>(null)
+const teamResumeStepId = ref('')
+const teamSelectedOrchestrationPresetId = ref<TeamOrchestrationPresetId | null>(null)
+const teamSelectedRecoveryPresetId = ref<TeamRecoveryPresetId>('balanced')
+const teamRecoveryPresetApplying = ref(false)
+const teamTemplateDraftName = ref('')
+const teamTemplateDraftDomain = ref<'product' | 'security' | 'ops' | 'audit' | 'custom'>('custom')
+const teamTemplateDraftSaving = ref(false)
+const teamTemplateOptions = ref<TeamTemplateOption[]>([])
+const selectedTeamTemplateId = ref('')
+const isLoadingTeamTemplates = ref(false)
 const assistantModelOptions = ref<AssistantModelOption[]>([])
 const assistantSelectedModel = ref('')
 const isLoadingAssistantModels = ref(false)
 const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
+
+const TEAM_ORCHESTRATION_PRESET_METAS: TeamOrchestrationPresetMeta[] = [
+  {
+    id: 'product_delivery_chain',
+    label: '需求到交付',
+    description: '产品 -> 架构 -> 研发/测试并行 -> 发布决策，适合 idea 到落地全链路。',
+  },
+  {
+    id: 'security_audit_matrix',
+    label: '安全审计矩阵',
+    description: '多维安全审计并行 -> 风险收敛 -> 修复验证，适合代码/系统安全评估。',
+  },
+  {
+    id: 'incident_response_flow',
+    label: '故障处置链路',
+    description: '故障接管 -> 并行根因分析 -> 处置方案 -> 验证复盘，适合线上异常场景。',
+  },
+]
+
+const TEAM_RECOVERY_PRESETS: TeamRecoveryPreset[] = [
+  {
+    id: 'conservative',
+    label: '保守',
+    description: '低重试、长退避、较长人工等待窗口，优先稳定性与可回滚性。',
+    max_attempts: 1,
+    backoff_ms: 1500,
+    human_intervention_timeout_secs: 900,
+    max_human_interventions: 4,
+    no_human_input_policy: 'conservative',
+  },
+  {
+    id: 'balanced',
+    label: '平衡',
+    description: '中等重试与等待窗口，在质量、风险和进度间折中。',
+    max_attempts: 2,
+    backoff_ms: 800,
+    human_intervention_timeout_secs: 600,
+    max_human_interventions: 3,
+    no_human_input_policy: 'balanced',
+  },
+  {
+    id: 'aggressive',
+    label: '激进',
+    description: '高重试、短退避、短等待窗口，优先推进速度与产出。',
+    max_attempts: 3,
+    backoff_ms: 400,
+    human_intervention_timeout_secs: 300,
+    max_human_interventions: 2,
+    no_human_input_policy: 'aggressive',
+  },
+]
+
+const TEAM_TEMPLATE_DOMAIN_OPTIONS = ['product', 'security', 'ops', 'audit', 'custom'] as const
 
 // Subagent detail modal
 const showSubagentDetailModal = ref(false)
@@ -506,7 +797,14 @@ const loadAuditConfigFromLocal = (): AuditConfig => {
 }
 
 const ASSISTANT_MODEL_STORAGE_KEY = 'sentinel:agent:assistant-model'
+const TEAM_TEMPLATE_STORAGE_KEY = 'sentinel:agent:team-template-id'
 let unlistenAiConfigUpdated: UnlistenFn | null = null
+let unlistenTeamStateChanged: UnlistenFn | null = null
+let unlistenTeamRoundCompleted: UnlistenFn | null = null
+let unlistenTeamArtifactGenerated: UnlistenFn | null = null
+let teamRunStatusPollTimer: ReturnType<typeof setInterval> | null = null
+let isPollingTeamRunStatus = false
+let teamMainFlowMessageIds = new Set<string>()
 
 const normalizeProviderName = (provider: string) => {
   const lower = provider.toLowerCase()
@@ -529,6 +827,14 @@ const normalizeProviderName = (provider: string) => {
     lm_studio: 'LM Studio',
   }
   return names[lower] || provider
+}
+
+const formatDurationMs = (value: number | undefined) => {
+  const ms = Number(value ?? 0)
+  if (!Number.isFinite(ms) || ms <= 0) return '0ms'
+  if (ms < 1000) return `${Math.floor(ms)}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${(ms / 60_000).toFixed(1)}m`
 }
 
 const extractModelId = (item: any): string => {
@@ -635,6 +941,131 @@ const handleAssistantModelChange = (value: string) => {
   }
 }
 
+const formatTeamTemplateTag = (template: AgentTeamTemplate): string => {
+  const domain = (template.domain || 'custom').trim() || 'custom'
+  return `${domain} · ${template.is_system ? '内置' : '自定义'}`
+}
+
+const setSelectedTeamTemplate = (value: string) => {
+  const normalized = value || ''
+  selectedTeamTemplateId.value = normalized
+  try {
+    if (normalized) {
+      localStorage.setItem(TEAM_TEMPLATE_STORAGE_KEY, normalized)
+    } else {
+      localStorage.removeItem(TEAM_TEMPLATE_STORAGE_KEY)
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+const loadTeamTemplateOptions = async (preferredTemplateId = ''): Promise<string> => {
+  isLoadingTeamTemplates.value = true
+  try {
+    let templates = await agentTeamApi.listTemplates()
+    if (templates.length === 0) {
+      await agentTeamApi.seedBuiltinTemplates()
+      templates = await agentTeamApi.listTemplates()
+    }
+
+    const options: TeamTemplateOption[] = templates
+      .map((template) => ({
+        value: template.id,
+        label: template.name,
+        description: formatTeamTemplateTag(template),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+
+    teamTemplateOptions.value = options
+
+    let stored = ''
+    try {
+      stored = localStorage.getItem(TEAM_TEMPLATE_STORAGE_KEY) || ''
+    } catch {
+      stored = ''
+    }
+
+    const preferred = preferredTemplateId || selectedTeamTemplateId.value || stored
+    const resolved = preferred && options.some((item) => item.value === preferred)
+      ? preferred
+      : (options[0]?.value || '')
+    setSelectedTeamTemplate(resolved)
+    return resolved
+  } catch (e) {
+    console.warn('[AgentView] Failed to load team template options:', e)
+    teamTemplateOptions.value = []
+    setSelectedTeamTemplate('')
+    return ''
+  } finally {
+    isLoadingTeamTemplates.value = false
+  }
+}
+
+const ensureTeamTemplateIdReady = async (): Promise<string> => {
+  const selected = selectedTeamTemplateId.value.trim()
+  if (teamTemplateOptions.value.length > 0) {
+    if (selected && teamTemplateOptions.value.some((item) => item.value === selected)) {
+      return selected
+    }
+    const fallback = teamTemplateOptions.value[0]?.value || ''
+    if (fallback) {
+      setSelectedTeamTemplate(fallback)
+      return fallback
+    }
+  }
+  return await loadTeamTemplateOptions(selected)
+}
+
+const handleTeamTemplateChange = (value: string) => {
+  setSelectedTeamTemplate(value || '')
+}
+
+function extractTemplateMaxRounds(config: unknown): number | undefined {
+  if (typeof config === 'number') {
+    const n = Math.max(1, Math.floor(config))
+    return Number.isFinite(n) ? n : undefined
+  }
+  if (config && typeof config === 'object' && !Array.isArray(config)) {
+    const obj = config as Record<string, unknown>
+    const candidate = Number(obj.max_rounds ?? obj.maxRounds ?? obj.default_rounds ?? obj.rounds)
+    if (Number.isFinite(candidate) && candidate > 0) {
+      return Math.floor(candidate)
+    }
+  }
+  return undefined
+}
+
+function extractTemplateOrchestrationPlan(config: unknown): Record<string, any> | undefined {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined
+  const obj = config as Record<string, unknown>
+  const raw = obj.orchestration_plan ?? obj.orchestrationPlan ?? obj.plan
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const cloned = JSON.parse(JSON.stringify(raw))
+  const steps = Array.isArray(cloned?.steps) ? cloned.steps : []
+  if (steps.length === 0) return undefined
+  return cloned
+}
+
+function extractTemplatePlanVersion(config: unknown): number | undefined {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined
+  const obj = config as Record<string, unknown>
+  const candidate = Number(obj.plan_version ?? obj.planVersion ?? obj.version)
+  if (!Number.isFinite(candidate) || candidate <= 0) return undefined
+  return Math.floor(candidate)
+}
+
+function extractTemplateStateMachine(toolPolicy: unknown): Record<string, any> | undefined {
+  if (!toolPolicy || typeof toolPolicy !== 'object' || Array.isArray(toolPolicy)) return undefined
+  const policyObj = toolPolicy as Record<string, unknown>
+  const raw =
+    policyObj.state_machine && typeof policyObj.state_machine === 'object' && !Array.isArray(policyObj.state_machine)
+      ? policyObj.state_machine
+      : undefined
+  if (!raw) return undefined
+  return JSON.parse(JSON.stringify(raw as Record<string, unknown>))
+}
+
 const buildEffectiveToolConfigForExecution = () => {
   const baseConfig = {
     enabled: toolConfig.value.enabled,
@@ -664,10 +1095,203 @@ const buildEffectiveToolConfigForExecution = () => {
 // Agent events
 const agentEvents = useAgentEvents(computed(() => conversationId.value || ''))
 const messages = computed(() => agentEvents.messages.value)
-const isExecuting = computed(() => agentEvents.isExecuting.value)
+const TEAM_NON_RUNNING_STATES = new Set(['PENDING', 'SUSPENDED_FOR_HUMAN', 'COMPLETED', 'FAILED', 'ARCHIVED'])
+const TEAM_RUN_STATUS_POLL_INTERVAL_MS = 2000
+const isTeamRunActive = computed(() => {
+  if (!teamModeEnabled.value || !activeTeamSessionId.value) return false
+  return !TEAM_NON_RUNNING_STATES.has(teamSessionState.value || '')
+})
+const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
+const teamWorkspaceBadgeCount = computed(
+  () => teamBlackboardEntries.value.length + teamArtifacts.value.length,
+)
+const latestTeamRoundId = computed(() => {
+  if (teamRounds.value.length === 0) return null
+  return teamRounds.value[teamRounds.value.length - 1]?.id || null
+})
+const latestTeamDivergence = computed(() => {
+  for (let idx = teamRounds.value.length - 1; idx >= 0; idx -= 1) {
+    const score = teamRounds.value[idx]?.divergence_score
+    if (typeof score === 'number') return score
+  }
+  return null
+})
+const teamOrchestrationRuntime = computed<Record<string, any>>(() => {
+  const raw = teamSessionDetail.value?.state_machine?.orchestration_runtime
+  if (raw && typeof raw === 'object') return raw as Record<string, any>
+  return {}
+})
+const teamMemberNameOptions = computed(() =>
+  (teamSessionDetail.value?.members || [])
+    .map((member) => member.name)
+    .filter((name) => typeof name === 'string' && name.trim().length > 0),
+)
+const teamOrchestrationPresets = computed(() => TEAM_ORCHESTRATION_PRESET_METAS)
+const teamRecoveryPresets = computed(() => TEAM_RECOVERY_PRESETS)
+const teamTemplateDomainOptions = computed(() => TEAM_TEMPLATE_DOMAIN_OPTIONS)
+const teamSelectedOrchestrationPresetDescription = computed(() => {
+  if (!teamSelectedOrchestrationPresetId.value) return ''
+  return TEAM_ORCHESTRATION_PRESET_METAS.find((item) => item.id === teamSelectedOrchestrationPresetId.value)?.description || ''
+})
+const teamSelectedRecoveryPresetDescription = computed(() => {
+  const selected = TEAM_RECOVERY_PRESETS.find((item) => item.id === teamSelectedRecoveryPresetId.value)
+  return selected?.description || ''
+})
+const teamCurrentNoHumanInputPolicy = computed<TeamRecoveryPresetId>(() => {
+  const fallback = 'balanced'
+  const stateMachine = teamSessionDetail.value?.state_machine
+  if (!stateMachine || typeof stateMachine !== 'object') return fallback
+  const fromIntervention = (stateMachine as any)?.human_intervention?.policy
+  const fromRoot = (stateMachine as any)?.no_human_input_policy
+  const raw = typeof fromIntervention === 'string' ? fromIntervention : fromRoot
+  if (raw === 'conservative' || raw === 'aggressive') return raw
+  return fallback
+})
+const teamCurrentHumanInterventionTimeoutSecs = computed(() => {
+  const stateMachine = teamSessionDetail.value?.state_machine
+  const fromIntervention = Number((stateMachine as any)?.human_intervention?.timeout_secs)
+  if (Number.isFinite(fromIntervention) && fromIntervention > 0) return Math.floor(fromIntervention)
+  const fromRoot = Number((stateMachine as any)?.human_intervention_timeout_secs)
+  if (Number.isFinite(fromRoot) && fromRoot > 0) return Math.floor(fromRoot)
+  return 600
+})
+const teamCurrentMaxHumanInterventions = computed(() => {
+  const stateMachine = teamSessionDetail.value?.state_machine
+  const value = Number((stateMachine as any)?.max_human_interventions)
+  if (Number.isFinite(value) && value > 0) return Math.floor(value)
+  return 3
+})
+const teamFlattenedStepOptions = computed(() => {
+  const options: Array<{ id: string; path: string; label: string }> = []
+  const walk = (steps: TeamOrchestrationStep[], prefix: number[]) => {
+    steps.forEach((step, idx) => {
+      const path = [...prefix, idx]
+      const pathLabel = path.map((part) => part + 1).join('.')
+      const title = step.name?.trim() || step.phase?.trim() || step.type
+      options.push({
+        id: step.id,
+        path: pathLabel,
+        label: `${step.id} (${pathLabel}) · ${title}`,
+      })
+      if (Array.isArray(step.children) && step.children.length > 0) {
+        walk(step.children, path)
+      }
+    })
+  }
+  walk(teamOrchestrationDraft.value.steps, [])
+  return options
+})
+const teamStepPathById = computed(() => {
+  const pathMap = new Map<string, string>()
+  teamFlattenedStepOptions.value.forEach((item) => {
+    if (!pathMap.has(item.id)) {
+      pathMap.set(item.id, item.path)
+    }
+  })
+  return pathMap
+})
+const teamLastRuntimeStepPath = computed(() => {
+  const lastStepId = teamOrchestrationRuntime.value.last_step_id
+  if (typeof lastStepId !== 'string' || !lastStepId.trim()) return '-'
+  return teamStepPathById.value.get(lastStepId) || '-'
+})
+const teamRuntimeSummary = computed(() => {
+  const raw = teamOrchestrationRuntime.value.summary
+  const totalAttempts = Number(raw?.total_attempts ?? 0)
+  const totalSuccess = Number(raw?.total_success ?? 0)
+  const totalFailed = Number(raw?.total_failed ?? 0)
+  const slowestDurationMs = Number(raw?.slowest_duration_ms ?? 0)
+  const slowestStepId = typeof raw?.slowest_step_id === 'string' ? raw.slowest_step_id : ''
+  return {
+    totalAttempts: Number.isFinite(totalAttempts) ? Math.max(0, Math.floor(totalAttempts)) : 0,
+    totalSuccess: Number.isFinite(totalSuccess) ? Math.max(0, Math.floor(totalSuccess)) : 0,
+    totalFailed: Number.isFinite(totalFailed) ? Math.max(0, Math.floor(totalFailed)) : 0,
+    slowestDurationMs: Number.isFinite(slowestDurationMs) ? Math.max(0, Math.floor(slowestDurationMs)) : 0,
+    slowestStepId,
+  }
+})
+const teamRuntimeSuggestedResumeStepId = computed(() => {
+  const value = teamOrchestrationRuntime.value.suggested_resume_step_id
+  return typeof value === 'string' ? value : ''
+})
+const teamRuntimeStepStats = computed<TeamRuntimeStepStat[]>(() => {
+  const raw = teamOrchestrationRuntime.value.step_stats
+  if (!raw || typeof raw !== 'object') return []
+  return Object.entries(raw)
+    .map(([stepId, value]) => {
+      const v = value as Record<string, any>
+      const toNum = (n: any) => {
+        const parsed = Number(n ?? 0)
+        return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0
+      }
+      return {
+        step_id: stepId,
+        total_attempts: toNum(v.total_attempts),
+        success_count: toNum(v.success_count),
+        failure_count: toNum(v.failure_count),
+        avg_duration_ms: toNum(v.avg_duration_ms),
+        last_duration_ms: toNum(v.last_duration_ms),
+        last_status: typeof v.last_status === 'string' ? v.last_status : '',
+        last_error: typeof v.last_error === 'string' ? v.last_error : '',
+      }
+    })
+    .sort((a, b) => b.failure_count - a.failure_count || b.avg_duration_ms - a.avg_duration_ms)
+})
+const teamRuntimeHotspots = computed(() => teamRuntimeStepStats.value.slice(0, 8))
+const teamRuntimeFailureModes = computed<TeamRuntimeFailureMode[]>(() => {
+  const raw = teamOrchestrationRuntime.value.failure_modes
+  if (!raw || typeof raw !== 'object') return []
+  return Object.entries(raw)
+    .map(([mode, value]) => {
+      const v = value as Record<string, any>
+      const countRaw = Number(v.count ?? 0)
+      const count = Number.isFinite(countRaw) ? Math.max(0, Math.floor(countRaw)) : 0
+      return {
+        mode,
+        count,
+        latest_step_id: typeof v.latest_step_id === 'string' ? v.latest_step_id : '',
+        latest_error: typeof v.latest_error === 'string' ? v.latest_error : '',
+        hint: typeof v.hint === 'string' ? v.hint : '',
+      }
+    })
+    .sort((a, b) => b.count - a.count)
+})
+const teamRuntimeBackendRecoverySuggestions = computed(() => {
+  const raw = teamOrchestrationRuntime.value.recovery_suggestions
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((item) => typeof item === 'string')
+    .map((item) => String(item).trim())
+    .filter((item) => item.length > 0)
+})
+const teamRuntimeRecoverySuggestions = computed(() => {
+  const hints: string[] = [...teamRuntimeBackendRecoverySuggestions.value]
+  const seen = new Set(hints)
+  const pushHint = (msg: string) => {
+    const normalized = msg.trim()
+    if (!normalized) return
+    if (seen.has(normalized)) return
+    seen.add(normalized)
+    hints.push(normalized)
+  }
+  if (teamRuntimeSummary.value.totalFailed > 0 && teamRuntimeSuggestedResumeStepId.value) {
+    pushHint(`优先从失败节点 ${teamRuntimeSuggestedResumeStepId.value} 恢复执行。`)
+  }
+  const frequentFailure = teamRuntimeStepStats.value.find((item) => item.failure_count >= 3)
+  if (frequentFailure) {
+    pushHint(`节点 ${frequentFailure.step_id} 连续失败较多，建议提高 backoff 或拆分任务。`)
+  }
+  if (teamRuntimeSummary.value.slowestDurationMs >= 120000 && teamRuntimeSummary.value.slowestStepId) {
+    pushHint(`慢节点 ${teamRuntimeSummary.value.slowestStepId} 耗时较长，建议拆分或并行化。`)
+  }
+  if (hints.length === 0) {
+    hints.push('当前执行稳定，可继续按既定编排运行。')
+  }
+  return hints
+})
 
 type SubagentRunRecord = {
   id: string
@@ -771,6 +1395,7 @@ const handleRenderHtml = (htmlContent: string) => {
   terminalComposable.closeTerminal()
   todosComposable.close()
   isAuditFindingsPanelActive.value = false
+  isTeamWorkspaceActive.value = false
   isHtmlPanelActive.value = true
 }
 
@@ -809,6 +1434,7 @@ const handleToggleWebExplorer = () => {
     terminalComposable.closeTerminal()
     isHtmlPanelActive.value = false
     isAuditFindingsPanelActive.value = false
+    isTeamWorkspaceActive.value = false
     webExplorerEvents.open()
   }
 }
@@ -822,6 +1448,7 @@ const handleToggleTodos = () => {
     terminalComposable.closeTerminal()
     isHtmlPanelActive.value = false
     isAuditFindingsPanelActive.value = false
+    isTeamWorkspaceActive.value = false
     todosComposable.open()
   }
 }
@@ -834,6 +1461,7 @@ const handleToggleHtmlPanel = () => {
     terminalComposable.closeTerminal()
     todosComposable.close()
     isAuditFindingsPanelActive.value = false
+    isTeamWorkspaceActive.value = false
     isHtmlPanelActive.value = true
   }
 }
@@ -846,6 +1474,7 @@ const handleToggleAuditFindings = () => {
     terminalComposable.closeTerminal()
     todosComposable.close()
     isHtmlPanelActive.value = false
+    isTeamWorkspaceActive.value = false
     isAuditFindingsPanelActive.value = true
   }
 }
@@ -859,6 +1488,7 @@ const handleToggleTerminal = () => {
     todosComposable.close()
     isHtmlPanelActive.value = false
     isAuditFindingsPanelActive.value = false
+    isTeamWorkspaceActive.value = false
     terminalComposable.openTerminal()
   }
 }
@@ -1179,6 +1809,1249 @@ const handleToggleTools = (enabled: boolean) => {
   console.log('[AgentView] Tools:', enabled ? 'enabled' : 'disabled')
 }
 
+const appendTeamBridgeMessage = (content: string) => {
+  const normalized = (content || '').replace(/^\s*\[Team\]\s*/i, '').trim()
+  agentEvents.messages.value.push({
+    id: crypto.randomUUID(),
+    type: 'system',
+    content: normalized || content,
+    timestamp: Date.now(),
+    metadata: {
+      kind: 'team_bridge',
+    },
+  })
+}
+
+const mapTeamMessageType = (role: string): AgentMessage['type'] => {
+  const normalized = (role || '').toLowerCase()
+  if (normalized === 'user') return 'user'
+  if (normalized === 'system') return 'system'
+  if (normalized === 'assistant') return 'final'
+  return 'system'
+}
+
+const parseTeamMessageTimestamp = (raw: string): number => {
+  const parsed = Date.parse(raw || '')
+  return Number.isFinite(parsed) ? parsed : Date.now()
+}
+
+const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
+  if (!Array.isArray(messagesResp) || messagesResp.length === 0) return
+  const sorted = [...messagesResp].sort((a, b) => {
+    const ta = parseTeamMessageTimestamp(a.timestamp)
+    const tb = parseTeamMessageTimestamp(b.timestamp)
+    if (ta !== tb) return ta - tb
+    return a.id.localeCompare(b.id)
+  })
+  for (const msg of sorted) {
+    if (!msg?.id || teamMainFlowMessageIds.has(msg.id)) continue
+    if (!(msg.content || '').trim()) continue
+    teamMainFlowMessageIds.add(msg.id)
+    agentEvents.messages.value.push({
+      id: `team:${msg.id}`,
+      type: mapTeamMessageType(msg.role),
+      content: msg.content,
+      timestamp: parseTeamMessageTimestamp(msg.timestamp),
+      metadata: {
+        kind: 'team_member_output',
+      },
+    })
+  }
+}
+
+const syncTeamMessagesToMainFlow = async (sessionId?: string | null) => {
+  const sid = sessionId || activeTeamSessionId.value
+  if (!sid || !teamModeEnabled.value) return
+  try {
+    const messagesResp = await agentTeamApi.getMessages(sid)
+    if (!messagesResp || activeTeamSessionId.value !== sid) return
+    teamSessionMessages.value = messagesResp
+    appendTeamMessagesToMainFlow(messagesResp)
+  } catch (e) {
+    console.warn('[AgentView] Failed to sync team messages to main flow:', e)
+  }
+}
+
+const applyTeamState = (nextState: string) => {
+  const normalized = (nextState || '').trim()
+  if (!normalized) return false
+  const prev = teamSessionState.value
+  if (prev === normalized) return false
+  teamSessionState.value = normalized
+  if (normalized === 'COMPLETED') {
+    appendTeamBridgeMessage('[Team] 会话执行完成。')
+  } else if (normalized === 'FAILED') {
+    appendTeamBridgeMessage('[Team] 会话执行失败。')
+  } else if (normalized === 'SUSPENDED_FOR_HUMAN') {
+    appendTeamBridgeMessage('[Team] 需要人工介入，请继续输入指导意见。')
+  }
+  return true
+}
+
+const stopTeamRunStatusPolling = () => {
+  if (teamRunStatusPollTimer) {
+    clearInterval(teamRunStatusPollTimer)
+    teamRunStatusPollTimer = null
+  }
+  isPollingTeamRunStatus = false
+}
+
+const pollTeamRunStatusOnce = async () => {
+  if (isPollingTeamRunStatus) return
+  const sessionId = activeTeamSessionId.value
+  if (!teamModeEnabled.value || !sessionId) return
+  isPollingTeamRunStatus = true
+  try {
+    await syncTeamMessagesToMainFlow(sessionId)
+    const status = await agentTeamApi.getRunStatus(sessionId)
+    if (!status || activeTeamSessionId.value !== sessionId) return
+    if (typeof status.state === 'string' && status.state.length > 0) {
+      const changed = applyTeamState(status.state)
+      if (changed && isTeamWorkspaceActive.value) {
+        void loadTeamWorkspaceData()
+      }
+    }
+  } catch (e) {
+    console.warn('[AgentView] Failed to poll team run status:', e)
+  } finally {
+    isPollingTeamRunStatus = false
+  }
+}
+
+const ensureTeamRunStatusPolling = () => {
+  if (!teamModeEnabled.value || !activeTeamSessionId.value) {
+    stopTeamRunStatusPolling()
+    return
+  }
+  if (teamRunStatusPollTimer) return
+  // Run once immediately to avoid waiting one polling interval.
+  void pollTeamRunStatusOnce()
+  teamRunStatusPollTimer = setInterval(() => {
+    void pollTeamRunStatusOnce()
+  }, TEAM_RUN_STATUS_POLL_INTERVAL_MS)
+}
+
+const syncActiveTeamSession = async () => {
+  if (!conversationId.value) {
+    activeTeamSessionId.value = null
+    teamSessionState.value = 'PENDING'
+    return
+  }
+  try {
+    const sessions = await agentTeamApi.listSessions(conversationId.value, 20, 0)
+    const candidate = sessions.find((item) => item.state !== 'ARCHIVED') || null
+    activeTeamSessionId.value = candidate?.id || null
+    teamSessionState.value = candidate?.state || 'PENDING'
+    ensureTeamRunStatusPolling()
+    if (candidate?.template_id) {
+      setSelectedTeamTemplate(candidate.template_id)
+    }
+    if (isTeamWorkspaceActive.value) {
+      await loadTeamWorkspaceData()
+    }
+  } catch (e) {
+    console.warn('[AgentView] Failed to sync team session:', e)
+    activeTeamSessionId.value = null
+    teamSessionState.value = 'PENDING'
+    stopTeamRunStatusPolling()
+  }
+}
+
+const handleToggleTeamMode = async (enabled: boolean) => {
+  if (!enabled && isTeamRunActive.value) {
+    teamModeEnabled.value = true
+    appendTeamBridgeMessage('[Team] 正在运行，停止后才能关闭 Team 模式。')
+    return
+  }
+  teamModeEnabled.value = enabled
+  if (enabled) {
+    await loadTeamTemplateOptions(selectedTeamTemplateId.value)
+    await syncActiveTeamSession()
+    ensureTeamRunStatusPolling()
+    if (isTeamWorkspaceActive.value) {
+      await loadTeamWorkspaceData()
+    }
+  } else {
+    stopTeamRunStatusPolling()
+    isTeamWorkspaceActive.value = false
+  }
+}
+
+const createAndStartTeamSession = async (goal: string) => {
+  const templateId = await ensureTeamTemplateIdReady()
+  if (!templateId) {
+    throw new Error('No Team template available')
+  }
+  const template = await agentTeamApi.getTemplate(templateId)
+  if (!template) {
+    throw new Error('所选 Team 模板不存在，请重新选择模板。')
+  }
+  const orchestrationPlan = extractTemplateOrchestrationPlan(template.default_rounds_config)
+  if (!orchestrationPlan) {
+    throw new Error(`模板「${template.name}」未配置编排流程，请先在模板库编辑并保存工作流。`)
+  }
+  const planVersion = extractTemplatePlanVersion(template.default_rounds_config)
+  const templateStateMachine = extractTemplateStateMachine(template.default_tool_policy)
+  const maxRounds = extractTemplateMaxRounds(template.default_rounds_config)
+  const session = await agentTeamApi.createSession({
+    name: `${goal}`,
+    goal,
+    template_id: templateId,
+    conversation_id: conversationId.value || undefined,
+    max_rounds: maxRounds,
+    orchestration_plan: orchestrationPlan,
+    plan_version: planVersion,
+    state_machine: {
+      ...(templateStateMachine || {}),
+      tool_policy: {
+        ...((templateStateMachine as any)?.tool_policy || {}),
+        enabled: toolsEnabled.value,
+      },
+    },
+  })
+  activeTeamSessionId.value = session.id
+  teamSessionState.value = session.state
+  ensureTeamRunStatusPolling()
+  await agentTeamApi.startRun(session.id)
+  await syncTeamMessagesToMainFlow(session.id)
+  teamSessionState.value = 'INITIALIZING'
+  appendTeamBridgeMessage(`${session.name}`)
+  if (isTeamWorkspaceActive.value) {
+    await loadTeamWorkspaceData()
+  }
+  return session
+}
+
+const routeTeamMessage = async (content: string) => {
+  let currentSession = activeTeamSessionId.value
+    ? await agentTeamApi.getSession(activeTeamSessionId.value)
+    : null
+
+  if (
+    !currentSession ||
+    currentSession.state === 'COMPLETED' ||
+    currentSession.state === 'FAILED' ||
+    currentSession.state === 'ARCHIVED'
+  ) {
+    await createAndStartTeamSession(content)
+    return
+  }
+
+  await agentTeamApi.submitMessage({
+    session_id: currentSession.id,
+    content,
+    resume: currentSession.state === 'SUSPENDED_FOR_HUMAN',
+  })
+
+  if (currentSession.state === 'PENDING') {
+    if (!currentSession.orchestration_plan || !Array.isArray(currentSession.orchestration_plan.steps) || currentSession.orchestration_plan.steps.length === 0) {
+      const templateId = currentSession.template_id || selectedTeamTemplateId.value
+      if (templateId) {
+        const template = await agentTeamApi.getTemplate(templateId)
+        const templatePlan = extractTemplateOrchestrationPlan(template?.default_rounds_config)
+        if (!templatePlan) {
+          throw new Error('当前 Team 会话缺少编排流程，且模板未配置工作流。请到模板库先配置编排。')
+        }
+        await agentTeamApi.updateSession(currentSession.id, {
+          orchestration_plan: templatePlan,
+          plan_version: extractTemplatePlanVersion(template?.default_rounds_config),
+        })
+      } else {
+        throw new Error('当前 Team 会话缺少编排流程，请重新选择模板后重试。')
+      }
+    }
+    await agentTeamApi.startRun(currentSession.id)
+    await syncTeamMessagesToMainFlow(currentSession.id)
+    appendTeamBridgeMessage('[Team] 已启动待运行会话。')
+    teamSessionState.value = 'INITIALIZING'
+    if (isTeamWorkspaceActive.value) {
+      await loadTeamWorkspaceData()
+    }
+    return
+  }
+
+  teamSessionState.value = currentSession.state
+  if (currentSession.state === 'SUSPENDED_FOR_HUMAN') {
+    appendTeamBridgeMessage('[Team] 已提交人工意见，团队继续执行。')
+  } else {
+    appendTeamBridgeMessage('[Team] 已追加需求到当前会话。')
+  }
+  if (isTeamWorkspaceActive.value) {
+    await loadTeamWorkspaceData()
+  }
+}
+
+const generateTeamStepId = (prefix = 'step') => {
+  const random = Math.random().toString(36).slice(2, 7)
+  return `${prefix}-${Date.now().toString(36)}-${random}`
+}
+
+const pickTeamMemberForPreset = (keywords: string[], fallbackIndex = 0) => {
+  const options = teamMemberNameOptions.value
+  if (options.length === 0) return ''
+  const lowered = options.map((name) => name.toLowerCase())
+  for (const keyword of keywords) {
+    const target = keyword.toLowerCase()
+    const hitIndex = lowered.findIndex((item) => item.includes(target))
+    if (hitIndex >= 0) {
+      return options[hitIndex]
+    }
+  }
+  return options[Math.min(Math.max(fallbackIndex, 0), options.length - 1)] || options[0]
+}
+
+const createPresetAgentStep = (input: {
+  prefix: string
+  name: string
+  phase: string
+  instruction: string
+  member: string
+}): TeamOrchestrationStep => ({
+  id: generateTeamStepId(input.prefix),
+  type: 'agent',
+  name: input.name,
+  member: input.member,
+  phase: input.phase,
+  instruction: input.instruction,
+  retry: { max_attempts: 1, backoff_ms: 800 },
+})
+
+const buildOrchestrationPresetPlan = (presetId: TeamOrchestrationPresetId): TeamOrchestrationPlan => {
+  const version = Math.max(1, Number(teamOrchestrationDraft.value.version || 1))
+  const pm = pickTeamMemberForPreset(['产品', 'product', 'pm'], 0)
+  const architect = pickTeamMemberForPreset(['架构', 'architect'], 1)
+  const engineer = pickTeamMemberForPreset(['研发', '开发', 'engineer', 'dev'], 2)
+  const qa = pickTeamMemberForPreset(['测试', 'qa', 'quality'], 3)
+  const security = pickTeamMemberForPreset(['安全', 'security'], 2)
+  const sre = pickTeamMemberForPreset(['sre', '运维', 'ops'], 0)
+
+  if (presetId === 'product_delivery_chain') {
+    return {
+      version,
+      steps: [
+        createPresetAgentStep({
+          prefix: 'prd',
+          name: '需求澄清',
+          phase: 'requirements',
+          member: pm,
+          instruction: '明确目标用户、核心场景、验收标准与边界条件，沉淀为可执行需求。',
+        }),
+        createPresetAgentStep({
+          prefix: 'arch',
+          name: '架构设计',
+          phase: 'design',
+          member: architect || engineer || pm,
+          instruction: '输出系统架构、模块边界、关键技术选型与风险控制点。',
+        }),
+        {
+          id: generateTeamStepId('delivery'),
+          type: 'parallel',
+          name: '并行交付',
+          phase: 'implementation_and_validation',
+          children: [
+            createPresetAgentStep({
+              prefix: 'impl',
+              name: '研发实现方案',
+              phase: 'implementation',
+              member: engineer || architect || pm,
+              instruction: '拆解实现任务、接口契约与交付顺序，明确依赖与里程碑。',
+            }),
+            createPresetAgentStep({
+              prefix: 'qa',
+              name: '测试验证策略',
+              phase: 'validation',
+              member: qa || engineer || architect,
+              instruction: '设计测试范围、关键用例、回归策略与上线前验证清单。',
+            }),
+          ],
+        },
+        createPresetAgentStep({
+          prefix: 'gate',
+          name: '发布决策',
+          phase: 'release_gate',
+          member: architect || pm || engineer,
+          instruction: '综合风险、质量与收益做最终发布建议，并给出发布后观测指标。',
+        }),
+      ],
+    }
+  }
+
+  if (presetId === 'security_audit_matrix') {
+    return {
+      version,
+      steps: [
+        {
+          id: generateTeamStepId('audit'),
+          type: 'parallel',
+          name: '安全审计并行分析',
+          phase: 'security_audit',
+          children: [
+            createPresetAgentStep({
+              prefix: 'auth',
+              name: '鉴权与会话审计',
+              phase: 'auth_security',
+              member: security || engineer || architect,
+              instruction: '检查认证、授权、会话管理缺陷并给出风险等级。',
+            }),
+            createPresetAgentStep({
+              prefix: 'deps',
+              name: '依赖与供应链审计',
+              phase: 'supply_chain_security',
+              member: security || engineer || architect,
+              instruction: '识别依赖漏洞、供应链风险与版本治理建议。',
+            }),
+            createPresetAgentStep({
+              prefix: 'code',
+              name: '代码与配置审计',
+              phase: 'code_security',
+              member: engineer || security || architect,
+              instruction: '检查注入、越权、敏感配置与日志暴露等高风险问题。',
+            }),
+          ],
+        },
+        {
+          id: generateTeamStepId('remediate'),
+          type: 'serial',
+          name: '风险收敛与修复',
+          phase: 'remediation',
+          children: [
+            createPresetAgentStep({
+              prefix: 'triage',
+              name: '风险分级与排期',
+              phase: 'triage',
+              member: security || pm || architect,
+              instruction: '汇总审计发现，按风险与业务影响排序并输出修复优先级。',
+            }),
+            createPresetAgentStep({
+              prefix: 'fix',
+              name: '修复方案设计',
+              phase: 'fix_plan',
+              member: engineer || architect || security,
+              instruction: '为高优先问题提供可落地修复策略、代码改造点与回滚方案。',
+            }),
+            createPresetAgentStep({
+              prefix: 'verify',
+              name: '修复验证',
+              phase: 'retest',
+              member: qa || security || engineer,
+              instruction: '验证修复有效性并确认未引入回归风险，形成闭环结论。',
+            }),
+          ],
+        },
+      ],
+    }
+  }
+
+  return {
+    version,
+    steps: [
+      createPresetAgentStep({
+        prefix: 'takeover',
+        name: '故障接管',
+        phase: 'incident_intake',
+        member: sre || architect || engineer,
+        instruction: '明确故障范围、影响用户、时间线与当前止损动作。',
+      }),
+      {
+        id: generateTeamStepId('analysis'),
+        type: 'parallel',
+        name: '并行根因分析',
+        phase: 'incident_analysis',
+        children: [
+          createPresetAgentStep({
+            prefix: 'rootcause',
+            name: '技术根因分析',
+            phase: 'root_cause',
+            member: engineer || architect || sre,
+            instruction: '定位技术根因，给出可验证证据与复现路径。',
+          }),
+          createPresetAgentStep({
+            prefix: 'secimpact',
+            name: '安全影响评估',
+            phase: 'security_impact',
+            member: security || engineer || architect,
+            instruction: '评估是否存在安全风险扩散、数据泄露或权限滥用。',
+          }),
+        ],
+      },
+      createPresetAgentStep({
+        prefix: 'plan',
+        name: '处置与恢复方案',
+        phase: 'mitigation_plan',
+        member: architect || engineer || sre,
+        instruction: '制定短期止血与长期修复方案，明确执行步骤与责任人。',
+      }),
+      createPresetAgentStep({
+        prefix: 'postmortem',
+        name: '验证与复盘',
+        phase: 'verification_postmortem',
+        member: qa || pm || architect,
+        instruction: '验证恢复效果并输出复盘结论、预防措施与后续追踪指标。',
+      }),
+    ],
+  }
+}
+
+const getAllTeamAgentSteps = (steps: TeamOrchestrationStep[]): TeamOrchestrationStep[] => {
+  const result: TeamOrchestrationStep[] = []
+  const walk = (nodes: TeamOrchestrationStep[]) => {
+    for (const node of nodes) {
+      if (node.type === 'agent') {
+        result.push(node)
+      } else if (Array.isArray(node.children) && node.children.length > 0) {
+        walk(node.children)
+      }
+    }
+  }
+  walk(steps)
+  return result
+}
+
+const inferTeamTemplateDraftName = () => {
+  if (teamTemplateDraftName.value.trim()) return
+  if (teamSelectedOrchestrationPresetId.value) {
+    const preset = TEAM_ORCHESTRATION_PRESET_METAS.find((item) => item.id === teamSelectedOrchestrationPresetId.value)
+    if (preset) {
+      teamTemplateDraftName.value = `${preset.label}-模板`
+      return
+    }
+  }
+  const goal = (teamSessionDetail.value?.goal || '').trim()
+  if (goal) {
+    teamTemplateDraftName.value = `Team-${goal.slice(0, 20)}${goal.length > 20 ? '...' : ''}`
+    return
+  }
+  teamTemplateDraftName.value = 'Team-编排模板'
+}
+
+const normalizeTeamOrchestrationStep = (raw: any): TeamOrchestrationStep => {
+  const typeRaw = typeof raw?.type === 'string' ? raw.type : 'agent'
+  const type: TeamOrchestrationStepType = typeRaw === 'parallel' || typeRaw === 'serial' ? typeRaw : 'agent'
+  const step: TeamOrchestrationStep = {
+    id: typeof raw?.id === 'string' && raw.id.trim()
+      ? raw.id.trim()
+      : generateTeamStepId('step'),
+    type,
+    name: typeof raw?.name === 'string' ? raw.name : '',
+    phase: typeof raw?.phase === 'string' ? raw.phase : '',
+    instruction: typeof raw?.instruction === 'string'
+      ? raw.instruction
+      : (typeof raw?.prompt === 'string' ? raw.prompt : ''),
+  }
+
+  if (type === 'agent') {
+    step.member = typeof raw?.member === 'string' ? raw.member : ''
+    const retryMaxAttempts = Number(raw?.retry?.max_attempts ?? raw?.retry_max_attempts ?? 1)
+    const retryBackoffMs = Number(raw?.retry?.backoff_ms ?? raw?.retry_backoff_ms ?? 800)
+    step.retry = {
+      max_attempts: Number.isFinite(retryMaxAttempts) ? Math.max(1, Math.floor(retryMaxAttempts)) : 1,
+      backoff_ms: Number.isFinite(retryBackoffMs) ? Math.max(100, Math.floor(retryBackoffMs)) : 800,
+    }
+  } else {
+    const rawChildren = Array.isArray(raw?.children) ? raw.children : []
+    step.children = rawChildren.map((child: any) => normalizeTeamOrchestrationStep(child))
+  }
+
+  return step
+}
+
+const normalizeTeamOrchestrationPlan = (raw: any): TeamOrchestrationPlan => {
+  const versionRaw = Number(raw?.version ?? 1)
+  const version = Number.isFinite(versionRaw) ? Math.max(1, Math.floor(versionRaw)) : 1
+  const steps = Array.isArray(raw?.steps)
+    ? raw.steps.map((step: any) => normalizeTeamOrchestrationStep(step))
+    : []
+  return { version, steps }
+}
+
+const teamOrchestrationPlanToJson = (plan: TeamOrchestrationPlan): any => {
+  const mapStep = (step: TeamOrchestrationStep): any => {
+    const base: Record<string, any> = {
+      id: step.id || generateTeamStepId('step'),
+      type: step.type,
+    }
+    if (step.name && step.name.trim()) {
+      base.name = step.name.trim()
+    }
+    if (step.phase && step.phase.trim()) {
+      base.phase = step.phase.trim()
+    }
+    if (step.instruction && step.instruction.trim()) {
+      base.instruction = step.instruction.trim()
+    }
+    if (step.type === 'agent') {
+      base.member = (step.member || '').trim()
+      const retryMaxAttempts = Number(step.retry?.max_attempts ?? 1)
+      const retryBackoffMs = Number(step.retry?.backoff_ms ?? 800)
+      base.retry = {
+        max_attempts: Number.isFinite(retryMaxAttempts) ? Math.max(1, Math.floor(retryMaxAttempts)) : 1,
+        backoff_ms: Number.isFinite(retryBackoffMs) ? Math.max(100, Math.floor(retryBackoffMs)) : 800,
+      }
+    } else {
+      base.children = Array.isArray(step.children) ? step.children.map(mapStep) : []
+    }
+    return base
+  }
+
+  return {
+    version: Number.isFinite(Number(plan.version)) ? Math.max(1, Math.floor(Number(plan.version))) : 1,
+    steps: Array.isArray(plan.steps) ? plan.steps.map(mapStep) : [],
+  }
+}
+
+const updateTeamOrchestrationTextFromDraft = () => {
+  const jsonValue = teamOrchestrationPlanToJson(teamOrchestrationDraft.value)
+  teamOrchestrationPlanText.value = JSON.stringify(jsonValue, null, 2)
+}
+
+const defaultOrchestrationPlan = (): TeamOrchestrationPlan => ({
+  version: 1,
+  steps: [],
+})
+
+const syncTeamOrchestrationEditorFromSession = (force = false) => {
+  const plan = teamSessionDetail.value?.orchestration_plan ?? defaultOrchestrationPlan()
+  if (teamPlanDirty.value && !force) return
+  const normalized = normalizeTeamOrchestrationPlan(plan)
+  teamOrchestrationDraft.value = normalized
+  teamOrchestrationPlanText.value = JSON.stringify(teamOrchestrationPlanToJson(normalized), null, 2)
+  teamPlanDirty.value = false
+  teamPlanError.value = null
+  if (force || !teamResumeStepId.value.trim()) {
+    const lastStepId = teamSessionDetail.value?.state_machine?.orchestration_runtime?.last_step_id
+    teamResumeStepId.value = typeof lastStepId === 'string' ? lastStepId : ''
+  }
+  teamSelectedOrchestrationPresetId.value = null
+  teamSelectedRecoveryPresetId.value = teamCurrentNoHumanInputPolicy.value
+  if (force || !teamTemplateDraftName.value.trim()) {
+    teamTemplateDraftName.value = ''
+    inferTeamTemplateDraftName()
+  }
+}
+
+const handleTeamOrchestrationInput = (event: Event) => {
+  const target = event.target as HTMLTextAreaElement
+  teamOrchestrationPlanText.value = target.value
+  try {
+    const parsed = JSON.parse(target.value)
+    teamOrchestrationDraft.value = normalizeTeamOrchestrationPlan(parsed)
+  } catch {
+    // Keep text as source when json is temporarily invalid during editing.
+  }
+  teamPlanDirty.value = true
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+}
+
+const handleTeamReloadOrchestrationPlan = () => {
+  syncTeamOrchestrationEditorFromSession(true)
+  teamPlanSuccess.value = '已从会话重新载入编排计划。'
+}
+
+const markTeamVisualPlanDirty = () => {
+  updateTeamOrchestrationTextFromDraft()
+  teamPlanDirty.value = true
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+}
+
+const handleTeamVisualStepsUpdated = (steps: TeamOrchestrationStep[]) => {
+  teamOrchestrationDraft.value.steps = steps
+  markTeamVisualPlanDirty()
+}
+
+const handleTeamApplyOrchestrationPreset = (presetId: TeamOrchestrationPresetId) => {
+  const presetPlan = buildOrchestrationPresetPlan(presetId)
+  const normalized = normalizeTeamOrchestrationPlan(presetPlan)
+  teamOrchestrationDraft.value = normalized
+  updateTeamOrchestrationTextFromDraft()
+  teamPlanDirty.value = true
+  teamPlanError.value = null
+  teamSelectedOrchestrationPresetId.value = presetId
+  if (!teamTemplateDraftName.value.trim()) {
+    inferTeamTemplateDraftName()
+  }
+  if (presetId === 'product_delivery_chain') {
+    teamTemplateDraftDomain.value = 'product'
+  } else if (presetId === 'security_audit_matrix') {
+    teamTemplateDraftDomain.value = 'security'
+  } else {
+    teamTemplateDraftDomain.value = 'ops'
+  }
+
+  const missingMemberCount = getAllTeamAgentSteps(normalized.steps)
+    .filter((step) => !step.member || !step.member.trim())
+    .length
+  if (missingMemberCount > 0) {
+    teamPlanSuccess.value = `已应用预设（${missingMemberCount} 个节点未匹配成员，请手动选择后保存）。`
+  } else {
+    teamPlanSuccess.value = '已应用编排预设，请保存后运行。'
+  }
+}
+
+const handleTeamApplyRecoveryPreset = async (presetId: TeamRecoveryPresetId) => {
+  const preset = TEAM_RECOVERY_PRESETS.find((item) => item.id === presetId)
+  if (!preset) return
+
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+  teamSelectedRecoveryPresetId.value = presetId
+
+  const agentSteps = getAllTeamAgentSteps(teamOrchestrationDraft.value.steps)
+  for (const step of agentSteps) {
+    step.retry = {
+      max_attempts: preset.max_attempts,
+      backoff_ms: preset.backoff_ms,
+    }
+  }
+  if (agentSteps.length > 0) {
+    markTeamVisualPlanDirty()
+  }
+
+  if (!activeTeamSessionId.value) {
+    teamPlanSuccess.value = '已应用恢复策略 preset（会话未激活，仅更新本地编排草稿）。'
+    return
+  }
+
+  const currentStateMachine = teamSessionDetail.value?.state_machine && typeof teamSessionDetail.value.state_machine === 'object'
+    ? teamSessionDetail.value.state_machine
+    : {}
+  const currentIntervention = (currentStateMachine as any)?.human_intervention && typeof (currentStateMachine as any).human_intervention === 'object'
+    ? (currentStateMachine as any).human_intervention
+    : {}
+
+  const nextStateMachine = {
+    ...currentStateMachine,
+    no_human_input_policy: preset.no_human_input_policy,
+    human_intervention_timeout_secs: preset.human_intervention_timeout_secs,
+    max_human_interventions: preset.max_human_interventions,
+    human_intervention: {
+      ...currentIntervention,
+      policy: preset.no_human_input_policy,
+      timeout_secs: preset.human_intervention_timeout_secs,
+    },
+  }
+
+  teamRecoveryPresetApplying.value = true
+  try {
+    await agentTeamApi.updateSession(activeTeamSessionId.value, {
+      state_machine: nextStateMachine,
+    })
+    if (teamSessionDetail.value) {
+      teamSessionDetail.value = {
+        ...teamSessionDetail.value,
+        state_machine: nextStateMachine,
+      }
+    }
+    teamPlanSuccess.value = '已应用恢复策略 preset，并同步会话恢复配置。'
+  } catch (e: any) {
+    teamPlanError.value = e?.message || String(e)
+  } finally {
+    teamRecoveryPresetApplying.value = false
+  }
+}
+
+const handleTeamSaveCurrentPlanAsTemplate = async () => {
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+  inferTeamTemplateDraftName()
+
+  const templateName = teamTemplateDraftName.value.trim()
+  if (!templateName) {
+    teamPlanError.value = '请输入模板名称。'
+    return
+  }
+
+  const templateDomain = teamTemplateDraftDomain.value
+  if (!TEAM_TEMPLATE_DOMAIN_OPTIONS.includes(templateDomain)) {
+    teamPlanError.value = '模板 domain 非法。'
+    return
+  }
+
+  teamTemplateDraftSaving.value = true
+  try {
+    const plan = parseTeamOrchestrationPlanInput()
+    const steps = Array.isArray(plan?.steps) ? plan.steps : []
+    if (steps.length === 0) {
+      throw new Error('当前编排为空，无法保存为模板。')
+    }
+
+    const sessionMembers = teamSessionDetail.value?.members || []
+    let memberPayload: Array<{
+      name: string
+      responsibility?: string
+      system_prompt?: string
+      decision_style?: string
+      risk_preference?: string
+      weight?: number
+      tool_policy?: any
+      output_schema?: any
+      sort_order?: number
+    }> = sessionMembers.map((member, index) => ({
+      name: member.name,
+      responsibility: member.responsibility || undefined,
+      system_prompt: member.system_prompt || undefined,
+      decision_style: member.decision_style || undefined,
+      risk_preference: member.risk_preference || undefined,
+      weight: Number.isFinite(Number(member.weight)) ? Number(member.weight) : 1,
+      tool_policy: member.tool_policy || undefined,
+      output_schema: member.output_schema || undefined,
+      sort_order: Number.isFinite(Number(member.sort_order)) ? Number(member.sort_order) : index,
+    }))
+
+    if (memberPayload.length === 0) {
+      const fallbackMembers = Array.from(
+        new Set(
+          getAllTeamAgentSteps(teamOrchestrationDraft.value.steps)
+            .map((step) => (step.member || '').trim())
+            .filter((name) => !!name),
+        ),
+      )
+      memberPayload = fallbackMembers.map((name, index) => ({
+        name,
+        sort_order: index,
+      }))
+    }
+
+    if (memberPayload.length === 0) {
+      throw new Error('当前会话没有可用成员，至少需要 1 个成员才能保存模板。')
+    }
+
+    const recoveryStateMachine = {
+      no_human_input_policy: teamCurrentNoHumanInputPolicy.value,
+      human_intervention_timeout_secs: teamCurrentHumanInterventionTimeoutSecs.value,
+      max_human_interventions: teamCurrentMaxHumanInterventions.value,
+      human_intervention: {
+        policy: teamCurrentNoHumanInputPolicy.value,
+        timeout_secs: teamCurrentHumanInterventionTimeoutSecs.value,
+      },
+    }
+
+    const maxRounds = Number(teamSessionDetail.value?.max_rounds || 5)
+    const normalizedMaxRounds = Number.isFinite(maxRounds) ? Math.max(1, Math.floor(maxRounds)) : 5
+    const planVersionRaw = Number(plan?.version ?? teamOrchestrationDraft.value.version ?? 1)
+    const planVersion = Number.isFinite(planVersionRaw) ? Math.max(1, Math.floor(planVersionRaw)) : 1
+
+    const created = await agentTeamApi.createTemplate({
+      name: templateName,
+      description: '由 Team 编排页沉淀，包含编排计划与恢复策略预设。',
+      domain: templateDomain,
+      default_rounds_config: {
+        max_rounds: normalizedMaxRounds,
+        orchestration_plan: plan,
+        plan_version: planVersion,
+      },
+      default_tool_policy: {
+        state_machine: recoveryStateMachine,
+      },
+      members: memberPayload,
+    })
+
+    teamPlanSuccess.value = `模板已创建：${created.name}`
+  } catch (e: any) {
+    teamPlanError.value = e?.message || String(e)
+  } finally {
+    teamTemplateDraftSaving.value = false
+  }
+}
+
+const ensureTeamContainerChildren = (step: TeamOrchestrationStep): TeamOrchestrationStep[] => {
+  if (step.type === 'agent') {
+    step.type = 'serial'
+    step.member = ''
+    step.retry = undefined
+  }
+  if (!Array.isArray(step.children)) {
+    step.children = []
+  }
+  return step.children
+}
+
+const getTeamStepArrayByContainerPath = (containerPath: number[]): TeamOrchestrationStep[] | null => {
+  let current = teamOrchestrationDraft.value.steps
+  if (containerPath.length === 0) {
+    return current
+  }
+  for (const idx of containerPath) {
+    if (!Array.isArray(current) || idx < 0 || idx >= current.length) {
+      return null
+    }
+    const step = current[idx]
+    current = ensureTeamContainerChildren(step)
+  }
+  return current
+}
+
+const getTeamStepByPath = (path: number[]): TeamOrchestrationStep | null => {
+  if (path.length === 0) return null
+  const container = getTeamStepArrayByContainerPath(path.slice(0, -1))
+  const index = path[path.length - 1]
+  if (!container || index < 0 || index >= container.length) return null
+  return container[index]
+}
+
+const pathsEqual = (a: number[], b: number[]): boolean =>
+  a.length === b.length && a.every((v, idx) => v === b[idx])
+
+const isPathPrefix = (prefix: number[], path: number[]): boolean =>
+  prefix.length <= path.length && prefix.every((v, idx) => path[idx] === v)
+
+const removeTeamStepAtPath = (path: number[]): TeamOrchestrationStep | null => {
+  if (path.length === 0) return null
+  const container = getTeamStepArrayByContainerPath(path.slice(0, -1))
+  const index = path[path.length - 1]
+  if (!container || index < 0 || index >= container.length) return null
+  const [removed] = container.splice(index, 1)
+  return removed || null
+}
+
+const adjustPathAfterRemoval = (path: number[], removedPath: number[]): number[] | null => {
+  if (isPathPrefix(removedPath, path)) {
+    return null
+  }
+  const next = [...path]
+  if (
+    path.length === removedPath.length &&
+    pathsEqual(path.slice(0, -1), removedPath.slice(0, -1)) &&
+    removedPath[removedPath.length - 1] < path[path.length - 1]
+  ) {
+    next[next.length - 1] -= 1
+  }
+  return next
+}
+
+const handleTeamMoveStepByPath = (payload: TeamStepMovePayload) => {
+  const sourcePath = payload.sourcePath || []
+  const targetPath = payload.targetPath || []
+  if (sourcePath.length === 0 || targetPath.length === 0) return
+  if (pathsEqual(sourcePath, targetPath) && payload.mode === 'before') return
+  if (payload.mode === 'inside' && isPathPrefix(sourcePath, targetPath)) {
+    return
+  }
+
+  const moved = removeTeamStepAtPath(sourcePath)
+  if (!moved) return
+  const adjustedTargetPath = adjustPathAfterRemoval(targetPath, sourcePath)
+  if (!adjustedTargetPath) {
+    markTeamVisualPlanDirty()
+    return
+  }
+
+  if (payload.mode === 'before') {
+    const targetContainer = getTeamStepArrayByContainerPath(adjustedTargetPath.slice(0, -1))
+    const targetIndex = adjustedTargetPath[adjustedTargetPath.length - 1]
+    if (!targetContainer) return
+    const safeIndex = Math.max(0, Math.min(targetIndex, targetContainer.length))
+    targetContainer.splice(safeIndex, 0, moved)
+  } else {
+    const targetStep = getTeamStepByPath(adjustedTargetPath)
+    if (!targetStep) return
+    const children = ensureTeamContainerChildren(targetStep)
+    children.push(moved)
+  }
+
+  markTeamVisualPlanDirty()
+}
+
+const handleTeamPromoteStep = (path: number[]) => {
+  if (path.length < 2) return
+  const moveIndex = path[path.length - 1]
+  const parentPath = path.slice(0, -1)
+  const grandParentPath = path.slice(0, -2)
+  const parentIndex = path[path.length - 2]
+  const sourceArray = getTeamStepArrayByContainerPath(parentPath)
+  const targetArray = getTeamStepArrayByContainerPath(grandParentPath)
+  if (!sourceArray || !targetArray) return
+  if (moveIndex < 0 || moveIndex >= sourceArray.length) return
+  const [moved] = sourceArray.splice(moveIndex, 1)
+  targetArray.splice(parentIndex + 1, 0, moved)
+  markTeamVisualPlanDirty()
+}
+
+const handleTeamNestStep = (path: number[]) => {
+  if (path.length < 1) return
+  const moveIndex = path[path.length - 1]
+  if (moveIndex <= 0) return
+  const containerPath = path.slice(0, -1)
+  const siblingArray = getTeamStepArrayByContainerPath(containerPath)
+  if (!siblingArray) return
+  if (moveIndex < 0 || moveIndex >= siblingArray.length) return
+  const prevSibling = siblingArray[moveIndex - 1]
+  const [moved] = siblingArray.splice(moveIndex, 1)
+  const children = ensureTeamContainerChildren(prevSibling)
+  children.push(moved)
+  markTeamVisualPlanDirty()
+}
+
+const parseTeamOrchestrationPlanInput = (): any => {
+  const raw = teamOrchestrationPlanText.value.trim()
+  if (!raw) {
+    throw new Error('编排计划不能为空。')
+  }
+  const parsed = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('编排计划必须是 JSON 对象。')
+  }
+  const normalized = normalizeTeamOrchestrationPlan(parsed)
+  teamOrchestrationDraft.value = normalized
+  return teamOrchestrationPlanToJson(normalized)
+}
+
+const handleTeamSaveOrchestrationPlan = async () => {
+  if (!activeTeamSessionId.value) return
+  teamPlanSaving.value = true
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+  try {
+    const plan = parseTeamOrchestrationPlanInput()
+    const planVersionRaw = Number(plan?.version ?? teamSessionDetail.value?.plan_version ?? 1)
+    const planVersion = Number.isFinite(planVersionRaw) ? Math.max(1, Math.floor(planVersionRaw)) : 1
+    await agentTeamApi.updateSession(activeTeamSessionId.value, {
+      orchestration_plan: plan,
+      plan_version: planVersion,
+    })
+    teamPlanDirty.value = false
+    await loadTeamWorkspaceData()
+    teamPlanSuccess.value = '编排计划已保存。'
+  } catch (e: any) {
+    teamPlanError.value = e?.message || String(e)
+  } finally {
+    teamPlanSaving.value = false
+  }
+}
+
+const handleTeamStartRunWithPlan = async () => {
+  if (!activeTeamSessionId.value || isTeamRunActive.value) return
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+  try {
+    if (teamPlanDirty.value) {
+      await handleTeamSaveOrchestrationPlan()
+      if (teamPlanError.value) return
+    }
+    await agentTeamApi.startRun(activeTeamSessionId.value)
+    teamSessionState.value = 'INITIALIZING'
+    appendTeamBridgeMessage('[Team] 已按当前编排计划启动执行。')
+    await loadTeamWorkspaceData()
+  } catch (e: any) {
+    teamPlanError.value = e?.message || String(e)
+  }
+}
+
+const handleTeamRetryRun = async () => {
+  if (!activeTeamSessionId.value || isTeamRunActive.value) return
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+  try {
+    if (teamPlanDirty.value) {
+      await handleTeamSaveOrchestrationPlan()
+      if (teamPlanError.value) return
+    }
+    await agentTeamApi.startRun(activeTeamSessionId.value)
+    teamSessionState.value = 'INITIALIZING'
+    appendTeamBridgeMessage('[Team] 已触发重试运行。')
+    await loadTeamWorkspaceData()
+  } catch (e: any) {
+    teamPlanError.value = e?.message || String(e)
+  }
+}
+
+const handleTeamResumeFromStep = async () => {
+  if (!activeTeamSessionId.value || isTeamRunActive.value) return
+  teamPlanError.value = null
+  teamPlanSuccess.value = null
+  try {
+    const stepId = teamResumeStepId.value.trim()
+    if (!stepId) {
+      throw new Error('请先填写要恢复的 step_id。')
+    }
+    const currentStateMachine = teamSessionDetail.value?.state_machine && typeof teamSessionDetail.value.state_machine === 'object'
+      ? teamSessionDetail.value.state_machine
+      : {}
+    const currentRuntime = currentStateMachine?.orchestration_runtime && typeof currentStateMachine.orchestration_runtime === 'object'
+      ? currentStateMachine.orchestration_runtime
+      : {}
+    await agentTeamApi.updateSession(activeTeamSessionId.value, {
+      state_machine: {
+        ...currentStateMachine,
+        orchestration_runtime: {
+          ...currentRuntime,
+          resume_from_step_id: stepId,
+        },
+      },
+    })
+    await agentTeamApi.startRun(activeTeamSessionId.value)
+    teamSessionState.value = 'INITIALIZING'
+    appendTeamBridgeMessage(`[Team] 已从 step '${stepId}' 发起恢复执行。`)
+    await loadTeamWorkspaceData()
+  } catch (e: any) {
+    teamPlanError.value = e?.message || String(e)
+  }
+}
+
+const handleTeamFillResumeStep = (stepId: string) => {
+  const normalized = (stepId || '').trim()
+  if (!normalized) return
+  teamResumeStepId.value = normalized
+  teamPlanError.value = null
+  teamPlanSuccess.value = `已选择恢复节点：${normalized}`
+}
+
+const resetTeamBlackboardArchive = () => {
+  teamBlackboardArchiveEntryId.value = null
+  teamBlackboardArchiveMessages.value = []
+  teamBlackboardArchiveScope.value = null
+  teamBlackboardArchiveLoading.value = false
+  teamBlackboardArchiveError.value = null
+}
+
+const loadTeamWorkspaceData = async () => {
+  if (!activeTeamSessionId.value) {
+    teamSessionMessages.value = []
+    teamRounds.value = []
+    teamBlackboardEntries.value = []
+    resetTeamBlackboardArchive()
+    teamArtifacts.value = []
+    teamSessionDetail.value = null
+    teamSelectedOrchestrationPresetId.value = null
+    teamSelectedRecoveryPresetId.value = 'balanced'
+    teamTemplateDraftName.value = ''
+    teamTemplateDraftDomain.value = 'custom'
+    syncTeamOrchestrationEditorFromSession(true)
+    return
+  }
+  teamWorkspaceLoading.value = true
+  try {
+    const [sessionResp, messagesResp, roundsResp, blackboardResp, artifactsResp] = await Promise.all([
+      agentTeamApi.getSession(activeTeamSessionId.value),
+      agentTeamApi.getMessages(activeTeamSessionId.value),
+      agentTeamApi.getRounds(activeTeamSessionId.value),
+      agentTeamApi.getBlackboard(activeTeamSessionId.value),
+      agentTeamApi.listArtifacts(activeTeamSessionId.value),
+    ])
+    teamSessionDetail.value = sessionResp
+    teamSessionMessages.value = messagesResp
+    teamRounds.value = roundsResp
+    teamBlackboardEntries.value = blackboardResp
+    if (
+      teamBlackboardArchiveEntryId.value &&
+      !blackboardResp.some((entry) => entry.id === teamBlackboardArchiveEntryId.value)
+    ) {
+      resetTeamBlackboardArchive()
+    }
+    teamArtifacts.value = artifactsResp
+    syncTeamOrchestrationEditorFromSession()
+  } catch (e) {
+    console.error('[AgentView] Failed to load team workspace data:', e)
+  } finally {
+    teamWorkspaceLoading.value = false
+  }
+}
+
+const handleToggleTeamWorkspace = async () => {
+  if (!teamModeEnabled.value) return
+  if (isTeamWorkspaceActive.value) {
+    isTeamWorkspaceActive.value = false
+    return
+  }
+  webExplorerEvents.close()
+  todosComposable.close()
+  terminalComposable.closeTerminal()
+  isHtmlPanelActive.value = false
+  isAuditFindingsPanelActive.value = false
+  isTeamWorkspaceActive.value = true
+  if (!activeTeamSessionId.value) {
+    teamWorkspaceTab.value = 'templates'
+  }
+  await loadTeamWorkspaceData()
+}
+
+const handleTeamResolveBlackboardEntry = async (entryId: string) => {
+  if (!activeTeamSessionId.value || !entryId) return
+  try {
+    await agentTeamApi.resolveBlackboardEntry(activeTeamSessionId.value, entryId)
+    teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
+  } catch (e) {
+    console.error('[AgentView] Failed to resolve team blackboard entry:', e)
+  }
+}
+
+const handleTeamViewBlackboardArchive = async (entryId: string) => {
+  if (!activeTeamSessionId.value || !entryId) return
+
+  if (teamBlackboardArchiveEntryId.value === entryId && !teamBlackboardArchiveLoading.value) {
+    resetTeamBlackboardArchive()
+    return
+  }
+
+  teamBlackboardArchiveEntryId.value = entryId
+  teamBlackboardArchiveMessages.value = []
+  teamBlackboardArchiveScope.value = null
+  teamBlackboardArchiveError.value = null
+  teamBlackboardArchiveLoading.value = true
+
+  try {
+    const archive = await agentTeamApi.getBlackboardEntryArchive(
+      activeTeamSessionId.value,
+      entryId,
+      120,
+    ) as AgentTeamBlackboardArchive
+    teamBlackboardArchiveMessages.value = Array.isArray(archive.messages) ? archive.messages : []
+    teamBlackboardArchiveScope.value = archive.retrieval_scope || null
+  } catch (e: any) {
+    teamBlackboardArchiveError.value = e?.message || String(e)
+  } finally {
+    teamBlackboardArchiveLoading.value = false
+  }
+}
+
+const handleTeamAddBlackboardEntry = async (type: string, title: string, content: string) => {
+  if (!activeTeamSessionId.value) return
+  try {
+    await agentTeamApi.addBlackboardEntry({
+      session_id: activeTeamSessionId.value,
+      entry_type: type,
+      title,
+      content,
+      contributed_by: '主链路用户',
+    })
+    teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
+  } catch (e) {
+    console.error('[AgentView] Failed to add team blackboard entry:', e)
+  }
+}
+
+const handleTeamAnnotateBlackboardEntry = async (entryId: string, text: string) => {
+  if (!activeTeamSessionId.value) return
+  try {
+    await agentTeamApi.addBlackboardEntry({
+      session_id: activeTeamSessionId.value,
+      entry_type: 'action_item',
+      title: `批注 - ${entryId.slice(0, 8)}`,
+      content: text,
+      contributed_by: '主链路批注',
+    })
+    teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
+  } catch (e) {
+    console.error('[AgentView] Failed to annotate team blackboard entry:', e)
+  }
+}
+
+const handleTeamTemplatesUpdated = async () => {
+  await loadTeamTemplateOptions(selectedTeamTemplateId.value)
+  if (teamWorkspaceTab.value === 'templates') {
+    await syncActiveTeamSession()
+    await loadTeamWorkspaceData()
+  }
+}
+
+const handleTeamSessionCreated = async (sessionId: string) => {
+  activeTeamSessionId.value = sessionId
+  await syncActiveTeamSession()
+  teamWorkspaceTab.value = 'blackboard'
+  await loadTeamWorkspaceData()
+}
+
 const buildPersistableToolConfig = (config: UiToolConfigPayload) => ({
   enabled: config.enabled,
   selection_strategy: config.selection_strategy,
@@ -1485,12 +3358,24 @@ const handleViewSubagentDetails = (subagentId: string) => {
 // Handle stop
 const handleStop = async () => {
   console.log('[AgentView] Stop requested for conversation:', conversationId.value)
-  
+
+  if (teamModeEnabled.value && activeTeamSessionId.value) {
+    try {
+      await agentTeamApi.stopRun(activeTeamSessionId.value)
+      applyTeamState('FAILED')
+      appendTeamBridgeMessage('[Team] 已停止当前会话运行。')
+    } catch (e) {
+      console.error('[AgentView] Failed to stop team execution:', e)
+      localError.value = t('agent.failedToStopExecution') + ': ' + e
+    }
+    return
+  }
+
   if (!conversationId.value) {
     console.warn('[AgentView] No conversation ID to stop')
     return
   }
-  
+
   try {
     // Call backend to cancel command
     await invoke('cancel_ai_stream', {
@@ -1921,6 +3806,53 @@ const handleSubmit = async () => {
   if (!task) return
   
   localError.value = null
+
+  if (teamModeEnabled.value) {
+    try {
+      // Ensure conversation exists for Team session association.
+      if (!conversationId.value) {
+        const convId = await invoke<string>('create_ai_conversation', {
+          request: {
+            title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+            service_name: 'default'
+          }
+        })
+        conversationId.value = convId
+        currentConversationTitle.value = t('agent.newConversationTitle')
+        conversationListRef.value?.loadConversations()
+        await syncActiveTeamSession()
+      }
+
+      let fullTask = task
+      if (referencedTraffic.value.length > 0) {
+        const trafficContext = buildTrafficContext(referencedTraffic.value)
+        fullTask = `${trafficContext}\n\nUser task: ${task}`
+      }
+
+      // Clear input and pending artifacts in Team mode.
+      inputValue.value = ''
+      pendingAttachments.value = []
+      pendingDocuments.value = []
+      processedDocuments.value = []
+      referencedTraffic.value = []
+
+      nextTick(() => {
+        messageFlowRef.value?.scrollToBottom()
+      })
+
+      emit('submit', fullTask)
+      await routeTeamMessage(fullTask)
+      emit('complete', {
+        mode: 'team',
+        session_id: activeTeamSessionId.value,
+      })
+    } catch (e: any) {
+      const errorMsg = e?.toString?.() || String(e)
+      localError.value = errorMsg
+      emit('error', errorMsg)
+    }
+    return
+  }
   
   // Takeover: if currently executing, cancel previous stream first
   if (isExecuting.value && conversationId.value) {
@@ -2107,6 +4039,34 @@ onMounted(async () => {
   unlistenAiConfigUpdated = await listen('ai_config_updated', async () => {
     await loadAssistantModelOptions()
   })
+  unlistenTeamStateChanged = await listen<AgentTeamStateChangedEvent>('agent_team:state_changed', (event) => {
+    if (!activeTeamSessionId.value || event.payload.session_id !== activeTeamSessionId.value) {
+      return
+    }
+    applyTeamState(event.payload.state)
+    void syncTeamMessagesToMainFlow(event.payload.session_id)
+    if (isTeamWorkspaceActive.value) {
+      void loadTeamWorkspaceData()
+    }
+  })
+  unlistenTeamRoundCompleted = await listen<AgentTeamRoundEvent>('agent_team:round_completed', () => {
+    if (!activeTeamSessionId.value) {
+      return
+    }
+    void syncTeamMessagesToMainFlow(activeTeamSessionId.value)
+    if (isTeamWorkspaceActive.value) {
+      void loadTeamWorkspaceData()
+    }
+  })
+  unlistenTeamArtifactGenerated = await listen<AgentTeamArtifactEvent>('agent_team:artifact_generated', (event) => {
+    if (!activeTeamSessionId.value || event.payload.session_id !== activeTeamSessionId.value) {
+      return
+    }
+    void syncTeamMessagesToMainFlow(event.payload.session_id)
+    if (isTeamWorkspaceActive.value) {
+      void loadTeamWorkspaceData()
+    }
+  })
   
   // Load saved tool configuration from database
   await loadToolConfig()
@@ -2133,9 +4093,22 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopTeamRunStatusPolling()
   if (unlistenAiConfigUpdated) {
     unlistenAiConfigUpdated()
     unlistenAiConfigUpdated = null
+  }
+  if (unlistenTeamStateChanged) {
+    unlistenTeamStateChanged()
+    unlistenTeamStateChanged = null
+  }
+  if (unlistenTeamRoundCompleted) {
+    unlistenTeamRoundCompleted()
+    unlistenTeamRoundCompleted = null
+  }
+  if (unlistenTeamArtifactGenerated) {
+    unlistenTeamArtifactGenerated()
+    unlistenTeamArtifactGenerated = null
   }
 })
 
@@ -2162,6 +4135,21 @@ watch(conversationId, async (newId) => {
       console.error('[AgentView] Failed to update conversation title:', e)
     }
   }
+  if (teamModeEnabled.value) {
+    await syncActiveTeamSession()
+  }
+})
+
+watch(activeTeamSessionId, async (newId, oldId) => {
+  if (newId !== oldId) {
+    teamMainFlowMessageIds = new Set<string>()
+  }
+  ensureTeamRunStatusPolling()
+  if (newId) {
+    await syncTeamMessagesToMainFlow(newId)
+  }
+  if (!isTeamWorkspaceActive.value) return
+  await loadTeamWorkspaceData()
 })
 
 watch(auditPolicyGate, async (newGate) => {

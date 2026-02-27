@@ -1,5 +1,5 @@
 export default {
-  title: 'Bug Bounty',
+  title: 'BBounty',
   createProgram: 'Create Program',
   editProgram: 'Edit Program',
   createFirstProgram: 'Create First Program',
@@ -17,7 +17,7 @@ export default {
   featureInDevelopment: 'This feature is under development',
   selected: 'Selected',
   search: 'Search...',
-  
+
   stats: {
     totalPrograms: 'Total Programs',
     active: 'Active',
@@ -30,7 +30,7 @@ export default {
     acceptanceRate: 'Acceptance Rate',
     successRate: 'Success Rate',
   },
-  
+
   tabs: {
     programs: 'Programs',
     assets: 'Assets',
@@ -43,7 +43,7 @@ export default {
     workflows: 'Workflows',
     monitor: 'Monitor Scheduler',
   },
-  
+
   assets: {
     attackSurface: 'Attack Surface',
     exposure: 'Exposure',
@@ -52,19 +52,19 @@ export default {
     service: 'Service',
     discoveryMethod: 'Discovery',
   },
-  
+
   programs: {
     title: 'My Bug Bounty Programs',
     empty: 'No programs yet, create one to start hunting',
     submissions: 'Submissions',
     earnings: 'Earnings',
   },
-  
+
   findings: {
     title: 'Findings List',
     empty: 'No findings yet',
   },
-  
+
   submissions: {
     title: 'Submissions List',
     empty: 'No submissions yet',
@@ -290,7 +290,7 @@ export default {
     reportGenerated: 'Report generated',
     reportError: 'Failed to generate report',
   },
-  
+
   table: {
     title: 'Title',
     type: 'Type',
@@ -302,12 +302,12 @@ export default {
     reward: 'Reward',
     submittedAt: 'Submitted At',
   },
-  
+
   filter: {
     allSeverities: 'All Severities',
     allStatuses: 'All Statuses',
   },
-  
+
   severity: {
     critical: 'Critical',
     high: 'High',
@@ -315,7 +315,7 @@ export default {
     low: 'Low',
     info: 'Info',
   },
-  
+
   status: {
     new: 'New',
     verified: 'Verified',
@@ -324,7 +324,7 @@ export default {
     fixed: 'Fixed',
     wontfix: 'Won\'t Fix',
   },
-  
+
   form: {
     programName: 'Program Name',
     programNamePlaceholder: 'Enter program name',
@@ -356,13 +356,13 @@ export default {
     tagsPlaceholder: 'Enter tags, separated by commas',
     tagsHint: 'Separate multiple tags with commas',
   },
-  
+
   platforms: {
     private: 'Private Program',
     src: 'SRC Platform',
     other: 'Other Platform',
   },
-  
+
   success: {
     programCreated: 'Program created successfully',
     programUpdated: 'Program updated successfully',
@@ -377,7 +377,7 @@ export default {
     submissionUpdated: 'Submission updated successfully',
     submissionDeleted: 'Submission deleted',
   },
-  
+
   errors: {
     loadFailed: 'Failed to load',
     createFailed: 'Failed to create',
@@ -385,7 +385,7 @@ export default {
     deleteFailed: 'Failed to delete',
     duplicateFinding: 'A similar finding already exists',
   },
-  
+
   confirm: {
     deleteProgram: 'Are you sure you want to delete this program?',
     deleteScope: 'Are you sure you want to delete this scope?',
@@ -730,7 +730,7 @@ export default {
     pluginsLoading: 'Loading plugin list...',
     pluginsLoadFailed: 'Failed to load plugin list, using default plugins',
   },
-  
+
   assetManagement: {
     title: 'Asset Management',
     name: 'Asset Name',
@@ -767,25 +767,25 @@ export default {
     sslDisabled: 'SSL Disabled',
     titleFilter: 'Title',
     fingerprintFilter: 'Fingerprint',
-    
+
     riskLevel: {
       title: 'Risk Level',
       high: 'High Risk',
       medium: 'Medium Risk',
       low: 'Low Risk',
     },
-    
+
     status: {
       active: 'Active',
       inactive: 'Inactive',
     },
-    
+
     exposureLevel: {
       internet: 'Internet',
       intranet: 'Intranet',
       private: 'Private',
     },
-    
+
     columnGroups: {
       basic: 'Basic Info',
       ip: 'IP Assets',
@@ -794,7 +794,7 @@ export default {
       web: 'Web/URL',
       certificate: 'Certificate',
     },
-    
+
     columns: {
       name: 'Name',
       type: 'Type',
@@ -805,7 +805,7 @@ export default {
       attack_surface_score: 'Attack Surface Score',
       exposure_level: 'Exposure Level',
       discovery_method: 'Discovery Method',
-      
+
       // IP Asset
       ipVersion: 'IP Version',
       asn: 'ASN',
@@ -813,25 +813,25 @@ export default {
       country: 'Country',
       city: 'City',
       cloudProvider: 'Cloud Provider',
-      
+
       // Port/Service
       port: 'Port',
       serviceName: 'Service Name',
       serviceVersion: 'Service Version',
       transportProtocol: 'Transport Protocol',
-      
+
       // Domain
       domainRegistrar: 'Domain Registrar',
       expirationDate: 'Expiration Date',
       parentDomain: 'Parent Domain',
-      
+
       // Web/URL
       httpStatus: 'HTTP Status',
       title: 'Page Title',
       cdn: 'CDN',
       waf: 'WAF',
       techStack: 'Tech Stack',
-      
+
       // Certificate
       ssl: 'SSL',
       certIssuer: 'Certificate Issuer',

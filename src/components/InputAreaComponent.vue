@@ -178,6 +178,14 @@
             <button class="icon-btn" title="附件" @click="triggerFileSelect"><i class="fas fa-paperclip"></i></button>
             <button class="icon-btn" :class="{ active: localToolsEnabled }" title="工具调用" @click="toggleTools"><i class="fas fa-tools"></i></button>
             <button v-if="localToolsEnabled" class="icon-btn" title="工具配置" @click="emit('open-tool-config')"><i class="fas fa-cog"></i></button>
+            <button
+              class="icon-btn"
+              :class="{ active: localTeamEnabled }"
+              title="Team 模式"
+              @click="toggleTeam"
+            >
+              <i class="fas fa-users"></i>
+            </button>
             <button 
               class="icon-btn" 
               :class="{ active: localRagEnabled }" 
@@ -205,6 +213,24 @@
               <span class="opacity-70">·</span>
               <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
+            </div>
+            <div v-if="localTeamEnabled" class="assistant-team-template-switch">
+              <SearchableSelect
+                :model-value="localSelectedTeamTemplate"
+                :options="availableTeamTemplateOptions"
+                :placeholder="teamTemplateLoading ? '加载模板中...' : '选择 Team 模板'"
+                search-placeholder="搜索 Team 模板..."
+                no-results-text="无匹配模板"
+                :disabled="teamTemplateLoading || availableTeamTemplateOptions.length === 0"
+                size="sm"
+                direction="up"
+                variant="toolbar"
+                :auto-width="true"
+                align="right"
+                group-by="description"
+                @update:model-value="localSelectedTeamTemplate = $event"
+                @change="onTeamTemplateChanged"
+              />
             </div>
             <div class="assistant-model-switch">
               <SearchableSelect
@@ -488,6 +514,7 @@ const props = defineProps<{
   allowTakeover?: boolean
   ragEnabled?: boolean
   toolsEnabled?: boolean
+  teamEnabled?: boolean
   pendingAttachments?: any[]
   pendingDocuments?: PendingDocumentAttachment[]
   processedDocuments?: ProcessedDocumentResult[]
@@ -496,6 +523,9 @@ const props = defineProps<{
   availableModels?: ModelOption[]
   selectedModel?: string
   modelLoading?: boolean
+  teamTemplateOptions?: ModelOption[]
+  selectedTeamTemplate?: string
+  teamTemplateLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -507,6 +537,7 @@ const emit = defineEmits<{
   (e: 'clear-conversation'): void
   (e: 'toggle-rag', enabled: boolean): void
   (e: 'toggle-tools', enabled: boolean): void
+  (e: 'toggle-team', enabled: boolean): void
   (e: 'open-tool-config'): void
   (e: 'add-attachments', files: string[]): void
   (e: 'remove-attachment', index: number): void
@@ -516,6 +547,7 @@ const emit = defineEmits<{
   (e: 'remove-traffic', index: number): void
   (e: 'clear-traffic'): void
   (e: 'change-model', value: string): void
+  (e: 'change-team-template', value: string): void
 }>()
 
 // removed architecture utilities
@@ -531,6 +563,7 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const STORAGE_KEYS = {
   rag: 'sentinel:input:ragEnabled',
   tools: 'sentinel:input:toolsEnabled',
+  team: 'sentinel:input:teamEnabled',
 } as const
 
 const SLASH_COMMANDS_CATEGORY = 'agent'
@@ -557,8 +590,12 @@ const setBool = (key: string, value: boolean) => {
 // Feature states (controlled by parent via props, with persistence)
 const localRagEnabled = ref<boolean>(!!props.ragEnabled)
 const localToolsEnabled = ref<boolean>(!!props.toolsEnabled)
+const localTeamEnabled = ref<boolean>(!!props.teamEnabled)
 const localSelectedModel = ref(props.selectedModel || '')
+const localSelectedTeamTemplate = ref(props.selectedTeamTemplate || '')
 const availableModelOptions = computed(() => props.availableModels || [])
+const availableTeamTemplateOptions = computed(() => props.teamTemplateOptions || [])
+const teamTemplateLoading = computed(() => !!props.teamTemplateLoading)
 
 // init guard
 const initialized = ref(false)
@@ -1479,10 +1516,21 @@ const toggleTools = () => {
   emit('toggle-tools', localToolsEnabled.value)
 }
 
+const toggleTeam = () => {
+  localTeamEnabled.value = !localTeamEnabled.value
+  setBool(STORAGE_KEYS.team, localTeamEnabled.value)
+  emit('toggle-team', localTeamEnabled.value)
+}
+
 const onModelChanged = (value: string) => {
   if (!value) return
   localSelectedModel.value = value
   emit('change-model', value)
+}
+
+const onTeamTemplateChanged = (value: string) => {
+  localSelectedTeamTemplate.value = value || ''
+  emit('change-team-template', localSelectedTeamTemplate.value)
 }
 
 // 点击外部区域关闭弹层
@@ -1626,14 +1674,19 @@ const setupTauriDragDrop = async () => {
     // Listen for drag-drop events
     unlistenDragDrop = await webview.onDragDropEvent(async (event) => {
       console.log('[InputArea] Drag drop event:', event.payload.type)
+      const payload = event.payload as any
+      const paths = Array.isArray(payload?.paths) ? payload.paths : []
+      const hasFilePaths = paths.length > 0
       
       if (event.payload.type === 'over' || event.payload.type === 'enter') {
-        isDragOver.value = true
+        // 仅对文件拖拽显示上传态，避免干扰页面内普通节点拖拽
+        if (hasFilePaths) {
+          isDragOver.value = true
+        }
       } else if (event.payload.type === 'leave') {
         isDragOver.value = false
       } else if (event.payload.type === 'drop') {
         isDragOver.value = false
-        const paths = event.payload.paths
         console.log('[InputArea] Dropped files:', paths)
         
         if (!paths || paths.length === 0) return
@@ -1839,10 +1892,18 @@ onMounted(async () => {
     localToolsEnabled.value = savedTools
     setBool(STORAGE_KEYS.tools, savedTools)
     emit('toggle-tools', savedTools)
+
+    // Team: prefer persisted value if exists, otherwise use prop
+    const hasPersistedTeam = localStorage.getItem(STORAGE_KEYS.team) !== null
+    const savedTeam = hasPersistedTeam ? getBool(STORAGE_KEYS.team) : !!props.teamEnabled
+    localTeamEnabled.value = savedTeam
+    setBool(STORAGE_KEYS.team, savedTeam)
+    emit('toggle-team', savedTeam)
   } catch {
     // fallback to props on any error
     localRagEnabled.value = !!props.ragEnabled
     localToolsEnabled.value = !!props.toolsEnabled
+    localTeamEnabled.value = !!props.teamEnabled
   }
   initialized.value = true
   window.addEventListener('resize', updatePopoverPosition)
@@ -1891,10 +1952,30 @@ watch(
 )
 
 watch(
+  () => props.teamEnabled,
+  (val) => {
+    if (typeof val === 'boolean') {
+      localTeamEnabled.value = val
+      setBool(STORAGE_KEYS.team, val)
+    }
+  }
+)
+
+watch(
   () => props.selectedModel,
   (val) => {
     if (typeof val === 'string') {
       localSelectedModel.value = val
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.selectedTeamTemplate,
+  (val) => {
+    if (typeof val === 'string') {
+      localSelectedTeamTemplate.value = val
     }
   },
   { immediate: true },

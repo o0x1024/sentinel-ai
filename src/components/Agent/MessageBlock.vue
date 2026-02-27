@@ -210,6 +210,9 @@
   <!-- Regular message block for non-tool-call messages (only render if has content) -->
   <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
     <div :class="['message-block relative rounded-lg px-3 py-2 overflow-hidden', typeClass]">
+      <div v-if="isTeamMessage" class="message-team-indicator inline-flex items-center gap-1 text-xs text-primary font-medium mb-1">
+        <i class="fas fa-users"></i>
+      </div>
       <!-- Actions (overlay) - hide when editing -->
       <div
         v-if="!isEditing && (message.type === 'user' || message.type === 'final')"
@@ -694,6 +697,11 @@ const isTenthManCritique = computed(() => {
          (props.message.metadata?.kind === 'tenth_man_critique' ||
           props.message.metadata?.kind === 'tenth_man_intervention' ||
           props.message.metadata?.kind === 'tenth_man_warning')
+})
+
+const isTeamMessage = computed(() => {
+  const kind = props.message.metadata?.kind
+  return kind === 'team_member_output' || kind === 'team_bridge'
 })
 
 // Format number with commas

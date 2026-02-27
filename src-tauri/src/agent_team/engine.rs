@@ -1,10 +1,12 @@
 //! Agent Team 核心引擎 - 轮次编排与状态机流转
 
 use anyhow::{Context, Result};
+use futures::future::{join_all, BoxFuture};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
@@ -19,11 +21,8 @@ use sentinel_tools::{
 use super::blackboard::BlackboardManager;
 use super::models::*;
 use super::repository_runtime as repo_rt;
-use super::role_context::{
-    build_challenge_prompt, build_decide_prompt, build_propose_prompt, build_role_context,
-    calculate_divergence_score, RoleContextInput,
-};
-use super::scheduler::{DivergenceCalculator, ToolGovernance};
+use super::role_context::{build_role_context, RoleContextInput};
+use super::scheduler::ToolGovernance;
 
 /// 引擎配置（可运行时注入）
 #[derive(Debug, Clone)]
@@ -45,11 +44,6 @@ impl Default for TeamEngineConfig {
 
 const EXECUTION_MEMORY_MAX_CARDS: usize = 24;
 const EXECUTION_MEMORY_PROMPT_CARDS: usize = 8;
-const DEFAULT_MAX_HUMAN_INTERVENTIONS: i64 = 2;
-const DEFAULT_HUMAN_INTERVENTION_TIMEOUT_SECS: i64 = 300;
-const MIN_HUMAN_INTERVENTION_TIMEOUT_SECS: i64 = 30;
-const MAX_HUMAN_INTERVENTION_TIMEOUT_SECS: i64 = 3600;
-const DEFAULT_NO_HUMAN_INPUT_POLICY: &str = "balanced";
 
 /// Agent Team 引擎
 pub struct AgentTeamEngine {
@@ -133,53 +127,77 @@ impl AgentTeamEngine {
             }
         }
 
-        // round_number 全局递增，用于时间线一致展示
-        let session_max_total_rounds = session.max_rounds.max(1);
-        // 预留 1 轮给 proposing，1 轮给 deciding，剩余预算给 challenging
-        let session_max_challenge_rounds = (session_max_total_rounds - 2).max(0);
-        let effective_max_challenge_rounds =
-            std::cmp::min(session_max_challenge_rounds, self.config.max_challenge_rounds);
+        let resume_from_step_id = session
+            .state_machine
+            .as_ref()
+            .and_then(|sm| sm.get("orchestration_runtime"))
+            .and_then(|rt| rt.get("resume_from_step_id"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
 
-        // 执行 Propose 阶段（第 1 轮）
-        let mut current_round_number = 1;
-        self.run_propose_phase(session_id, &session, current_round_number)
-            .await?;
-
-        // 执行 Challenge 阶段（并发多角色，可迭代多轮）
-        for challenge_idx in 0..effective_max_challenge_rounds {
-            current_round_number += 1;
-            let (round_divergence, suspended) = self
-                .run_challenge_phase(session_id, &session, current_round_number)
-                .await?;
-            if suspended {
-                // 等待 Human-in-the-Loop 恢复（此处直接返回，resume 由 Tauri command 重入）
-                return Ok(());
-            }
-            if round_divergence <= self.config.divergence_threshold * 0.7 {
-                break;
-            }
-            if challenge_idx + 1 < effective_max_challenge_rounds {
-                self.emit_event(
-                    session_id,
-                    "agent_team:divergence_alert",
-                    json!({
-                        "session_id": session_id,
-                        "divergence_score": round_divergence,
-                        "threshold": self.config.divergence_threshold,
-                        "extra_round": current_round_number + 1
-                    }),
+        if let Some(step_id) = resume_from_step_id.as_deref() {
+            if let Err(e) = self
+                .clear_orchestration_resume_marker(session_id, &session, step_id)
+                .await
+            {
+                warn!(
+                    "Failed to clear orchestration resume marker for session {}: {}",
+                    session_id, e
                 );
             }
         }
 
-        // 执行 Decide 阶段：当总轮次预算=1 时，决策并入第1轮；否则使用下一轮号
-        let decide_round_number = if session_max_total_rounds <= 1 {
-            1
+        let plan = if let Some(plan) = session.orchestration_plan.as_ref() {
+            plan
         } else {
-            current_round_number + 1
+            let err = anyhow::anyhow!(
+                "Session {} missing orchestration_plan; workflow orchestration is required",
+                session_id
+            );
+            self.emit_event(
+                session_id,
+                "agent_team:orchestration_required",
+                json!({
+                    "session_id": session_id,
+                    "error": err.to_string()
+                }),
+            );
+            return Err(err);
         };
-        self.run_decide_phase(session_id, &session, decide_round_number)
-            .await?;
+
+        let suspended = match self
+            .execute_orchestration_plan(
+                session_id,
+                &session,
+                plan,
+                resume_from_step_id.as_deref(),
+            )
+            .await
+        {
+            Ok(suspended) => suspended,
+            Err(e) => {
+                let err = anyhow::anyhow!(
+                    "Failed to execute orchestration plan for session {}: {}",
+                    session_id,
+                    e
+                );
+                warn!("{:#}", err);
+                self.emit_event(
+                    session_id,
+                    "agent_team:orchestration_failed",
+                    json!({
+                        "session_id": session_id,
+                        "error": err.to_string()
+                    }),
+                );
+                return Err(err);
+            }
+        };
+        if suspended {
+            // 等待 Human-in-the-Loop 恢复（resume 由 Tauri command 重入）
+            return Ok(());
+        }
 
         // 生成标准文档产物
         self.generate_artifacts(session_id, &session).await?;
@@ -201,48 +219,353 @@ impl AgentTeamEngine {
         Ok(())
     }
 
-    /// Phase: PROPOSING - 核心角色生成初始方案
-    async fn run_propose_phase(
+    async fn execute_orchestration_plan(
         &self,
         session_id: &str,
         session: &AgentTeamSession,
+        plan: &Value,
+        resume_from_step_id: Option<&str>,
+    ) -> Result<bool> {
+        let steps = plan
+            .get("steps")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("orchestration_plan.steps must be array"))?;
+        if steps.is_empty() {
+            return Err(anyhow::anyhow!("orchestration_plan.steps cannot be empty"));
+        }
+
+        let round_counter = Arc::new(AtomicI32::new(1));
+        self.transition_state(session_id, TeamSessionState::Revising)
+            .await?;
+        self.emit_event(
+            session_id,
+            "agent_team:orchestration_started",
+            json!({
+                "session_id": session_id,
+                "steps": steps.len(),
+                "version": plan.get("version").and_then(|v| v.as_i64()).unwrap_or(1),
+                "resume_from_step_id": resume_from_step_id
+            }),
+        );
+
+        let resume_path = if let Some(step_id) = resume_from_step_id {
+            if let Some(path) = Self::find_orchestration_step_path(steps, step_id) {
+                self.emit_event(
+                    session_id,
+                    "agent_team:orchestration_resume_applied",
+                    json!({
+                        "session_id": session_id,
+                        "resume_from_step_id": step_id,
+                        "resume_path": path,
+                    }),
+                );
+                Some(path)
+            } else {
+                warn!(
+                    "resume_from_step_id '{}' not found in orchestration plan for session {}, fallback to full run",
+                    step_id, session_id
+                );
+                self.emit_event(
+                    session_id,
+                    "agent_team:orchestration_resume_ignored",
+                    json!({
+                        "session_id": session_id,
+                        "resume_from_step_id": step_id,
+                        "reason": "step_not_found"
+                    }),
+                );
+                None
+            }
+        } else {
+            None
+        };
+
+        self.execute_orchestration_steps(
+            session_id,
+            session,
+            steps,
+            round_counter,
+            Vec::new(),
+            resume_path.as_deref(),
+        )
+        .await
+    }
+
+    fn execute_orchestration_steps<'a>(
+        &'a self,
+        session_id: &'a str,
+        session: &'a AgentTeamSession,
+        steps: &'a [Value],
+        round_counter: Arc<AtomicI32>,
+        path_prefix: Vec<usize>,
+        resume_path: Option<&'a [usize]>,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let start_index = Self::resolve_resume_start_index(resume_path, &path_prefix).unwrap_or(0);
+            let mut suspended = false;
+            for idx in start_index..steps.len() {
+                let step = &steps[idx];
+                let mut current_path = path_prefix.clone();
+                current_path.push(idx);
+                let path = Self::format_orchestration_path(&current_path);
+                let step_suspended = self
+                    .execute_orchestration_step(
+                        session_id,
+                        session,
+                        step,
+                        round_counter.clone(),
+                        path,
+                        current_path,
+                        resume_path,
+                    )
+                    .await?;
+                if step_suspended {
+                    suspended = true;
+                    break;
+                }
+            }
+            Ok(suspended)
+        })
+    }
+
+    fn resolve_resume_start_index(
+        resume_path: Option<&[usize]>,
+        prefix: &[usize],
+    ) -> Option<usize> {
+        let path = resume_path?;
+        if path.len() <= prefix.len() {
+            return None;
+        }
+        if !path.starts_with(prefix) {
+            return None;
+        }
+        Some(path[prefix.len()])
+    }
+
+    fn format_orchestration_path(indices: &[usize]) -> String {
+        let mut path = String::new();
+        for (depth, index) in indices.iter().enumerate() {
+            if depth == 0 {
+                path.push_str(&format!("steps[{}]", index));
+            } else {
+                path.push_str(&format!(".children[{}]", index));
+            }
+        }
+        path
+    }
+
+    fn find_orchestration_step_path(steps: &[Value], target_step_id: &str) -> Option<Vec<usize>> {
+        fn walk(
+            steps: &[Value],
+            target_step_id: &str,
+            prefix: &mut Vec<usize>,
+        ) -> Option<Vec<usize>> {
+            for (idx, step) in steps.iter().enumerate() {
+                prefix.push(idx);
+                let matched = step
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|id| id == target_step_id)
+                    .unwrap_or(false);
+                if matched {
+                    return Some(prefix.clone());
+                }
+                if let Some(children) = step.get("children").and_then(|v| v.as_array()) {
+                    if let Some(found) = walk(children, target_step_id, prefix) {
+                        return Some(found);
+                    }
+                }
+                prefix.pop();
+            }
+            None
+        }
+
+        walk(steps, target_step_id, &mut Vec::new())
+    }
+
+    fn execute_orchestration_step<'a>(
+        &'a self,
+        session_id: &'a str,
+        session: &'a AgentTeamSession,
+        step: &'a Value,
+        round_counter: Arc<AtomicI32>,
+        path: String,
+        path_indices: Vec<usize>,
+        resume_path: Option<&'a [usize]>,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let step_obj = step
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("orchestration step {} must be object", path))?;
+            let step_id = step_obj
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("orchestration step {} missing id", path))?;
+            let step_type = step_obj
+                .get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("orchestration step {} missing type", path))?;
+
+            match step_type {
+                "agent" => {
+                    self.run_orchestration_agent_step_with_retry(
+                        session_id,
+                        session,
+                        step_id,
+                        step_obj,
+                        round_counter,
+                    )
+                    .await
+                }
+                "serial" => {
+                    let children = step_obj
+                        .get("children")
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "orchestration step {} (id={}) missing children",
+                                path,
+                                step_id
+                            )
+                        })?;
+                    self.execute_orchestration_steps(
+                        session_id,
+                        session,
+                        children,
+                        round_counter.clone(),
+                        path_indices.clone(),
+                        resume_path,
+                    )
+                    .await
+                }
+                "parallel" => {
+                    let children = step_obj
+                        .get("children")
+                        .and_then(|v| v.as_array())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "orchestration step {} (id={}) missing children",
+                                path,
+                                step_id
+                            )
+                        })?;
+                    let child_start =
+                        Self::resolve_resume_start_index(resume_path, &path_indices).unwrap_or(0);
+                    let futures = children
+                        .iter()
+                        .enumerate()
+                        .skip(child_start)
+                        .map(|(idx, child)| {
+                        let child_path = format!("{}.children[{}]", path, idx);
+                        let mut child_indices = path_indices.clone();
+                        child_indices.push(idx);
+                        self.execute_orchestration_step(
+                            session_id,
+                            session,
+                            child,
+                            round_counter.clone(),
+                            child_path,
+                            child_indices,
+                            resume_path,
+                        )
+                    });
+                    let results = join_all(futures).await;
+                    let mut suspended = false;
+                    for result in results {
+                        if result? {
+                            suspended = true;
+                        }
+                    }
+                    Ok(suspended)
+                }
+                other => Err(anyhow::anyhow!(
+                    "orchestration step {} has unsupported type '{}'",
+                    path,
+                    other
+                )),
+            }
+        })
+    }
+
+    async fn run_orchestration_agent_step(
+        &self,
+        session_id: &str,
+        session: &AgentTeamSession,
+        step_id: &str,
+        step_obj: &serde_json::Map<String, Value>,
         round_number: i32,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let db = self
             .app_handle
             .try_state::<Arc<DatabaseService>>()
             .context("DatabaseService not available")?;
         let pool = db.get_runtime_pool().context("Failed to get db pool")?;
 
-        self.transition_state(session_id, TeamSessionState::Proposing)
+        let phase = step_obj
+            .get("phase")
+            .and_then(|v| v.as_str())
+            .unwrap_or("orchestrating");
+        self.transition_state(session_id, Self::phase_to_state(phase))
             .await?;
 
-        let round = repo_rt::create_round(&pool, session_id, round_number, "proposing").await?;
+        let member_selector = step_obj
+            .get("member")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("orchestration step {} missing member", step_id))?;
+        let member = self
+            .resolve_member(session, member_selector)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "orchestration step {} member '{}' not found in session members",
+                    step_id,
+                    member_selector
+                )
+            })?;
+
+        let step_label = step_obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(step_id);
+        let step_instruction = step_obj
+            .get("instruction")
+            .or_else(|| step_obj.get("prompt"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let round = repo_rt::create_round(&pool, session_id, round_number, phase).await?;
         self.emit_event(
             session_id,
             "agent_team:round_started",
-            json!({"round": round_number, "phase": "proposing"}),
+            json!({
+                "round": round_number,
+                "phase": phase,
+                "step_id": step_id,
+                "step_name": step_label,
+                "member_id": member.id,
+                "member_name": member.name,
+            }),
         );
-
-        let goal = session.goal.as_deref().unwrap_or("请讨论并制定方案");
-        // 第1号角色（产品/主提案角色）生成初始方案
-        let proposer = &session.members[0];
-        let llm_config = self.get_llm_config_for_member(Some(proposer)).await?;
         self.emit_event(
             session_id,
             "agent_team:role_thinking",
             json!({
-                "member_id": proposer.id,
-                "member_name": proposer.name,
-                "phase": "proposing"
+                "member_id": member.id,
+                "member_name": member.name,
+                "phase": phase,
+                "step_id": step_id,
             }),
         );
 
-        let propose_prompt = build_propose_prompt(
+        let goal = session.goal.as_deref().unwrap_or("请讨论并制定方案");
+        let llm_config = self.get_llm_config_for_member(Some(member)).await?;
+        let step_prompt = self.build_orchestration_agent_prompt(
             goal,
+            step_id,
+            step_label,
+            phase,
             round_number,
-            &proposer.name,
-            proposer.responsibility.as_deref().unwrap_or(""),
+            member,
+            step_instruction,
         );
         let shared_memory_prompt = self
             .build_shared_execution_memory_prompt(&pool, session_id, EXECUTION_MEMORY_PROMPT_CARDS)
@@ -252,15 +575,15 @@ impl AgentTeamEngine {
         let context = build_role_context(RoleContextInput {
             app_handle: &self.app_handle,
             session_id,
-            member: proposer,
-                session_goal: goal,
-                round_task: &propose_prompt,
-                round_number,
-                llm_config: &llm_config,
-                blackboard: &self.blackboard,
+            member,
+            session_goal: goal,
+            round_task: &step_prompt,
+            round_number,
+            llm_config: &llm_config,
+            blackboard: &self.blackboard,
             directed_messages: vec![ChatMessage {
                 role: "user".to_string(),
-                content: propose_prompt.clone(),
+                content: step_prompt.clone(),
                 tool_calls: None,
                 tool_call_id: None,
                 reasoning_content: None,
@@ -269,65 +592,64 @@ impl AgentTeamEngine {
         })
         .await?;
 
-        let (proposal, proposal_tool_calls) = self
+        let (content, tool_calls) = self
             .invoke_llm_streaming(
                 session_id,
-                Some(proposer),
-                "proposing",
+                Some(member),
+                phase,
                 &llm_config,
                 &context.system_prompt,
                 &context.history_messages,
             )
             .await?;
-
-        // 保存提案消息
-        let proposal_msg = repo_rt::create_message(
+        let msg = repo_rt::create_message(
             &pool,
             session_id,
             Some(&round.id),
-            Some(&proposer.id),
-            Some(&proposer.name),
+            Some(&member.id),
+            Some(&member.name),
             "assistant",
-            &proposal,
+            &content,
             None,
         )
         .await?;
-        if let Some(tc) = &proposal_tool_calls {
-            repo_rt::update_message_tool_calls(&pool, &proposal_msg.id, tc).await?;
+        if let Some(tc) = &tool_calls {
+            repo_rt::update_message_tool_calls(&pool, &msg.id, tc).await?;
         }
         self.summarize_and_persist_member_execution(
             &pool,
             session_id,
             goal,
             round_number,
-            "proposing",
-            proposer,
+            phase,
+            member,
             &llm_config,
-            &proposal,
-            proposal_tool_calls.as_ref(),
+            &content,
+            tool_calls.as_ref(),
         )
         .await;
 
-        // 更新白板：记录提案要点
+        let (entry_type_str, entry_type_enum) = Self::phase_to_blackboard_entry(phase);
+        let entry_title = format!("{} · {}", member.name, step_label);
+        let entry_content = shorten_text(&content, 500);
         self.blackboard
             .append_entry(
                 session_id,
-                super::models::BlackboardEntryType::ActionItem,
-                &format!("{}的初始提案", proposer.name),
-                &shorten_text(&proposal, 500),
-                Some(&proposer.name),
-                &uuid::Uuid::new_v4().to_string(),
+                entry_type_enum,
+                &entry_title,
+                &entry_content,
+                Some(&member.name),
+                &round.id,
             )
             .await;
-
         repo_rt::upsert_blackboard_entry(
             &pool,
             &UpdateBlackboardRequest {
                 session_id: session_id.to_string(),
-                entry_type: "action_item".to_string(),
-                title: format!("{}的初始提案", proposer.name),
-                content: shorten_text(&proposal, 500),
-                contributed_by: Some(proposer.name.clone()),
+                entry_type: entry_type_str.to_string(),
+                title: entry_title,
+                content: entry_content,
+                contributed_by: Some(member.name.clone()),
                 round_id: Some(round.id.clone()),
             },
         )
@@ -337,246 +659,124 @@ impl AgentTeamEngine {
         self.emit_event(
             session_id,
             "agent_team:round_completed",
-            json!({"round": round_number, "phase": "proposing"}),
+            json!({
+                "round": round_number,
+                "phase": phase,
+                "step_id": step_id,
+                "step_name": step_label,
+                "member_id": member.id,
+                "member_name": member.name,
+            }),
         );
 
-        info!("Proposing phase completed for session: {}", session_id);
-        Ok(())
+        Ok(false)
     }
 
-    /// Phase: CHALLENGING - 多角色并发 Review（DAG 并发调度）
-    /// 返回 (divergence_score, is_suspended)
-    async fn run_challenge_phase(
+    async fn run_orchestration_agent_step_with_retry(
         &self,
         session_id: &str,
         session: &AgentTeamSession,
-        round_number: i32,
-    ) -> Result<(f64, bool)> {
+        step_id: &str,
+        step_obj: &serde_json::Map<String, Value>,
+        round_counter: Arc<AtomicI32>,
+    ) -> Result<bool> {
+        let max_attempts = step_obj
+            .get("retry")
+            .and_then(|v| v.get("max_attempts"))
+            .or_else(|| step_obj.get("retry_max_attempts"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1)
+            .clamp(1, 5) as i32;
+        let backoff_ms = step_obj
+            .get("retry")
+            .and_then(|v| v.get("backoff_ms"))
+            .or_else(|| step_obj.get("retry_backoff_ms"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(800)
+            .clamp(100, 10_000) as u64;
+
         let db = self
             .app_handle
             .try_state::<Arc<DatabaseService>>()
             .context("DatabaseService not available")?;
         let pool = db.get_runtime_pool().context("Failed to get db pool")?;
 
-        self.transition_state(session_id, TeamSessionState::Challenging)
-            .await?;
-
-        let round = repo_rt::create_round(&pool, session_id, round_number, "challenging").await?;
-        self.emit_event(
-            session_id,
-            "agent_team:round_started",
-            json!({"round": round_number, "phase": "challenging"}),
-        );
-
-        // 获取最新提案（上一轮最后的 assistant 消息）
-        let messages = repo_rt::get_messages(&pool, session_id).await?;
-        let last_proposal = messages
-            .iter()
-            .filter(|m| m.role == "assistant")
-            .last()
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-
-        let goal = session.goal.as_deref().unwrap_or("请讨论并制定方案");
-        // 生成 DAG 执行计划（除第0号角色即 proposer 外全部并发）
-        let reviewers: Vec<&AgentTeamMember> = session.members.iter().skip(1).collect();
-
-        // 并发执行所有 Reviewer
-        let mut review_results: Vec<(String, String, String)> = vec![]; // (member_id, name, review)
-
-        for reviewer in &reviewers {
-            let reviewer_id = reviewer.id.clone();
-            let reviewer_name = reviewer.name.clone();
-            let responsibility = reviewer.responsibility.clone().unwrap_or_default();
-            let proposal_clone = last_proposal.clone();
-            let round_num = round_number;
-            let llm_config = self.get_llm_config_for_member(Some(reviewer)).await?;
-
-            // 每个 reviewer 串行执行（tokio::spawn 受 Semaphore 限制）
-            let challenge_prompt =
-                build_challenge_prompt(&proposal_clone, &reviewer_name, &responsibility, round_num);
-            let shared_memory_prompt = self
-                .build_shared_execution_memory_prompt(
-                    &pool,
-                    session_id,
-                    EXECUTION_MEMORY_PROMPT_CARDS,
-                )
+        let mut last_error: Option<anyhow::Error> = None;
+        for attempt in 1..=max_attempts {
+            let round_number = round_counter.fetch_add(1, Ordering::SeqCst);
+            let started_at = Instant::now();
+            match self
+                .run_orchestration_agent_step(session_id, session, step_id, step_obj, round_number)
                 .await
-                .unwrap_or_default();
-
-            // 通知前端该角色开始思考
-            self.emit_event(
-                session_id,
-                "agent_team:role_thinking",
-                json!({
-                    "member_id": reviewer_id,
-                    "member_name": reviewer_name,
-                    "phase": "challenging"
-                }),
-            );
-
-            let context = build_role_context(RoleContextInput {
-                app_handle: &self.app_handle,
-                session_id,
-                member: reviewer,
-                session_goal: goal,
-                round_task: &challenge_prompt,
-                round_number,
-                llm_config: &llm_config,
-                blackboard: &self.blackboard,
-                directed_messages: vec![ChatMessage {
-                    role: "user".to_string(),
-                    content: challenge_prompt.clone(),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    reasoning_content: None,
-                }],
-                shared_execution_memory: Some(shared_memory_prompt.as_str()),
-            })
-            .await?;
-
-            let (review, review_tool_calls) = self
-                .invoke_llm_streaming(
-                    session_id,
-                    Some(reviewer),
-                    "challenging",
-                    &llm_config,
-                    &context.system_prompt,
-                    &context.history_messages,
-                )
-                .await?;
-
-            // 保存消息
-            let review_msg = repo_rt::create_message(
-                &pool,
-                session_id,
-                Some(&round.id),
-                Some(&reviewer.id),
-                Some(&reviewer.name),
-                "assistant",
-                &review,
-                None,
-            )
-            .await?;
-            if let Some(tc) = &review_tool_calls {
-                repo_rt::update_message_tool_calls(&pool, &review_msg.id, tc).await?;
+            {
+                Ok(suspended) => {
+                    let duration_ms = started_at.elapsed().as_millis() as i64;
+                    self.persist_orchestration_checkpoint(
+                        &pool,
+                        session_id,
+                        step_id,
+                        "succeeded",
+                        attempt,
+                        round_number,
+                        Some(duration_ms),
+                        None,
+                    )
+                    .await;
+                    return Ok(suspended);
+                }
+                Err(e) => {
+                    let duration_ms = started_at.elapsed().as_millis() as i64;
+                    let err_text = e.to_string();
+                    self.persist_orchestration_checkpoint(
+                        &pool,
+                        session_id,
+                        step_id,
+                        "failed",
+                        attempt,
+                        round_number,
+                        Some(duration_ms),
+                        Some(err_text.as_str()),
+                    )
+                    .await;
+                    if attempt < max_attempts {
+                        warn!(
+                            "Orchestration step {} failed on attempt {}/{} for session {}: {}",
+                            step_id, attempt, max_attempts, session_id, err_text
+                        );
+                        self.emit_event(
+                            session_id,
+                            "agent_team:orchestration_step_retry",
+                            json!({
+                                "session_id": session_id,
+                                "step_id": step_id,
+                                "attempt": attempt,
+                                "max_attempts": max_attempts,
+                                "next_retry_in_ms": backoff_ms,
+                                "error": err_text,
+                            }),
+                        );
+                        tokio::time::sleep(StdDuration::from_millis(backoff_ms * attempt as u64))
+                            .await;
+                    }
+                    last_error = Some(e);
+                }
             }
-            self.summarize_and_persist_member_execution(
-                &pool,
-                session_id,
-                goal,
-                round_number,
-                "challenging",
-                reviewer,
-                &llm_config,
-                &review,
-                review_tool_calls.as_ref(),
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "orchestration step {} failed after retries for session {}",
+                step_id,
+                session_id
             )
-            .await;
-
-            review_results.push((reviewer_id, reviewer_name, review));
-        }
-
-        // 计算分歧度（使用 DivergenceCalculator）
-        let review_texts: Vec<&str> = review_results.iter().map(|(_, _, r)| r.as_str()).collect();
-        let divergence = DivergenceCalculator::calculate(&review_texts);
-
-        info!(
-            "Challenge round {}: divergence={:.3} (threshold={:.3})",
-            round_number, divergence, self.config.divergence_threshold
-        );
-
-        // 将各角色 Review 更新到白板（分歧/共识）
-        for (_, name, review) in &review_results {
-            let entry_type = if divergence > self.config.divergence_threshold * 0.5 {
-                "dispute"
-            } else {
-                "consensus"
-            };
-            let entry_req = UpdateBlackboardRequest {
-                session_id: session_id.to_string(),
-                entry_type: entry_type.to_string(),
-                title: format!("{} 的评审（第{}轮）", name, round_number),
-                content: shorten_text(review, 400),
-                contributed_by: Some(name.clone()),
-                round_id: Some(round.id.clone()),
-            };
-            self.blackboard
-                .append_entry(
-                    session_id,
-                    if entry_type == "dispute" {
-                        BlackboardEntryType::Dispute
-                    } else {
-                        BlackboardEntryType::Consensus
-                    },
-                    &entry_req.title,
-                    &entry_req.content,
-                    Some(name),
-                    &round.id,
-                )
-                .await;
-            repo_rt::upsert_blackboard_entry(&pool, &entry_req).await?;
-        }
-
-        // 检查是否需要 Human-in-the-Loop
-        if DivergenceCalculator::needs_human_intervention(
-            divergence,
-            self.config.divergence_threshold,
-        ) {
-            self.emit_event(
-                session_id,
-                "agent_team:divergence_alert",
-                json!({
-                    "session_id": session_id,
-                    "divergence_score": divergence,
-                    "threshold": self.config.divergence_threshold
-                }),
-            );
-            let should_suspend = self
-                .should_suspend_for_human_intervention(
-                    &pool,
-                    session_id,
-                    divergence,
-                    "challenging",
-                    round_number,
-                )
-                .await?;
-            if should_suspend {
-                warn!("High divergence ({:.3}), suspending for human", divergence);
-                self.transition_state(session_id, TeamSessionState::SuspendedForHuman)
-                    .await?;
-                repo_rt::complete_round(&pool, &round.id, Some(divergence)).await?;
-                self.schedule_auto_resume_if_needed(session_id);
-                return Ok((divergence, true));
-            }
-            warn!(
-                "High divergence ({:.3}) but human intervention limit reached; forcing progression",
-                divergence
-            );
-        }
-
-        self.transition_state(session_id, TeamSessionState::ConvergenceCheck)
-            .await?;
-        repo_rt::complete_round(&pool, &round.id, Some(divergence)).await?;
-        self.emit_event(
-            session_id,
-            "agent_team:round_completed",
-            json!({"round": round_number, "phase": "challenging", "divergence_score": divergence}),
-        );
-
-        info!(
-            "Challenge phase round {} completed, divergence={:.3}",
-            round_number, divergence
-        );
-        Ok((divergence, false))
+        }))
     }
 
-    /// Phase: DECIDING - 其他角色 Review 并形成最终方案
-    async fn run_decide_phase(
+    async fn clear_orchestration_resume_marker(
         &self,
         session_id: &str,
         session: &AgentTeamSession,
-        round_number: i32,
+        consumed_step_id: &str,
     ) -> Result<()> {
         let db = self
             .app_handle
@@ -584,275 +784,590 @@ impl AgentTeamEngine {
             .context("DatabaseService not available")?;
         let pool = db.get_runtime_pool().context("Failed to get db pool")?;
 
-        self.transition_state(session_id, TeamSessionState::Deciding)
-            .await?;
-
-        let round = repo_rt::create_round(&pool, session_id, round_number, "deciding").await?;
-        self.emit_event(
-            session_id,
-            "agent_team:round_started",
-            json!({"round": round_number, "phase": "deciding"}),
+        let mut state_machine = session.state_machine.clone().unwrap_or_else(|| json!({}));
+        if !state_machine.is_object() {
+            state_machine = json!({});
+        }
+        let state_obj = state_machine
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("state_machine must be object"))?;
+        let runtime_value = state_obj
+            .entry("orchestration_runtime".to_string())
+            .or_insert_with(|| json!({}));
+        if !runtime_value.is_object() {
+            *runtime_value = json!({});
+        }
+        let runtime_obj = runtime_value
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("orchestration_runtime must be object"))?;
+        runtime_obj.remove("resume_from_step_id");
+        runtime_obj.insert(
+            "resume_consumed_step_id".to_string(),
+            json!(consumed_step_id.to_string()),
+        );
+        runtime_obj.insert(
+            "resume_consumed_at".to_string(),
+            json!(chrono::Utc::now().to_rfc3339()),
         );
 
-        let goal = session.goal.as_deref().unwrap_or("请讨论并制定方案");
-
-        // 获取第1轮的提案内容
-        let messages = repo_rt::get_messages(&pool, session_id).await?;
-        let proposal = messages
-            .iter()
-            .filter(|m| m.role == "assistant")
-            .last()
-            .map(|m| m.content.clone())
-            .unwrap_or_default();
-
-        // 2号角色及以后的角色进行 Review
-        let mut review_scores: Vec<f64> = vec![];
-        let mut all_reviews = vec![format!(
-            "**{}的初始提案：**\n{}",
-            session.members[0].name, &proposal
-        )];
-
-        for reviewer in session.members.iter().skip(1) {
-            let llm_config = self.get_llm_config_for_member(Some(reviewer)).await?;
-            self.emit_event(
-                session_id,
-                "agent_team:role_thinking",
-                json!({
-                    "member_id": reviewer.id,
-                    "member_name": reviewer.name,
-                    "phase": "deciding"
-                }),
-            );
-
-            let challenge_prompt = build_challenge_prompt(
-                &proposal,
-                &reviewer.name,
-                reviewer.responsibility.as_deref().unwrap_or(""),
-                round_number,
-            );
-            let shared_memory_prompt = self
-                .build_shared_execution_memory_prompt(
-                    &pool,
-                    session_id,
-                    EXECUTION_MEMORY_PROMPT_CARDS,
-                )
-                .await
-                .unwrap_or_default();
-
-            let context = build_role_context(RoleContextInput {
-                app_handle: &self.app_handle,
-                session_id,
-                member: reviewer,
-                session_goal: goal,
-                round_task: &challenge_prompt,
-                round_number,
-                llm_config: &llm_config,
-                blackboard: &self.blackboard,
-                directed_messages: vec![ChatMessage {
-                    role: "user".to_string(),
-                    content: challenge_prompt.clone(),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    reasoning_content: None,
-                }],
-                shared_execution_memory: Some(shared_memory_prompt.as_str()),
-            })
-            .await?;
-
-            let (review, review_tool_calls) = self
-                .invoke_llm_streaming(
-                    session_id,
-                    Some(reviewer),
-                    "deciding",
-                    &llm_config,
-                    &context.system_prompt,
-                    &context.history_messages,
-                )
-                .await?;
-
-            // 尝试从 review 中提取评分
-            let score = extract_score_from_review(&review);
-            if let Some(s) = score {
-                review_scores.push(s);
-            }
-
-            let review_msg = repo_rt::create_message(
-                &pool,
-                session_id,
-                Some(&round.id),
-                Some(&reviewer.id),
-                Some(&reviewer.name),
-                "assistant",
-                &review,
-                None,
-            )
-            .await?;
-            if let Some(tc) = &review_tool_calls {
-                repo_rt::update_message_tool_calls(&pool, &review_msg.id, tc).await?;
-            }
-            self.summarize_and_persist_member_execution(
-                &pool,
-                session_id,
-                goal,
-                round_number,
-                "deciding",
-                reviewer,
-                &llm_config,
-                &review,
-                review_tool_calls.as_ref(),
-            )
-            .await;
-
-            all_reviews.push(format!("**{}的评审：**\n{}", reviewer.name, &review));
-        }
-
-        // 计算分歧度
-        let divergence = if review_scores.len() >= 2 {
-            calculate_divergence_score(&review_scores)
-        } else {
-            0.0
-        };
-
-        info!(
-            "Divergence score for session {}: {:.3} (threshold: {:.3})",
-            session_id, divergence, self.config.divergence_threshold
-        );
-
-        // 如果分歧过大，触发 Human-in-the-Loop
-        if divergence > self.config.divergence_threshold {
-            self.emit_event(
-                session_id,
-                "agent_team:divergence_alert",
-                json!({
-                    "session_id": session_id,
-                    "divergence_score": divergence,
-                    "threshold": self.config.divergence_threshold
-                }),
-            );
-            let should_suspend = self
-                .should_suspend_for_human_intervention(&pool, session_id, divergence, "deciding", 2)
-                .await?;
-            if should_suspend {
-                warn!(
-                    "High divergence detected ({:.3}), suspending for human review",
-                    divergence
-                );
-                self.transition_state(session_id, TeamSessionState::SuspendedForHuman)
-                    .await?;
-                repo_rt::complete_round(&pool, &round.id, Some(divergence)).await?;
-                self.schedule_auto_resume_if_needed(session_id);
-                return Ok(());
-            }
-            warn!(
-                "High divergence detected ({:.3}) but human intervention limit reached; forcing decision merge",
-                divergence
-            );
-        }
-
-        // 生成最终决策
-        let blackboard_summary = self.blackboard.get_context_summary(session_id).await;
-        let decide_prompt =
-            build_decide_prompt(goal, &all_reviews.join("\n\n"), &blackboard_summary, round_number);
-
-        // 使用第1号角色作为决策整合者
-        let decider = &session.members[0];
-        let llm_config = self.get_llm_config_for_member(Some(decider)).await?;
-        let shared_memory_prompt = self
-            .build_shared_execution_memory_prompt(&pool, session_id, EXECUTION_MEMORY_PROMPT_CARDS)
-            .await
-            .unwrap_or_default();
-        let context = build_role_context(RoleContextInput {
-            app_handle: &self.app_handle,
-            session_id,
-            member: decider,
-            session_goal: goal,
-            round_task: &decide_prompt,
-            round_number,
-            llm_config: &llm_config,
-            blackboard: &self.blackboard,
-            directed_messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: decide_prompt.clone(),
-                tool_calls: None,
-                tool_call_id: None,
-                reasoning_content: None,
-            }],
-            shared_execution_memory: Some(shared_memory_prompt.as_str()),
-        })
-        .await?;
-
-        let (decision, decision_tool_calls) = self
-            .invoke_llm_streaming(
-                session_id,
-                Some(decider),
-                "deciding",
-                &llm_config,
-                &context.system_prompt,
-                &context.history_messages,
-            )
-            .await?;
-
-        let decision_msg = repo_rt::create_message(
+        repo_rt::update_agent_team_session(
             &pool,
             session_id,
-            Some(&round.id),
-            Some(&decider.id),
-            Some(&decider.name),
-            "assistant",
-            &decision,
-            None,
-        )
-        .await?;
-        if let Some(tc) = &decision_tool_calls {
-            repo_rt::update_message_tool_calls(&pool, &decision_msg.id, tc).await?;
-        }
-        self.summarize_and_persist_member_execution(
-            &pool,
-            session_id,
-            goal,
-            round_number,
-            "deciding",
-            decider,
-            &llm_config,
-            &decision,
-            decision_tool_calls.as_ref(),
-        )
-        .await;
-
-        // 记录最终决策到白板
-        self.blackboard
-            .append_entry(
-                session_id,
-                super::models::BlackboardEntryType::Consensus,
-                "最终决策",
-                &shorten_text(&decision, 800),
-                Some("系统"),
-                &uuid::Uuid::new_v4().to_string(),
-            )
-            .await;
-
-        repo_rt::upsert_blackboard_entry(
-            &pool,
-            &UpdateBlackboardRequest {
-                session_id: session_id.to_string(),
-                entry_type: "consensus".to_string(),
-                title: "最终决策".to_string(),
-                content: shorten_text(&decision, 800),
-                contributed_by: Some("系统合并".to_string()),
-                round_id: Some(round.id.clone()),
+            &UpdateAgentTeamSessionRequest {
+                name: None,
+                goal: None,
+                state: None,
+                max_rounds: None,
+                orchestration_plan: None,
+                plan_version: None,
+                state_machine: Some(state_machine),
+                error_message: None,
             },
         )
         .await?;
 
-        repo_rt::complete_round(&pool, &round.id, Some(divergence)).await?;
-        self.emit_event(
-            session_id,
-            "agent_team:round_completed",
-            json!({"round": round_number, "phase": "deciding", "divergence_score": divergence}),
-        );
-
-        info!("Deciding phase completed for session: {}", session_id);
         Ok(())
+    }
+
+    async fn persist_orchestration_checkpoint(
+        &self,
+        pool: &DatabasePool,
+        session_id: &str,
+        step_id: &str,
+        status: &str,
+        attempt: i32,
+        round_number: i32,
+        duration_ms: Option<i64>,
+        error: Option<&str>,
+    ) {
+        let session = match repo_rt::get_agent_team_session(pool, session_id).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return,
+            Err(e) => {
+                warn!(
+                    "Failed to persist orchestration checkpoint for session {}: {}",
+                    session_id, e
+                );
+                return;
+            }
+        };
+
+        let mut state_machine = session.state_machine.unwrap_or_else(|| json!({}));
+        if !state_machine.is_object() {
+            state_machine = json!({});
+        }
+        let Some(state_obj) = state_machine.as_object_mut() else {
+            return;
+        };
+        let runtime_value = state_obj
+            .entry("orchestration_runtime".to_string())
+            .or_insert_with(|| json!({}));
+        if !runtime_value.is_object() {
+            *runtime_value = json!({});
+        }
+
+        if let Some(runtime_obj) = runtime_value.as_object_mut() {
+            runtime_obj.insert("last_step_id".to_string(), json!(step_id));
+            runtime_obj.insert("last_step_status".to_string(), json!(status));
+            runtime_obj.insert("last_attempt".to_string(), json!(attempt));
+            runtime_obj.insert("last_round".to_string(), json!(round_number));
+            if let Some(ms) = duration_ms {
+                runtime_obj.insert("last_duration_ms".to_string(), json!(ms));
+            }
+            runtime_obj.insert(
+                "updated_at".to_string(),
+                json!(chrono::Utc::now().to_rfc3339()),
+            );
+            if let Some(err) = error {
+                runtime_obj.insert("last_error".to_string(), json!(shorten_text(err, 500)));
+            } else {
+                runtime_obj.remove("last_error");
+            }
+            self.update_orchestration_runtime_stats(
+                runtime_obj,
+                step_id,
+                status,
+                attempt,
+                round_number,
+                duration_ms,
+                error,
+            );
+        }
+
+        if let Err(e) = repo_rt::update_agent_team_session(
+            pool,
+            session_id,
+            &UpdateAgentTeamSessionRequest {
+                name: None,
+                goal: None,
+                state: None,
+                max_rounds: None,
+                orchestration_plan: None,
+                plan_version: None,
+                state_machine: Some(state_machine),
+                error_message: None,
+            },
+        )
+        .await
+        {
+            warn!(
+                "Failed to update session state_machine checkpoint for session {}: {}",
+                session_id, e
+            );
+        }
+    }
+
+    fn update_orchestration_runtime_stats(
+        &self,
+        runtime_obj: &mut serde_json::Map<String, Value>,
+        step_id: &str,
+        status: &str,
+        attempt: i32,
+        round_number: i32,
+        duration_ms: Option<i64>,
+        error: Option<&str>,
+    ) {
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let mark_last_success = status == "succeeded";
+        let mark_suggested_resume = status == "failed";
+        {
+            let step_stats_value = runtime_obj
+                .entry("step_stats".to_string())
+                .or_insert_with(|| json!({}));
+            if !step_stats_value.is_object() {
+                *step_stats_value = json!({});
+            }
+            let Some(step_stats_obj) = step_stats_value.as_object_mut() else {
+                return;
+            };
+            let step_stat_value = step_stats_obj.entry(step_id.to_string()).or_insert_with(|| {
+                json!({
+                    "step_id": step_id,
+                    "total_attempts": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "total_duration_ms": 0,
+                    "avg_duration_ms": 0,
+                })
+            });
+            if !step_stat_value.is_object() {
+                *step_stat_value = json!({
+                    "step_id": step_id,
+                    "total_attempts": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "total_duration_ms": 0,
+                    "avg_duration_ms": 0,
+                });
+            }
+            let Some(step_stat_obj) = step_stat_value.as_object_mut() else {
+                return;
+            };
+
+            let mut total_attempts = step_stat_obj
+                .get("total_attempts")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let mut success_count = step_stat_obj
+                .get("success_count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let mut failure_count = step_stat_obj
+                .get("failure_count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let mut total_duration_ms = step_stat_obj
+                .get("total_duration_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+
+            total_attempts += 1;
+            if mark_last_success {
+                success_count += 1;
+            } else if mark_suggested_resume {
+                failure_count += 1;
+            }
+            if let Some(ms) = duration_ms {
+                total_duration_ms += ms.max(0);
+                step_stat_obj.insert("last_duration_ms".to_string(), json!(ms.max(0)));
+            }
+
+            let avg_duration_ms = if total_attempts > 0 {
+                total_duration_ms / total_attempts
+            } else {
+                0
+            };
+            step_stat_obj.insert("step_id".to_string(), json!(step_id));
+            step_stat_obj.insert("total_attempts".to_string(), json!(total_attempts));
+            step_stat_obj.insert("success_count".to_string(), json!(success_count));
+            step_stat_obj.insert("failure_count".to_string(), json!(failure_count));
+            step_stat_obj.insert("total_duration_ms".to_string(), json!(total_duration_ms));
+            step_stat_obj.insert("avg_duration_ms".to_string(), json!(avg_duration_ms));
+            step_stat_obj.insert("last_status".to_string(), json!(status));
+            step_stat_obj.insert("last_attempt".to_string(), json!(attempt));
+            step_stat_obj.insert("last_round".to_string(), json!(round_number));
+            step_stat_obj.insert("updated_at".to_string(), json!(now.clone()));
+            if let Some(err) = error {
+                step_stat_obj.insert("last_error".to_string(), json!(shorten_text(err, 500)));
+            } else {
+                step_stat_obj.remove("last_error");
+            }
+        }
+
+        if mark_last_success {
+            runtime_obj.insert("last_success_step_id".to_string(), json!(step_id));
+        }
+        if mark_suggested_resume {
+            runtime_obj.insert("suggested_resume_step_id".to_string(), json!(step_id));
+        }
+        if mark_suggested_resume {
+            if let Some(err) = error {
+                let failure_mode = Self::classify_orchestration_failure_mode(err);
+                self.update_orchestration_failure_mode_stats(
+                    runtime_obj,
+                    failure_mode,
+                    step_id,
+                    err,
+                    now.as_str(),
+                );
+            } else {
+                self.update_orchestration_failure_mode_stats(
+                    runtime_obj,
+                    "unknown",
+                    step_id,
+                    "",
+                    now.as_str(),
+                );
+            }
+        }
+
+        {
+            let summary_value = runtime_obj
+                .entry("summary".to_string())
+                .or_insert_with(|| json!({}));
+            if !summary_value.is_object() {
+                *summary_value = json!({});
+            }
+            let Some(summary_obj) = summary_value.as_object_mut() else {
+                return;
+            };
+            let mut total_attempts_all = summary_obj
+                .get("total_attempts")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let mut total_success = summary_obj
+                .get("total_success")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let mut total_failed = summary_obj
+                .get("total_failed")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            total_attempts_all += 1;
+            if status == "succeeded" {
+                total_success += 1;
+            } else if status == "failed" {
+                total_failed += 1;
+            }
+
+            summary_obj.insert("total_attempts".to_string(), json!(total_attempts_all));
+            summary_obj.insert("total_success".to_string(), json!(total_success));
+            summary_obj.insert("total_failed".to_string(), json!(total_failed));
+            summary_obj.insert("updated_at".to_string(), json!(now.clone()));
+
+            if let Some(ms) = duration_ms {
+                let current_slowest = summary_obj
+                    .get("slowest_duration_ms")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                if ms > current_slowest {
+                    summary_obj.insert("slowest_duration_ms".to_string(), json!(ms));
+                    summary_obj.insert("slowest_step_id".to_string(), json!(step_id));
+                }
+            }
+        }
+        self.refresh_orchestration_recovery_suggestions(runtime_obj);
+    }
+
+    fn update_orchestration_failure_mode_stats(
+        &self,
+        runtime_obj: &mut serde_json::Map<String, Value>,
+        failure_mode: &str,
+        step_id: &str,
+        error: &str,
+        now: &str,
+    ) {
+        let modes_value = runtime_obj
+            .entry("failure_modes".to_string())
+            .or_insert_with(|| json!({}));
+        if !modes_value.is_object() {
+            *modes_value = json!({});
+        }
+        let Some(modes_obj) = modes_value.as_object_mut() else {
+            return;
+        };
+        let mode_value = modes_obj
+            .entry(failure_mode.to_string())
+            .or_insert_with(|| {
+                json!({
+                    "mode": failure_mode,
+                    "count": 0,
+                    "latest_step_id": "",
+                    "latest_error": "",
+                    "hint": Self::failure_mode_recovery_hint(failure_mode),
+                    "updated_at": now,
+                })
+            });
+        if !mode_value.is_object() {
+            *mode_value = json!({
+                "mode": failure_mode,
+                "count": 0,
+                "latest_step_id": "",
+                "latest_error": "",
+                "hint": Self::failure_mode_recovery_hint(failure_mode),
+                "updated_at": now,
+            });
+        }
+        let Some(mode_obj) = mode_value.as_object_mut() else {
+            return;
+        };
+
+        let mut count = mode_obj
+            .get("count")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .max(0);
+        count += 1;
+        mode_obj.insert("mode".to_string(), json!(failure_mode));
+        mode_obj.insert("count".to_string(), json!(count));
+        mode_obj.insert("latest_step_id".to_string(), json!(step_id));
+        mode_obj.insert(
+            "latest_error".to_string(),
+            json!(shorten_text(error, 500)),
+        );
+        mode_obj.insert(
+            "hint".to_string(),
+            json!(Self::failure_mode_recovery_hint(failure_mode)),
+        );
+        mode_obj.insert("updated_at".to_string(), json!(now));
+    }
+
+    fn refresh_orchestration_recovery_suggestions(
+        &self,
+        runtime_obj: &mut serde_json::Map<String, Value>,
+    ) {
+        let mut suggestions: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        let push_unique = |msg: String,
+                           suggestions: &mut Vec<String>,
+                           seen: &mut std::collections::HashSet<String>| {
+            if msg.trim().is_empty() {
+                return;
+            }
+            if seen.insert(msg.clone()) {
+                suggestions.push(msg);
+            }
+        };
+
+        if let Some(step_id) = runtime_obj
+            .get("suggested_resume_step_id")
+            .and_then(|v| v.as_str())
+        {
+            push_unique(
+                format!("优先从失败节点 {} 恢复执行。", step_id),
+                &mut suggestions,
+                &mut seen,
+            );
+        }
+
+        if let Some(modes_obj) = runtime_obj
+            .get("failure_modes")
+            .and_then(|v| v.as_object())
+        {
+            let mut modes: Vec<(String, i64)> = modes_obj
+                .iter()
+                .map(|(mode, value)| {
+                    (
+                        mode.clone(),
+                        value.get("count").and_then(|v| v.as_i64()).unwrap_or(0),
+                    )
+                })
+                .collect();
+            modes.sort_by(|a, b| b.1.cmp(&a.1));
+
+            for (mode, _) in modes.into_iter().take(3) {
+                push_unique(
+                    Self::failure_mode_recovery_hint(&mode).to_string(),
+                    &mut suggestions,
+                    &mut seen,
+                );
+            }
+        }
+
+        if let Some(slowest_step_id) = runtime_obj
+            .get("summary")
+            .and_then(|v| v.get("slowest_step_id"))
+            .and_then(|v| v.as_str())
+        {
+            let slowest_ms = runtime_obj
+                .get("summary")
+                .and_then(|v| v.get("slowest_duration_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if slowest_ms >= 120_000 {
+                push_unique(
+                    format!(
+                        "慢节点 {} 耗时较高（约{}秒），建议拆分任务或改并行。",
+                        slowest_step_id,
+                        slowest_ms / 1000
+                    ),
+                    &mut suggestions,
+                    &mut seen,
+                );
+            }
+        }
+
+        if suggestions.is_empty() {
+            suggestions.push("当前暂无明显失败风险，可按既定编排继续运行。".to_string());
+        }
+        runtime_obj.insert("recovery_suggestions".to_string(), json!(suggestions));
+    }
+
+    fn classify_orchestration_failure_mode(error: &str) -> &'static str {
+        let lower = error.to_lowercase();
+        if lower.contains("timeout")
+            || lower.contains("timed out")
+            || lower.contains("deadline exceeded")
+        {
+            "timeout"
+        } else if lower.contains("rate limit")
+            || lower.contains("429")
+            || lower.contains("api key")
+            || lower.contains("provider")
+            || lower.contains("unauthorized")
+        {
+            "llm_provider"
+        } else if lower.contains("permission")
+            || lower.contains("denied")
+            || lower.contains("approval")
+        {
+            "permission"
+        } else if lower.contains("tool")
+            || lower.contains("shell")
+            || lower.contains("command")
+        {
+            "tool_execution"
+        } else if lower.contains("missing")
+            || lower.contains("invalid")
+            || lower.contains("required")
+            || lower.contains("json")
+        {
+            "input_validation"
+        } else if lower.contains("member") && lower.contains("not found") {
+            "member_mapping"
+        } else {
+            "unknown"
+        }
+    }
+
+    fn failure_mode_recovery_hint(mode: &str) -> &'static str {
+        match mode {
+            "timeout" => "超时失败较多，建议提高 backoff、降低单步任务复杂度，必要时拆分步骤。",
+            "llm_provider" => {
+                "模型/供应商失败较多，建议检查 API key、限流配额并切换备用模型。"
+            }
+            "permission" => "权限失败较多，建议调整工具策略或角色权限后再重试。",
+            "tool_execution" => "工具执行失败较多，建议先在单步验证工具输入，再恢复编排运行。",
+            "input_validation" => "输入校验失败较多，建议检查 step 配置字段与 JSON 结构。",
+            "member_mapping" => "成员映射失败，建议确认 step.member 与 Team 成员名称一致。",
+            _ => "未知失败较多，建议从最近失败 step 恢复并开启更小步长重试。",
+        }
+    }
+
+    fn resolve_member<'a>(
+        &self,
+        session: &'a AgentTeamSession,
+        selector: &str,
+    ) -> Option<&'a AgentTeamMember> {
+        let normalized = selector.trim().to_lowercase();
+        session.members.iter().find(|m| {
+            m.id.eq_ignore_ascii_case(selector) || m.name.trim().to_lowercase() == normalized
+        })
+    }
+
+    fn phase_to_state(phase: &str) -> TeamSessionState {
+        let lower = phase.trim().to_lowercase();
+        if lower.contains("propos") || lower.contains("draft") {
+            TeamSessionState::Proposing
+        } else if lower.contains("challeng")
+            || lower.contains("review")
+            || lower.contains("audit")
+        {
+            TeamSessionState::Challenging
+        } else if lower.contains("decid") || lower.contains("merge") {
+            TeamSessionState::Deciding
+        } else {
+            TeamSessionState::Revising
+        }
+    }
+
+    fn phase_to_blackboard_entry(phase: &str) -> (&'static str, BlackboardEntryType) {
+        let lower = phase.trim().to_lowercase();
+        if lower.contains("challeng") || lower.contains("review") || lower.contains("audit") {
+            ("dispute", BlackboardEntryType::Dispute)
+        } else if lower.contains("decid") || lower.contains("merge") {
+            ("consensus", BlackboardEntryType::Consensus)
+        } else {
+            ("action_item", BlackboardEntryType::ActionItem)
+        }
+    }
+
+    fn build_orchestration_agent_prompt(
+        &self,
+        goal: &str,
+        step_id: &str,
+        step_label: &str,
+        phase: &str,
+        round_number: i32,
+        member: &AgentTeamMember,
+        step_instruction: &str,
+    ) -> String {
+        format!(
+            "你正在执行 Team 工作流节点，请严格围绕当前节点任务输出。\n\
+             - 会话目标: {}\n\
+             - 节点ID: {}\n\
+             - 节点名称: {}\n\
+             - 执行阶段: {}\n\
+             - 节点序号: {}\n\
+             - 你的角色: {}\n\
+             - 角色职责: {}\n\
+             - 节点额外要求: {}\n\n\
+             输出要求:\n\
+             1) 本节点可执行结论\n\
+             2) 关键依据（含风险/假设/边界）\n\
+             3) 对后续节点的交接信息（避免重复劳动）",
+            goal,
+            step_id,
+            step_label,
+            phase,
+            round_number,
+            member.name,
+            member.responsibility.as_deref().unwrap_or(""),
+            if step_instruction.trim().is_empty() {
+                "无"
+            } else {
+                step_instruction
+            },
+        )
     }
 
     /// 生成标准文档产物（PRD / Architecture）
@@ -1004,386 +1519,6 @@ impl AgentTeamEngine {
     /// 发送 Tauri 事件
     fn emit_event(&self, _session_id: &str, event: &str, payload: serde_json::Value) {
         let _ = self.app_handle.emit(event, &payload);
-    }
-
-    fn schedule_auto_resume_if_needed(&self, session_id: &str) {
-        let session_id_owned = session_id.to_string();
-        let app_handle = self.app_handle.clone();
-
-        tokio::spawn(async move {
-            let mut timeout_secs = DEFAULT_HUMAN_INTERVENTION_TIMEOUT_SECS;
-            let mut policy = DEFAULT_NO_HUMAN_INPUT_POLICY.to_string();
-
-            let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
-                warn!(
-                    "Auto-resume skipped for session {}: DatabaseService not available",
-                    session_id_owned
-                );
-                return;
-            };
-            let pool = match db.get_runtime_pool() {
-                Ok(pool) => pool,
-                Err(e) => {
-                    warn!(
-                        "Auto-resume skipped for session {}: failed to get db pool: {}",
-                        session_id_owned, e
-                    );
-                    return;
-                }
-            };
-
-            let session = match repo_rt::get_agent_team_session(&pool, &session_id_owned).await {
-                Ok(Some(s)) => s,
-                Ok(None) => return,
-                Err(e) => {
-                    warn!(
-                        "Auto-resume skipped for session {}: failed to fetch session for scheduling: {}",
-                        session_id_owned, e
-                    );
-                    return;
-                }
-            };
-
-            if let Some(state_machine) = session.state_machine.as_ref().and_then(|v| v.as_object()) {
-                let fallback_timeout = state_machine
-                    .get("human_intervention_timeout_secs")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(DEFAULT_HUMAN_INTERVENTION_TIMEOUT_SECS);
-                let fallback_policy = AgentTeamEngine::normalize_no_human_input_policy(
-                    state_machine
-                        .get("no_human_input_policy")
-                        .and_then(|v| v.as_str()),
-                );
-
-                if let Some(intervention) = state_machine
-                    .get("human_intervention")
-                    .and_then(|v| v.as_object())
-                {
-                    timeout_secs = AgentTeamEngine::normalize_human_intervention_timeout_secs(
-                        intervention
-                            .get("timeout_secs")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(fallback_timeout),
-                    );
-                    policy = AgentTeamEngine::normalize_no_human_input_policy(
-                        intervention
-                            .get("policy")
-                            .and_then(|v| v.as_str())
-                            .or_else(|| Some(fallback_policy.as_str())),
-                    );
-                } else {
-                    timeout_secs =
-                        AgentTeamEngine::normalize_human_intervention_timeout_secs(fallback_timeout);
-                    policy = fallback_policy;
-                }
-            }
-
-            info!(
-                "Scheduled auto-resume for session {} in {}s with '{}' policy",
-                session_id_owned, timeout_secs, policy
-            );
-            tokio::time::sleep(StdDuration::from_secs(timeout_secs as u64)).await;
-
-            let session = match repo_rt::get_agent_team_session(&pool, &session_id_owned).await {
-                Ok(Some(s)) => s,
-                Ok(None) => return,
-                Err(e) => {
-                    warn!(
-                        "Auto-resume skipped for session {}: failed to fetch session on trigger: {}",
-                        session_id_owned, e
-                    );
-                    return;
-                }
-            };
-
-            if session.state != TeamSessionState::SuspendedForHuman.to_string() {
-                return;
-            }
-
-            let auto_message = AgentTeamEngine::build_auto_resume_prompt(&policy);
-            if let Err(e) = repo_rt::create_message(
-                &pool,
-                &session_id_owned,
-                None,
-                None,
-                Some("系统自动介入"),
-                "user",
-                &auto_message,
-                None,
-            )
-            .await
-            {
-                warn!(
-                    "Auto-resume skipped for session {}: failed to append auto message: {}",
-                    session_id_owned, e
-                );
-                return;
-            }
-
-            let mut state_machine = session.state_machine.unwrap_or_else(|| json!({}));
-            if !state_machine.is_object() {
-                state_machine = json!({});
-            }
-            if let Some(state_obj) = state_machine.as_object_mut() {
-                let intervention_value = state_obj
-                    .entry("human_intervention".to_string())
-                    .or_insert_with(|| json!({}));
-                if !intervention_value.is_object() {
-                    *intervention_value = json!({});
-                }
-                if let Some(intervention_obj) = intervention_value.as_object_mut() {
-                    let auto_resume_count = intervention_obj
-                        .get("auto_resume_count")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0)
-                        + 1;
-                    intervention_obj
-                        .insert("auto_resume_count".to_string(), json!(auto_resume_count));
-                    intervention_obj.insert(
-                        "auto_resumed_at".to_string(),
-                        json!(chrono::Utc::now().to_rfc3339()),
-                    );
-                    intervention_obj.insert(
-                        "last_auto_resume_policy".to_string(),
-                        json!(policy.clone()),
-                    );
-                    intervention_obj
-                        .insert("last_action".to_string(), json!("auto_resumed_timeout"));
-                    intervention_obj.insert(
-                        "updated_at".to_string(),
-                        json!(chrono::Utc::now().to_rfc3339()),
-                    );
-                    intervention_obj.remove("auto_resume_at");
-                }
-            }
-
-            if let Err(e) = repo_rt::update_agent_team_session(
-                &pool,
-                &session_id_owned,
-                &UpdateAgentTeamSessionRequest {
-                    name: None,
-                    goal: None,
-                    state: None,
-                    max_rounds: None,
-                    state_machine: Some(state_machine),
-                    error_message: None,
-                },
-            )
-            .await
-            {
-                warn!(
-                    "Failed to persist auto-resume metadata for session {}: {}",
-                    session_id_owned, e
-                );
-            }
-
-            match start_agent_team_run_async(app_handle.clone(), session_id_owned.clone()).await {
-                Ok(_) => info!(
-                    "Session {} auto-resumed after timeout using '{}' policy",
-                    session_id_owned, policy
-                ),
-                Err(e) => warn!("Auto-resume failed for session {}: {}", session_id_owned, e),
-            }
-        });
-    }
-
-    fn normalize_human_intervention_timeout_secs(value: i64) -> i64 {
-        value.clamp(
-            MIN_HUMAN_INTERVENTION_TIMEOUT_SECS,
-            MAX_HUMAN_INTERVENTION_TIMEOUT_SECS,
-        )
-    }
-
-    fn normalize_no_human_input_policy(policy: Option<&str>) -> String {
-        match policy
-            .unwrap_or(DEFAULT_NO_HUMAN_INPUT_POLICY)
-            .trim()
-            .to_lowercase()
-            .as_str()
-        {
-            "conservative" => "conservative".to_string(),
-            "aggressive" => "aggressive".to_string(),
-            _ => "balanced".to_string(),
-        }
-    }
-
-    fn build_auto_resume_prompt(policy: &str) -> String {
-        match policy {
-            "conservative" => "用户暂未介入。请按保守收敛策略继续：优先安全与稳定，选择风险最低且可回滚方案。请直接输出唯一执行方案、被放弃方案及理由、执行步骤。".to_string(),
-            "aggressive" => "用户暂未介入。请按激进推进策略继续：优先交付速度与产出，选择实现最快方案，同时给出关键风险及兜底回滚。请直接输出唯一执行方案、被放弃方案及理由、执行步骤。".to_string(),
-            _ => "用户暂未介入。请按平衡收敛策略继续：在风险、成本、质量之间做均衡取舍，给出可执行的单一方案。请直接输出唯一执行方案、被放弃方案及理由、执行步骤。".to_string(),
-        }
-    }
-
-    async fn should_suspend_for_human_intervention(
-        &self,
-        pool: &DatabasePool,
-        session_id: &str,
-        divergence: f64,
-        phase: &str,
-        round_number: i32,
-    ) -> Result<bool> {
-        let session = repo_rt::get_agent_team_session(pool, session_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("session not found: {}", session_id))?;
-
-        let mut state_machine = session.state_machine.unwrap_or_else(|| json!({}));
-        if !state_machine.is_object() {
-            state_machine = json!({});
-        }
-        let state_obj = state_machine
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("state_machine must be object"))?;
-
-        let fallback_max = state_obj
-            .get("max_human_interventions")
-            .and_then(|v| v.as_i64())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT_MAX_HUMAN_INTERVENTIONS);
-        let fallback_timeout_secs = Self::normalize_human_intervention_timeout_secs(
-            state_obj
-                .get("human_intervention_timeout_secs")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(DEFAULT_HUMAN_INTERVENTION_TIMEOUT_SECS),
-        );
-        let fallback_policy = Self::normalize_no_human_input_policy(
-            state_obj
-                .get("no_human_input_policy")
-                .and_then(|v| v.as_str()),
-        );
-
-        let intervention_value = state_obj
-            .entry("human_intervention".to_string())
-            .or_insert_with(|| json!({}));
-        if !intervention_value.is_object() {
-            *intervention_value = json!({});
-        }
-        let intervention_obj = intervention_value
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("human_intervention must be object"))?;
-
-        let count = intervention_obj
-            .get("count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0)
-            .max(0);
-        let max_interventions = intervention_obj
-            .get("max")
-            .and_then(|v| v.as_i64())
-            .filter(|v| *v > 0)
-            .unwrap_or(fallback_max);
-        let timeout_secs = Self::normalize_human_intervention_timeout_secs(
-            intervention_obj
-                .get("timeout_secs")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(fallback_timeout_secs),
-        );
-        let policy = Self::normalize_no_human_input_policy(
-            intervention_obj
-                .get("policy")
-                .and_then(|v| v.as_str())
-                .or_else(|| Some(fallback_policy.as_str())),
-        );
-
-        let now_dt = chrono::Utc::now();
-        let now = now_dt.to_rfc3339();
-
-        if count >= max_interventions {
-            let forced_continue_count = intervention_obj
-                .get("forced_continue_count")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                + 1;
-            intervention_obj.insert("max".to_string(), json!(max_interventions));
-            intervention_obj.insert("count".to_string(), json!(count));
-            intervention_obj.insert("limit_reached".to_string(), json!(true));
-            intervention_obj.insert(
-                "forced_continue_count".to_string(),
-                json!(forced_continue_count),
-            );
-            intervention_obj.insert("last_phase".to_string(), json!(phase));
-            intervention_obj.insert("last_round".to_string(), json!(round_number));
-            intervention_obj.insert("last_divergence".to_string(), json!(divergence));
-            intervention_obj.insert("policy".to_string(), json!(policy.clone()));
-            intervention_obj.insert("timeout_secs".to_string(), json!(timeout_secs));
-            intervention_obj.insert("updated_at".to_string(), json!(now));
-            intervention_obj.insert("last_action".to_string(), json!("forced_continue"));
-            intervention_obj.remove("auto_resume_at");
-
-            repo_rt::update_agent_team_session(
-                pool,
-                session_id,
-                &UpdateAgentTeamSessionRequest {
-                    name: None,
-                    goal: None,
-                    state: None,
-                    max_rounds: None,
-                    state_machine: Some(state_machine),
-                    error_message: None,
-                },
-            )
-            .await?;
-
-            let policy_label = match policy.as_str() {
-                "conservative" => "保守",
-                "aggressive" => "激进",
-                _ => "平衡",
-            };
-            let system_message = format!(
-                "分歧度仍然偏高（{:.0}%），且人工介入已达上限（{}/{}）。系统将按{}策略强制推进后续决策以避免循环。",
-                divergence * 100.0,
-                count,
-                max_interventions,
-                policy_label
-            );
-            let _ = repo_rt::create_message(
-                pool,
-                session_id,
-                None,
-                None,
-                Some("系统"),
-                "system",
-                &system_message,
-                None,
-            )
-            .await;
-            return Ok(false);
-        }
-
-        let next_count = count + 1;
-        let auto_resume_at = (now_dt + chrono::Duration::seconds(timeout_secs)).to_rfc3339();
-        intervention_obj.insert("max".to_string(), json!(max_interventions));
-        intervention_obj.insert("count".to_string(), json!(next_count));
-        intervention_obj.insert("policy".to_string(), json!(policy));
-        intervention_obj.insert("timeout_secs".to_string(), json!(timeout_secs));
-        intervention_obj.insert("limit_reached".to_string(), json!(false));
-        intervention_obj.insert(
-            "degradation_level".to_string(),
-            json!(std::cmp::min(next_count, max_interventions)),
-        );
-        intervention_obj.insert("last_phase".to_string(), json!(phase));
-        intervention_obj.insert("last_round".to_string(), json!(round_number));
-        intervention_obj.insert("last_divergence".to_string(), json!(divergence));
-        intervention_obj.insert("suspended_at".to_string(), json!(now.clone()));
-        intervention_obj.insert("auto_resume_at".to_string(), json!(auto_resume_at));
-        intervention_obj.insert("updated_at".to_string(), json!(now));
-        intervention_obj.insert("last_action".to_string(), json!("suspended_waiting_human"));
-
-        repo_rt::update_agent_team_session(
-            pool,
-            session_id,
-            &UpdateAgentTeamSessionRequest {
-                name: None,
-                goal: None,
-                state: None,
-                max_rounds: None,
-                state_machine: Some(state_machine),
-                error_message: None,
-            },
-        )
-        .await?;
-
-        Ok(true)
     }
 
     async fn summarize_and_persist_member_execution(
@@ -1733,6 +1868,8 @@ Input:\n\
                 goal: None,
                 state: None,
                 max_rounds: None,
+                orchestration_plan: None,
+                plan_version: None,
                 state_machine: Some(state_machine),
                 error_message: None,
             },
@@ -2305,6 +2442,8 @@ pub async fn start_agent_team_run_async(app_handle: AppHandle, session_id: Strin
                             goal: None,
                             state: Some("FAILED".to_string()),
                             max_rounds: None,
+                            orchestration_plan: None,
+                            plan_version: None,
                             state_machine: None,
                             error_message: Some(e.to_string()),
                         },
@@ -2349,29 +2488,6 @@ fn shorten_text(text: &str, max_chars: usize) -> String {
     } else {
         format!("{}...", chars[..max_chars].iter().collect::<String>())
     }
-}
-
-/// 从评审文本中提取评分（如 "综合评分：8/10"）
-fn extract_score_from_review(review: &str) -> Option<f64> {
-    // 简单正则-like 提取
-    for line in review.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("评分") || lower.contains("score") {
-            // 寻找数字
-            let numbers: Vec<f64> = line
-                .split_whitespace()
-                .filter_map(|w| {
-                    let w = w.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
-                    w.parse::<f64>().ok()
-                })
-                .filter(|&n| n >= 1.0 && n <= 10.0)
-                .collect();
-            if let Some(&score) = numbers.first() {
-                return Some(score);
-            }
-        }
-    }
-    None
 }
 
 fn extract_member_model_override(member: &AgentTeamMember) -> Option<(String, String)> {

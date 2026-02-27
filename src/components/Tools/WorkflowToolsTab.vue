@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-4">
-    <div class="flex justify-between items-center">
+    <div v-if="!props.embedded" class="flex justify-between items-center">
       <div class="alert alert-info flex-1 mr-4">
         <i class="fas fa-info-circle"></i>
         <span>这些是在工作流工作室中标记为工具的工作流，可供AI助手调用执行。</span>
@@ -25,15 +25,34 @@
       </div>
     </div>
     
+    <!-- 分类筛选 -->
+    <div v-if="!props.embedded" class="flex flex-wrap gap-2">
+      <button
+        @click="selectedCategory = ''"
+        :class="['btn btn-sm', selectedCategory === '' ? 'btn-primary' : 'btn-ghost']"
+      >
+        全部 ({{ workflows.length }})
+      </button>
+      <button
+        v-for="cat in workflowCategories"
+        :key="cat.key"
+        @click="selectedCategory = cat.key"
+        :class="['btn btn-sm', selectedCategory === cat.key ? 'btn-secondary' : 'btn-ghost']"
+      >
+        <i class="fas fa-tag mr-1"></i>
+        {{ cat.label }} ({{ cat.count }})
+      </button>
+    </div>
+
     <div v-if="isLoading" class="text-center p-8">
       <i class="fas fa-spinner fa-spin text-2xl"></i>
       <p class="mt-2">正在加载工作流工具...</p>
     </div>
     
     <!-- 卡片视图 -->
-    <div v-else-if="workflows.length > 0 && viewMode === 'card'" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+    <div v-else-if="filteredWorkflows.length > 0 && viewMode === 'card'" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
       <div 
-        v-for="workflow in workflows" 
+        v-for="workflow in filteredWorkflows" 
         :key="workflow.id"
         class="card bg-base-100 shadow-lg hover:shadow-xl transition-shadow"
       >
@@ -80,7 +99,7 @@
     </div>
     
     <!-- 列表视图 -->
-    <div v-else-if="workflows.length > 0 && viewMode === 'list'" class="overflow-x-auto">
+    <div v-else-if="filteredWorkflows.length > 0 && viewMode === 'list'" class="overflow-x-auto">
       <table class="table w-full">
         <thead>
           <tr>
@@ -93,7 +112,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="workflow in workflows" :key="workflow.id">
+          <tr v-for="workflow in filteredWorkflows" :key="workflow.id">
             <td>
               <div class="flex items-center gap-2">
                 <i class="fas fa-project-diagram text-secondary"></i>
@@ -129,6 +148,14 @@
         </tbody>
       </table>
     </div>
+
+    <div v-else-if="workflows.length > 0" class="text-center p-8">
+      <i class="fas fa-filter text-3xl text-base-content/30 mb-3"></i>
+      <p class="font-semibold">当前分类下暂无工作流工具</p>
+      <button @click="selectedCategory = ''" class="btn btn-sm btn-outline mt-3">
+        清除筛选
+      </button>
+    </div>
     
     <div v-else class="text-center p-8">
       <i class="fas fa-project-diagram text-4xl text-base-content/30 mb-4"></i>
@@ -158,25 +185,92 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import UnifiedToolTest from './UnifiedToolTest.vue'
+
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false
+})
 
 // 状态
 const workflows = ref<any[]>([])
 const isLoading = ref(false)
 const viewMode = ref('list')
+const selectedCategory = ref('')
 const showTestModal = ref(false)
 const testingWorkflow = ref<any>(null)
 const testingInputSchema = ref<any>({})
+
+const UNCATEGORIZED_KEY = '__uncategorized__'
+
+const workflowCategories = computed(() => {
+  const counts = new Map<string, number>()
+
+  for (const workflow of workflows.value) {
+    const tags = parseTags(workflow.tags)
+    if (tags.length === 0) {
+      counts.set(UNCATEGORIZED_KEY, (counts.get(UNCATEGORIZED_KEY) || 0) + 1)
+      continue
+    }
+
+    for (const tag of new Set(tags)) {
+      counts.set(tag, (counts.get(tag) || 0) + 1)
+    }
+  }
+
+  return Array.from(counts.entries())
+    .map(([key, count]) => ({
+      key,
+      count,
+      label: key === UNCATEGORIZED_KEY ? '未分类' : key
+    }))
+    .sort((a, b) => b.count - a.count)
+})
+
+const filteredWorkflows = computed(() => {
+  if (props.embedded) {
+    return workflows.value
+  }
+
+  if (!selectedCategory.value) {
+    return workflows.value
+  }
+
+  if (selectedCategory.value === UNCATEGORIZED_KEY) {
+    return workflows.value.filter(workflow => parseTags(workflow.tags).length === 0)
+  }
+
+  return workflows.value.filter(workflow => parseTags(workflow.tags).includes(selectedCategory.value))
+})
+
+watch(workflowCategories, categories => {
+  if (props.embedded) return
+  if (!selectedCategory.value) return
+  if (!categories.some(category => category.key === selectedCategory.value)) {
+    selectedCategory.value = ''
+  }
+})
+
+watch(
+  () => props.embedded,
+  isEmbedded => {
+    if (!isEmbedded) return
+    selectedCategory.value = ''
+    viewMode.value = 'list'
+  },
+  { immediate: true }
+)
 
 // 方法
 function parseTags(tags: string | null): string[] {
   if (!tags) return []
   try {
     const parsed = JSON.parse(tags)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? parsed.map(tag => String(tag).trim()).filter(Boolean) : []
   } catch {
     return tags.split(',').map(t => t.trim()).filter(t => t)
   }

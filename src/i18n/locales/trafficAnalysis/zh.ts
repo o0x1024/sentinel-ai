@@ -1092,7 +1092,7 @@ export default {
       emptyWorkflows: '暂无已保存的工作流',
       emptyTemplates: '暂无模板',
       aiTool: 'AI工具',
-      duplicate: '复制',
+      duplicate: '克隆',
       delete: '删除',
       templateBadge: '模板',
       nodeCount: '{count} 个节点',
@@ -1266,8 +1266,8 @@ export default {
       imageExportRequiresHtml2Canvas: '图片导出功能需要安装html2canvas库',
       templateSaved: '已保存为模板',
       templateSaveFailed: '保存模板失败：{error}',
-      workflowDuplicated: '工作流已复制',
-      duplicateFailed: '复制失败：{error}',
+      workflowDuplicated: '工作流已克隆',
+      duplicateFailed: '克隆失败：{error}',
       templateDeleted: '模板已删除',
       deleteTemplateFailed: '删除模板失败：{error}',
       templateApplied: '模板已应用',
@@ -1338,7 +1338,7 @@ export default {
     defaults: {
       unnamedWorkflow: '未命名工作流',
       importedWorkflow: '导入的工作流',
-      duplicateWorkflowName: '{name} (副本)'
+      duplicateWorkflowName: '{name} (克隆)'
     },
     errors: {
       invalidWorkflowFile: '无效的工作流文件格式',

@@ -223,9 +223,18 @@
                       </div>
                     </div>
                     <div class="flex gap-0.5">
+                      <button
+                        class="btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0"
+                        @click.stop="edit_workflow_metadata(wf.id)"
+                        :title="t('trafficAnalysis.workflowStudio.header.editMetadataTooltip')"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5M18.586 3.586a2 2 0 112.828 2.828L12 15.828l-4 1 1-4 9.586-9.242z" />
+                        </svg>
+                      </button>
                       <button 
                         class="btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0" 
-                        @click.stop="duplicate_workflow(wf.id)" 
+                        @click.stop="clone_workflow(wf.id)" 
                         :title="t('trafficAnalysis.workflowStudio.workflowListPanel.duplicate')"
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -337,7 +346,24 @@
       <!-- 主内容区域 -->
       <div class="flex-1 flex gap-4 min-w-0">
         <!-- 节点库侧边栏 -->
-        <div :class="sidebar_collapsed ? 'w-12' : 'w-84'" class="transition-all duration-300 flex-shrink-0 flex flex-col">
+        <div
+          :style="sidebar_collapsed ? undefined : { width: `${sidebar_width}px` }"
+          :class="[
+            sidebar_collapsed ? 'w-12' : '',
+            show_workflow_list_panel || is_resizing_sidebar ? 'transition-none no-node-lib-anim' : 'transition-[width] duration-300'
+          ]"
+          class="relative flex-shrink-0 flex flex-col"
+        >
+          <div
+            v-if="!sidebar_collapsed"
+            class="absolute top-0 right-0 h-full w-1.5 cursor-col-resize z-20 group"
+            @mousedown="start_sidebar_resize"
+          >
+            <div
+              class="h-full w-full"
+              :class="is_resizing_sidebar ? 'bg-primary/30' : 'bg-transparent group-hover:bg-base-content/10'"
+            ></div>
+          </div>
           <div class="card bg-base-100 shadow-xl flex-1 flex flex-col overflow-hidden">
             <div class="card-body p-3 flex flex-col flex-1 overflow-hidden">
               <div class="flex items-center justify-between mb-2 flex-shrink-0">
@@ -1057,6 +1083,14 @@ const is_loading_graph = ref(false)
 const AUTO_SAVE_DELAY = 1000 // 1秒防抖延迟
 const MAX_EXECUTION_LOGS = 500
 const MAX_LOG_DETAILS_LENGTH = 2000
+const SIDEBAR_WIDTH_KEY = 'workflow_studio_sidebar_width'
+const SIDEBAR_DEFAULT_WIDTH = 320
+const SIDEBAR_MIN_WIDTH = 220
+const SIDEBAR_MAX_WIDTH = 560
+const sidebar_width = ref(SIDEBAR_DEFAULT_WIDTH)
+const is_resizing_sidebar = ref(false)
+const sidebar_resize_start_x = ref(0)
+const sidebar_resize_start_width = ref(SIDEBAR_DEFAULT_WIDTH)
 
 defineOptions({
   name: 'WorkflowStudio'
@@ -2076,6 +2110,15 @@ const save_workflow = async (silent = false): Promise<boolean> => {
       isTemplate: false,
       isTool: workflow_is_tool.value
     })
+    sync_current_workflow_to_list()
+    // 新建/克隆后列表中不存在该项时，面板打开状态下主动刷新一次
+    if (
+      show_workflow_list_panel.value &&
+      workflow_list_tab.value === 'workflows' &&
+      !workflow_list.value.some((wf) => wf.id === workflow_id.value)
+    ) {
+      await load_workflow_list()
+    }
     has_unsaved_changes.value = false
     if (!silent) {
       add_log(
@@ -2213,6 +2256,22 @@ const load_workflow_list = async () => {
   }
 }
 
+// 将当前编辑中的工作流元数据同步到列表，确保列表实时反映变更
+const sync_current_workflow_to_list = () => {
+  const idx = workflow_list.value.findIndex((wf) => wf.id === workflow_id.value)
+  if (idx === -1) return
+  const current = workflow_list.value[idx] || {}
+  workflow_list.value[idx] = {
+    ...current,
+    id: workflow_id.value,
+    name: workflow_name.value || t('trafficAnalysis.workflowStudio.defaults.unnamedWorkflow'),
+    description: workflow_description.value || '',
+    tags: workflow_tags.value || '',
+    version: workflow_version.value || 'v1.0.0',
+    is_tool: workflow_is_tool.value
+  }
+}
+
 // 过滤后的工作流列表
 const filtered_workflow_list = computed(() => {
   const search = workflow_list_search.value.toLowerCase().trim()
@@ -2263,8 +2322,16 @@ const load_workflow_from_panel = async (id: string) => {
   await load_workflow(id)
 }
 
-// 复制工作流
-const duplicate_workflow = async (id: string) => {
+// 编辑工作流元数据
+const edit_workflow_metadata = async (id: string) => {
+  await load_workflow(id)
+  if (workflow_id.value === id) {
+    show_meta_dialog.value = true
+  }
+}
+
+// 克隆工作流
+const clone_workflow = async (id: string) => {
   const toast = useToast()
   try {
     await load_workflow(id)
@@ -2314,6 +2381,39 @@ const toggle_favorite = (node_type: string) => {
   }
   // 保存到localStorage
   localStorage.setItem('workflow_favorites', JSON.stringify(Array.from(favorites.value)))
+}
+
+const clamp_sidebar_width = (w: number) => {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w))
+}
+
+const on_sidebar_resize_mousemove = (e: MouseEvent) => {
+  if (!is_resizing_sidebar.value) return
+  const delta = e.clientX - sidebar_resize_start_x.value
+  sidebar_width.value = clamp_sidebar_width(sidebar_resize_start_width.value + delta)
+}
+
+const stop_sidebar_resize = () => {
+  if (!is_resizing_sidebar.value) return
+  is_resizing_sidebar.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('mousemove', on_sidebar_resize_mousemove)
+  window.removeEventListener('mouseup', stop_sidebar_resize)
+  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebar_width.value))
+}
+
+const start_sidebar_resize = (e: MouseEvent) => {
+  if (sidebar_collapsed.value) return
+  e.preventDefault()
+  e.stopPropagation()
+  is_resizing_sidebar.value = true
+  sidebar_resize_start_x.value = e.clientX
+  sidebar_resize_start_width.value = sidebar_width.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', on_sidebar_resize_mousemove)
+  window.addEventListener('mouseup', stop_sidebar_resize)
 }
 
 const is_favorite = (node_type: string) => {
@@ -2735,6 +2835,7 @@ const toggle_tool_selection = (key: string, toolName: string) => {
 
 // 监听工作流元数据变化，触发自动保存
 watch([workflow_name, workflow_description, workflow_tags, workflow_version, workflow_is_tool], () => {
+  sync_current_workflow_to_list()
   trigger_auto_save()
 })
 
@@ -2849,6 +2950,14 @@ onMounted(async () => {
       console.error('Failed to load favorites:', e)
     }
   }
+
+  const saved_sidebar_width = localStorage.getItem(SIDEBAR_WIDTH_KEY)
+  if (saved_sidebar_width) {
+    const parsed = Number(saved_sidebar_width)
+    if (!Number.isNaN(parsed)) {
+      sidebar_width.value = clamp_sidebar_width(parsed)
+    }
+  }
   
   // 加载上次运行的工作流
   const last_workflow_id = localStorage.getItem('last_run_workflow_id')
@@ -2869,6 +2978,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   wf_events.unsubscribe_all()
+  stop_sidebar_resize()
   // 清除自动保存定时器
   if (auto_save_timer.value) {
     clearTimeout(auto_save_timer.value)

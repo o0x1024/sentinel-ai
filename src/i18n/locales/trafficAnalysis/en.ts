@@ -1134,7 +1134,7 @@ export default {
       emptyWorkflows: 'No saved workflows',
       emptyTemplates: 'No templates',
       aiTool: 'AI Tool',
-      duplicate: 'Duplicate',
+      duplicate: 'Clone',
       delete: 'Delete',
       templateBadge: 'Template',
       nodeCount: '{count} nodes',
@@ -1308,8 +1308,8 @@ export default {
       imageExportRequiresHtml2Canvas: 'Image export requires the html2canvas library',
       templateSaved: 'Template saved',
       templateSaveFailed: 'Failed to save template: {error}',
-      workflowDuplicated: 'Workflow duplicated',
-      duplicateFailed: 'Duplicate failed: {error}',
+      workflowDuplicated: 'Workflow cloned',
+      duplicateFailed: 'Clone failed: {error}',
       templateDeleted: 'Template deleted',
       deleteTemplateFailed: 'Failed to delete template: {error}',
       templateApplied: 'Template applied',
@@ -1380,7 +1380,7 @@ export default {
     defaults: {
       unnamedWorkflow: 'Unnamed workflow',
       importedWorkflow: 'Imported workflow',
-      duplicateWorkflowName: '{name} (Copy)'
+      duplicateWorkflowName: '{name} (Clone)'
     },
     errors: {
       invalidWorkflowFile: 'Invalid workflow file format',

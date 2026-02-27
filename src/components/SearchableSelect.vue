@@ -120,7 +120,7 @@ const searchQuery = ref('')
 const highlightedIndex = ref(0)
 const controlClass = computed(() => {
   if (props.variant === 'toolbar') {
-    return props.size === 'sm' ? 'h-8 text-[13px] font-medium' : 'h-10 text-sm'
+    return props.size === 'sm' ? 'h-8 text-sm font-medium' : 'h-10 text-sm'
   }
   return props.size === 'sm' ? 'h-9 text-sm' : 'h-12'
 })

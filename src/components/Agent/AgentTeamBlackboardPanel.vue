@@ -100,14 +100,58 @@
           <!-- Footer -->
           <div class="flex items-center justify-between mt-1.5">
             <span class="text-[10px] text-base-content/30">{{ formatTime(entry.created_at) }}</span>
-            <button
-              v-if="canAnnotate && annotatingEntry !== entry.id"
-              class="btn btn-xs btn-ghost text-base-content/30 hover:text-secondary py-0 h-auto"
-              @click="startAnnotate(entry.id)"
-            >
-              <i class="fas fa-pen text-[10px]"></i>
-              <span class="text-[10px]">批注</span>
-            </button>
+            <div class="flex items-center gap-1">
+              <button
+                class="btn btn-xs btn-ghost text-base-content/30 hover:text-primary py-0 h-auto"
+                @click="emit('view-archive', entry.id)"
+              >
+                <i class="fas fa-box-archive text-[10px]"></i>
+                <span class="text-[10px]">
+                  {{ archiveEntryId === entry.id ? '收起归档' : '归档' }}
+                </span>
+              </button>
+              <button
+                v-if="canAnnotate && annotatingEntry !== entry.id"
+                class="btn btn-xs btn-ghost text-base-content/30 hover:text-secondary py-0 h-auto"
+                @click="startAnnotate(entry.id)"
+              >
+                <i class="fas fa-pen text-[10px]"></i>
+                <span class="text-[10px]">批注</span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="archiveEntryId === entry.id"
+            class="mt-2 rounded-lg border border-base-300 bg-base-100/80 p-2 space-y-2"
+          >
+            <div class="text-[10px] text-base-content/50">
+              原始归档
+              <span v-if="archiveScope" class="ml-1">· {{ archiveScopeLabel(archiveScope) }}</span>
+            </div>
+            <div v-if="archiveLoading" class="text-[11px] text-base-content/50">
+              <i class="fas fa-spinner fa-spin mr-1"></i> 正在加载归档...
+            </div>
+            <div v-else-if="archiveError" class="text-[11px] text-error">
+              {{ archiveError }}
+            </div>
+            <div v-else-if="archiveMessagesSafe.length === 0" class="text-[11px] text-base-content/45">
+              未检索到可关联的原始消息
+            </div>
+            <div v-else class="max-h-44 overflow-y-auto space-y-1.5">
+              <div
+                v-for="msg in archiveMessagesSafe"
+                :key="msg.id"
+                class="rounded border border-base-300/80 bg-base-100 p-1.5"
+              >
+                <div class="text-[10px] text-base-content/45 mb-0.5">
+                  {{ archiveMessageAuthor(msg.role, msg.member_name) }} · {{ formatTime(msg.timestamp) }}
+                </div>
+                <div class="text-[11px] text-base-content/75 whitespace-pre-wrap break-words">
+                  {{ msg.content }}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </TransitionGroup>
@@ -159,12 +203,17 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { AgentTeamBlackboardEntry } from '@/types/agentTeam'
+import type { AgentTeamBlackboardEntry, AgentTeamMessage } from '@/types/agentTeam'
 
 // ==================== Props / Emits ====================
 
 const props = defineProps<{
   entries: AgentTeamBlackboardEntry[]
+  archiveEntryId?: string | null
+  archiveMessages?: AgentTeamMessage[]
+  archiveScope?: string | null
+  archiveLoading?: boolean
+  archiveError?: string | null
   canAnnotate?: boolean
   showClose?: boolean
 }>()
@@ -172,6 +221,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'resolve', entryId: string): void
+  (e: 'view-archive', entryId: string): void
   (e: 'add-entry', type: string, title: string, content: string): void
   (e: 'annotate', entryId: string, text: string): void
 }>()
@@ -204,6 +254,8 @@ const filterLabel = computed(() => {
   const map: Record<string, string> = { consensus: '共识', dispute: '分歧', action_item: '待办' }
   return map[activeFilter.value] ?? ''
 })
+
+const archiveMessagesSafe = computed(() => props.archiveMessages ?? [])
 
 // ==================== Actions ====================
 
@@ -258,6 +310,17 @@ function formatTime(ts: string): string {
   } catch {
     return ''
   }
+}
+
+function archiveScopeLabel(scope: string): string {
+  if (scope === 'round') return '同轮次'
+  if (scope === 'session_recent_fallback') return '同轮为空，回退最近消息'
+  return '会话最近消息'
+}
+
+function archiveMessageAuthor(role: string, memberName?: string): string {
+  if (memberName?.trim()) return `${memberName} (${role})`
+  return role
 }
 </script>
 

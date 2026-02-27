@@ -2,8 +2,6 @@ name: Build and Release Sentinel AI
 
 on:
   push:
-    branches:
-      - '**'
     tags:
       - 'v*'
 

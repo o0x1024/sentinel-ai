@@ -790,6 +790,8 @@ impl AgentTeamMigration {
                 template_id TEXT,
                 name TEXT NOT NULL,
                 goal TEXT,
+                orchestration_plan TEXT,
+                plan_version INTEGER NOT NULL DEFAULT 1,
                 state TEXT NOT NULL DEFAULT 'PENDING',
                 state_machine TEXT,
                 current_round INTEGER DEFAULT 0,
@@ -806,6 +808,20 @@ impl AgentTeamMigration {
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )"#
         ).execute(pool).await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "agent_team_sessions",
+            "orchestration_plan",
+            "TEXT",
+        )
+        .await?;
+        Self::add_column_if_not_exists(
+            pool,
+            "agent_team_sessions",
+            "plan_version",
+            "INTEGER NOT NULL DEFAULT 1",
+        )
+        .await?;
 
         // agent_team_members - 会话成员快照（从模板复制）
         sqlx::query(
@@ -933,6 +949,28 @@ impl AgentTeamMigration {
         info!("Agent Team migration completed successfully");
         Ok(())
     }
+
+    async fn add_column_if_not_exists(
+        pool: &PgPool,
+        table: &str,
+        column: &str,
+        column_type: &str,
+    ) -> Result<()> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)",
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !exists {
+            let alter_query = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_type);
+            sqlx::query(&alter_query).execute(pool).await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -943,4 +981,3 @@ mod tests {
         // Implementation depends on your test setup
     }
 }
-

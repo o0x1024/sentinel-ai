@@ -8,6 +8,7 @@ import type {
     AgentTeamRound,
     AgentTeamMessage,
     AgentTeamBlackboardEntry,
+    AgentTeamBlackboardArchive,
     AgentTeamArtifact,
     AgentTeamRunStatus,
     CreateAgentTeamTemplateRequest,
@@ -109,6 +110,18 @@ export const agentTeamApi = {
 
     async addBlackboardEntry(req: UpdateBlackboardRequest): Promise<AgentTeamBlackboardEntry> {
         return invoke('agent_team_add_blackboard_entry', { request: req })
+    },
+
+    async resolveBlackboardEntry(sessionId: string, entryId: string): Promise<AgentTeamBlackboardEntry> {
+        return invoke('agent_team_resolve_blackboard_entry', { sessionId, entryId })
+    },
+
+    async getBlackboardEntryArchive(
+        sessionId: string,
+        entryId: string,
+        limit = 80,
+    ): Promise<AgentTeamBlackboardArchive> {
+        return invoke('agent_team_get_blackboard_entry_archive', { sessionId, entryId, limit })
     },
 
     // Artifacts

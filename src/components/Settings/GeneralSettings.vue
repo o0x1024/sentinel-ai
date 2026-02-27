@@ -260,24 +260,18 @@
           <div class="space-y-4">
             <h4 class="font-semibold border-b pb-2">{{ t('settings.general.window') }}</h4>
             
-            <!-- 关闭到系统托盘 -->
+            <!-- 关闭按钮行为 -->
             <div class="form-control">
-              <label class="label cursor-pointer">
-                <span class="label-text">{{ t('settings.general.closeToTray') }}</span>
-                <input type="checkbox" class="toggle toggle-primary" 
-                       v-model="settings.general.closeToTray">
-              </label>
               <label class="label">
-                <span class="label-text-alt">{{ t('settings.general.closeToTrayHint') }}</span>
+                <span class="label-text">关闭按钮行为</span>
               </label>
-            </div>
-            
-            <!-- 最小化到系统托盘 -->
-            <div class="form-control">
-              <label class="label cursor-pointer">
-                <span class="label-text">{{ t('settings.general.minimizeToTray') }}</span>
-                <input type="checkbox" class="toggle toggle-primary" 
-                       v-model="settings.general.minimizeToTray">
+              <select class="select select-bordered" v-model="settings.general.closeAction">
+                <option value="hide">隐藏窗口（后台运行）</option>
+                <option value="minimize">最小化到任务栏 / Dock</option>
+                <option value="exit">直接退出程序</option>
+              </select>
+              <label class="label">
+                <span class="label-text-alt">该设置会保存到数据库，点击窗口关闭按钮时生效</span>
               </label>
             </div>
             
@@ -503,6 +497,10 @@ const settings = computed({
     if (s.general && typeof s.general === 'object') {
       if (typeof s.general.tavilyApiKey === 'undefined') s.general.tavilyApiKey = ''
       if (typeof s.general.tavilyMaxResults === 'undefined') s.general.tavilyMaxResults = 5
+      if (typeof s.general.closeAction === 'undefined') s.general.closeAction = 'minimize'
+      if (!['hide', 'minimize', 'exit'].includes(s.general.closeAction)) {
+        s.general.closeAction = 'minimize'
+      }
     }
     return s
   },

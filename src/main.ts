@@ -69,7 +69,6 @@ const DictionaryManagement = () => import('./views/DictionaryManagement.vue');
 
 const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
-const AITeamAssistant = () => import('./views/AITeamAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue');
 const PluginManagement = () => import('./views/PluginManagement.vue');
@@ -118,12 +117,6 @@ const routes = [
     meta: { title: 'AI助手' }
   },
   {
-    path: '/ai-team',
-    name: 'AITeamAssistant',
-    component: AITeamAssistant,
-    meta: { title: 'AI Team' }
-  },
-  {
     path: '/rag-management',
     name: 'RAGManagement',
     component: RAGManagement,
@@ -163,7 +156,7 @@ const routes = [
     path: '/bug-bounty',
     name: 'BugBounty',
     component: BugBounty,
-    meta: { title: 'Bug Bounty' }
+    meta: { title: 'BBounty' }
   },
   {
     path: '/cyberchef',

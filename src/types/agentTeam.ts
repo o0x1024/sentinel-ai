@@ -77,6 +77,8 @@ export interface AgentTeamSession {
     template_id?: string
     name: string
     goal?: string
+    orchestration_plan?: any
+    plan_version: number
     state: string
     state_machine?: any
     current_round: number
@@ -136,6 +138,12 @@ export interface AgentTeamBlackboardEntry {
     is_resolved: boolean
     created_at: string
     updated_at: string
+}
+
+export interface AgentTeamBlackboardArchive {
+    entry: AgentTeamBlackboardEntry
+    messages: AgentTeamMessage[]
+    retrieval_scope: string
 }
 
 // ==================== 产物 ====================
@@ -204,6 +212,8 @@ export interface CreateAgentTeamSessionRequest {
     template_id?: string
     conversation_id?: string
     max_rounds?: number
+    orchestration_plan?: any
+    plan_version?: number
     state_machine?: any
     members?: CreateAgentTeamTemplateMemberRequest[]
 }
@@ -213,6 +223,8 @@ export interface UpdateAgentTeamSessionRequest {
     goal?: string
     state?: string
     max_rounds?: number
+    orchestration_plan?: any
+    plan_version?: number
     state_machine?: any
     error_message?: string
 }

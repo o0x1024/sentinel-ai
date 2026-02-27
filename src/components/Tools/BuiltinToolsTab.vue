@@ -3,9 +3,9 @@
     <div class="flex justify-between items-center">
       <div class="alert alert-info flex-1 mr-4">
         <i class="fas fa-info-circle"></i>
-        <span>这些是系统内置的工具，已自动注册并可供AI助手调用。</span>
+        <span>{{ infoText }}</span>
       </div>
-      <div class="join">
+      <div v-if="sourceFilter === 'builtin'" class="join">
         <button @click="viewMode = 'card'" :class="['join-item', 'btn', 'btn-sm', {'btn-primary': viewMode === 'card'}]">
           <i class="fas fa-th-large"></i>
         </button>
@@ -18,29 +18,43 @@
     <!-- 分类筛选 -->
     <div class="flex flex-wrap gap-2 mb-4">
       <button 
-        @click="selectedCategory = ''"
-        :class="['btn btn-sm', selectedCategory === '' ? 'btn-primary' : 'btn-ghost']"
+        @click="selectBuiltinCategory('')"
+        :class="['btn btn-sm', sourceFilter === 'builtin' && selectedCategory === '' ? 'btn-primary' : 'btn-ghost']"
       >
         全部 ({{ tools.length }})
       </button>
       <button 
         v-for="cat in categories" 
         :key="cat.key"
-        @click="selectedCategory = cat.key"
-        :class="['btn btn-sm', selectedCategory === cat.key ? cat.btnClass : 'btn-ghost']"
+        @click="selectBuiltinCategory(cat.key)"
+        :class="['btn btn-sm', sourceFilter === 'builtin' && selectedCategory === cat.key ? cat.btnClass : 'btn-ghost']"
       >
         <i :class="cat.icon" class="mr-1"></i>
         {{ cat.label }} ({{ getToolCountByCategory(cat.key) }})
       </button>
+      <button
+        @click="selectSourceFilter('workflow')"
+        :class="['btn btn-sm', sourceFilter === 'workflow' ? 'btn-secondary' : 'btn-ghost']"
+      >
+        <i class="fas fa-project-diagram mr-1"></i>
+        工作流工具
+      </button>
+      <button
+        @click="selectSourceFilter('plugin')"
+        :class="['btn btn-sm', sourceFilter === 'plugin' ? 'btn-accent' : 'btn-ghost']"
+      >
+        <i class="fas fa-plug mr-1"></i>
+        插件工具
+      </button>
     </div>
 
-    <div v-if="isLoading" class="text-center p-8">
+    <div v-if="showContent && isLoading" class="text-center p-8">
       <i class="fas fa-spinner fa-spin text-2xl"></i>
       <p class="mt-2">正在加载内置工具...</p>
     </div>
     
     <!-- 卡片视图 - 按分类分组 -->
-    <div v-else-if="tools.length > 0 && viewMode === 'card'" class="space-y-6">
+    <div v-else-if="showContent && tools.length > 0 && viewMode === 'card'" class="space-y-6">
       <div v-for="group in groupedTools" :key="group.category" class="space-y-3">
         <!-- 分类标题 -->
         <div class="flex items-center gap-2 border-b border-base-300 pb-2">
@@ -132,7 +146,7 @@
     </div>
     
     <!-- 列表视图 - 按分类分组 -->
-    <div v-else-if="tools.length > 0 && viewMode === 'list'" class="space-y-6">
+    <div v-else-if="showContent && tools.length > 0 && viewMode === 'list'" class="space-y-6">
       <div v-for="group in groupedTools" :key="group.category" class="space-y-2">
         <!-- 分类标题 -->
         <div class="flex items-center gap-2 border-b border-base-300 pb-2">
@@ -217,7 +231,7 @@
       </div>
     </div>
     
-    <div v-else class="text-center p-8">
+    <div v-else-if="showContent" class="text-center p-8">
       <i class="fas fa-exclamation-triangle text-4xl text-warning mb-4"></i>
       <p class="text-lg font-semibold">未找到内置工具</p>
       <p class="text-base-content/70">请检查MCP服务是否正常运行</p>
@@ -341,6 +355,20 @@ import ShellConfigModal from './ShellConfigModal.vue'
 import ShellTerminal from './ShellTerminal.vue'
 import UnifiedToolTest from './UnifiedToolTest.vue'
 
+type BuiltinSourceFilter = 'builtin' | 'workflow' | 'plugin'
+
+const props = withDefaults(defineProps<{
+  sourceFilter?: BuiltinSourceFilter
+  showContent?: boolean
+}>(), {
+  sourceFilter: 'builtin',
+  showContent: true
+})
+
+const emit = defineEmits<{
+  (e: 'source-filter-change', filter: BuiltinSourceFilter): void
+}>()
+
 // 分类配置
 interface CategoryConfig {
   key: string
@@ -381,6 +409,17 @@ const showShellConfigModal = ref(false)
 const showShellTerminal = ref(false)
 const testingTool = ref<any>(null)
 const selectedCategory = ref('')
+const sourceFilter = computed(() => props.sourceFilter)
+const showContent = computed(() => props.showContent)
+const infoText = computed(() => {
+  if (sourceFilter.value === 'workflow') {
+    return '这些是在工作流工作室中标记为工具的工作流，可供AI助手调用执行。'
+  }
+  if (sourceFilter.value === 'plugin') {
+    return '管理 Agent 插件工具，可在创建 Agent 时选择启用的插件工具。'
+  }
+  return '这些是系统内置的工具，已自动注册并可供AI助手调用。'
+})
 
 // 计算属性：可用的分类
 const categories = computed(() => {
@@ -429,6 +468,15 @@ const getToolCountByCategory = (category: string) => {
   return tools.value.filter(t => 
     (t.category?.toLowerCase() || 'utility') === category
   ).length
+}
+
+function selectBuiltinCategory(category: string) {
+  selectedCategory.value = category
+  emit('source-filter-change', 'builtin')
+}
+
+function selectSourceFilter(filter: BuiltinSourceFilter) {
+  emit('source-filter-change', filter)
 }
 
 // Vision Explorer V2 状态

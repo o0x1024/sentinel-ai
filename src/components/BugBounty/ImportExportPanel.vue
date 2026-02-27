@@ -589,7 +589,7 @@ const generateHtmlReport = (program: any, findings: any[], submissions: any[]): 
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Bug Bounty Report</title>
+  <title>BBounty Report</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; }
     h1 { color: #1f2937; border-bottom: 2px solid #3b82f6; padding-bottom: 0.5rem; }

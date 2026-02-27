@@ -154,12 +154,19 @@ async function handleCreate() {
   if (!form.value.goal.trim()) return
   isCreating.value = true
   try {
+    const templateOrchestrationPlan = extractTemplateOrchestrationPlan(props.template.default_rounds_config)
+    const templatePlanVersion = extractTemplatePlanVersion(props.template.default_rounds_config)
+    const templateStateMachine = extractTemplateStateMachine(props.template.default_tool_policy)
+
     const session = await agentTeamApi.createSession({
       name: form.value.name.trim() || autoName.value,
       goal: form.value.goal.trim(),
       template_id: props.template.id,
       conversation_id: props.conversationId,
       max_rounds: form.value.maxRounds,
+      orchestration_plan: templateOrchestrationPlan,
+      plan_version: templatePlanVersion,
+      state_machine: templateStateMachine,
     })
     // Kick off the run asynchronously
     agentTeamApi.startRun(session.id).catch(e =>
@@ -199,5 +206,47 @@ function extractTemplateMaxRounds(config: unknown): number {
     return normalizeRounds(candidate)
   }
   return DEFAULT_TEMPLATE_ROUNDS
+}
+
+function extractTemplateOrchestrationPlan(config: unknown): Record<string, any> | undefined {
+  if (!config || typeof config !== 'object') return undefined
+  const obj = config as Record<string, unknown>
+  const raw =
+    obj.orchestration_plan ??
+    obj.orchestrationPlan ??
+    obj.plan
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  return JSON.parse(JSON.stringify(raw))
+}
+
+function extractTemplatePlanVersion(config: unknown): number | undefined {
+  if (!config || typeof config !== 'object') return undefined
+  const obj = config as Record<string, unknown>
+  const candidate = Number(obj.plan_version ?? obj.planVersion ?? obj.version)
+  if (!Number.isFinite(candidate) || candidate <= 0) return undefined
+  return Math.floor(candidate)
+}
+
+function extractTemplateStateMachine(toolPolicy: unknown): Record<string, any> | undefined {
+  if (!toolPolicy || typeof toolPolicy !== 'object') return undefined
+  const policyObj = toolPolicy as Record<string, unknown>
+  const directStateMachine =
+    policyObj.state_machine && typeof policyObj.state_machine === 'object' && !Array.isArray(policyObj.state_machine)
+      ? policyObj.state_machine
+      : undefined
+  if (directStateMachine) {
+    return JSON.parse(JSON.stringify(directStateMachine))
+  }
+
+  const policy = typeof policyObj.no_human_input_policy === 'string' ? policyObj.no_human_input_policy : undefined
+  const timeout = Number(policyObj.human_intervention_timeout_secs)
+  const maxInterventions = Number(policyObj.max_human_interventions)
+  if (!policy && !Number.isFinite(timeout) && !Number.isFinite(maxInterventions)) return undefined
+
+  return {
+    no_human_input_policy: policy || 'balanced',
+    human_intervention_timeout_secs: Number.isFinite(timeout) ? Math.max(60, Math.floor(timeout)) : 600,
+    max_human_interventions: Number.isFinite(maxInterventions) ? Math.max(1, Math.floor(maxInterventions)) : 3,
+  }
 }
 </script>

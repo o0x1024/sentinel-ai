@@ -64,23 +64,20 @@ pub async fn build_role_context(input: RoleContextInput<'_>) -> Result<RoleConte
     );
 
     // 3. Team 协作规则注入
-    let collaboration_rules = format!(
-        "\n\n[Team 协作规则 - 第{}轮]\n\
-        当前会话目标: {}\n\
-        本轮任务: {}\n\
+    let collaboration_rules = "\n\n[Team 工作流协作规则]\n\
+        当前节点任务由用户消息提供；system 仅定义稳定协作约束。\n\
         \n\
         协作原则:\n\
-        1. 你是 Agent Team 协作系统的一个角色，请站在你的职责视角提供专业分析\n\
-        2. 观点要有具体依据，避免泛泛而谈\n\
+        1. 你正在执行工作流中的一个节点，只对当前节点目标负责，不扩展到未分配范围\n\
+        2. 输出必须可交接给下游节点，优先给出可执行结论与必要证据\n\
         3. 当需要事实验证或执行操作时，优先使用可用工具（若工具可用）再给结论\n\
-        4. 对分歧点给出量化理由（成本/风险/收益）\n\
-        5. 如果你的观点与他人有冲突，请明确指出冲突点并给出替代方案\n\
-        6. 在回复末尾，用结构化格式总结你的核心观点：\n\
-           - **支持**: [可接受的要点]\n\
-           - **异议**: [需要修改的要点]\n\
-           - **建议**: [具体改进措施]\n",
-        input.round_number, input.session_goal, input.round_task,
-    );
+        4. 明确标注假设、风险和边界条件，避免模糊表述\n\
+        5. 若发现上游输入不足，请明确指出缺口与最小补充信息\n\
+        6. 回复末尾使用固定结构：\n\
+           - **本节点结论**: [本节点可交付结果]\n\
+           - **关键依据/风险**: [证据与风险]\n\
+           - **下游交接**: [下一节点可直接使用的信息]\n"
+        .to_string();
 
     // 4. 工作目录注入（与 AI 助手一致，优先 agent.working_directory）
     let working_dir_section = if let Some(db) = input

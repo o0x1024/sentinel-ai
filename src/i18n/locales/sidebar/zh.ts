@@ -15,12 +15,11 @@ export default {
   securityCenter: '安全中心',
   traffic: '流量分析',
   aiAssistant: 'AI助手',
-  aiTeam: 'AI Team',
   ragManagement: '知识库管理',
   Tools: '应用工具',
   cyberChef: '编码解码',
   performance: '性能监控',
-  bugBounty: 'Bug Bounty',
+  bugBounty: 'BBounty',
 
   // Settings submenu
   aiSettings: 'AI服务',
@@ -47,7 +46,7 @@ export default {
   lowVulnerabilities: '低危漏洞',
 
   // Tools submenu
-  mcpServers: 'MCP服务器',
+  mcpServers: 'MCP工具',
   availableTools: '可用工具',
   toolManagement: '工具管理',
 

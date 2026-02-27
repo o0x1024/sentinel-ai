@@ -8,6 +8,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::models::*;
+use super::orchestration::normalize_and_validate_orchestration_plan;
 use super::repository::builtin_templates_seed;
 
 pub async fn create_agent_team_template(
@@ -317,18 +318,21 @@ pub async fn create_agent_team_session(
 
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
+    let orchestration_plan = normalize_and_validate_orchestration_plan(req.orchestration_plan.as_ref())?;
 
     sqlx::query(
         r#"INSERT INTO agent_team_sessions
-           (id, conversation_id, template_id, name, goal, state, state_machine, current_round, max_rounds,
-            total_tokens, estimated_cost, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+           (id, conversation_id, template_id, name, goal, orchestration_plan, plan_version,
+            state, state_machine, current_round, max_rounds, total_tokens, estimated_cost, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&id)
     .bind(&req.conversation_id)
     .bind(&req.template_id)
     .bind(&req.name)
     .bind(&req.goal)
+    .bind(orchestration_plan.as_ref().map(|v| v.to_string()))
+    .bind(req.plan_version.unwrap_or(1))
     .bind(TeamSessionState::Pending.to_string())
     .bind(req.state_machine.as_ref().map(|v| v.to_string()))
     .bind(0i32)
@@ -361,10 +365,13 @@ pub async fn update_agent_team_session(
     ensure_schema(pool).await?;
 
     let now = Utc::now();
+    let orchestration_plan = normalize_and_validate_orchestration_plan(req.orchestration_plan.as_ref())?;
     sqlx::query(
         r#"UPDATE agent_team_sessions
            SET name = COALESCE(?, name),
                goal = COALESCE(?, goal),
+               orchestration_plan = COALESCE(?, orchestration_plan),
+               plan_version = COALESCE(?, plan_version),
                state = COALESCE(?, state),
                max_rounds = COALESCE(?, max_rounds),
                state_machine = COALESCE(?, state_machine),
@@ -374,6 +381,8 @@ pub async fn update_agent_team_session(
     )
     .bind(&req.name)
     .bind(&req.goal)
+    .bind(orchestration_plan.as_ref().map(|v| v.to_string()))
+    .bind(req.plan_version)
     .bind(&req.state)
     .bind(req.max_rounds)
     .bind(req.state_machine.as_ref().map(|v| v.to_string()))
@@ -416,7 +425,7 @@ pub async fn get_agent_team_session(
     ensure_schema(pool).await?;
 
     let row_opt = sqlx::query(
-        r#"SELECT id, conversation_id, template_id, name, goal, state, state_machine,
+        r#"SELECT id, conversation_id, template_id, name, goal, orchestration_plan, plan_version, state, state_machine,
                   current_round, max_rounds, blackboard_state, divergence_scores,
                   total_tokens, estimated_cost, suspended_reason, started_at, completed_at,
                   error_message, created_at, updated_at
@@ -436,6 +445,10 @@ pub async fn get_agent_team_session(
         template_id: row.try_get("template_id")?,
         name: row.try_get("name")?,
         goal: row.try_get("goal")?,
+        orchestration_plan: row
+            .try_get::<Option<String>, _>("orchestration_plan")?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        plan_version: row.try_get::<i32, _>("plan_version").unwrap_or(1),
         state: row.try_get("state")?,
         state_machine: row
             .try_get::<Option<String>, _>("state_machine")?
@@ -833,6 +846,180 @@ pub async fn get_blackboard_entries(
         .collect()
 }
 
+pub async fn resolve_blackboard_entry(
+    pool: &SqlitePool,
+    session_id: &str,
+    entry_id: &str,
+) -> Result<AgentTeamBlackboardEntry> {
+    ensure_schema(pool).await?;
+
+    let now = Utc::now();
+    let updated = sqlx::query(
+        r#"UPDATE agent_team_blackboard_entries
+           SET is_resolved = 1, updated_at = ?
+           WHERE session_id = ? AND id = ?"#,
+    )
+    .bind(now)
+    .bind(session_id)
+    .bind(entry_id)
+    .execute(pool)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        return Err(anyhow::anyhow!("Blackboard entry not found"));
+    }
+
+    let row = sqlx::query(
+        r#"SELECT id, session_id, round_id, entry_type, title, content,
+                  contributed_by, is_resolved, created_at, updated_at
+           FROM agent_team_blackboard_entries
+           WHERE session_id = ? AND id = ?"#,
+    )
+    .bind(session_id)
+    .bind(entry_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(AgentTeamBlackboardEntry {
+        id: row.try_get("id")?,
+        session_id: row.try_get("session_id")?,
+        round_id: row.try_get("round_id")?,
+        entry_type: row.try_get("entry_type")?,
+        title: row.try_get("title")?,
+        content: row.try_get("content")?,
+        contributed_by: row.try_get("contributed_by")?,
+        is_resolved: row.try_get::<bool, _>("is_resolved").unwrap_or(false),
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+pub async fn get_blackboard_entry_archive(
+    pool: &SqlitePool,
+    session_id: &str,
+    entry_id: &str,
+    limit: i64,
+) -> Result<AgentTeamBlackboardArchive> {
+    ensure_schema(pool).await?;
+
+    let safe_limit = limit.clamp(10, 400);
+    let entry_row = sqlx::query(
+        r#"SELECT id, session_id, round_id, entry_type, title, content,
+                  contributed_by, is_resolved, created_at, updated_at
+           FROM agent_team_blackboard_entries
+           WHERE session_id = ? AND id = ?"#,
+    )
+    .bind(session_id)
+    .bind(entry_id)
+    .fetch_one(pool)
+    .await?;
+
+    let entry = AgentTeamBlackboardEntry {
+        id: entry_row.try_get("id")?,
+        session_id: entry_row.try_get("session_id")?,
+        round_id: entry_row.try_get("round_id")?,
+        entry_type: entry_row.try_get("entry_type")?,
+        title: entry_row.try_get("title")?,
+        content: entry_row.try_get("content")?,
+        contributed_by: entry_row.try_get("contributed_by")?,
+        is_resolved: entry_row.try_get::<bool, _>("is_resolved").unwrap_or(false),
+        created_at: entry_row.try_get("created_at")?,
+        updated_at: entry_row.try_get("updated_at")?,
+    };
+
+    let mut retrieval_scope = if entry.round_id.is_some() {
+        "round".to_string()
+    } else {
+        "session_recent".to_string()
+    };
+
+    let mut messages = if let Some(round_id) = entry.round_id.as_deref() {
+        let rows = sqlx::query(
+            r#"SELECT id, session_id, round_id, member_id, member_name, role, content,
+                      tool_calls, token_count, timestamp
+               FROM agent_team_messages
+               WHERE session_id = ? AND round_id = ?
+               ORDER BY timestamp ASC
+               LIMIT ?"#,
+        )
+        .bind(session_id)
+        .bind(round_id)
+        .bind(safe_limit)
+        .fetch_all(pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(AgentTeamMessage {
+                    id: row.try_get("id")?,
+                    session_id: row.try_get("session_id")?,
+                    round_id: row.try_get("round_id")?,
+                    member_id: row.try_get("member_id")?,
+                    member_name: row.try_get("member_name")?,
+                    role: row.try_get("role")?,
+                    content: row.try_get("content")?,
+                    tool_calls: row
+                        .try_get::<Option<String>, _>("tool_calls")?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    token_count: row.try_get("token_count")?,
+                    timestamp: row.try_get("timestamp")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
+    if messages.is_empty() {
+        if entry.round_id.is_some() {
+            retrieval_scope = "session_recent_fallback".to_string();
+        }
+        let rows = sqlx::query(
+            r#"SELECT id, session_id, round_id, member_id, member_name, role, content,
+                      tool_calls, token_count, timestamp
+               FROM (
+                   SELECT id, session_id, round_id, member_id, member_name, role, content,
+                          tool_calls, token_count, timestamp
+                   FROM agent_team_messages
+                   WHERE session_id = ?
+                   ORDER BY timestamp DESC
+                   LIMIT ?
+               ) recent
+               ORDER BY timestamp ASC"#,
+        )
+        .bind(session_id)
+        .bind(safe_limit)
+        .fetch_all(pool)
+        .await?;
+
+        messages = rows
+            .into_iter()
+            .map(|row| {
+                Ok(AgentTeamMessage {
+                    id: row.try_get("id")?,
+                    session_id: row.try_get("session_id")?,
+                    round_id: row.try_get("round_id")?,
+                    member_id: row.try_get("member_id")?,
+                    member_name: row.try_get("member_name")?,
+                    role: row.try_get("role")?,
+                    content: row.try_get("content")?,
+                    tool_calls: row
+                        .try_get::<Option<String>, _>("tool_calls")?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    token_count: row.try_get("token_count")?,
+                    timestamp: row.try_get("timestamp")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+    }
+
+    Ok(AgentTeamBlackboardArchive {
+        entry,
+        messages,
+        retrieval_scope,
+    })
+}
+
 // ==================== 产物操作 ====================
 
 pub async fn create_artifact(
@@ -1137,6 +1324,8 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
             template_id TEXT,
             name TEXT NOT NULL,
             goal TEXT,
+            orchestration_plan TEXT,
+            plan_version INTEGER NOT NULL DEFAULT 1,
             state TEXT NOT NULL DEFAULT 'PENDING',
             state_machine TEXT,
             current_round INTEGER DEFAULT 0,
@@ -1154,6 +1343,20 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
         )"#,
     )
     .execute(pool)
+    .await?;
+    ensure_column_if_not_exists(
+        pool,
+        "agent_team_sessions",
+        "orchestration_plan",
+        "TEXT",
+    )
+    .await?;
+    ensure_column_if_not_exists(
+        pool,
+        "agent_team_sessions",
+        "plan_version",
+        "INTEGER NOT NULL DEFAULT 1",
+    )
     .await?;
 
     // agent_team_members
@@ -1287,5 +1490,27 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
         sqlx::query(sql).execute(pool).await?;
     }
 
+    Ok(())
+}
+
+async fn ensure_column_if_not_exists(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    column_def: &str,
+) -> Result<()> {
+    let pragma_sql = format!("PRAGMA table_info({})", table);
+    let rows = sqlx::query(&pragma_sql).fetch_all(pool).await?;
+    let exists = rows.into_iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .map(|name| name == column)
+            .unwrap_or(false)
+    });
+    if exists {
+        return Ok(());
+    }
+
+    let alter_sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, column_def);
+    sqlx::query(&alter_sql).execute(pool).await?;
     Ok(())
 }

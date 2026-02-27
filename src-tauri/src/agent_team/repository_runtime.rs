@@ -268,6 +268,39 @@ pub async fn get_blackboard_entries(
     }
 }
 
+pub async fn resolve_blackboard_entry(
+    pool: &DatabasePool,
+    session_id: &str,
+    entry_id: &str,
+) -> Result<AgentTeamBlackboardEntry> {
+    match pool {
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::resolve_blackboard_entry(p, session_id, entry_id).await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::resolve_blackboard_entry(p, session_id, entry_id).await
+        }
+        DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
+    }
+}
+
+pub async fn get_blackboard_entry_archive(
+    pool: &DatabasePool,
+    session_id: &str,
+    entry_id: &str,
+    limit: i64,
+) -> Result<AgentTeamBlackboardArchive> {
+    match pool {
+        DatabasePool::PostgreSQL(p) => {
+            pg_repo::get_blackboard_entry_archive(p, session_id, entry_id, limit).await
+        }
+        DatabasePool::SQLite(p) => {
+            sqlite_repo::get_blackboard_entry_archive(p, session_id, entry_id, limit).await
+        }
+        DatabasePool::MySQL(_) => Err(anyhow!("Agent Team 暂不支持 MySQL")),
+    }
+}
+
 pub async fn create_artifact(
     pool: &DatabasePool,
     session_id: &str,
