@@ -135,7 +135,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select', conversationId: string): void
-  (e: 'create', conversationId: string): void
+  (e: 'create'): void
   (e: 'close'): void
 }>()
 
@@ -242,19 +242,8 @@ const handleSearch = () => {
   }, 300)
 }
 
-const createNewConversation = async () => {
-  try {
-    const conversationId = await invoke<string>('create_ai_conversation', {
-      request: {
-        title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
-        service_name: 'default'
-      }
-    })
-    await loadConversations(true)
-    emit('create', conversationId)
-  } catch (error) {
-    console.error('Failed to create conversation:', error)
-  }
+const createNewConversation = () => {
+  emit('create')
 }
 
 const selectConversation = (conv: Conversation) => {
@@ -330,4 +319,3 @@ defineExpose({
   transform: translateX(2px);
 }
 </style>
-

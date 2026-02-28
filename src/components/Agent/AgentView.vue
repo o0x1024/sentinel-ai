@@ -189,19 +189,16 @@
             :processed-documents="processedDocuments"
             :referenced-traffic="referencedTraffic"
             :context-usage="contextUsage"
+            :default-max-context-tokens="assistantDefaultMaxContextTokens"
             :available-models="assistantModelOptions"
             :selected-model="assistantSelectedModel"
             :model-loading="isLoadingAssistantModels"
-            :team-template-options="teamTemplateOptions"
-            :selected-team-template="selectedTeamTemplateId"
-            :team-template-loading="isLoadingTeamTemplates"
             @send-message="handleSubmit"
             @stop-execution="handleStop"
             @toggle-rag="handleToggleRAG"
             @toggle-tools="handleToggleTools"
             @toggle-team="handleToggleTeamMode"
             @change-model="handleAssistantModelChange"
-            @change-team-template="handleTeamTemplateChange"
             @add-attachments="handleAddAttachments"
             @remove-attachment="handleRemoveAttachment"
             @add-documents="handleAddDocuments"
@@ -231,13 +228,6 @@
               <div class="flex border-b border-base-300 overflow-x-auto">
                 <button
                   class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'templates' ? 'text-primary border-b-2 border-primary bg-primary/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'templates'"
-                >
-                  <i class="fas fa-layer-group mr-1"></i> Team库
-                </button>
-                <button
-                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
                   :class="teamWorkspaceTab === 'tasks' ? 'text-secondary border-b-2 border-secondary bg-secondary/5' : 'text-base-content/50 hover:text-base-content'"
                   @click="teamWorkspaceTab = 'tasks'"
                 >
@@ -252,6 +242,13 @@
                 </button>
                 <button
                   class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
+                  :class="teamWorkspaceTab === 'blackboard' ? 'text-warning border-b-2 border-warning bg-warning/5' : 'text-base-content/50 hover:text-base-content'"
+                  @click="teamWorkspaceTab = 'blackboard'"
+                >
+                  <i class="fas fa-chalkboard mr-1"></i> Blackboard
+                </button>
+                <button
+                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
                   :class="teamWorkspaceTab === 'agents' ? 'text-info border-b-2 border-info bg-info/5' : 'text-base-content/50 hover:text-base-content'"
                   @click="teamWorkspaceTab = 'agents'"
                 >
@@ -263,13 +260,6 @@
                 <i class="fas fa-spinner fa-spin mr-2"></i> Team 工作台加载中...
               </div>
 
-              <AgentTeamTemplateLibrary
-                v-else-if="teamWorkspaceTab === 'templates'"
-                :conversation-id="conversationId || undefined"
-                class="flex-1 overflow-hidden"
-                @close="isTeamWorkspaceActive = false"
-                @templates-updated="handleTeamTemplatesUpdated"
-              />
               <div v-else-if="teamWorkspaceTab === 'tasks'" class="flex-1 overflow-auto p-3">
                 <div v-if="teamTasks.length === 0" class="text-sm text-base-content/50">暂无任务数据</div>
                 <div v-else class="space-y-2">
@@ -292,28 +282,40 @@
                 </div>
               </div>
               <div v-else-if="teamWorkspaceTab === 'inbox'" class="flex-1 overflow-auto p-3">
-                <div v-if="teamMailbox.length === 0" class="text-sm text-base-content/50">暂无收件箱消息</div>
+                <div v-if="teamSessionMessages.length === 0" class="text-sm text-base-content/50">暂无线程消息</div>
                 <div v-else class="space-y-2">
                   <div
-                    v-for="msg in teamMailbox"
+                    v-for="msg in teamSessionMessages"
                     :key="msg.id"
                     class="rounded-lg border border-base-300 bg-base-100 p-2"
                   >
                     <div class="flex items-center justify-between gap-2">
-                      <div class="text-xs font-semibold">{{ msg.message_type }}</div>
-                      <button
-                        v-if="!msg.is_acknowledged"
-                        class="btn btn-xs btn-outline"
-                        @click="handleAckMailbox(msg.id)"
-                      >
-                        Ack
-                      </button>
-                      <span v-else class="badge badge-xs badge-success">已确认</span>
+                      <div class="text-xs font-semibold">{{ msg.role }}</div>
+                      <span class="text-[11px] text-base-content/45">{{ formatTimestamp(msg.timestamp) }}</span>
                     </div>
                     <div class="mt-1 text-[11px] text-base-content/60">
-                      From: {{ resolveAgentName(msg.from_agent_id) }} → To: {{ resolveAgentName(msg.to_agent_id) }}
+                      {{ msg.member_name || msg.member_id || 'system' }}
                     </div>
-                    <pre class="mt-1 text-[11px] bg-base-200/60 rounded p-1.5 overflow-auto max-h-24">{{ stringifySmallJson(msg.payload) }}</pre>
+                    <div class="mt-1 text-[11px] bg-base-200/60 rounded p-1.5 whitespace-pre-wrap break-words">{{ msg.content || '—' }}</div>
+                  </div>
+                </div>
+              </div>
+              <div v-else-if="teamWorkspaceTab === 'blackboard'" class="flex-1 overflow-auto p-3">
+                <div v-if="teamBlackboardEntries.length === 0" class="text-sm text-base-content/50">暂无白板信息</div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="entry in teamBlackboardEntries"
+                    :key="entry.id"
+                    class="rounded-lg border border-base-300 bg-base-100 p-2"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="badge badge-xs" :class="teamBlackboardEntryBadgeClass(entry.entry_type)">{{ entry.entry_type }}</span>
+                      <span class="text-[11px] text-base-content/45">{{ formatTimestamp(entry.created_at) }}</span>
+                    </div>
+                    <div class="mt-1 text-[11px] text-base-content/60">
+                      Agent: {{ resolveAgentName(entry.agent_id) }} · Task: {{ entry.task_id || '-' }}
+                    </div>
+                    <div class="mt-1 text-[11px] bg-base-200/60 rounded p-1.5 whitespace-pre-wrap break-words">{{ entry.content || '—' }}</div>
                   </div>
                 </div>
               </div>
@@ -340,8 +342,8 @@
               </div>
               <div v-else class="flex-1 overflow-auto p-4">
                 <div class="rounded-xl border border-base-300 bg-base-100 p-4 text-sm text-base-content/70">
-                  编排入口已迁移到 Team库。
-                  请在「Team库 → 编辑模板」中配置 V2 `task_graph`。
+                  Team V3 工作台已启用。
+                  当前可在 Tasks / Inbox / Blackboard / Agents 查看运行状态。
                 </div>
               </div>
             </div>
@@ -420,21 +422,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
 import type {
-  AgentTeamTemplate,
-  AgentTeamRound,
   AgentTeamMessage,
-  AgentTeamArtifact,
-  AgentTeamBlackboardEntry,
-  AgentTeamBlackboardArchive,
   AgentTeamSession,
-  AgentTeamRoundEvent,
-  AgentTeamArtifactEvent,
   AgentTeamStateChangedEvent,
   AgentTeamMessageStreamStartEvent,
   AgentTeamMessageStreamDeltaEvent,
   AgentTeamMessageStreamDoneEvent,
+  AgentTeamToolCallEvent,
+  AgentTeamToolResultEvent,
+  TeamBlackboardEntry,
   TeamTask,
-  MailboxMessage,
 } from '@/types/agentTeam'
 import { agentTeamApi } from '@/api/agentTeam'
 import { useAgentEvents } from '@/composables/useAgentEvents'
@@ -449,11 +446,6 @@ import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
 import AuditFindingsPanel from './AuditFindingsPanel.vue'
-import AgentTeamTemplateLibrary from './AgentTeamTemplateLibrary.vue'
-import AgentTeamBlackboardPanel from './AgentTeamBlackboardPanel.vue'
-import AgentTeamArtifactPanel from './AgentTeamArtifactPanel.vue'
-import AgentTeamTimeline from './AgentTeamTimeline.vue'
-import AgentTeamChallengeSplitView from './AgentTeamChallengeSplitView.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -535,10 +527,21 @@ interface AssistantModelOption {
   description?: string
 }
 
-interface TeamTemplateOption {
-  value: string
-  label: string
-  description?: string
+interface AgentCompleteEvent {
+  execution_id: string
+  success?: boolean
+}
+
+interface AgentErrorEvent {
+  execution_id: string
+  error: string
+}
+
+interface AgentAssistantMessageSavedEvent {
+  execution_id: string
+  message_id: string
+  content: string
+  timestamp: number
 }
 
 type TeamOrchestrationStepType = 'agent' | 'serial' | 'parallel'
@@ -642,6 +645,180 @@ const showConversations = ref(false) // Default hidden
 const showToolConfig = ref(false)
 const currentConversationTitle = ref(t('agent.newConversationTitle'))
 const historyLoadToken = ref(0)
+const autoTitleGeneratingConversationIds = new Set<string>()
+
+interface ConversationSummary {
+  id: string
+  title?: string | null
+  total_messages?: number
+  created_at?: string
+  updated_at?: string
+}
+
+const normalizeConversationTitle = (title?: string | null): string => {
+  return (title || '').replace(/\s+/g, ' ').trim()
+}
+
+const isDefaultConversationTitle = (title?: string | null): boolean => {
+  const normalized = normalizeConversationTitle(title)
+  if (!normalized) return true
+  const lower = normalized.toLowerCase()
+  const localized = t('agent.newConversationTitle').toLowerCase()
+  if (lower === localized || lower.startsWith(`${localized} `)) return true
+  return /^new conversation(\s+.+)?$/i.test(normalized) || /^新会话(\s+.+)?$/i.test(normalized)
+}
+
+const sanitizeGeneratedConversationTitle = (rawTitle?: string | null): string => {
+  if (!rawTitle) return ''
+  const lines = String(rawTitle)
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```/g, ''))
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+  let normalized = lines[0] || ''
+  normalized = normalized
+    .replace(/^(title|标题)\s*[:：]\s*/i, '')
+    .replace(/^[`"'“”‘’《》【】()（）]+/, '')
+    .replace(/[`"'“”‘’《》【】()（）]+$/, '')
+    .replace(/[。.!?；;：:]+$/, '')
+    .trim()
+  if (normalized.length > 40) {
+    normalized = normalized.slice(0, 40).trim()
+  }
+  return normalized
+}
+
+const buildFallbackConversationTitle = (content: string): string => {
+  const normalized = content.replace(/\s+/g, ' ').trim()
+  if (!normalized) return t('agent.newConversationTitle')
+  if (normalized.length <= 30) return normalized
+  return `${normalized.slice(0, 30).trim()}...`
+}
+
+const loadConversationSummaries = async (): Promise<ConversationSummary[]> => {
+  try {
+    const conversations = await invoke<ConversationSummary[]>('get_ai_conversations')
+    return Array.isArray(conversations) ? conversations : []
+  } catch (e) {
+    console.warn('[AgentView] Failed to load conversation summaries:', e)
+    return []
+  }
+}
+
+const findConversationSummary = async (convId: string): Promise<ConversationSummary | null> => {
+  const conversations = await loadConversationSummaries()
+  return conversations.find(c => c.id === convId) || null
+}
+
+const findReusableEmptyConversation = async (): Promise<ConversationSummary | null> => {
+  const conversations = await loadConversationSummaries()
+  const candidates = conversations.filter((conv) => {
+    const totalMessages = Number(conv.total_messages ?? 0)
+    return totalMessages === 0 && isDefaultConversationTitle(conv.title)
+  })
+  if (candidates.length === 0) return null
+  const sorted = [...candidates].sort((a, b) => {
+    const aTs = new Date(a.updated_at || a.created_at || 0).getTime()
+    const bTs = new Date(b.updated_at || b.created_at || 0).getTime()
+    return bTs - aTs
+  })
+  return sorted[0] || null
+}
+
+const generateConversationTitleWithLlm = async (firstMessage: string): Promise<string | null> => {
+  const normalizedInput = firstMessage.replace(/\s+/g, ' ').trim()
+  if (!normalizedInput) return null
+
+  const streamId = `conversation_title_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  let generatedTitle = ''
+  let streamCompleted = false
+  let streamError = ''
+  let unlistenComplete: UnlistenFn | null = null
+  let unlistenError: UnlistenFn | null = null
+
+  try {
+    unlistenComplete = await listen<{ stream_id?: string; content?: string }>('plugin_gen_complete', (event) => {
+      const payload = event.payload || {}
+      if (payload.stream_id !== streamId) return
+      generatedTitle = String(payload.content || '')
+      streamCompleted = true
+    })
+    unlistenError = await listen<{ stream_id?: string; error?: string }>('plugin_gen_error', (event) => {
+      const payload = event.payload || {}
+      if (payload.stream_id !== streamId) return
+      streamError = String(payload.error || 'title generation failed')
+      streamCompleted = true
+    })
+
+    await invoke('generate_plugin_stream', {
+      request: {
+        stream_id: streamId,
+        message: `用户首条消息：${normalizedInput}`,
+        system_prompt: '你是会话标题助手。请根据用户首条消息生成一个简短明确的会话标题。要求：使用与用户相同语言；不超过18个汉字或8个英文单词；不要引号、句号和前缀；只输出标题。',
+        service_name: 'default',
+      }
+    })
+
+    const maxWaitTimeMs = 20000
+    const startTime = Date.now()
+    while (!streamCompleted && (Date.now() - startTime < maxWaitTimeMs)) {
+      await new Promise(resolve => setTimeout(resolve, 120))
+    }
+
+    if (!streamCompleted || streamError) {
+      if (streamError) {
+        console.warn('[AgentView] Conversation title generation failed:', streamError)
+      }
+      return null
+    }
+    const sanitized = sanitizeGeneratedConversationTitle(generatedTitle)
+    return sanitized || null
+  } catch (e) {
+    console.warn('[AgentView] Failed to call title generation stream:', e)
+    return null
+  } finally {
+    if (unlistenComplete) unlistenComplete()
+    if (unlistenError) unlistenError()
+  }
+}
+
+const maybeAutoRenameConversationByFirstMessage = async (convId: string, firstMessage: string) => {
+  const normalizedInput = firstMessage.replace(/\s+/g, ' ').trim()
+  if (!convId || !normalizedInput) return
+  if (autoTitleGeneratingConversationIds.has(convId)) return
+
+  const conversation = await findConversationSummary(convId)
+  if (!conversation) return
+  if (!isDefaultConversationTitle(conversation.title)) return
+  const totalMessages = Number(conversation.total_messages ?? 0)
+  if (totalMessages !== 0) return
+
+  autoTitleGeneratingConversationIds.add(convId)
+  try {
+    const llmTitle = await generateConversationTitleWithLlm(normalizedInput)
+    const finalTitle = llmTitle || buildFallbackConversationTitle(normalizedInput)
+    if (!finalTitle) return
+
+    const latestConversation = await findConversationSummary(convId)
+    if (!latestConversation) return
+    if (!isDefaultConversationTitle(latestConversation.title)) return
+
+    await invoke('update_ai_conversation_title', {
+      conversationId: convId,
+      title: finalTitle,
+      serviceName: 'default'
+    })
+
+    if (conversationId.value === convId) {
+      currentConversationTitle.value = finalTitle
+    }
+    conversationListRef.value?.loadConversations()
+  } catch (e) {
+    console.warn('[AgentView] Failed to auto rename conversation:', e)
+  } finally {
+    autoTitleGeneratingConversationIds.delete(convId)
+  }
+}
 
 // Feature toggles
 const ragEnabled = ref(false)
@@ -655,20 +832,12 @@ const referencedTraffic = ref<ReferencedTraffic[]>([])
 const activeTeamSessionId = ref<string | null>(null)
 const teamSessionState = ref<string>('PENDING')
 const isTeamWorkspaceActive = ref(false)
-const teamWorkspaceTab = ref<'templates' | 'tasks' | 'inbox' | 'agents'>('templates')
+const teamWorkspaceTab = ref<'tasks' | 'inbox' | 'blackboard' | 'agents'>('tasks')
 const teamWorkspaceLoading = ref(false)
 const teamSessionMessages = ref<AgentTeamMessage[]>([])
-const teamRounds = ref<AgentTeamRound[]>([])
-const teamBlackboardEntries = ref<AgentTeamBlackboardEntry[]>([])
-const teamBlackboardArchiveEntryId = ref<string | null>(null)
-const teamBlackboardArchiveMessages = ref<AgentTeamMessage[]>([])
-const teamBlackboardArchiveScope = ref<string | null>(null)
-const teamBlackboardArchiveLoading = ref(false)
-const teamBlackboardArchiveError = ref<string | null>(null)
-const teamArtifacts = ref<AgentTeamArtifact[]>([])
 const teamSessionDetail = ref<AgentTeamSession | null>(null)
 const teamTasks = ref<TeamTask[]>([])
-const teamMailbox = ref<MailboxMessage[]>([])
+const teamBlackboardEntries = ref<TeamBlackboardEntry[]>([])
 const teamOrchestrationPlanText = ref('{\n  "version": 1,\n  "steps": []\n}')
 const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
 const teamPlanDirty = ref(false)
@@ -679,17 +848,31 @@ const teamResumeStepId = ref('')
 const teamSelectedOrchestrationPresetId = ref<TeamOrchestrationPresetId | null>(null)
 const teamSelectedRecoveryPresetId = ref<TeamRecoveryPresetId>('balanced')
 const teamRecoveryPresetApplying = ref(false)
-const teamTemplateDraftName = ref('')
-const teamTemplateDraftDomain = ref<'product' | 'security' | 'ops' | 'audit' | 'custom'>('custom')
-const teamTemplateDraftSaving = ref(false)
-const teamTemplateOptions = ref<TeamTemplateOption[]>([])
-const selectedTeamTemplateId = ref('')
-const isLoadingTeamTemplates = ref(false)
 const assistantModelOptions = ref<AssistantModelOption[]>([])
 const assistantSelectedModel = ref('')
 const isLoadingAssistantModels = ref(false)
+const assistantProviderMaxContextMap = ref<Record<string, number>>({})
 const isSubagentPanelOpen = ref(false)
 const subagents = computed(() => agentEvents.subagents.value)
+const DEFAULT_MAX_CONTEXT_TOKENS = 128000
+
+const toPositiveTokenLimit = (value: unknown): number | null => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  return Math.floor(parsed)
+}
+
+const assistantDefaultMaxContextTokens = computed(() => {
+  const selected = (assistantSelectedModel.value || '').trim()
+  const providerKey = selected.includes('/') ? selected.split('/')[0].toLowerCase() : ''
+  if (providerKey) {
+    const configured = assistantProviderMaxContextMap.value[providerKey]
+    if (typeof configured === 'number' && configured > 0) {
+      return configured
+    }
+  }
+  return DEFAULT_MAX_CONTEXT_TOKENS
+})
 
 const TEAM_ORCHESTRATION_PRESET_METAS: TeamOrchestrationPresetMeta[] = [
   {
@@ -741,8 +924,6 @@ const TEAM_RECOVERY_PRESETS: TeamRecoveryPreset[] = [
     no_human_input_policy: 'aggressive',
   },
 ]
-
-const TEAM_TEMPLATE_DOMAIN_OPTIONS = ['product', 'security', 'ops', 'audit', 'custom'] as const
 
 // Subagent detail modal
 const showSubagentDetailModal = ref(false)
@@ -831,17 +1012,22 @@ const loadAuditConfigFromLocal = (): AuditConfig => {
 }
 
 const ASSISTANT_MODEL_STORAGE_KEY = 'sentinel:agent:assistant-model'
-const TEAM_TEMPLATE_STORAGE_KEY = 'sentinel:agent:team-template-id'
 let unlistenAiConfigUpdated: UnlistenFn | null = null
 let unlistenTeamStateChanged: UnlistenFn | null = null
-let unlistenTeamRoundCompleted: UnlistenFn | null = null
-let unlistenTeamArtifactGenerated: UnlistenFn | null = null
 let unlistenTeamMessageStreamStart: UnlistenFn | null = null
 let unlistenTeamMessageStreamDelta: UnlistenFn | null = null
 let unlistenTeamMessageStreamDone: UnlistenFn | null = null
+let unlistenTeamToolCall: UnlistenFn | null = null
+let unlistenTeamToolResult: UnlistenFn | null = null
+let unlistenAgentComplete: UnlistenFn | null = null
+let unlistenAgentError: UnlistenFn | null = null
+let unlistenAgentAssistantSaved: UnlistenFn | null = null
 let teamRunStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let isPollingTeamRunStatus = false
 let teamMainFlowMessageIds = new Set<string>()
+let teamMainFlowToolCallIds = new Set<string>()
+let teamMirroredAssistantSourceIds = new Set<string>()
+let teamMirroredConversationMessageIds = new Set<string>()
 const teamStreamTempMessageByStreamId = new Map<string, string>()
 const teamStreamDoneIdsBySignature = new Map<string, string[]>()
 
@@ -893,6 +1079,7 @@ const loadAssistantModelOptions = async () => {
       : {}
     const defaultModel = typeof aiConfig?.default_llm_model === 'string' ? aiConfig.default_llm_model : ''
     const options: AssistantModelOption[] = []
+    const providerMaxContextMap: Record<string, number> = {}
 
     Object.entries(providers).forEach(([providerKey, providerValue]) => {
       const cfg = providerValue as any
@@ -901,6 +1088,9 @@ const loadAssistantModelOptions = async () => {
       const providerRaw = String(cfg?.provider || providerKey).trim()
       const provider = providerRaw.toLowerCase()
       if (!provider) return
+      const maxContextLength = toPositiveTokenLimit(cfg?.max_context_length) ?? DEFAULT_MAX_CONTEXT_TOKENS
+      providerMaxContextMap[provider] = maxContextLength
+      providerMaxContextMap[String(providerKey).toLowerCase()] = maxContextLength
 
       const modelsRaw = Array.isArray(cfg?.models) ? cfg.models : []
       const modelIds = modelsRaw.map(extractModelId).filter((v: string) => !!v)
@@ -941,6 +1131,7 @@ const loadAssistantModelOptions = async () => {
     }
 
     assistantModelOptions.value = options
+    assistantProviderMaxContextMap.value = providerMaxContextMap
 
     let stored = ''
     try {
@@ -962,6 +1153,7 @@ const loadAssistantModelOptions = async () => {
   } catch (e) {
     console.warn('[AgentView] Failed to load assistant model options:', e)
     assistantModelOptions.value = []
+    assistantProviderMaxContextMap.value = {}
   } finally {
     isLoadingAssistantModels.value = false
   }
@@ -978,143 +1170,6 @@ const handleAssistantModelChange = (value: string) => {
   } catch {
     // ignore storage errors
   }
-}
-
-const isTeamTemplateRunnable = (template?: AgentTeamTemplate | null) => {
-  if (!template) return false
-  if ((template.schema_version || 1) < 2) return false
-  if (template.upgrade_failed) return false
-  return !!template.template_spec_v2
-}
-
-const formatTeamTemplateTag = (template: AgentTeamTemplate): string => {
-  const domain = (template.domain || 'custom').trim() || 'custom'
-  const runnableTag = isTeamTemplateRunnable(template) ? 'V2' : '需升级'
-  return `${domain} · ${template.is_system ? '内置' : '自定义'} · ${runnableTag}`
-}
-
-const setSelectedTeamTemplate = (value: string) => {
-  const normalized = value || ''
-  selectedTeamTemplateId.value = normalized
-  try {
-    if (normalized) {
-      localStorage.setItem(TEAM_TEMPLATE_STORAGE_KEY, normalized)
-    } else {
-      localStorage.removeItem(TEAM_TEMPLATE_STORAGE_KEY)
-    }
-  } catch {
-    // ignore storage errors
-  }
-}
-
-const loadTeamTemplateOptions = async (preferredTemplateId = ''): Promise<string> => {
-  isLoadingTeamTemplates.value = true
-  try {
-    let templates = await agentTeamApi.listTemplates()
-    if (templates.length === 0) {
-      await agentTeamApi.seedBuiltinTemplates()
-      templates = await agentTeamApi.listTemplates()
-    }
-
-    const options: TeamTemplateOption[] = templates
-      .map((template) => ({
-        value: template.id,
-        label: template.name,
-        description: formatTeamTemplateTag(template),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
-
-    teamTemplateOptions.value = options
-
-    let stored = ''
-    try {
-      stored = localStorage.getItem(TEAM_TEMPLATE_STORAGE_KEY) || ''
-    } catch {
-      stored = ''
-    }
-
-    const runnableIds = new Set(
-      templates.filter((template) => isTeamTemplateRunnable(template)).map((template) => template.id),
-    )
-
-    const preferred = preferredTemplateId || selectedTeamTemplateId.value || stored
-    const resolved = preferred && options.some((item) => item.value === preferred) && runnableIds.has(preferred)
-      ? preferred
-      : (options.find((item) => runnableIds.has(item.value))?.value || options[0]?.value || '')
-    setSelectedTeamTemplate(resolved)
-    return resolved
-  } catch (e) {
-    console.warn('[AgentView] Failed to load team template options:', e)
-    teamTemplateOptions.value = []
-    setSelectedTeamTemplate('')
-    return ''
-  } finally {
-    isLoadingTeamTemplates.value = false
-  }
-}
-
-const ensureTeamTemplateIdReady = async (): Promise<string> => {
-  const selected = selectedTeamTemplateId.value.trim()
-  if (teamTemplateOptions.value.length > 0) {
-    if (selected && teamTemplateOptions.value.some((item) => item.value === selected)) {
-      return selected
-    }
-    const fallback = teamTemplateOptions.value[0]?.value || ''
-    if (fallback) {
-      setSelectedTeamTemplate(fallback)
-      return fallback
-    }
-  }
-  return await loadTeamTemplateOptions(selected)
-}
-
-const handleTeamTemplateChange = (value: string) => {
-  setSelectedTeamTemplate(value || '')
-}
-
-function extractTemplateMaxRounds(config: unknown): number | undefined {
-  if (typeof config === 'number') {
-    const n = Math.max(1, Math.floor(config))
-    return Number.isFinite(n) ? n : undefined
-  }
-  if (config && typeof config === 'object' && !Array.isArray(config)) {
-    const obj = config as Record<string, unknown>
-    const candidate = Number(obj.max_rounds ?? obj.maxRounds ?? obj.default_rounds ?? obj.rounds)
-    if (Number.isFinite(candidate) && candidate > 0) {
-      return Math.floor(candidate)
-    }
-  }
-  return undefined
-}
-
-function extractTemplateOrchestrationPlan(config: unknown): Record<string, any> | undefined {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined
-  const obj = config as Record<string, unknown>
-  const raw = obj.orchestration_plan ?? obj.orchestrationPlan ?? obj.plan
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
-  const cloned = JSON.parse(JSON.stringify(raw))
-  const steps = Array.isArray(cloned?.steps) ? cloned.steps : []
-  if (steps.length === 0) return undefined
-  return cloned
-}
-
-function extractTemplatePlanVersion(config: unknown): number | undefined {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined
-  const obj = config as Record<string, unknown>
-  const candidate = Number(obj.plan_version ?? obj.planVersion ?? obj.version)
-  if (!Number.isFinite(candidate) || candidate <= 0) return undefined
-  return Math.floor(candidate)
-}
-
-function extractTemplateStateMachine(toolPolicy: unknown): Record<string, any> | undefined {
-  if (!toolPolicy || typeof toolPolicy !== 'object' || Array.isArray(toolPolicy)) return undefined
-  const policyObj = toolPolicy as Record<string, unknown>
-  const raw =
-    policyObj.state_machine && typeof policyObj.state_machine === 'object' && !Array.isArray(policyObj.state_machine)
-      ? policyObj.state_machine
-      : undefined
-  if (!raw) return undefined
-  return JSON.parse(JSON.stringify(raw as Record<string, unknown>))
 }
 
 const buildEffectiveToolConfigForExecution = () => {
@@ -1228,21 +1283,33 @@ const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
 }
 
 // Agent events
-const agentEvents = useAgentEvents(computed(() => conversationId.value || ''))
+const agentEvents = useAgentEvents(computed(() => conversationId.value || ''), {
+  suppressUserMessages: computed(() => teamModeEnabled.value),
+  defaultMaxContextTokens: assistantDefaultMaxContextTokens,
+})
 const messages = computed(() => agentEvents.messages.value)
-const TEAM_NON_RUNNING_STATES = new Set(['PENDING', 'SUSPENDED_FOR_HUMAN', 'COMPLETED', 'FAILED', 'ARCHIVED'])
+const TEAM_RUNNING_STATES = new Set([
+  'EXECUTING',
+  'INITIALIZING',
+  'PROPOSING',
+  'CHALLENGING',
+  'CONVERGENCE_CHECK',
+  'REVISING',
+  'DECIDING',
+  'ARTIFACT_GENERATION',
+])
 const TEAM_RUN_STATUS_POLL_INTERVAL_MS = 2000
 const isTeamRunActive = computed(() => {
   if (!teamModeEnabled.value || !activeTeamSessionId.value) return false
-  return !TEAM_NON_RUNNING_STATES.has(teamSessionState.value || '')
+  const normalized = String(teamSessionState.value || '').trim().toUpperCase()
+  return TEAM_RUNNING_STATES.has(normalized)
 })
 const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
 const teamWorkspaceBadgeCount = computed(
-  () => teamTasks.value.filter((task) => ['failed', 'blocked'].includes((task.status || '').toLowerCase())).length
-    + teamMailbox.value.filter((msg) => !msg.is_acknowledged).length,
+  () => teamTasks.value.filter((task) => ['failed', 'blocked'].includes((task.status || '').toLowerCase())).length,
 )
 const resolveAgentName = (agentId?: string | null) => {
   if (!agentId) return 'broadcast'
@@ -1257,24 +1324,22 @@ const taskStatusBadgeClass = (status: string) => {
   if (normalized === 'blocked') return 'badge-warning'
   return 'badge-ghost'
 }
-const stringifySmallJson = (value: unknown) => {
-  try {
-    return JSON.stringify(value ?? {}, null, 2)
-  } catch {
-    return String(value ?? '')
-  }
+const teamBlackboardEntryBadgeClass = (entryType?: string | null) => {
+  const normalized = String(entryType || '').toLowerCase()
+  if (normalized === 'task_output') return 'badge-success'
+  if (normalized === 'task_error') return 'badge-error'
+  if (normalized === 'task_start') return 'badge-info'
+  if (normalized === 'plan') return 'badge-secondary'
+  if (normalized === 'plan_fallback') return 'badge-warning'
+  if (normalized === 'goal') return 'badge-accent'
+  return 'badge-ghost'
 }
-const latestTeamRoundId = computed(() => {
-  if (teamRounds.value.length === 0) return null
-  return teamRounds.value[teamRounds.value.length - 1]?.id || null
-})
-const latestTeamDivergence = computed(() => {
-  for (let idx = teamRounds.value.length - 1; idx >= 0; idx -= 1) {
-    const score = teamRounds.value[idx]?.divergence_score
-    if (typeof score === 'number') return score
-  }
-  return null
-})
+const formatTimestamp = (value?: string | null) => {
+  if (!value) return '—'
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) return value
+  return new Date(time).toLocaleString()
+}
 const teamOrchestrationRuntime = computed<Record<string, any>>(() => {
   const raw = teamSessionDetail.value?.state_machine?.orchestration_runtime
   if (raw && typeof raw === 'object') return raw as Record<string, any>
@@ -1287,7 +1352,6 @@ const teamMemberNameOptions = computed(() =>
 )
 const teamOrchestrationPresets = computed(() => TEAM_ORCHESTRATION_PRESET_METAS)
 const teamRecoveryPresets = computed(() => TEAM_RECOVERY_PRESETS)
-const teamTemplateDomainOptions = computed(() => TEAM_TEMPLATE_DOMAIN_OPTIONS)
 const teamSelectedOrchestrationPresetDescription = computed(() => {
   if (!teamSelectedOrchestrationPresetId.value) return ''
   return TEAM_ORCHESTRATION_PRESET_METAS.find((item) => item.id === teamSelectedOrchestrationPresetId.value)?.description || ''
@@ -1991,6 +2055,70 @@ const parseTeamMessageTimestamp = (raw: string): number => {
   return Number.isFinite(parsed) ? parsed : Date.now()
 }
 
+const parseToolCallArguments = (value: unknown): Record<string, any> => {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' ? parsed : { raw: value }
+    } catch {
+      return { raw: value }
+    }
+  }
+  if (value && typeof value === 'object') {
+    return value as Record<string, any>
+  }
+  return {}
+}
+
+const normalizeToolResult = (value: unknown): string | undefined => {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+const pushTeamToolCallToMainFlow = (params: {
+  toolCallId?: string
+  toolName?: string
+  toolArgs?: unknown
+  toolResult?: unknown
+  success?: boolean
+  timestamp?: number
+  memberId?: string
+  memberName?: string
+  phase?: string
+  forceType?: 'tool_call' | 'tool_result'
+}) => {
+  const normalizedId = (params.toolCallId || '').trim()
+  if (normalizedId && teamMainFlowToolCallIds.has(normalizedId)) return
+  const stableId = normalizedId || `team-toolcall:${crypto.randomUUID()}`
+  const msgType = params.forceType || (params.toolResult !== undefined ? 'tool_result' : 'tool_call')
+  if (normalizedId) {
+    teamMainFlowToolCallIds.add(normalizedId)
+  }
+  teamMainFlowMessageIds.add(stableId)
+  agentEvents.messages.value.push({
+    id: stableId,
+    type: msgType as AgentMessage['type'],
+    content: `${t('agent.toolCallCompleted')}: ${params.toolName || 'unknown'}`,
+    timestamp: params.timestamp ?? Date.now(),
+    metadata: {
+      kind: msgType,
+      tool_name: params.toolName || 'unknown',
+      tool_args: parseToolCallArguments(params.toolArgs),
+      tool_result: normalizeToolResult(params.toolResult),
+      tool_call_id: normalizedId || undefined,
+      status: params.success === false ? 'failed' : 'completed',
+      success: params.success !== false,
+      team_member_id: params.memberId,
+      team_member_name: params.memberName,
+    },
+  })
+}
+
 const buildTeamMessageSignature = (
   role: string | undefined,
   memberName: string | undefined,
@@ -2102,6 +2230,46 @@ const handleTeamMessageStreamDone = (payload: AgentTeamMessageStreamDoneEvent) =
   void syncTeamMessagesToMainFlow(payload.session_id)
 }
 
+const handleTeamToolCall = (payload: AgentTeamToolCallEvent) => {
+  if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
+  pushTeamToolCallToMainFlow({
+    toolCallId: payload.tool_call_id,
+    toolName: payload.name,
+    toolArgs: payload.arguments,
+    timestamp: parseTeamMessageTimestamp(payload.timestamp || ''),
+    memberId: payload.member_id,
+    memberName: payload.member_name,
+    phase: payload.phase,
+    forceType: 'tool_call',
+  })
+}
+
+const handleTeamToolResult = (payload: AgentTeamToolResultEvent) => {
+  if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
+  const existing = agentEvents.messages.value.find((item) => item.id === payload.tool_call_id)
+  if (existing) {
+    existing.type = 'tool_result'
+    existing.metadata = {
+      ...(existing.metadata || {}),
+      kind: 'tool_result',
+      tool_result: payload.result,
+      status: payload.success === false ? 'failed' : 'completed',
+      success: payload.success !== false,
+    }
+    return
+  }
+  pushTeamToolCallToMainFlow({
+    toolCallId: payload.tool_call_id,
+    toolResult: payload.result,
+    success: payload.success,
+    timestamp: parseTeamMessageTimestamp(payload.timestamp || ''),
+    memberId: payload.member_id,
+    memberName: payload.member_name,
+    phase: payload.phase,
+    forceType: 'tool_result',
+  })
+}
+
 const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage) => {
   const signature = buildTeamMessageSignature(msg.role, msg.member_name, msg.content || '')
   const queue = teamStreamDoneIdsBySignature.get(signature)
@@ -2130,6 +2298,63 @@ const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage) => {
   }
 }
 
+const buildTeamMirroredConversationRole = (role: string): string | null => {
+  const normalized = (role || '').toLowerCase()
+  if (normalized === 'assistant') return 'assistant'
+  if (normalized === 'system') return 'system'
+  if (normalized === 'tool_call' || normalized === 'tool_result') return 'tool'
+  return null
+}
+
+const mirrorTeamMessageToConversation = async (msg: AgentTeamMessage) => {
+  const convId = conversationId.value
+  const sessionId = activeTeamSessionId.value
+  if (!convId || !sessionId || !msg?.id) return
+  const role = buildTeamMirroredConversationRole(msg.role)
+  if (!role) return
+
+  const deterministicId = `teamv3:${msg.id}`
+  if (teamMirroredConversationMessageIds.has(deterministicId)) return
+
+  const rawContent = (msg.content || '').trim()
+  if (!rawContent) return
+  const memberLabel = msg.member_name || msg.member_id || (msg.role === 'system' ? 'team_system' : 'team')
+  const mirroredContent = `[Team/${memberLabel}] ${rawContent}`
+  const metadata = {
+    kind: 'team_v3_mirror',
+    team_session_id: sessionId,
+    team_message_id: msg.id,
+    team_member_id: msg.member_id,
+    team_member_name: msg.member_name,
+    team_role: msg.role,
+    source: 'team_v3_messages',
+  }
+
+  try {
+    await invoke('save_ai_message', {
+      request: {
+        id: deterministicId,
+        conversation_id: convId,
+        role,
+        content: mirroredContent,
+        metadata,
+      },
+    })
+    teamMirroredConversationMessageIds.add(deterministicId)
+  } catch (e: any) {
+    const err = String(e || '')
+    if (
+      err.includes('UNIQUE constraint failed') ||
+      err.toLowerCase().includes('duplicate key') ||
+      err.toLowerCase().includes('already exists')
+    ) {
+      teamMirroredConversationMessageIds.add(deterministicId)
+      return
+    }
+    console.warn('[AgentView] Failed to mirror Team message to conversation:', e)
+  }
+}
+
 const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
   if (!Array.isArray(messagesResp) || messagesResp.length === 0) return
   const sorted = [...messagesResp].sort((a, b) => {
@@ -2140,22 +2365,224 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
   })
   for (const msg of sorted) {
     if (!msg?.id || teamMainFlowMessageIds.has(msg.id)) continue
-    if (!(msg.content || '').trim()) continue
-    consumeTeamStreamTempForPersistedMessage(msg)
-    teamMainFlowMessageIds.add(msg.id)
-    agentEvents.messages.value.push({
-      id: `team:${msg.id}`,
-      type: mapTeamMessageType(msg.role),
-      content: msg.content,
-      timestamp: parseTeamMessageTimestamp(msg.timestamp),
-      metadata: {
-        kind: 'team_member_output',
-        team_member_id: msg.member_id,
-        team_member_name: msg.member_name,
-        team_member_role: msg.role,
+    const msgTime = parseTeamMessageTimestamp(msg.timestamp)
+    if (msg.role === 'system') {
+      if ((msg.content || '').trim()) {
+        agentEvents.messages.value.push({
+          id: `team:${msg.id}`,
+          type: 'system',
+          content: msg.content,
+          timestamp: msgTime,
+          metadata: {
+            kind: 'team_system',
+            team_member_id: msg.member_id,
+            team_member_name: msg.member_name,
+            team_member_role: msg.role,
+          },
+        })
+        void mirrorTeamMessageToConversation(msg)
+      }
+      teamMainFlowMessageIds.add(msg.id)
+      continue
+    }
+    if (msg.role === 'tool_call' || msg.role === 'tool_result') {
+      const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : []
+      if (toolCalls.length > 0) {
+        for (let i = 0; i < toolCalls.length; i += 1) {
+          const tc = toolCalls[i]
+          if (!tc || typeof tc !== 'object') continue
+          pushTeamToolCallToMainFlow({
+            toolCallId: typeof (tc as any).id === 'string' ? (tc as any).id : `team:${msg.id}:tool:${i}`,
+            toolName: typeof (tc as any).name === 'string' ? (tc as any).name : 'unknown',
+            toolArgs: (tc as any).arguments,
+            toolResult: (tc as any).result,
+            success: (tc as any).success !== false,
+            timestamp: msgTime,
+            memberId: msg.member_id,
+            memberName: msg.member_name,
+            forceType: msg.role === 'tool_result' ? 'tool_result' : 'tool_call',
+          })
+        }
+      } else {
+        pushTeamToolCallToMainFlow({
+          toolCallId: `team:${msg.id}`,
+          toolName: msg.content || 'unknown',
+          timestamp: msgTime,
+          memberId: msg.member_id,
+          memberName: msg.member_name,
+          forceType: msg.role === 'tool_result' ? 'tool_result' : 'tool_call',
+        })
+      }
+      teamMainFlowMessageIds.add(msg.id)
+      continue
+    }
+    if ((msg.content || '').trim()) {
+      consumeTeamStreamTempForPersistedMessage(msg)
+      teamMainFlowMessageIds.add(msg.id)
+      agentEvents.messages.value.push({
+        id: `team:${msg.id}`,
+        type: mapTeamMessageType(msg.role),
+        content: msg.content,
+        timestamp: msgTime,
+        metadata: {
+          kind: 'team_member_output',
+          team_member_id: msg.member_id,
+          team_member_name: msg.member_name,
+          team_member_role: msg.role,
+        },
+      })
+      void mirrorTeamMessageToConversation(msg)
+    }
+    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+      for (let i = 0; i < msg.tool_calls.length; i += 1) {
+        const tc = msg.tool_calls[i]
+        if (!tc || typeof tc !== 'object') continue
+        const toolCallId = typeof tc.id === 'string' ? tc.id : `team:${msg.id}:tool:${i}`
+        pushTeamToolCallToMainFlow({
+          toolCallId,
+          toolName: typeof tc.name === 'string' ? tc.name : 'unknown',
+          toolArgs: (tc as any).arguments,
+          toolResult: (tc as any).result,
+          success: (tc as any).success !== false,
+          timestamp: msgTime,
+          memberId: msg.member_id,
+          memberName: msg.member_name,
+          forceType: (tc as any).result !== undefined ? 'tool_result' : 'tool_call',
+        })
+      }
+    }
+  }
+}
+
+const parseConversationMessageTimestamp = (raw: unknown): number => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  const parsed = Date.parse(typeof raw === 'string' ? raw : '')
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const persistTeamSessionState = async (sessionId: string, nextState: string) => {
+  try {
+    await agentTeamApi.updateSession(sessionId, { state: nextState as any })
+  } catch (e) {
+    console.warn(`[AgentView] Failed to persist team session state '${nextState}':`, e)
+  }
+}
+
+const collectTeamMirroredSourceIds = async (sessionId: string): Promise<Set<string>> => {
+  const rows = await invoke<any[]>('team_v3_list_messages', { sessionId })
+  const mirrored = new Set<string>()
+  for (const row of rows || []) {
+    const payload = row?.payload
+    if (payload && typeof payload === 'object' && typeof payload.source_message_id === 'string') {
+      mirrored.add(payload.source_message_id)
+    }
+  }
+  return mirrored
+}
+
+const mirrorAssistantOutputToTeamSession = async (
+  sessionId: string,
+  sourceMessageId: string,
+  content: string,
+) => {
+  try {
+    const normalizedSourceMessageId = (sourceMessageId || '').trim()
+    const normalizedContent = (content || '').trim()
+    if (!normalizedSourceMessageId || !normalizedContent) return
+
+    if (!teamMirroredAssistantSourceIds.has(normalizedSourceMessageId)) {
+      if (teamMirroredAssistantSourceIds.size === 0) {
+        teamMirroredAssistantSourceIds = await collectTeamMirroredSourceIds(sessionId)
+      }
+      if (teamMirroredAssistantSourceIds.has(normalizedSourceMessageId)) return
+    } else {
+      return
+    }
+
+    await invoke('team_v3_send_message', {
+      sessionId,
+      request: {
+        thread_id: sessionId,
+        from_agent_id: 'assistant',
+        to_agent_id: null,
+        message_type: 'assistant',
+        payload: {
+          content: normalizedContent,
+          source_message_id: normalizedSourceMessageId,
+        },
       },
     })
+    teamMirroredAssistantSourceIds.add(normalizedSourceMessageId)
+    await syncTeamMessagesToMainFlow(sessionId)
+    if (isTeamWorkspaceActive.value) {
+      await loadTeamWorkspaceData()
+    }
+  } catch (e) {
+    console.warn('[AgentView] Failed to mirror assistant output to Team session:', e)
   }
+}
+
+const syncLatestAssistantOutputToTeamSession = async (sessionId: string, convId: string) => {
+  try {
+    const conversationMessages = await invoke<any[]>('get_ai_messages_by_conversation', { conversationId: convId })
+    const latestAssistant = (conversationMessages || [])
+      .filter((row) => row?.role === 'assistant' && typeof row?.id === 'string')
+      .sort((a, b) => parseConversationMessageTimestamp(b?.timestamp) - parseConversationMessageTimestamp(a?.timestamp))[0]
+    if (!latestAssistant) return
+    const content = typeof latestAssistant.content === 'string' ? latestAssistant.content : ''
+    await mirrorAssistantOutputToTeamSession(sessionId, latestAssistant.id, content)
+  } catch (e) {
+    console.warn('[AgentView] Failed to sync latest assistant output to Team session:', e)
+  }
+}
+
+const handleTeamAssistantMessageSaved = async (payload: AgentAssistantMessageSavedEvent) => {
+  const convId = conversationId.value
+  const sessionId = activeTeamSessionId.value
+  if (!teamModeEnabled.value || !convId || !sessionId) return
+  if (payload.execution_id !== convId) return
+  await mirrorAssistantOutputToTeamSession(sessionId, payload.message_id, payload.content)
+}
+
+const handleTeamExecutionComplete = async (payload: AgentCompleteEvent) => {
+  const convId = conversationId.value
+  const sessionId = activeTeamSessionId.value
+  if (!teamModeEnabled.value || !convId || !sessionId) return
+  if (payload.execution_id !== convId) return
+
+  await syncLatestAssistantOutputToTeamSession(sessionId, convId)
+  const nextState = payload.success === false ? 'FAILED' : 'PLAN_DRAFT'
+  try {
+    await agentTeamApi.finalizeRun(sessionId, payload.success !== false, undefined)
+  } catch (e) {
+    console.warn('[AgentView] Failed to finalize team run on complete:', e)
+  }
+  teamSessionState.value = nextState
+  await persistTeamSessionState(sessionId, nextState)
+  if (isTeamWorkspaceActive.value) {
+    await loadTeamWorkspaceData()
+  }
+  stopTeamRunStatusPolling()
+}
+
+const handleTeamExecutionError = async (payload: AgentErrorEvent) => {
+  const convId = conversationId.value
+  const sessionId = activeTeamSessionId.value
+  if (!teamModeEnabled.value || !convId || !sessionId) return
+  if (payload.execution_id !== convId) return
+
+  try {
+    await agentTeamApi.finalizeRun(sessionId, false, payload.error || 'unknown error')
+  } catch (e) {
+    console.warn('[AgentView] Failed to finalize team run on error:', e)
+  }
+  teamSessionState.value = 'FAILED'
+  await persistTeamSessionState(sessionId, 'FAILED')
+  appendTeamBridgeMessage(`[Team] 执行失败：${payload.error || 'unknown error'}`)
+  if (isTeamWorkspaceActive.value) {
+    await loadTeamWorkspaceData()
+  }
+  stopTeamRunStatusPolling()
 }
 
 const syncTeamMessagesToMainFlow = async (sessionId?: string | null) => {
@@ -2168,6 +2595,30 @@ const syncTeamMessagesToMainFlow = async (sessionId?: string | null) => {
     appendTeamMessagesToMainFlow(messagesResp)
   } catch (e) {
     console.warn('[AgentView] Failed to sync team messages to main flow:', e)
+  }
+}
+
+const refreshTeamRuntimeData = async (sessionId: string) => {
+  const [tasksResp, blackboardResp] = await Promise.allSettled([
+    agentTeamApi.listTasks(sessionId),
+    isTeamWorkspaceActive.value
+      ? agentTeamApi.listBlackboardEntries(sessionId, 200)
+      : Promise.resolve(null),
+  ])
+  if (activeTeamSessionId.value !== sessionId) return
+
+  if (tasksResp.status === 'fulfilled') {
+    teamTasks.value = tasksResp.value
+  } else {
+    console.warn('[AgentView] Failed to refresh team tasks:', tasksResp.reason)
+  }
+
+  if (blackboardResp.status === 'fulfilled') {
+    if (blackboardResp.value) {
+      teamBlackboardEntries.value = blackboardResp.value
+    }
+  } else {
+    console.warn('[AgentView] Failed to refresh team blackboard entries:', blackboardResp.reason)
   }
 }
 
@@ -2202,6 +2653,7 @@ const pollTeamRunStatusOnce = async () => {
   isPollingTeamRunStatus = true
   try {
     await syncTeamMessagesToMainFlow(sessionId)
+    await refreshTeamRuntimeData(sessionId)
     const status = await agentTeamApi.getRunStatus(sessionId)
     if (!status || activeTeamSessionId.value !== sessionId) return
     if (typeof status.state === 'string' && status.state.length > 0) {
@@ -2222,6 +2674,11 @@ const ensureTeamRunStatusPolling = () => {
     stopTeamRunStatusPolling()
     return
   }
+  const normalized = String(teamSessionState.value || '').trim().toUpperCase()
+  if (!TEAM_RUNNING_STATES.has(normalized)) {
+    stopTeamRunStatusPolling()
+    return
+  }
   if (teamRunStatusPollTimer) return
   // Run once immediately to avoid waiting one polling interval.
   void pollTeamRunStatusOnce()
@@ -2237,14 +2694,12 @@ const syncActiveTeamSession = async () => {
     return
   }
   try {
+    await agentTeamApi.ensureSchema()
     const sessions = await agentTeamApi.listSessions(conversationId.value, 20, 0)
     const candidate = sessions.find((item) => item.state !== 'ARCHIVED') || null
     activeTeamSessionId.value = candidate?.id || null
     teamSessionState.value = candidate?.state || 'PENDING'
     ensureTeamRunStatusPolling()
-    if (candidate?.template_id) {
-      setSelectedTeamTemplate(candidate.template_id)
-    }
     if (isTeamWorkspaceActive.value) {
       await loadTeamWorkspaceData()
     }
@@ -2264,7 +2719,6 @@ const handleToggleTeamMode = async (enabled: boolean) => {
   }
   teamModeEnabled.value = enabled
   if (enabled) {
-    await loadTeamTemplateOptions(selectedTeamTemplateId.value)
     await syncActiveTeamSession()
     ensureTeamRunStatusPolling()
     if (isTeamWorkspaceActive.value) {
@@ -2276,52 +2730,40 @@ const handleToggleTeamMode = async (enabled: boolean) => {
   }
 }
 
+const ensureConversationForTeamSession = async () => {
+  if (conversationId.value) return
+  const convId = await invoke<string>('create_ai_conversation', {
+    request: {
+      title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+      service_name: 'default'
+    }
+  })
+  conversationId.value = convId
+  currentConversationTitle.value = t('agent.newConversationTitle')
+  conversationListRef.value?.loadConversations()
+  await syncActiveTeamSession()
+}
+
+const buildTeamSessionName = (goal: string) => {
+  const normalized = (goal || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return 'Team Session'
+  const preview = normalized.length > 96 ? `${normalized.slice(0, 96)}...` : normalized
+  return `Team: ${preview}`
+}
+
 const createAndStartTeamSession = async (goal: string) => {
-  const templateId = await ensureTeamTemplateIdReady()
-  if (!templateId) {
-    throw new Error('No Team template available')
-  }
-  const template = await agentTeamApi.getTemplate(templateId)
-  if (!template) {
-    throw new Error('所选 Team 模板不存在，请重新选择模板。')
-  }
-  if ((template.schema_version || 1) < 2) {
-    throw new Error(`模板「${template.name}」不是 V2 模板，请在 Team库中编辑并保存后重试。`)
-  }
-  if (template.upgrade_failed) {
-    throw new Error(`模板「${template.name}」升级失败：${template.upgrade_error || '请修复模板后重试。'}`)
-  }
-  if (!template.template_spec_v2) {
-    throw new Error(`模板「${template.name}」缺少 V2 结构，请重新保存模板或执行升级。`)
-  }
-  const runtimeSpecV2 = JSON.parse(JSON.stringify(template.template_spec_v2))
-  const templateStateMachine = extractTemplateStateMachine(template.default_tool_policy)
-  const effectiveToolConfig = buildEffectiveToolConfigForExecution()
-  const runtimeToolPolicy = buildTeamToolPolicyFromUiConfig(effectiveToolConfig)
-  const maxRounds = extractTemplateMaxRounds(template.default_rounds_config)
   const session = await agentTeamApi.createSession({
-    name: `${goal}`,
+    name: buildTeamSessionName(goal),
     goal,
-    template_id: templateId,
     conversation_id: conversationId.value || undefined,
-    max_rounds: maxRounds,
-    schema_version: 2,
-    runtime_spec_v2: runtimeSpecV2,
-    state_machine: {
-      ...(templateStateMachine || {}),
-      tool_policy: {
-        ...((templateStateMachine as any)?.tool_policy || {}),
-        ...runtimeToolPolicy,
-      },
-    },
   })
   activeTeamSessionId.value = session.id
   teamSessionState.value = session.state
-  ensureTeamRunStatusPolling()
-  await agentTeamApi.startRun(session.id)
-  await syncTeamMessagesToMainFlow(session.id)
-  teamSessionState.value = 'INITIALIZING'
-  appendTeamBridgeMessage(`${session.name}`)
+  await agentTeamApi.submitMessage({
+    session_id: session.id,
+    content: goal,
+    resume: false,
+  })
   if (isTeamWorkspaceActive.value) {
     await loadTeamWorkspaceData()
   }
@@ -2349,38 +2791,32 @@ const routeTeamMessage = async (content: string) => {
     resume: currentSession.state === 'SUSPENDED_FOR_HUMAN',
   })
 
-  if (currentSession.state === 'PENDING') {
-    const effectiveToolConfig = buildEffectiveToolConfigForExecution()
-    const runtimeToolPolicy = buildTeamToolPolicyFromUiConfig(effectiveToolConfig)
-    const currentStateMachine =
-      currentSession.state_machine && typeof currentSession.state_machine === 'object' && !Array.isArray(currentSession.state_machine)
-        ? currentSession.state_machine
-        : {}
-    await agentTeamApi.updateSession(currentSession.id, {
-      state_machine: {
-        ...(currentStateMachine as Record<string, unknown>),
-        tool_policy: {
-          ...((currentStateMachine as any)?.tool_policy || {}),
-          ...runtimeToolPolicy,
-        },
-      },
-    })
-    await agentTeamApi.startRun(currentSession.id)
-    await syncTeamMessagesToMainFlow(currentSession.id)
-    appendTeamBridgeMessage('[Team] 已启动待运行会话。')
-    teamSessionState.value = 'INITIALIZING'
-    if (isTeamWorkspaceActive.value) {
-      await loadTeamWorkspaceData()
-    }
-    return
+  teamSessionState.value = currentSession.state
+  if (isTeamWorkspaceActive.value) {
+    await loadTeamWorkspaceData()
+  }
+}
+
+const runTeamExecutionFromWorkspace = async (bridgeMessage: string) => {
+  if (!activeTeamSessionId.value) {
+    throw new Error('Team 会话不存在。')
   }
 
-  teamSessionState.value = currentSession.state
-  if (currentSession.state === 'SUSPENDED_FOR_HUMAN') {
-    appendTeamBridgeMessage('[Team] 已提交人工意见，团队继续执行。')
-  } else {
-    appendTeamBridgeMessage('[Team] 已追加需求到当前会话。')
+  if (isExecuting.value && conversationId.value) {
+    await handleStop()
+    await new Promise(resolve => setTimeout(resolve, 300))
   }
+
+  await ensureConversationForTeamSession()
+  teamSessionState.value = 'EXECUTING'
+  ensureTeamRunStatusPolling()
+  await persistTeamSessionState(activeTeamSessionId.value, 'EXECUTING')
+  appendTeamBridgeMessage(bridgeMessage)
+  await agentTeamApi.startRun(
+    activeTeamSessionId.value,
+    conversationId.value || undefined,
+    ragEnabled.value,
+  )
   if (isTeamWorkspaceActive.value) {
     await loadTeamWorkspaceData()
   }
@@ -2612,23 +3048,6 @@ const getAllTeamAgentSteps = (steps: TeamOrchestrationStep[]): TeamOrchestration
   return result
 }
 
-const inferTeamTemplateDraftName = () => {
-  if (teamTemplateDraftName.value.trim()) return
-  if (teamSelectedOrchestrationPresetId.value) {
-    const preset = TEAM_ORCHESTRATION_PRESET_METAS.find((item) => item.id === teamSelectedOrchestrationPresetId.value)
-    if (preset) {
-      teamTemplateDraftName.value = `${preset.label}-模板`
-      return
-    }
-  }
-  const goal = (teamSessionDetail.value?.goal || '').trim()
-  if (goal) {
-    teamTemplateDraftName.value = `Team-${goal.slice(0, 20)}${goal.length > 20 ? '...' : ''}`
-    return
-  }
-  teamTemplateDraftName.value = 'Team-编排模板'
-}
-
 const normalizeTeamOrchestrationStep = (raw: any): TeamOrchestrationStep => {
   const typeRaw = typeof raw?.type === 'string' ? raw.type : 'agent'
   const type: TeamOrchestrationStepType = typeRaw === 'parallel' || typeRaw === 'serial' ? typeRaw : 'agent'
@@ -2728,10 +3147,6 @@ const syncTeamOrchestrationEditorFromSession = (force = false) => {
   }
   teamSelectedOrchestrationPresetId.value = null
   teamSelectedRecoveryPresetId.value = teamCurrentNoHumanInputPolicy.value
-  if (force || !teamTemplateDraftName.value.trim()) {
-    teamTemplateDraftName.value = ''
-    inferTeamTemplateDraftName()
-  }
 }
 
 const handleTeamOrchestrationInput = (event: Event) => {
@@ -2773,16 +3188,6 @@ const handleTeamApplyOrchestrationPreset = (presetId: TeamOrchestrationPresetId)
   teamPlanDirty.value = true
   teamPlanError.value = null
   teamSelectedOrchestrationPresetId.value = presetId
-  if (!teamTemplateDraftName.value.trim()) {
-    inferTeamTemplateDraftName()
-  }
-  if (presetId === 'product_delivery_chain') {
-    teamTemplateDraftDomain.value = 'product'
-  } else if (presetId === 'security_audit_matrix') {
-    teamTemplateDraftDomain.value = 'security'
-  } else {
-    teamTemplateDraftDomain.value = 'ops'
-  }
 
   const missingMemberCount = getAllTeamAgentSteps(normalized.steps)
     .filter((step) => !step.member || !step.member.trim())
@@ -2853,176 +3258,6 @@ const handleTeamApplyRecoveryPreset = async (presetId: TeamRecoveryPresetId) => 
     teamPlanError.value = e?.message || String(e)
   } finally {
     teamRecoveryPresetApplying.value = false
-  }
-}
-
-const handleTeamSaveCurrentPlanAsTemplate = async () => {
-  teamPlanError.value = null
-  teamPlanSuccess.value = null
-  inferTeamTemplateDraftName()
-
-  const templateName = teamTemplateDraftName.value.trim()
-  if (!templateName) {
-    teamPlanError.value = '请输入模板名称。'
-    return
-  }
-
-  const templateDomain = teamTemplateDraftDomain.value
-  if (!TEAM_TEMPLATE_DOMAIN_OPTIONS.includes(templateDomain)) {
-    teamPlanError.value = '模板 domain 非法。'
-    return
-  }
-
-  teamTemplateDraftSaving.value = true
-  try {
-    const plan = parseTeamOrchestrationPlanInput()
-    const steps = Array.isArray(plan?.steps) ? plan.steps : []
-    if (steps.length === 0) {
-      throw new Error('当前编排为空，无法保存为模板。')
-    }
-
-    const sessionMembers = teamSessionDetail.value?.members || []
-    let memberPayload: Array<{
-      name: string
-      responsibility?: string
-      system_prompt?: string
-      decision_style?: string
-      risk_preference?: string
-      weight?: number
-      tool_policy?: any
-      output_schema?: any
-      sort_order?: number
-    }> = sessionMembers.map((member, index) => ({
-      name: member.name,
-      responsibility: member.responsibility || undefined,
-      system_prompt: member.system_prompt || undefined,
-      decision_style: member.decision_style || undefined,
-      risk_preference: member.risk_preference || undefined,
-      weight: Number.isFinite(Number(member.weight)) ? Number(member.weight) : 1,
-      tool_policy: member.tool_policy || undefined,
-      output_schema: member.output_schema || undefined,
-      sort_order: Number.isFinite(Number(member.sort_order)) ? Number(member.sort_order) : index,
-    }))
-
-    if (memberPayload.length === 0) {
-      const fallbackMembers = Array.from(
-        new Set(
-          getAllTeamAgentSteps(teamOrchestrationDraft.value.steps)
-            .map((step) => (step.member || '').trim())
-            .filter((name) => !!name),
-        ),
-      )
-      memberPayload = fallbackMembers.map((name, index) => ({
-        name,
-        sort_order: index,
-      }))
-    }
-
-    if (memberPayload.length === 0) {
-      throw new Error('当前会话没有可用 Agent，至少需要 1 个 Agent 才能保存模板。')
-    }
-
-    const usedIds = new Set<string>()
-    const agentsPayload = memberPayload.map((member, index) => {
-      const base = member.name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-      let id = base ? `agent-${base}` : `agent-${index + 1}`
-      while (usedIds.has(id)) {
-        id = `${id}-${usedIds.size + 1}`
-      }
-      usedIds.add(id)
-
-      const outputSchema = member.output_schema && typeof member.output_schema === 'object'
-        ? member.output_schema
-        : undefined
-      const provider = typeof outputSchema?.model_provider === 'string'
-        ? outputSchema.model_provider.trim()
-        : ''
-      const modelName = typeof outputSchema?.model_name === 'string'
-        ? outputSchema.model_name.trim()
-        : ''
-      const llmModel = typeof outputSchema?.llm_model === 'string'
-        ? outputSchema.llm_model.trim()
-        : ''
-      const model = llmModel || (provider && modelName ? `${provider}/${modelName}` : undefined)
-
-      return {
-        id,
-        name: member.name,
-        system_prompt: member.system_prompt,
-        model,
-        tool_policy: member.tool_policy,
-        skills: [] as string[],
-        max_parallel_tasks: 1,
-      }
-    })
-
-    const agentIdByName = new Map(agentsPayload.map((agent) => [agent.name.trim(), agent.id]))
-    const planAgentSteps = getAllTeamAgentSteps(steps)
-    const taskNodes = (planAgentSteps.length > 0 ? planAgentSteps : memberPayload.map((member, i) => ({
-      id: `task-${i + 1}`,
-      member: member.name,
-      phase: 'task_execution',
-      instruction: member.responsibility || '',
-    } as TeamOrchestrationStep))).map((step, index, arr) => {
-      const taskId = step.id?.trim() || `task-${index + 1}`
-      const assigneeName = (step.member || '').trim()
-      const assigneeId = agentIdByName.get(assigneeName) || ''
-      const depends_on = index > 0 ? [arr[index - 1].id?.trim() || `task-${index}`] : []
-      return {
-        id: taskId,
-        title: step.name?.trim() || assigneeName || `Task ${index + 1}`,
-        instruction: step.instruction?.trim() || `请完成任务：${step.name || assigneeName || `Task ${index + 1}`}`,
-        depends_on,
-        assignee_strategy: assigneeId
-          ? { mode: 'fixed_agent', agent_id: assigneeId, agent_name: assigneeName }
-          : { mode: 'auto' },
-        retry: {
-          max_attempts: Math.max(1, Number(step.retry?.max_attempts || 1)),
-          backoff_ms: Math.max(0, Number(step.retry?.backoff_ms || 300)),
-        },
-        phase: step.phase || 'task_execution',
-      }
-    })
-
-    const recoveryStateMachine = {
-      no_human_input_policy: teamCurrentNoHumanInputPolicy.value,
-      human_intervention_timeout_secs: teamCurrentHumanInterventionTimeoutSecs.value,
-      max_human_interventions: teamCurrentMaxHumanInterventions.value,
-      human_intervention: {
-        policy: teamCurrentNoHumanInputPolicy.value,
-        timeout_secs: teamCurrentHumanInterventionTimeoutSecs.value,
-      },
-    }
-
-    const maxRounds = Number(teamSessionDetail.value?.max_rounds || 5)
-    const normalizedMaxRounds = Number.isFinite(maxRounds) ? Math.max(1, Math.floor(maxRounds)) : 5
-
-    const created = await agentTeamApi.createTemplate({
-      name: templateName,
-      description: '由 Team 编排页沉淀，包含编排计划与恢复策略预设。',
-      domain: templateDomain,
-      default_rounds_config: {
-        max_rounds: normalizedMaxRounds,
-      },
-      default_tool_policy: {
-        state_machine: recoveryStateMachine,
-      },
-      agents: agentsPayload,
-      task_graph: {
-        version: 1,
-        nodes: taskNodes,
-      },
-    })
-
-    teamPlanSuccess.value = `模板已创建：${created.name}`
-  } catch (e: any) {
-    teamPlanError.value = e?.message || String(e)
-  } finally {
-    teamTemplateDraftSaving.value = false
   }
 }
 
@@ -3175,7 +3410,7 @@ const handleTeamSaveOrchestrationPlan = async () => {
   teamPlanSuccess.value = null
   try {
     parseTeamOrchestrationPlanInput()
-    teamPlanError.value = '会话编排直改入口已下线，请在 Team库编辑模板的 task_graph。'
+    teamPlanError.value = '会话编排直改入口已下线。'
   } catch (e: any) {
     teamPlanError.value = e?.message || String(e)
   } finally {
@@ -3192,9 +3427,7 @@ const handleTeamStartRunWithPlan = async () => {
       await handleTeamSaveOrchestrationPlan()
       if (teamPlanError.value) return
     }
-    await agentTeamApi.startRun(activeTeamSessionId.value)
-    teamSessionState.value = 'INITIALIZING'
-    appendTeamBridgeMessage('[Team] 已按当前编排计划启动执行。')
+    await runTeamExecutionFromWorkspace('[Team] 已按当前编排计划启动执行。')
     await loadTeamWorkspaceData()
   } catch (e: any) {
     teamPlanError.value = e?.message || String(e)
@@ -3210,9 +3443,7 @@ const handleTeamRetryRun = async () => {
       await handleTeamSaveOrchestrationPlan()
       if (teamPlanError.value) return
     }
-    await agentTeamApi.startRun(activeTeamSessionId.value)
-    teamSessionState.value = 'INITIALIZING'
-    appendTeamBridgeMessage('[Team] 已触发重试运行。')
+    await runTeamExecutionFromWorkspace('[Team] 已触发重试运行。')
     await loadTeamWorkspaceData()
   } catch (e: any) {
     teamPlanError.value = e?.message || String(e)
@@ -3243,9 +3474,7 @@ const handleTeamResumeFromStep = async () => {
         },
       },
     })
-    await agentTeamApi.startRun(activeTeamSessionId.value)
-    teamSessionState.value = 'INITIALIZING'
-    appendTeamBridgeMessage(`[Team] 已从 step '${stepId}' 发起恢复执行。`)
+    await runTeamExecutionFromWorkspace(`[Team] 已从 step '${stepId}' 发起恢复执行。`)
     await loadTeamWorkspaceData()
   } catch (e: any) {
     teamPlanError.value = e?.message || String(e)
@@ -3260,55 +3489,48 @@ const handleTeamFillResumeStep = (stepId: string) => {
   teamPlanSuccess.value = `已选择恢复节点：${normalized}`
 }
 
-const resetTeamBlackboardArchive = () => {
-  teamBlackboardArchiveEntryId.value = null
-  teamBlackboardArchiveMessages.value = []
-  teamBlackboardArchiveScope.value = null
-  teamBlackboardArchiveLoading.value = false
-  teamBlackboardArchiveError.value = null
-}
-
 const loadTeamWorkspaceData = async () => {
   if (!activeTeamSessionId.value) {
     teamSessionMessages.value = []
-    teamRounds.value = []
-    teamBlackboardEntries.value = []
-    resetTeamBlackboardArchive()
-    teamArtifacts.value = []
     teamSessionDetail.value = null
     teamTasks.value = []
-    teamMailbox.value = []
+    teamBlackboardEntries.value = []
     teamSelectedOrchestrationPresetId.value = null
     teamSelectedRecoveryPresetId.value = 'balanced'
-    teamTemplateDraftName.value = ''
-    teamTemplateDraftDomain.value = 'custom'
     syncTeamOrchestrationEditorFromSession(true)
     return
   }
   teamWorkspaceLoading.value = true
   try {
-    const [sessionResp, messagesResp, roundsResp, blackboardResp, artifactsResp, tasksResp, mailboxResp] = await Promise.all([
+    await agentTeamApi.ensureSchema()
+    const sessionId = activeTeamSessionId.value
+    const [sessionResp, messagesResp, tasksResp, blackboardResp] = await Promise.allSettled([
       agentTeamApi.getSession(activeTeamSessionId.value),
       agentTeamApi.getMessages(activeTeamSessionId.value),
-      agentTeamApi.getRounds(activeTeamSessionId.value),
-      agentTeamApi.getBlackboard(activeTeamSessionId.value),
-      agentTeamApi.listArtifacts(activeTeamSessionId.value),
       agentTeamApi.listTasks(activeTeamSessionId.value),
-      agentTeamApi.listMailbox(activeTeamSessionId.value),
+      agentTeamApi.listBlackboardEntries(activeTeamSessionId.value, 200),
     ])
-    teamSessionDetail.value = sessionResp
-    teamSessionMessages.value = messagesResp
-    teamRounds.value = roundsResp
-    teamBlackboardEntries.value = blackboardResp
-    if (
-      teamBlackboardArchiveEntryId.value &&
-      !blackboardResp.some((entry) => entry.id === teamBlackboardArchiveEntryId.value)
-    ) {
-      resetTeamBlackboardArchive()
+    if (activeTeamSessionId.value !== sessionId) return
+    if (sessionResp.status === 'fulfilled') {
+      teamSessionDetail.value = sessionResp.value
+    } else {
+      console.warn('[AgentView] Failed to load team session detail:', sessionResp.reason)
     }
-    teamArtifacts.value = artifactsResp
-    teamTasks.value = tasksResp
-    teamMailbox.value = mailboxResp
+    if (messagesResp.status === 'fulfilled') {
+      teamSessionMessages.value = messagesResp.value
+    } else {
+      console.warn('[AgentView] Failed to load team messages:', messagesResp.reason)
+    }
+    if (tasksResp.status === 'fulfilled') {
+      teamTasks.value = tasksResp.value
+    } else {
+      console.warn('[AgentView] Failed to load team tasks:', tasksResp.reason)
+    }
+    if (blackboardResp.status === 'fulfilled') {
+      teamBlackboardEntries.value = blackboardResp.value
+    } else {
+      console.warn('[AgentView] Failed to load team blackboard entries:', blackboardResp.reason)
+    }
     syncTeamOrchestrationEditorFromSession()
   } catch (e) {
     console.error('[AgentView] Failed to load team workspace data:', e)
@@ -3330,98 +3552,9 @@ const handleToggleTeamWorkspace = async () => {
   isAuditFindingsPanelActive.value = false
   isTeamWorkspaceActive.value = true
   if (!activeTeamSessionId.value) {
-    teamWorkspaceTab.value = 'templates'
+    teamWorkspaceTab.value = 'tasks'
   }
   await loadTeamWorkspaceData()
-}
-
-const handleTeamResolveBlackboardEntry = async (entryId: string) => {
-  if (!activeTeamSessionId.value || !entryId) return
-  try {
-    await agentTeamApi.resolveBlackboardEntry(activeTeamSessionId.value, entryId)
-    teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
-  } catch (e) {
-    console.error('[AgentView] Failed to resolve team blackboard entry:', e)
-  }
-}
-
-const handleAckMailbox = async (messageId: string) => {
-  if (!messageId || !activeTeamSessionId.value) return
-  try {
-    await agentTeamApi.ackMailbox(messageId)
-    teamMailbox.value = await agentTeamApi.listMailbox(activeTeamSessionId.value)
-  } catch (e) {
-    console.error('[AgentView] Failed to ack mailbox message:', e)
-  }
-}
-
-const handleTeamViewBlackboardArchive = async (entryId: string) => {
-  if (!activeTeamSessionId.value || !entryId) return
-
-  if (teamBlackboardArchiveEntryId.value === entryId && !teamBlackboardArchiveLoading.value) {
-    resetTeamBlackboardArchive()
-    return
-  }
-
-  teamBlackboardArchiveEntryId.value = entryId
-  teamBlackboardArchiveMessages.value = []
-  teamBlackboardArchiveScope.value = null
-  teamBlackboardArchiveError.value = null
-  teamBlackboardArchiveLoading.value = true
-
-  try {
-    const archive = await agentTeamApi.getBlackboardEntryArchive(
-      activeTeamSessionId.value,
-      entryId,
-      120,
-    ) as AgentTeamBlackboardArchive
-    teamBlackboardArchiveMessages.value = Array.isArray(archive.messages) ? archive.messages : []
-    teamBlackboardArchiveScope.value = archive.retrieval_scope || null
-  } catch (e: any) {
-    teamBlackboardArchiveError.value = e?.message || String(e)
-  } finally {
-    teamBlackboardArchiveLoading.value = false
-  }
-}
-
-const handleTeamAddBlackboardEntry = async (type: string, title: string, content: string) => {
-  if (!activeTeamSessionId.value) return
-  try {
-    await agentTeamApi.addBlackboardEntry({
-      session_id: activeTeamSessionId.value,
-      entry_type: type,
-      title,
-      content,
-      contributed_by: '主链路用户',
-    })
-    teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
-  } catch (e) {
-    console.error('[AgentView] Failed to add team blackboard entry:', e)
-  }
-}
-
-const handleTeamAnnotateBlackboardEntry = async (entryId: string, text: string) => {
-  if (!activeTeamSessionId.value) return
-  try {
-    await agentTeamApi.addBlackboardEntry({
-      session_id: activeTeamSessionId.value,
-      entry_type: 'action_item',
-      title: `批注 - ${entryId.slice(0, 8)}`,
-      content: text,
-      contributed_by: '主链路批注',
-    })
-    teamBlackboardEntries.value = await agentTeamApi.getBlackboard(activeTeamSessionId.value)
-  } catch (e) {
-    console.error('[AgentView] Failed to annotate team blackboard entry:', e)
-  }
-}
-
-const handleTeamTemplatesUpdated = async () => {
-  await loadTeamTemplateOptions(selectedTeamTemplateId.value)
-  if (teamWorkspaceTab.value === 'templates') {
-    await syncActiveTeamSession()
-    await loadTeamWorkspaceData()
-  }
 }
 
 const buildPersistableToolConfig = (config: UiToolConfigPayload) => ({
@@ -3934,6 +4067,11 @@ const loadConversationHistory = async (convId: string) => {
     }
 
     if (messages && messages.length > 0) {
+      teamMirroredConversationMessageIds = new Set(
+        messages
+          .map((row: any) => String(row?.id || ''))
+          .filter((id: string) => id.startsWith('teamv3:')),
+      )
       // DB already returns messages ordered by timestamp ASC.
       // Keep DB order directly to avoid frontend re-sorting instability
       // when multiple rows share the same millisecond timestamp.
@@ -4093,6 +4231,7 @@ const loadConversationHistory = async (convId: string) => {
         messageFlowRef.value?.scrollToBottom()
       })
     } else {
+      teamMirroredConversationMessageIds = new Set()
       console.log('[AgentView] No messages found for conversation:', convId)
     }
   } catch (e) {
@@ -4132,43 +4271,46 @@ const handleSelectConversation = async (convId: string) => {
 // Handle conversation creation
 const handleCreateConversation = async (newConvId?: string) => {
   if (newConvId) {
-    conversationId.value = newConvId
+    await handleSelectConversation(newConvId)
+    nextTick(() => {
+      inputAreaRef.value?.focusInput()
+    })
+    return
+  }
+
+  try {
+    // Reuse the latest empty draft conversation to avoid duplicate empty sessions.
+    const reusableConversation = await findReusableEmptyConversation()
+    if (reusableConversation) {
+      await handleSelectConversation(reusableConversation.id)
+      nextTick(() => {
+        inputAreaRef.value?.focusInput()
+      })
+      return
+    }
+
+    const convId = await invoke<string>('create_ai_conversation', {
+      request: {
+        title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+        service_name: 'default'
+      }
+    })
+    conversationId.value = convId
     currentConversationTitle.value = t('agent.newConversationTitle')
     agentEvents.clearMessages()
-    
+
     // Reset terminal session for new conversation
     terminalComposable.resetTerminal()
-    
+
+    // Refresh conversation list
+    conversationListRef.value?.loadConversations()
+
     // Focus input after creating conversation
     nextTick(() => {
       inputAreaRef.value?.focusInput()
     })
-  } else {
-    // Create new conversation
-    try {
-      const convId = await invoke<string>('create_ai_conversation', {
-        request: {
-          title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
-          service_name: 'default'
-        }
-      })
-      conversationId.value = convId
-      currentConversationTitle.value = t('agent.newConversationTitle')
-      agentEvents.clearMessages()
-      
-      // Reset terminal session for new conversation
-      terminalComposable.resetTerminal()
-      
-      // Refresh conversation list
-      conversationListRef.value?.loadConversations()
-      
-      // Focus input after creating conversation
-      nextTick(() => {
-        inputAreaRef.value?.focusInput()
-      })
-    } catch (e) {
-      console.error('[AgentView] Failed to create conversation:', e)
-    }
+  } catch (e) {
+    console.error('[AgentView] Failed to create conversation:', e)
   }
 }
 
@@ -4181,19 +4323,12 @@ const handleSubmit = async () => {
 
   if (teamModeEnabled.value) {
     try {
-      // Ensure conversation exists for Team session association.
-      if (!conversationId.value) {
-        const convId = await invoke<string>('create_ai_conversation', {
-          request: {
-            title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
-            service_name: 'default'
-          }
-        })
-        conversationId.value = convId
-        currentConversationTitle.value = t('agent.newConversationTitle')
-        conversationListRef.value?.loadConversations()
-        await syncActiveTeamSession()
+      if (isExecuting.value && conversationId.value) {
+        await handleStop()
+        await new Promise(resolve => setTimeout(resolve, 300))
       }
+
+      await ensureConversationForTeamSession()
 
       let fullTask = task
       if (referencedTraffic.value.length > 0) {
@@ -4203,10 +4338,15 @@ const handleSubmit = async () => {
 
       // Clear input and pending artifacts in Team mode.
       inputValue.value = ''
+      const usedDocuments = processedDocuments.value.filter(d => d.status === 'ready')
       pendingAttachments.value = []
       pendingDocuments.value = []
       processedDocuments.value = []
       referencedTraffic.value = []
+
+      if (usedDocuments.length > 0) {
+        agentEvents.setPendingDocumentAttachments(usedDocuments)
+      }
 
       nextTick(() => {
         messageFlowRef.value?.scrollToBottom()
@@ -4214,9 +4354,23 @@ const handleSubmit = async () => {
 
       emit('submit', fullTask)
       await routeTeamMessage(fullTask)
+      if (activeTeamSessionId.value) {
+        teamSessionState.value = 'EXECUTING'
+        ensureTeamRunStatusPolling()
+        await persistTeamSessionState(activeTeamSessionId.value, 'EXECUTING')
+        await agentTeamApi.startRun(
+          activeTeamSessionId.value,
+          conversationId.value || undefined,
+          ragEnabled.value,
+        )
+        if (isTeamWorkspaceActive.value) {
+          await loadTeamWorkspaceData()
+        }
+      }
       emit('complete', {
         mode: 'team',
         session_id: activeTeamSessionId.value,
+        execution_id: conversationId.value,
       })
     } catch (e: any) {
       const errorMsg = e?.toString?.() || String(e)
@@ -4320,6 +4474,10 @@ const handleSubmit = async () => {
       ? assistantSelectedModel.value
       : undefined
 
+    if (conversationId.value) {
+      void maybeAutoRenameConversationByFirstMessage(conversationId.value, task)
+    }
+
     // Call agent_execute command (tool config passed directly from frontend to ensure latest config takes effect immediately)
     const result = await invoke('agent_execute', {
       task: fullTask,
@@ -4421,24 +4579,6 @@ onMounted(async () => {
       void loadTeamWorkspaceData()
     }
   })
-  unlistenTeamRoundCompleted = await listen<AgentTeamRoundEvent>('agent_team:round_completed', () => {
-    if (!activeTeamSessionId.value) {
-      return
-    }
-    void syncTeamMessagesToMainFlow(activeTeamSessionId.value)
-    if (isTeamWorkspaceActive.value) {
-      void loadTeamWorkspaceData()
-    }
-  })
-  unlistenTeamArtifactGenerated = await listen<AgentTeamArtifactEvent>('agent_team:artifact_generated', (event) => {
-    if (!activeTeamSessionId.value || event.payload.session_id !== activeTeamSessionId.value) {
-      return
-    }
-    void syncTeamMessagesToMainFlow(event.payload.session_id)
-    if (isTeamWorkspaceActive.value) {
-      void loadTeamWorkspaceData()
-    }
-  })
   unlistenTeamMessageStreamStart = await listen<AgentTeamMessageStreamStartEvent>('agent_team:message_stream_start', (event) => {
     handleTeamMessageStreamStart(event.payload)
   })
@@ -4447,6 +4587,21 @@ onMounted(async () => {
   })
   unlistenTeamMessageStreamDone = await listen<AgentTeamMessageStreamDoneEvent>('agent_team:message_stream_done', (event) => {
     handleTeamMessageStreamDone(event.payload)
+  })
+  unlistenTeamToolCall = await listen<AgentTeamToolCallEvent>('agent_team:tool_call', (event) => {
+    handleTeamToolCall(event.payload)
+  })
+  unlistenTeamToolResult = await listen<AgentTeamToolResultEvent>('agent_team:tool_result', (event) => {
+    handleTeamToolResult(event.payload)
+  })
+  unlistenAgentComplete = await listen<AgentCompleteEvent>('agent:complete', (event) => {
+    void handleTeamExecutionComplete(event.payload)
+  })
+  unlistenAgentError = await listen<AgentErrorEvent>('agent:error', (event) => {
+    void handleTeamExecutionError(event.payload)
+  })
+  unlistenAgentAssistantSaved = await listen<AgentAssistantMessageSavedEvent>('agent:assistant_message_saved', (event) => {
+    void handleTeamAssistantMessageSaved(event.payload)
   })
   
   // Load saved tool configuration from database
@@ -4483,14 +4638,6 @@ onUnmounted(() => {
     unlistenTeamStateChanged()
     unlistenTeamStateChanged = null
   }
-  if (unlistenTeamRoundCompleted) {
-    unlistenTeamRoundCompleted()
-    unlistenTeamRoundCompleted = null
-  }
-  if (unlistenTeamArtifactGenerated) {
-    unlistenTeamArtifactGenerated()
-    unlistenTeamArtifactGenerated = null
-  }
   if (unlistenTeamMessageStreamStart) {
     unlistenTeamMessageStreamStart()
     unlistenTeamMessageStreamStart = null
@@ -4502,6 +4649,26 @@ onUnmounted(() => {
   if (unlistenTeamMessageStreamDone) {
     unlistenTeamMessageStreamDone()
     unlistenTeamMessageStreamDone = null
+  }
+  if (unlistenTeamToolCall) {
+    unlistenTeamToolCall()
+    unlistenTeamToolCall = null
+  }
+  if (unlistenTeamToolResult) {
+    unlistenTeamToolResult()
+    unlistenTeamToolResult = null
+  }
+  if (unlistenAgentComplete) {
+    unlistenAgentComplete()
+    unlistenAgentComplete = null
+  }
+  if (unlistenAgentError) {
+    unlistenAgentError()
+    unlistenAgentError = null
+  }
+  if (unlistenAgentAssistantSaved) {
+    unlistenAgentAssistantSaved()
+    unlistenAgentAssistantSaved = null
   }
 })
 
@@ -4517,6 +4684,7 @@ onActivated(() => {
 // Watch for conversation changes to update title
 watch(conversationId, async (newId) => {
   lastPersistedPolicyGateSignature.value = ''
+  teamMirroredConversationMessageIds = new Set<string>()
   if (newId) {
     try {
       const conversations = await invoke<any[]>('get_ai_conversations')
@@ -4536,6 +4704,8 @@ watch(conversationId, async (newId) => {
 watch(activeTeamSessionId, async (newId, oldId) => {
   if (newId !== oldId) {
     teamMainFlowMessageIds = new Set<string>()
+    teamMainFlowToolCallIds = new Set<string>()
+    teamMirroredAssistantSourceIds = new Set<string>()
     teamStreamTempMessageByStreamId.clear()
     teamStreamDoneIdsBySignature.clear()
   }

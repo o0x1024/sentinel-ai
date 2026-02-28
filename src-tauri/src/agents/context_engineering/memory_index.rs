@@ -342,7 +342,8 @@ async fn vector_retrieve(
         collection_id: Some(collection_id),
         top_k: Some(top_k),
         use_embedding: Some(true),
-        similarity_threshold: Some(0.15),
+        // Use configured RAG similarity threshold (from settings) instead of hard-coded value.
+        similarity_threshold: None,
         use_mmr: None,
         mmr_lambda: None,
         filters: None,

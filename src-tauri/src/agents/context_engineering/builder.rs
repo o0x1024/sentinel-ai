@@ -16,7 +16,8 @@ use crate::agents::context_engineering::checkpoint::{
     load_or_init_run_state, save_run_state, ContextRunState,
 };
 use crate::agents::context_engineering::memory_index::{
-    evict_low_value_items, ingest_memory_items_persistent, retrieve_memory_items_hybrid,
+    evict_low_value_items, ingest_memory_items, ingest_memory_items_persistent,
+    retrieve_memory_items_hybrid,
     MemoryQuery,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
@@ -111,7 +112,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 raw.trim().to_lowercase().as_str(),
                 "1" | "true" | "yes" | "on"
             );
-            policy.feature_context_packet_v2 = enabled;
+            // Caller policy can force-disable v2 retrieval; DB config only disables default-on behavior.
+            policy.feature_context_packet_v2 = policy.feature_context_packet_v2 && enabled;
         }
     }
     let mut run_state_block = String::new();
@@ -181,14 +183,18 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         let memory_facts = vec![state.task_brief.clone()];
         let memory_decisions = state.decisions.clone();
         let memory_todos = state.open_todos.clone();
-        ingest_memory_items_persistent(
-            &input.app_handle,
-            &mut state,
-            &memory_facts,
-            &memory_decisions,
-            &memory_todos,
-        )
-        .await;
+        if policy.feature_context_packet_v2 {
+            ingest_memory_items_persistent(
+                &input.app_handle,
+                &mut state,
+                &memory_facts,
+                &memory_decisions,
+                &memory_todos,
+            )
+            .await;
+        } else {
+            ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
+        }
         evict_low_value_items(&mut state);
         run_state_digests = state.last_tool_digests.clone();
         if policy.feature_context_packet_v2 {

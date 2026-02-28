@@ -213,11 +213,19 @@ export interface UseAgentEventsReturn {
   setPendingDocumentAttachments: (docs: any[]) => void
 }
 
+interface UseAgentEventsOptions {
+  suppressUserMessages?: Ref<boolean> | ComputedRef<boolean> | boolean
+  defaultMaxContextTokens?: Ref<number> | ComputedRef<number> | number
+}
+
 /**
  * Agent 事件监听
  * @param executionId 可选的执行 ID 过滤
  */
-export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEventsReturn {
+export function useAgentEvents(
+  executionId?: Ref<string> | string,
+  options?: UseAgentEventsOptions,
+): UseAgentEventsReturn {
   const messages = ref<AgentMessage[]>([])
   const isExecuting = ref(false)
   const currentExecutionId = ref<string | null>(null)
@@ -244,6 +252,26 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
   const pendingDocumentAttachments = ref<any[]>([])
 
   const unlisteners: UnlistenFn[] = []
+  const shouldSuppressUserMessages = () => {
+    const raw = options?.suppressUserMessages
+    if (typeof raw === 'boolean') return raw
+    if (raw && typeof raw === 'object' && 'value' in raw) {
+      return !!raw.value
+    }
+    return false
+  }
+
+  const resolveDefaultMaxContextTokens = () => {
+    const raw = options?.defaultMaxContextTokens
+    if (typeof raw === 'number') {
+      return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 128000
+    }
+    if (raw && typeof raw === 'object' && 'value' in raw) {
+      const value = Number(raw.value)
+      return Number.isFinite(value) && value > 0 ? Math.floor(value) : 128000
+    }
+    return 128000
+  }
 
   const hasExplicitTarget = executionId !== undefined
 
@@ -361,6 +389,9 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       )
       const imgAttachments = payload.image_attachments
       pendingDocumentAttachments.value = [] // Clear after use
+      if (shouldSuppressUserMessages()) {
+        return
+      }
       
       // Build metadata
       const metadata: any = {}
@@ -395,6 +426,9 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
       currentThinkingMessageId.value = null
       currentAssistantMessageId.value = null
       assistantSegmentBuffer.value = ''
+      if (shouldSuppressUserMessages()) {
+        return
+      }
 
       // 添加用户任务消息（如果没有通过 user_message 事件收到）
       const hasUserMessage = messages.value.some(m =>
@@ -558,8 +592,8 @@ export function useAgentEvents(executionId?: Ref<string> | string): UseAgentEven
               usagePercentage,
             }
           } else {
-            // If no context usage yet, create a basic one (assume 128K context)
-            const maxTokens = 128000
+            // If no context usage yet, create a basic one from configured context window.
+            const maxTokens = resolveDefaultMaxContextTokens()
             const usedTokens = inputTokens + outputTokens
             const usagePercentage = Math.min(100, (usedTokens / maxTokens * 100))
             contextUsage.value = {

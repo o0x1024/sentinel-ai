@@ -1,7 +1,6 @@
 //! Commands module - Tauri commands
 #![allow(ambiguous_glob_reexports)]
 
-pub mod agent_team_commands;
 pub mod ai;
 pub mod aisettings;
 pub mod asset;
@@ -32,6 +31,7 @@ pub mod scan_task_commands;
 pub mod security_rule_commands;
 pub mod shell_commands;
 pub mod task_tool_commands;
+pub mod team_v3_commands;
 pub mod terminal_commands;
 pub mod test_proxy;
 pub mod test_tracking_commands;
@@ -72,6 +72,7 @@ pub use scan_task_commands::*;
 pub use security_rule_commands::*;
 pub use shell_commands::*;
 pub use task_tool_commands::*;
+pub use team_v3_commands::*;
 pub use terminal_commands::*;
 pub use test_tracking_commands::*;
 pub use tool_commands::*;

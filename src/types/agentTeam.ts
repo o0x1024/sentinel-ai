@@ -5,6 +5,9 @@
 // ==================== 状态枚举 ====================
 
 export type TeamSessionState =
+    | 'PLAN_DRAFT'
+    | 'WAITING_PLAN_APPROVAL'
+    | 'EXECUTING'
     | 'PENDING'
     | 'INITIALIZING'
     | 'PROPOSING'
@@ -300,6 +303,18 @@ export interface TeamTask {
     last_error?: string
     started_at?: string
     completed_at?: string
+    created_at: string
+    updated_at: string
+}
+
+export interface TeamBlackboardEntry {
+    id: string
+    session_id: string
+    task_id?: string
+    agent_id?: string
+    entry_type: string
+    content: string
+    metadata?: any
     created_at: string
     updated_at: string
 }

@@ -5,6 +5,19 @@ use std::io::Write;
 
 const TOOL_LOG_MAX_CHARS: usize = 8000;
 
+fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+
+    let mut safe_len = max_bytes;
+    while safe_len > 0 && !input.is_char_boundary(safe_len) {
+        safe_len -= 1;
+    }
+
+    input[..safe_len].to_string()
+}
+
 /// 写入 LLM 日志
 pub fn write_llm_log(
     session_id: &str,
@@ -142,9 +155,8 @@ pub fn log_tool_result(
     success: bool,
     result: &str,
 ) {
-    let mut result_trimmed = result.to_string();
-    if result_trimmed.len() > TOOL_LOG_MAX_CHARS {
-        result_trimmed.truncate(TOOL_LOG_MAX_CHARS);
+    let mut result_trimmed = truncate_utf8_at_boundary(result, TOOL_LOG_MAX_CHARS);
+    if result_trimmed.len() < result.len() {
         result_trimmed.push_str("\n...[truncated]");
     }
 
@@ -226,4 +238,16 @@ pub fn log_response(
         "OUTPUT RESPONSE",
         &format!("\n{}\n", response),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_utf8_at_boundary;
+
+    #[test]
+    fn truncate_utf8_never_panics_on_multibyte_boundary() {
+        let input = "a中😀b";
+        let out = truncate_utf8_at_boundary(input, 4);
+        assert_eq!(out, "a中");
+    }
 }

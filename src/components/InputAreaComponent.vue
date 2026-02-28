@@ -214,24 +214,6 @@
               <span class="opacity-80">{{ formatTokenCount(effectiveContextUsage.usedTokens) }} / {{ formatTokenCount(effectiveContextUsage.maxTokens) }}</span>
               <span class="opacity-70 hidden sm:inline">{{ t('agent.contextUsed') }}</span>
             </div>
-            <div v-if="localTeamEnabled" class="assistant-team-template-switch">
-              <SearchableSelect
-                :model-value="localSelectedTeamTemplate"
-                :options="availableTeamTemplateOptions"
-                :placeholder="teamTemplateLoading ? '加载模板中...' : '选择 Team 模板'"
-                search-placeholder="搜索 Team 模板..."
-                no-results-text="无匹配模板"
-                :disabled="teamTemplateLoading || availableTeamTemplateOptions.length === 0"
-                size="sm"
-                direction="up"
-                variant="toolbar"
-                :auto-width="true"
-                align="right"
-                group-by="description"
-                @update:model-value="localSelectedTeamTemplate = $event"
-                @change="onTeamTemplateChanged"
-              />
-            </div>
             <div class="assistant-model-switch">
               <SearchableSelect
                 :model-value="localSelectedModel"
@@ -523,9 +505,7 @@ const props = defineProps<{
   availableModels?: ModelOption[]
   selectedModel?: string
   modelLoading?: boolean
-  teamTemplateOptions?: ModelOption[]
-  selectedTeamTemplate?: string
-  teamTemplateLoading?: boolean
+  defaultMaxContextTokens?: number
 }>()
 
 const emit = defineEmits<{
@@ -547,7 +527,6 @@ const emit = defineEmits<{
   (e: 'remove-traffic', index: number): void
   (e: 'clear-traffic'): void
   (e: 'change-model', value: string): void
-  (e: 'change-team-template', value: string): void
 }>()
 
 // removed architecture utilities
@@ -592,10 +571,7 @@ const localRagEnabled = ref<boolean>(!!props.ragEnabled)
 const localToolsEnabled = ref<boolean>(!!props.toolsEnabled)
 const localTeamEnabled = ref<boolean>(!!props.teamEnabled)
 const localSelectedModel = ref(props.selectedModel || '')
-const localSelectedTeamTemplate = ref(props.selectedTeamTemplate || '')
 const availableModelOptions = computed(() => props.availableModels || [])
-const availableTeamTemplateOptions = computed(() => props.teamTemplateOptions || [])
-const teamTemplateLoading = computed(() => !!props.teamTemplateLoading)
 
 // init guard
 const initialized = ref(false)
@@ -1319,13 +1295,20 @@ const estimateTokens = (text: string): number => {
 }
 
 const inputTokenEstimate = computed(() => estimateTokens(props.inputMessage || ''))
+const resolvedDefaultMaxContextTokens = computed(() => {
+  const parsed = Number(props.defaultMaxContextTokens)
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.floor(parsed)
+  }
+  return 128000
+})
 
 const effectiveContextUsage = computed(() => {
   const base = props.contextUsage
   const inputTokens = inputTokenEstimate.value
   if (!base) {
     if (inputTokens === 0) return null
-    const maxTokens = 128000
+    const maxTokens = resolvedDefaultMaxContextTokens.value
     const usedTokens = inputTokens
     const usagePercentage = maxTokens > 0
       ? Math.min(100, (usedTokens / maxTokens) * 100)
@@ -1526,11 +1509,6 @@ const onModelChanged = (value: string) => {
   if (!value) return
   localSelectedModel.value = value
   emit('change-model', value)
-}
-
-const onTeamTemplateChanged = (value: string) => {
-  localSelectedTeamTemplate.value = value || ''
-  emit('change-team-template', localSelectedTeamTemplate.value)
 }
 
 // 点击外部区域关闭弹层
@@ -1966,16 +1944,6 @@ watch(
   (val) => {
     if (typeof val === 'string') {
       localSelectedModel.value = val
-    }
-  },
-  { immediate: true },
-)
-
-watch(
-  () => props.selectedTeamTemplate,
-  (val) => {
-    if (typeof val === 'string') {
-      localSelectedTeamTemplate.value = val
     }
   },
   { immediate: true },

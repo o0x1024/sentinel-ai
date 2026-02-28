@@ -1,6 +1,5 @@
 //! Sentinel AI - Security Analysis Platform
 
-pub mod agent_team;
 pub mod agents;
 pub mod analyzers;
 pub mod commands;
@@ -1462,38 +1461,27 @@ pub fn run() {
             sentinel_workflow::commands::stop_workflow_schedule,
             sentinel_workflow::commands::list_workflow_schedules,
             sentinel_workflow::commands::get_workflow_schedule,
-            // Agent Team commands
-            commands::agent_team_commands::agent_team_create_template,
-            commands::agent_team_commands::agent_team_list_templates,
-            commands::agent_team_commands::agent_team_get_template,
-            commands::agent_team_commands::agent_team_update_template,
-            commands::agent_team_commands::agent_team_delete_template,
-            commands::agent_team_commands::agent_team_create_session,
-            commands::agent_team_commands::agent_team_get_session,
-            commands::agent_team_commands::agent_team_list_sessions,
-            commands::agent_team_commands::agent_team_update_session,
-            commands::agent_team_commands::agent_team_delete_session,
-            commands::agent_team_commands::agent_team_list_tasks,
-            commands::agent_team_commands::agent_team_update_task,
-            commands::agent_team_commands::agent_team_list_mailbox,
-            commands::agent_team_commands::agent_team_ack_mailbox,
-            commands::agent_team_commands::agent_team_upgrade_templates_to_v2,
-            commands::agent_team_commands::agent_team_start_run,
-            commands::agent_team_commands::agent_team_stop_run,
-            commands::agent_team_commands::agent_team_get_messages,
-            commands::agent_team_commands::agent_team_get_rounds,
-            commands::agent_team_commands::agent_team_submit_message,
-            commands::agent_team_commands::agent_team_append_partial_message,
-            commands::agent_team_commands::agent_team_get_blackboard,
-            commands::agent_team_commands::agent_team_add_blackboard_entry,
-            commands::agent_team_commands::agent_team_resolve_blackboard_entry,
-            commands::agent_team_commands::agent_team_get_blackboard_entry_archive,
-            commands::agent_team_commands::agent_team_list_artifacts,
-            commands::agent_team_commands::agent_team_get_artifact,
-            commands::agent_team_commands::agent_team_get_run_status,
-            commands::agent_team_commands::agent_team_seed_builtin_templates,
-            commands::agent_team_commands::agent_team_generate_template,
-            commands::agent_team_commands::agent_team_save_generated_template,
+            // Team V3 commands (non-backward-compatible cutover)
+            commands::team_v3_commands::team_v3_ensure_schema,
+            commands::team_v3_commands::team_v3_reset_schema,
+            commands::team_v3_commands::team_v3_create_session,
+            commands::team_v3_commands::team_v3_get_session,
+            commands::team_v3_commands::team_v3_list_sessions,
+            commands::team_v3_commands::team_v3_update_session,
+            commands::team_v3_commands::team_v3_start_execution,
+            commands::team_v3_commands::team_v3_stop_execution,
+            commands::team_v3_commands::team_v3_finalize_execution,
+            commands::team_v3_commands::team_v3_get_run_status,
+            commands::team_v3_commands::team_v3_create_task,
+            commands::team_v3_commands::team_v3_list_tasks,
+            commands::team_v3_commands::team_v3_claim_task,
+            commands::team_v3_commands::team_v3_release_task_claim,
+            commands::team_v3_commands::team_v3_send_message,
+            commands::team_v3_commands::team_v3_list_thread_messages,
+            commands::team_v3_commands::team_v3_list_messages,
+            commands::team_v3_commands::team_v3_list_blackboard_entries,
+            commands::team_v3_commands::team_v3_submit_plan_revision,
+            commands::team_v3_commands::team_v3_review_plan_revision,
         ])
         .run(context)
         .expect("Failed to start Tauri application");
