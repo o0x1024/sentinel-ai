@@ -196,6 +196,24 @@ pub struct TeamV3ReviewPlanRevisionRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct TeamV3PlannedAgent {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    responsibility: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    decision_style: Option<String>,
+    #[serde(default)]
+    risk_preference: Option<String>,
+    #[serde(default)]
+    weight: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct TeamV3PlannedTask {
     task_key: String,
     title: String,
@@ -212,6 +230,8 @@ struct TeamV3PlannedTask {
 struct TeamV3ExecutionPlan {
     #[serde(default)]
     summary: Option<String>,
+    #[serde(default)]
+    agents: Vec<TeamV3PlannedAgent>,
     tasks: Vec<TeamV3PlannedTask>,
 }
 
@@ -713,29 +733,9 @@ fn default_team_members() -> Vec<Value> {
     vec![
         json!({
             "id": "agent-1",
-            "name": "Team Agent 1",
-            "responsibility": "负责执行分配子任务并沉淀可复用结论",
+            "name": "Team Agent",
+            "responsibility": "负责执行分配任务并输出可复用结论",
             "sort_order": 0,
-            "weight": 1.0,
-            "token_usage": 0,
-            "tool_calls_count": 0,
-            "is_active": false
-        }),
-        json!({
-            "id": "agent-2",
-            "name": "Team Agent 2",
-            "responsibility": "负责执行分配子任务并沉淀可复用结论",
-            "sort_order": 1,
-            "weight": 1.0,
-            "token_usage": 0,
-            "tool_calls_count": 0,
-            "is_active": false
-        }),
-        json!({
-            "id": "agent-3",
-            "name": "Team Agent 3",
-            "responsibility": "负责执行分配子任务并沉淀可复用结论",
-            "sort_order": 2,
             "weight": 1.0,
             "token_usage": 0,
             "tool_calls_count": 0,
@@ -744,13 +744,7 @@ fn default_team_members() -> Vec<Value> {
     ]
 }
 
-fn normalize_team_members(state_data: &Value) -> Vec<Value> {
-    let mut members = state_data
-        .get("members")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
+fn normalize_team_member_values(mut members: Vec<Value>) -> Vec<Value> {
     if members.is_empty() {
         members = default_team_members();
     }
@@ -798,14 +792,148 @@ fn normalize_team_members(state_data: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn build_team_state_data(current: Option<&Value>, active_member_id: Option<&str>) -> Value {
+fn normalize_team_members(state_data: &Value) -> Vec<Value> {
+    let members = state_data
+        .get("members")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    normalize_team_member_values(members)
+}
+
+fn normalize_agent_id(input: &str, fallback_index: usize) -> String {
+    let mut normalized = input
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() {
+                ch
+            } else if ch == '-' || ch == '_' || ch == ' ' {
+                '-'
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+    normalized = normalized.trim_matches('-').to_string();
+    if normalized.is_empty() {
+        format!("agent-{}", fallback_index + 1)
+    } else {
+        normalized
+    }
+}
+
+fn derive_plan_members(plan: &TeamV3ExecutionPlan) -> Vec<Value> {
+    if !plan.agents.is_empty() {
+        let members = plan
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(index, agent)| {
+                let id = normalize_agent_id(agent.id.as_str(), index);
+                let name = if agent.name.trim().is_empty() {
+                    format!("Agent {}", index + 1)
+                } else {
+                    agent.name.trim().to_string()
+                };
+                let mut member = json!({
+                    "id": id,
+                    "name": name,
+                    "responsibility": agent
+                        .responsibility
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("负责执行分配任务并输出可复用结论"),
+                    "sort_order": index as i64,
+                    "weight": agent.weight.unwrap_or(1.0),
+                    "token_usage": 0,
+                    "tool_calls_count": 0,
+                    "is_active": false
+                });
+                if let Some(obj) = member.as_object_mut() {
+                    if let Some(system_prompt) = agent
+                        .system_prompt
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        obj.insert("system_prompt".to_string(), json!(system_prompt));
+                    }
+                    if let Some(decision_style) = agent
+                        .decision_style
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        obj.insert("decision_style".to_string(), json!(decision_style));
+                    }
+                    if let Some(risk_preference) = agent
+                        .risk_preference
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        obj.insert("risk_preference".to_string(), json!(risk_preference));
+                    }
+                }
+                member
+            })
+            .collect::<Vec<_>>();
+        return normalize_team_member_values(members);
+    }
+
+    let mut owners = plan
+        .tasks
+        .iter()
+        .filter_map(|task| {
+            task.owner_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
+        .collect::<Vec<_>>();
+    owners.sort();
+    owners.dedup();
+    if owners.is_empty() {
+        return default_team_members();
+    }
+    let members = owners
+        .into_iter()
+        .enumerate()
+        .map(|(index, owner)| {
+            let id = normalize_agent_id(owner.as_str(), index);
+            json!({
+                "id": id,
+                "name": format!("Agent {}", index + 1),
+                "responsibility": "负责执行分配任务并输出可复用结论",
+                "sort_order": index as i64,
+                "weight": 1.0,
+                "token_usage": 0,
+                "tool_calls_count": 0,
+                "is_active": false
+            })
+        })
+        .collect::<Vec<_>>();
+    normalize_team_member_values(members)
+}
+
+fn build_team_state_data_with_members(
+    current: Option<&Value>,
+    members: Vec<Value>,
+    active_member_id: Option<&str>,
+) -> Value {
     let mut state_data = current.cloned().unwrap_or_else(|| json!({}));
     if !state_data.is_object() {
         state_data = json!({});
     }
-
-    let mut members = normalize_team_members(&state_data);
-    for member in members.iter_mut() {
+    let mut normalized_members = normalize_team_member_values(members);
+    for member in normalized_members.iter_mut() {
         if let Some(member_obj) = member.as_object_mut() {
             let member_id = member_obj
                 .get("id")
@@ -817,7 +945,7 @@ fn build_team_state_data(current: Option<&Value>, active_member_id: Option<&str>
     }
 
     if let Some(state_obj) = state_data.as_object_mut() {
-        state_obj.insert("members".to_string(), Value::Array(members));
+        state_obj.insert("members".to_string(), Value::Array(normalized_members));
         let runtime = state_obj.entry("runtime").or_insert_with(|| json!({}));
         if let Some(runtime_obj) = runtime.as_object_mut() {
             runtime_obj.insert(
@@ -831,8 +959,13 @@ fn build_team_state_data(current: Option<&Value>, active_member_id: Option<&str>
             }
         }
     }
-
     state_data
+}
+
+fn build_team_state_data(current: Option<&Value>, active_member_id: Option<&str>) -> Value {
+    let current_state = current.cloned().unwrap_or_else(|| json!({}));
+    let members = normalize_team_members(&current_state);
+    build_team_state_data_with_members(Some(&current_state), members, active_member_id)
 }
 
 fn first_member_id(state_data: &Value) -> String {
@@ -865,24 +998,188 @@ fn team_member_ids(state_data: &Value) -> Vec<String> {
 }
 
 fn team_member_catalog_lines(state_data: &Value) -> Vec<String> {
-    normalize_team_members(state_data)
+    state_data
+        .get("members")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
         .into_iter()
-        .map(|member| {
+        .filter_map(|member| {
             let id = member
                 .get("id")
                 .and_then(|v| v.as_str())
-                .unwrap_or("member");
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())?;
             let name = member
                 .get("name")
                 .and_then(|v| v.as_str())
-                .unwrap_or(id);
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| id.clone());
             let responsibility = member
                 .get("responsibility")
                 .and_then(|v| v.as_str())
-                .unwrap_or("负责通用问题求解");
-            format!("- {} ({})：{}", id, name, responsibility)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "负责通用问题求解".to_string());
+            Some(format!("- {} ({})：{}", id, name, responsibility))
         })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+struct TeamV3MemberProfile {
+    name: String,
+    responsibility: Option<String>,
+    system_prompt: Option<String>,
+    decision_style: Option<String>,
+    risk_preference: Option<String>,
+}
+
+fn team_member_profiles(state_data: &Value) -> HashMap<String, TeamV3MemberProfile> {
+    normalize_team_members(state_data)
+        .into_iter()
+        .filter_map(|member| {
+            let id = member
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())?;
+            let name = member
+                .get("name")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| id.clone());
+            let responsibility = member
+                .get("responsibility")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let system_prompt = member
+                .get("system_prompt")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let decision_style = member
+                .get("decision_style")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let risk_preference = member
+                .get("risk_preference")
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            Some((
+                id,
+                TeamV3MemberProfile {
+                    name,
+                    responsibility,
+                    system_prompt,
+                    decision_style,
+                    risk_preference,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn canonical_agent_id(input: &str) -> String {
+    input
+        .trim()
+        .to_lowercase()
+        .replace('_', "-")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn resolve_member_id(owner_candidate: Option<&str>, members: &[String], index: usize) -> String {
+    let fallback = members
+        .get(index % members.len().max(1))
+        .cloned()
+        .unwrap_or_else(|| "agent-1".to_string());
+
+    let Some(owner_raw) = owner_candidate
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return fallback;
+    };
+
+    if members.iter().any(|member| member == owner_raw) {
+        return owner_raw.to_string();
+    }
+
+    let canonical_owner = canonical_agent_id(owner_raw);
+    if !canonical_owner.is_empty() {
+        if let Some(matched) = members
+            .iter()
+            .find(|member| canonical_agent_id(member.as_str()) == canonical_owner)
+        {
+            return matched.clone();
+        }
+    }
+
+    let normalized_owner = normalize_agent_id(owner_raw, index);
+    if let Some(matched) = members
+        .iter()
+        .find(|member| member.as_str() == normalized_owner.as_str())
+    {
+        return matched.clone();
+    }
+
+    fallback
+}
+
+fn build_team_member_execution_system_prompt(
+    member_id: &str,
+    profile: Option<&TeamV3MemberProfile>,
+) -> String {
+    let mut lines = vec![format!(
+        "你是 Team 成员 {}，请以严谨、可执行的方式完成分配任务。",
+        member_id
+    )];
+    if let Some(profile) = profile {
+        if !profile.name.trim().is_empty() {
+            lines.push(format!("成员名称：{}", profile.name.trim()));
+        }
+        if let Some(responsibility) = profile
+            .responsibility
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("职责边界：{}", responsibility));
+        }
+        if let Some(decision_style) = profile
+            .decision_style
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("决策风格：{}", decision_style));
+        }
+        if let Some(risk_preference) = profile
+            .risk_preference
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("风险偏好：{}", risk_preference));
+        }
+        if let Some(system_prompt) = profile
+            .system_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("额外执行约束：{}", system_prompt));
+        }
+    }
+    lines.push("输出必须可追溯、可验证，避免空泛表述。".to_string());
+    lines.join("\n")
 }
 
 fn parse_task_dependencies(metadata: &Value) -> Vec<String> {
@@ -1805,12 +2102,11 @@ async fn replace_team_v3_tasks_with_plan(
             .get(index)
             .cloned()
             .unwrap_or_else(|| normalize_task_key(raw_task.task_key.as_str(), index));
-        let owner_agent_id = raw_task
-            .owner_agent_id
-            .as_ref()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty() && members.contains(value))
-            .or_else(|| members.get(index % members.len().max(1)).cloned());
+        let owner_agent_id = Some(resolve_member_id(
+            raw_task.owner_agent_id.as_deref(),
+            members,
+            index,
+        ));
         let depends_on = raw_task
             .depends_on
             .iter()
@@ -2179,18 +2475,7 @@ fn build_team_v3_task_prompt(
 }
 
 fn select_team_member_for_task(task: &TeamV3Task, members: &[String], index: usize) -> String {
-    if let Some(owner) = task
-        .owner_agent_id
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return owner;
-    }
-    members
-        .get(index % members.len().max(1))
-        .cloned()
-        .unwrap_or_else(|| "agent-1".to_string())
+    resolve_member_id(task.owner_agent_id.as_deref(), members, index)
 }
 
 fn build_team_v3_planner_prompt(
@@ -2203,9 +2488,9 @@ fn build_team_v3_planner_prompt(
         format!("Team 目标：{}", goal),
         format!("用户输入：{}", user_input),
         format!(
-            "可分配成员：\n{}",
+            "当前成员（可复用、可重命名、可新增）：\n{}",
             if member_catalog.is_empty() {
-                "- agent-1 (Team Agent 1)：通用任务执行".to_string()
+                "- 暂无预设成员，请按任务需要自行设计成员".to_string()
             } else {
                 member_catalog.join("\n")
             }
@@ -2215,14 +2500,19 @@ fn build_team_v3_planner_prompt(
         sections.push(blackboard_context.to_string());
     }
     sections.push(
-        "请基于当前目标拆解任务，并仅输出合法 JSON。字段要求：\
+        "请基于当前目标生成 Team 执行计划，并仅输出合法 JSON。字段要求：\
         summary: 简短拆解说明；\
+        agents: 成员数组（每个成员包含 id/name/responsibility/system_prompt/decision_style/risk_preference/weight）；\
+        id: 稳定成员标识，建议使用小写英文和连字符；\
+        name: 成员显示名；\
+        responsibility/system_prompt/decision_style/risk_preference: 成员角色信息；\
+        weight: 成员权重（可选）；\
         tasks: 任务数组；\
         task_key: 英文短键；\
         title: 人类可读标题；\
         instruction: 可直接执行的指令；\
         depends_on: 依赖 task_key 数组；\
-        owner_agent_id: 必须来自可分配成员；\
+        owner_agent_id: 必须引用 agents.id；\
         priority: 数字，越小越先执行。"
             .to_string(),
     );
@@ -2231,39 +2521,63 @@ fn build_team_v3_planner_prompt(
 
 fn build_team_v3_planner_system_prompt(main_agent_id: &str) -> String {
     format!(
-        r#"你是 Team 主调度代理 {main_agent_id}，负责把用户目标分解为可执行任务图。
+        r#"你是 Team 主调度代理 {main_agent_id}，负责把用户目标分解为可执行任务图并定义执行成员。
 
 输出规则：
 1) 仅输出 JSON，不要输出 Markdown、解释文字或代码块围栏。
-2) JSON 结构必须为：{{"summary":"...","tasks":[{{...}}]}}
-3) tasks 数量 2-8。
-4) 能并行的任务不要相互依赖；最终必须有收敛任务（如 deliver-summary）依赖关键前置任务。
-5) owner_agent_id 只能使用输入中提供的可分配成员 id，不得臆造固定角色名。
+2) JSON 结构必须为：{{"summary":"...","agents":[{{...}}],"tasks":[{{...}}]}}
+3) agents 数量 1-8；tasks 数量 2-12。
+4) task.owner_agent_id 必须严格使用 agents.id，不得引用未定义成员。
+5) 能并行的任务不要相互依赖；必须有至少一个收敛任务依赖关键前置任务。
+6) 如果输入已有成员，可复用其 id；也可按任务需要新增成员。
 
-Few-shot 示例 1（并行后收敛）：
+Few-shot 示例 1（双成员并行后收敛）：
 输入目标：分析仓库并给出改造建议。
 输出：
-{{"summary":"先并行收集信息，再统一产出建议","tasks":[
-  {{"task_key":"collect-architecture","title":"收集架构信息","instruction":"阅读核心目录并提炼模块边界与职责。","depends_on":[],"owner_agent_id":"agent-1","priority":10}},
-  {{"task_key":"collect-risks","title":"收集风险与缺陷","instruction":"识别潜在风险点与实现缺口。","depends_on":[],"owner_agent_id":"agent-2","priority":10}},
-  {{"task_key":"deliver-summary","title":"汇总结论","instruction":"整合前置发现，输出分级建议和下一步计划。","depends_on":["collect-architecture","collect-risks"],"owner_agent_id":"agent-3","priority":30}}
+{{"summary":"双线分析后统一汇总","agents":[
+  {{"id":"product-analyst","name":"产品分析师","responsibility":"聚焦用户价值与业务目标","system_prompt":"优先解释用户场景、价值与优先级。","decision_style":"evidence-first","risk_preference":"balanced","weight":1.0}},
+  {{"id":"architecture-analyst","name":"架构分析师","responsibility":"评估实现路径与扩展性","system_prompt":"优先分析模块边界、依赖与扩展成本。","decision_style":"structured","risk_preference":"conservative","weight":1.0}}
+],"tasks":[
+  {{"task_key":"analyze-product","title":"分析产品价值","instruction":"提炼目标用户、核心价值与关键用例。","depends_on":[],"owner_agent_id":"product-analyst","priority":10}},
+  {{"task_key":"analyze-architecture","title":"分析技术架构","instruction":"识别架构模式、关键模块与技术风险。","depends_on":[],"owner_agent_id":"architecture-analyst","priority":10}},
+  {{"task_key":"deliver-summary","title":"汇总结论","instruction":"合并前置分析并输出行动建议。","depends_on":["analyze-product","analyze-architecture"],"owner_agent_id":"product-analyst","priority":30}}
 ]}}
 
-Few-shot 示例 2（串行链路）：
+Few-shot 示例 2（三成员串行链路）：
 输入目标：排查线上故障并给出修复方案。
 输出：
-{{"summary":"先定位问题，再给出修复和验证步骤","tasks":[
-  {{"task_key":"locate-root-cause","title":"定位根因","instruction":"分析现象、日志与变更定位问题根因。","depends_on":[],"owner_agent_id":"agent-1","priority":10}},
-  {{"task_key":"propose-fix","title":"制定修复方案","instruction":"基于根因给出可执行修复方案和回滚策略。","depends_on":["locate-root-cause"],"owner_agent_id":"agent-2","priority":20}},
-  {{"task_key":"verify-fix","title":"设计验证步骤","instruction":"制定验证清单和观测指标，确认修复有效。","depends_on":["propose-fix"],"owner_agent_id":"agent-3","priority":30}}
+{{"summary":"先定位根因，再修复并验证","agents":[
+  {{"id":"incident-investigator","name":"故障定位","responsibility":"定位根因与影响范围","system_prompt":"强调证据链完整性。","decision_style":"diagnostic","risk_preference":"balanced","weight":1.0}},
+  {{"id":"fix-designer","name":"修复设计","responsibility":"制定修复与回滚策略","system_prompt":"优先最小化风险与变更面。","decision_style":"structured","risk_preference":"conservative","weight":1.0}},
+  {{"id":"verifier","name":"验证负责人","responsibility":"设计验证与观测方案","system_prompt":"强调可观测性与验收标准。","decision_style":"checklist","risk_preference":"conservative","weight":1.0}}
+],"tasks":[
+  {{"task_key":"locate-root-cause","title":"定位根因","instruction":"分析现象、日志与变更定位问题根因。","depends_on":[],"owner_agent_id":"incident-investigator","priority":10}},
+  {{"task_key":"propose-fix","title":"制定修复方案","instruction":"基于根因给出可执行修复方案和回滚策略。","depends_on":["locate-root-cause"],"owner_agent_id":"fix-designer","priority":20}},
+  {{"task_key":"verify-fix","title":"设计验证步骤","instruction":"制定验证清单和观测指标，确认修复有效。","depends_on":["propose-fix"],"owner_agent_id":"verifier","priority":30}}
 ]}}"#
     )
 }
 
 fn validate_execution_plan(plan: &TeamV3ExecutionPlan) -> bool {
-    if plan.tasks.is_empty() || plan.tasks.len() > 12 {
+    if plan.tasks.is_empty() || plan.tasks.len() > 12 || plan.agents.len() > 12 {
         return false;
     }
+    let mut raw_agent_ids = HashSet::new();
+    let mut normalized_agent_ids = HashSet::new();
+    for (index, agent) in plan.agents.iter().enumerate() {
+        let raw_id = agent.id.trim();
+        if raw_id.is_empty() {
+            return false;
+        }
+        if !raw_agent_ids.insert(raw_id.to_string()) {
+            return false;
+        }
+        let normalized_id = normalize_agent_id(raw_id, index);
+        if !normalized_agent_ids.insert(normalized_id) {
+            return false;
+        }
+    }
+
     let mut keys = HashSet::new();
     for (index, task) in plan.tasks.iter().enumerate() {
         let task_key = normalize_task_key(task.task_key.as_str(), index);
@@ -2275,6 +2589,31 @@ fn validate_execution_plan(plan: &TeamV3ExecutionPlan) -> bool {
         }
         if task.title.trim().is_empty() || task.instruction.trim().is_empty() {
             return false;
+        }
+        if !plan.agents.is_empty() {
+            let Some(owner_agent_id) = task
+                .owner_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                return false;
+            };
+            let owner_exists_in_agents = raw_agent_ids.contains(owner_agent_id)
+                || normalized_agent_ids.contains(&normalize_agent_id(owner_agent_id, index));
+            if !owner_exists_in_agents {
+                return false;
+            }
+        }
+    }
+
+    for (index, task) in plan.tasks.iter().enumerate() {
+        let task_key = normalize_task_key(task.task_key.as_str(), index);
+        for dependency in task.depends_on.iter() {
+            let dependency_key = normalize_task_key(dependency.as_str(), 0);
+            if dependency_key == task_key || !keys.contains(&dependency_key) {
+                return false;
+            }
         }
     }
     true
@@ -2353,7 +2692,7 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
     rig_provider: &str,
     model: &str,
     cancellation_token: &CancellationToken,
-) -> Result<()> {
+) -> Result<(Vec<String>, Value)> {
     let members = team_member_ids(state_data);
     let main_agent_id = members
         .first()
@@ -2391,7 +2730,23 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
     .await?;
 
     if let Some(plan) = plan_opt {
-        replace_team_v3_tasks_with_plan(runtime_pool, session_id, &plan, &members).await?;
+        let planned_members = derive_plan_members(&plan);
+        let lead_member_id = planned_members
+            .first()
+            .and_then(|member| member.get("id"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| main_agent_id.clone());
+        let next_state_data = build_team_state_data_with_members(
+            Some(state_data),
+            planned_members,
+            Some(lead_member_id.as_str()),
+        );
+        let now = Utc::now().to_rfc3339();
+        set_team_v3_session_state_data(runtime_pool, session_id, &next_state_data, &now).await?;
+        let member_ids = team_member_ids(&next_state_data);
+        replace_team_v3_tasks_with_plan(runtime_pool, session_id, &plan, &member_ids).await?;
         let summary = plan
             .summary
             .as_deref()
@@ -2407,16 +2762,25 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
             runtime_pool,
             session_id,
             None,
-            Some(main_agent_id.as_str()),
+            Some(lead_member_id.as_str()),
             "plan",
             summary,
             Some(&plan_meta),
         )
         .await?;
-        return Ok(());
+        return Ok((member_ids, next_state_data));
     }
 
-    ensure_team_v3_execution_tasks(runtime_pool, session_id, Some(user_input), state_data).await?;
+    let fallback_state_data = build_team_state_data(Some(state_data), Some(main_agent_id.as_str()));
+    let now = Utc::now().to_rfc3339();
+    set_team_v3_session_state_data(runtime_pool, session_id, &fallback_state_data, &now).await?;
+    ensure_team_v3_execution_tasks(
+        runtime_pool,
+        session_id,
+        Some(user_input),
+        &fallback_state_data,
+    )
+    .await?;
     append_team_v3_status_message(
         runtime_pool,
         session_id,
@@ -2433,7 +2797,7 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
         None,
     )
     .await?;
-    Ok(())
+    Ok((team_member_ids(&fallback_state_data), fallback_state_data))
 }
 
 async fn run_team_v3_execution_orchestrator(
@@ -2456,10 +2820,9 @@ async fn run_team_v3_execution_orchestrator(
     let model = provider_config.model.clone();
     let max_iterations = provider_config.max_turns.unwrap_or(24).max(8) as usize;
     let timeout_secs = 1800_u64;
-    let members = team_member_ids(&state_data);
     let mut output_by_task_id: HashMap<String, String> = HashMap::new();
     let mut summary: Option<String> = None;
-    prepare_team_v3_execution_tasks_with_main_agent(
+    let (members, execution_state_data) = prepare_team_v3_execution_tasks_with_main_agent(
         &runtime_pool,
         &app_handle,
         &session_id,
@@ -2472,6 +2835,7 @@ async fn run_team_v3_execution_orchestrator(
         &cancellation_token,
     )
     .await?;
+    let member_profiles = team_member_profiles(&execution_state_data);
 
     loop {
         if is_team_execution_cancelled(&session_id, generation) || cancellation_token.is_cancelled()
@@ -2535,6 +2899,10 @@ async fn run_team_v3_execution_orchestrator(
         let mut join_set = JoinSet::new();
         for (index, (task, dependencies)) in ready_tasks.into_iter().enumerate() {
             let member_id = select_team_member_for_task(&task, &members, index);
+            let member_system_prompt = build_team_member_execution_system_prompt(
+                member_id.as_str(),
+                member_profiles.get(member_id.as_str()),
+            );
             set_team_v3_task_execution_state(
                 &runtime_pool,
                 &session_id,
@@ -2581,6 +2949,7 @@ async fn run_team_v3_execution_orchestrator(
             let provider_config = provider_config.clone();
             let rig_provider = rig_provider.clone();
             let model = model.clone();
+            let system_prompt = member_system_prompt.clone();
             let cancel_token = cancellation_token.clone();
             let session_id_for_task = session_id.clone();
             let member_id_for_task = member_id.clone();
@@ -2598,10 +2967,7 @@ async fn run_team_v3_execution_orchestrator(
                 let executor_params = AgentExecuteParams {
                     execution_id,
                     model,
-                    system_prompt: format!(
-                        "你是 Team 成员 {}，请以严谨、可执行的方式完成分配任务。",
-                        member_id_for_task
-                    ),
+                    system_prompt,
                     task: prompt,
                     rig_provider,
                     api_key: provider_config.api_key.clone(),
