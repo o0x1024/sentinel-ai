@@ -1043,19 +1043,24 @@ fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
 // Dictionary Operations
 // ============================================================
 
-use sqlx::PgPool;
 use std::sync::OnceLock;
 
+#[cfg(feature = "db-postgres")]
+type DictionaryPool = sqlx::PgPool;
+#[cfg(not(feature = "db-postgres"))]
+type DictionaryPool = sqlx::SqlitePool;
+
 /// Global database pool for dictionary operations
-static DICTIONARY_POOL: OnceLock<PgPool> = OnceLock::new();
+static DICTIONARY_POOL: OnceLock<DictionaryPool> = OnceLock::new();
 
 /// Initialize dictionary database pool (call from main app)
-pub fn init_dictionary_pool(pool: PgPool) {
+pub fn init_dictionary_pool(pool: DictionaryPool) {
     let _ = DICTIONARY_POOL.set(pool);
 }
 
 /// Get dictionary pool
-fn get_dictionary_pool() -> Option<&'static PgPool> {
+#[allow(dead_code)]
+fn get_dictionary_pool() -> Option<&'static DictionaryPool> {
     DICTIONARY_POOL.get()
 }
 
@@ -1078,98 +1083,14 @@ struct JsDictionary {
 async fn op_get_dictionary(
     #[string] id_or_name: String,
 ) -> Result<Option<JsDictionary>, deno_error::JsErrorBox> {
-    let pool = get_dictionary_pool()
-        .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
+    #[cfg(feature = "db-postgres")]
+    {
+        let pool = get_dictionary_pool().ok_or_else(|| {
+            deno_error::JsErrorBox::generic("Dictionary database not initialized")
+        })?;
 
-    // Try by ID first
-    let dict: Option<(String, String, Option<String>, String, Option<String>, Option<String>, i64, Option<String>)> = 
-        sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = $1 OR name = $2")
-            .bind(&id_or_name)
-            .bind(&id_or_name)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-    Ok(dict.map(
-        |(id, name, description, dict_type, service_type, category, word_count, tags)| {
-            JsDictionary {
-                id,
-                name,
-                description,
-                dict_type,
-                service_type,
-                category,
-                word_count,
-                tags,
-            }
-        },
-    ))
-}
-
-/// Get words from a dictionary by ID or name
-#[op2(async)]
-#[serde]
-async fn op_get_dictionary_words(
-    #[string] id_or_name: String,
-    #[smi] limit: Option<i32>,
-) -> Result<Vec<String>, deno_error::JsErrorBox> {
-    let pool = get_dictionary_pool()
-        .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
-
-    // First get dictionary ID
-    let dict_id: Option<String> =
-        sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
-            .bind(&id_or_name)
-            .bind(&id_or_name)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-    let dict_id = match dict_id {
-        Some(id) => id,
-        None => return Ok(vec![]),
-    };
-
-    // Get words
-    let limit_val = limit.unwrap_or(10000) as i64;
-    let words: Vec<String> = sqlx::query_scalar(
-        "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2"
-    )
-        .bind(&dict_id)
-        .bind(limit_val)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-    Ok(words)
-}
-
-/// List dictionaries with optional filter
-#[op2(async)]
-#[serde]
-async fn op_list_dictionaries(
-    #[string] dict_type: Option<String>,
-    #[string] category: Option<String>,
-) -> Result<Vec<JsDictionary>, deno_error::JsErrorBox> {
-    let pool = get_dictionary_pool()
-        .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
-
-    let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
-
-    let mut params_count = 0;
-    if let Some(_) = dict_type {
-        params_count += 1;
-        query.push_str(&format!(" AND dict_type = ${}", params_count));
-    }
-    if let Some(_) = category {
-        params_count += 1;
-        query.push_str(&format!(" AND category = ${}", params_count));
-    }
-    query.push_str(" ORDER BY name ASC");
-
-    let mut sql_query = sqlx::query_as::<
-        _,
-        (
+        // Try by ID first
+        let dict: Option<(
             String,
             String,
             Option<String>,
@@ -1178,24 +1099,15 @@ async fn op_list_dictionaries(
             Option<String>,
             i64,
             Option<String>,
-        ),
-    >(&query);
+        )> =
+            sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = $1 OR name = $2")
+                .bind(&id_or_name)
+                .bind(&id_or_name)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
 
-    if let Some(ref dt) = dict_type {
-        sql_query = sql_query.bind(dt);
-    }
-    if let Some(ref cat) = category {
-        sql_query = sql_query.bind(cat);
-    }
-
-    let rows = sql_query
-        .fetch_all(pool)
-        .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(
+        return Ok(dict.map(
             |(id, name, description, dict_type, service_type, category, word_count, tags)| {
                 JsDictionary {
                     id,
@@ -1208,8 +1120,146 @@ async fn op_list_dictionaries(
                     tags,
                 }
             },
+        ));
+    }
+
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        let _ = id_or_name;
+        Err(deno_error::JsErrorBox::generic(
+            "Dictionary operations require `db-postgres` feature",
+        ))
+    }
+}
+
+/// Get words from a dictionary by ID or name
+#[op2(async)]
+#[serde]
+async fn op_get_dictionary_words(
+    #[string] id_or_name: String,
+    #[smi] limit: Option<i32>,
+) -> Result<Vec<String>, deno_error::JsErrorBox> {
+    #[cfg(feature = "db-postgres")]
+    {
+        let pool = get_dictionary_pool().ok_or_else(|| {
+            deno_error::JsErrorBox::generic("Dictionary database not initialized")
+        })?;
+
+        // First get dictionary ID
+        let dict_id: Option<String> =
+            sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
+                .bind(&id_or_name)
+                .bind(&id_or_name)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
+        let dict_id = match dict_id {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        // Get words
+        let limit_val = limit.unwrap_or(10000) as i64;
+        let words: Vec<String> = sqlx::query_scalar(
+            "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2"
         )
-        .collect())
+            .bind(&dict_id)
+            .bind(limit_val)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
+        return Ok(words);
+    }
+
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        let _ = (id_or_name, limit);
+        Err(deno_error::JsErrorBox::generic(
+            "Dictionary operations require `db-postgres` feature",
+        ))
+    }
+}
+
+/// List dictionaries with optional filter
+#[op2(async)]
+#[serde]
+async fn op_list_dictionaries(
+    #[string] dict_type: Option<String>,
+    #[string] category: Option<String>,
+) -> Result<Vec<JsDictionary>, deno_error::JsErrorBox> {
+    #[cfg(feature = "db-postgres")]
+    {
+        let pool = get_dictionary_pool().ok_or_else(|| {
+            deno_error::JsErrorBox::generic("Dictionary database not initialized")
+        })?;
+
+        let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
+
+        let mut params_count = 0;
+        if let Some(_) = dict_type {
+            params_count += 1;
+            query.push_str(&format!(" AND dict_type = ${}", params_count));
+        }
+        if let Some(_) = category {
+            params_count += 1;
+            query.push_str(&format!(" AND category = ${}", params_count));
+        }
+        query.push_str(" ORDER BY name ASC");
+
+        let mut sql_query = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+                Option<String>,
+            ),
+        >(&query);
+
+        if let Some(ref dt) = dict_type {
+            sql_query = sql_query.bind(dt);
+        }
+        if let Some(ref cat) = category {
+            sql_query = sql_query.bind(cat);
+        }
+
+        let rows = sql_query
+            .fetch_all(pool)
+            .await
+            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
+        return Ok(rows
+            .into_iter()
+            .map(
+                |(id, name, description, dict_type, service_type, category, word_count, tags)| {
+                    JsDictionary {
+                        id,
+                        name,
+                        description,
+                        dict_type,
+                        service_type,
+                        category,
+                        word_count,
+                        tags,
+                    }
+                },
+            )
+            .collect());
+    }
+
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        let _ = (dict_type, category);
+        Err(deno_error::JsErrorBox::generic(
+            "Dictionary operations require `db-postgres` feature",
+        ))
+    }
 }
 
 // ============================================================

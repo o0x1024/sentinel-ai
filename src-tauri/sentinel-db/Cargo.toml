@@ -7,10 +7,16 @@ edition = "2021"
 name = "sentinel_db"
 path = "src/lib.rs"
 
+[features]
+default = ["db-sqlite"]
+db-sqlite = ["sqlx/sqlite", "sentinel-core/db-sqlite", "sentinel-plugins/db-sqlite"]
+db-postgres = ["sqlx/postgres", "sentinel-core/db-postgres", "sentinel-plugins/db-postgres"]
+db-mysql = ["sqlx/mysql", "sentinel-core/db-mysql", "sentinel-plugins/db-mysql"]
+
 [dependencies]
-sentinel-core = { path = "../sentinel-core" }
+sentinel-core = { path = "../sentinel-core", default-features = false }
 sentinel-rag = { path = "../sentinel-rag" }
-sentinel-plugins = { path = "../sentinel-plugins" }
+sentinel-plugins = { path = "../sentinel-plugins", default-features = false }
 anyhow = "1.0"
 async-trait = "0.1"
 bincode = "1.3"
@@ -18,11 +24,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 tracing = "0.1"
-sqlx = { version = "0.8.6", features = [
+sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",
-    "postgres",
-    "sqlite",
-    "mysql",
+    "derive",
+    "macros",
     "any",
     "chrono",
     "uuid",

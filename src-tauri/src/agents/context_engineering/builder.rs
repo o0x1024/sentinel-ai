@@ -16,8 +16,7 @@ use crate::agents::context_engineering::checkpoint::{
     load_or_init_run_state, save_run_state, ContextRunState,
 };
 use crate::agents::context_engineering::memory_index::{
-    evict_low_value_items, ingest_memory_items, ingest_memory_items_persistent,
-    retrieve_memory_items_hybrid, MemoryQuery,
+    evict_low_value_items, ingest_memory_items, retrieve_memory_items, MemoryQuery,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};
@@ -182,18 +181,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         let memory_facts = vec![state.task_brief.clone()];
         let memory_decisions = state.decisions.clone();
         let memory_todos = state.open_todos.clone();
-        if policy.feature_context_packet_v2 {
-            ingest_memory_items_persistent(
-                &input.app_handle,
-                &mut state,
-                &memory_facts,
-                &memory_decisions,
-                &memory_todos,
-            )
-            .await;
-        } else {
-            ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
-        }
+        // Disable automatic long-term memory persistence:
+        // fact/decision/todo are kept in run-state memory only.
+        ingest_memory_items(&mut state, &memory_facts, &memory_decisions, &memory_todos);
         evict_low_value_items(&mut state);
         run_state_digests = state.last_tool_digests.clone();
         if policy.feature_context_packet_v2 {
@@ -202,8 +192,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 query: format!("{}\n{}", state.task_brief, input.task),
                 top_k: 8,
             };
-            let retrieved =
-                retrieve_memory_items_hybrid(&input.app_handle, &mut state, &query).await;
+            // Keep retrieval local to current run-state; no vector-store retrieval.
+            let retrieved = retrieve_memory_items(&mut state, &query);
             retrieved_memory_ids = retrieved.iter().map(|item| item.id.clone()).collect();
             let retrieved_text = retrieved
                 .iter()

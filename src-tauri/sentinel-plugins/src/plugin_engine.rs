@@ -12,6 +12,7 @@
 use crate::error::{PluginError, Result};
 use crate::plugin_ops::{sentinel_plugin_ext, PluginContext};
 use crate::types::{Finding, PluginMetadata};
+#[cfg(feature = "plugin-ts-transpile")]
 use deno_ast::{
     EmitOptions, MediaType, ParseParams, SourceMapOption, TranspileModuleOptions, TranspileOptions,
 };
@@ -79,25 +80,35 @@ impl PluginModuleLoader {
 }
 
 fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String, String> {
-    // 根据文件扩展名确定 MediaType
+    if specifier.ends_with(".js") || specifier.ends_with(".mjs") {
+        return Ok(source.to_string());
+    }
+
+    let is_ts_like = specifier.ends_with(".ts")
+        || specifier.ends_with(".tsx")
+        || specifier.ends_with(".jsx");
+    if !is_ts_like {
+        return Ok(source.to_string());
+    }
+
+    #[cfg(not(feature = "plugin-ts-transpile"))]
+    {
+        return Err(
+            "TypeScript/JSX transpilation is disabled. Rebuild with feature `plugin-ts-transpile`."
+                .to_string(),
+        );
+    }
+
+    #[cfg(feature = "plugin-ts-transpile")]
     let media_type = if specifier.ends_with(".ts") {
         MediaType::TypeScript
     } else if specifier.ends_with(".tsx") {
         MediaType::Tsx
-    } else if specifier.ends_with(".jsx") {
-        MediaType::Jsx
-    } else if specifier.ends_with(".mjs") {
-        MediaType::Mjs
     } else {
-        MediaType::JavaScript
+        MediaType::Jsx
     };
 
-    // 如果是纯 JS，直接返回
-    if media_type == MediaType::JavaScript || media_type == MediaType::Mjs {
-        return Ok(source.to_string());
-    }
-
-    // 解析并转译
+    #[cfg(feature = "plugin-ts-transpile")]
     let parsed = deno_ast::parse_module(ParseParams {
         specifier: ModuleSpecifier::parse(specifier).unwrap(),
         text: source.into(),
@@ -108,6 +119,7 @@ fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String
     })
     .map_err(|e| format!("Failed to parse {}: {}", specifier, e))?;
 
+    #[cfg(feature = "plugin-ts-transpile")]
     let transpiled = parsed
         .transpile(
             &TranspileOptions::default(),
@@ -119,6 +131,7 @@ fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String
         )
         .map_err(|e| format!("Failed to transpile {}: {}", specifier, e))?;
 
+    #[cfg(feature = "plugin-ts-transpile")]
     Ok(transpiled.into_source().text)
 }
 
@@ -170,14 +183,20 @@ impl ModuleLoader for PluginModuleLoader {
                 hasher.update(url.as_bytes());
                 let hash = format!("{:x}", hasher.finalize());
 
-                let ext = ModuleSpecifier::parse(&url)
-                    .ok()
-                    .and_then(|u| {
-                        u.path_segments()
-                            .and_then(|mut segs| segs.next_back())
-                            .and_then(|s| s.rsplit_once('.').map(|(_, e)| format!(".{}", e)))
-                    })
-                    .unwrap_or_else(|| ".ts".to_string());
+                    let ext = ModuleSpecifier::parse(&url)
+                        .ok()
+                        .and_then(|u| {
+                            u.path_segments()
+                                .and_then(|mut segs| segs.next_back())
+                                .and_then(|s| s.rsplit_once('.').map(|(_, e)| format!(".{}", e)))
+                        })
+                        .unwrap_or_else(|| {
+                            if cfg!(feature = "plugin-ts-transpile") {
+                                ".ts".to_string()
+                            } else {
+                                ".js".to_string()
+                            }
+                        });
 
                 let cache_path = cache_dir.join(format!("{}{}", hash, ext));
 
@@ -394,7 +413,12 @@ impl PluginEngine {
             .collect();
 
         // 确定模块 URL（使用 sentinel:// 协议）
-        let module_specifier = format!("sentinel://plugin_{}.ts", safe_id);
+        let module_ext = if cfg!(feature = "plugin-ts-transpile") {
+            "ts"
+        } else {
+            "js"
+        };
+        let module_specifier = format!("sentinel://plugin_{}.{}", safe_id, module_ext);
 
         // 自动在 ESM 模块末尾追加代码，将导出的函数绑定到 globalThis
         // 这解决了 ESM 导出函数无法被 call_plugin_function 正确调用的问题

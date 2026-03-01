@@ -2,7 +2,6 @@
 
 pub mod builder;
 pub mod checkpoint;
-pub mod knowledge_graph;
 pub mod memory_index;
 pub mod observability;
 pub mod policy;

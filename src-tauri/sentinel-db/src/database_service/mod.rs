@@ -20,6 +20,7 @@ pub mod security_rules;
 pub mod service;
 pub mod skills;
 pub mod sliding_window;
+pub mod sqlx_compat;
 pub mod task_tool;
 pub mod todos;
 pub mod traffic;
@@ -67,6 +68,8 @@ pub use service::*;
 pub use skills::*;
 #[allow(unused_imports)]
 pub use sliding_window::*;
+#[allow(unused_imports)]
+pub use sqlx_compat::*;
 #[allow(unused_imports)]
 pub use todos::*;
 #[allow(unused_imports)]

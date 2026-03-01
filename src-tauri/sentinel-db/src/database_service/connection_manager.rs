@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
-use sqlx::mysql::MySqlPool;
-use sqlx::postgres::PgPool;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
 
 use super::db_config::{DatabaseConfig, DatabaseType};
+use super::sqlx_compat::{MySqlPool, PgPool};
+#[cfg(feature = "db-mysql")]
+use super::sqlx_compat::MySqlPoolOptions;
+#[cfg(feature = "db-postgres")]
+use super::sqlx_compat::PgPoolOptions;
 
 #[derive(Debug, Clone)]
 pub enum DatabasePool {
@@ -22,14 +25,23 @@ impl DatabasePool {
 
         match config.db_type {
             DatabaseType::PostgreSQL => {
-                let pool = sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(config.max_connections)
-                    .acquire_timeout(Duration::from_secs(config.query_timeout))
-                    .connect(&connection_string)
-                    .await
-                    .context("Failed to connect to PostgreSQL database")?;
+                #[cfg(feature = "db-postgres")]
+                {
+                    let pool = PgPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .acquire_timeout(Duration::from_secs(config.query_timeout))
+                        .connect(&connection_string)
+                        .await
+                        .context("Failed to connect to PostgreSQL database")?;
 
-                Ok(DatabasePool::PostgreSQL(pool))
+                    Ok(DatabasePool::PostgreSQL(pool))
+                }
+                #[cfg(not(feature = "db-postgres"))]
+                {
+                    Err(anyhow::anyhow!(
+                        "PostgreSQL support is disabled. Rebuild with feature `db-postgres`."
+                    ))
+                }
             }
             DatabaseType::SQLite => {
                 let sqlite_path = config.path.clone().unwrap_or_else(|| {
@@ -76,14 +88,23 @@ impl DatabasePool {
                 Ok(DatabasePool::SQLite(pool))
             }
             DatabaseType::MySQL => {
-                let pool = sqlx::mysql::MySqlPoolOptions::new()
-                    .max_connections(config.max_connections)
-                    .acquire_timeout(Duration::from_secs(config.query_timeout))
-                    .connect(&connection_string)
-                    .await
-                    .context("Failed to connect to MySQL database")?;
+                #[cfg(feature = "db-mysql")]
+                {
+                    let pool = MySqlPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .acquire_timeout(Duration::from_secs(config.query_timeout))
+                        .connect(&connection_string)
+                        .await
+                        .context("Failed to connect to MySQL database")?;
 
-                Ok(DatabasePool::MySQL(pool))
+                    Ok(DatabasePool::MySQL(pool))
+                }
+                #[cfg(not(feature = "db-mysql"))]
+                {
+                    Err(anyhow::anyhow!(
+                        "MySQL support is disabled. Rebuild with feature `db-mysql`."
+                    ))
+                }
             }
         }
     }

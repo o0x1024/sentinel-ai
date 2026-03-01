@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use crate::database_service::sqlx_compat::{MySql, Postgres};
 
 // ============================================================================
 // Data structures
@@ -219,7 +220,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut qb = sqlx::QueryBuilder::<Postgres>::new(
                     "SELECT * FROM cpg_security_rules WHERE 1=1",
                 );
                 if let Some(ref sev) = filters.severity {
@@ -283,7 +284,7 @@ impl DatabaseService {
                     .await?)
             }
             DatabasePool::MySQL(pool) => {
-                let mut qb = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut qb = sqlx::QueryBuilder::<MySql>::new(
                     "SELECT * FROM cpg_security_rules WHERE 1=1",
                 );
                 if let Some(ref sev) = filters.severity {
@@ -326,7 +327,7 @@ impl DatabaseService {
 
         let count: i64 = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut qb = sqlx::QueryBuilder::<Postgres>::new(
                     "SELECT COUNT(*) FROM cpg_security_rules WHERE 1=1",
                 );
                 if let Some(ref sev) = filters.severity {
@@ -356,7 +357,7 @@ impl DatabaseService {
                 qb.build_query_scalar().fetch_one(pool).await?
             }
             DatabasePool::MySQL(pool) => {
-                let mut qb = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut qb = sqlx::QueryBuilder::<MySql>::new(
                     "SELECT COUNT(*) FROM cpg_security_rules WHERE 1=1",
                 );
                 if let Some(ref sev) = filters.severity {

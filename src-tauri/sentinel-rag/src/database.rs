@@ -42,7 +42,6 @@ impl SqliteVectorStoreTable for RagVectorRow {
     fn name() -> &'static str {
         "rag_vectors"
     }
-
     fn schema() -> Vec<Column> {
         vec![
             Column::new("id", "TEXT PRIMARY KEY"),
@@ -52,11 +51,9 @@ impl SqliteVectorStoreTable for RagVectorRow {
             Column::new("definition", "TEXT"),
         ]
     }
-
     fn id(&self) -> String {
         self.id.clone()
     }
-
     fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
         vec![
             ("id", Box::new(self.id.clone())),
@@ -92,7 +89,6 @@ impl SqliteVectorManager {
             store: RwLock::new(None),
         }
     }
-
     pub async fn initialize(&self) -> Result<()> {
         let db_path = Path::new(&self.database_path);
         if let Some(parent) = db_path.parent() {
@@ -111,7 +107,6 @@ impl SqliteVectorManager {
         info!("SQLite vector store connected at: {}", self.database_path);
         Ok(())
     }
-
     pub async fn create_collection(
         &self,
         _collection_name: &str,
@@ -120,7 +115,6 @@ impl SqliteVectorManager {
         // Collection rows are created on first insert.
         Ok(())
     }
-
     pub async fn insert_chunks(
         &self,
         collection_name: &str,
@@ -155,7 +149,6 @@ impl SqliteVectorManager {
             )),
         }
     }
-
     async fn insert_chunks_ollama(
         &self,
         collection_name: &str,
@@ -181,19 +174,17 @@ impl SqliteVectorManager {
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_openai(
         &self,
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
         let client = self.openai_compatible_client("OPENAI_API_KEY", "https://api.openai.com/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_cohere(
         &self,
         collection_name: &str,
@@ -208,14 +199,17 @@ impl SqliteVectorManager {
 
         std::env::set_var("COHERE_API_KEY", &api_key_str);
         let client = rig::providers::cohere::Client::from_env();
-        let embedding_model: CohereEmbedding =
-            client.embedding_model(&self.embedding_config.model, "search_document");
+        let embedding_model: CohereEmbedding = match self.embedding_config.dimensions {
+            Some(dim) if dim > 0 => {
+                client.embedding_model_with_ndims(&self.embedding_config.model, "search_document", dim)
+            }
+            _ => client.embedding_model(&self.embedding_config.model, "search_document"),
+        };
 
         let store = self.ensure_cohere_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_anthropic(
         &self,
         _collection_name: &str,
@@ -224,7 +218,6 @@ impl SqliteVectorManager {
         warn!("Anthropic doesn't provide embedding models.");
         Err(anyhow!("Anthropic doesn't support embedding models. Please use OpenAI, Cohere, or other embedding providers."))
     }
-
     async fn insert_chunks_gemini(
         &self,
         collection_name: &str,
@@ -246,31 +239,28 @@ impl SqliteVectorManager {
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_deepseek(
         &self,
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
         let client = self.openai_compatible_client("DEEPSEEK_API_KEY", "https://api.deepseek.com/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_moonshot(
         &self,
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
         let client = self.openai_compatible_client("MOONSHOT_API_KEY", "https://api.moonshot.cn/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_openrouter(
         &self,
         collection_name: &str,
@@ -278,12 +268,11 @@ impl SqliteVectorManager {
     ) -> Result<usize> {
         let client =
             self.openai_compatible_client("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_modelscope(
         &self,
         collection_name: &str,
@@ -293,24 +282,22 @@ impl SqliteVectorManager {
             "MODELSCOPE_API_KEY",
             "https://api-inference.modelscope.cn/v1",
         )?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_lmstudio(
         &self,
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
         let client = self.openai_compatible_client("OPENAI_API_KEY", "http://localhost:1234/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.insert_chunks_impl(collection_name, chunks, embedding_model, store)
             .await
     }
-
     async fn insert_chunks_impl<M>(
         &self,
         collection_name: &str,
@@ -372,7 +359,6 @@ impl SqliteVectorManager {
 
         Ok(docs.len())
     }
-
     pub async fn search_similar(
         &self,
         collection_name: &str,
@@ -429,7 +415,6 @@ impl SqliteVectorManager {
             )),
         }
     }
-
     async fn search_similar_ollama(
         &self,
         collection_name: &str,
@@ -456,7 +441,6 @@ impl SqliteVectorManager {
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_openai(
         &self,
         collection_name: &str,
@@ -464,12 +448,11 @@ impl SqliteVectorManager {
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
         let client = self.openai_compatible_client("OPENAI_API_KEY", "https://api.openai.com/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_cohere(
         &self,
         collection_name: &str,
@@ -485,14 +468,17 @@ impl SqliteVectorManager {
 
         std::env::set_var("COHERE_API_KEY", &api_key_str);
         let client = rig::providers::cohere::Client::from_env();
-        let embedding_model: CohereEmbedding =
-            client.embedding_model(&self.embedding_config.model, "search_query");
+        let embedding_model: CohereEmbedding = match self.embedding_config.dimensions {
+            Some(dim) if dim > 0 => {
+                client.embedding_model_with_ndims(&self.embedding_config.model, "search_query", dim)
+            }
+            _ => client.embedding_model(&self.embedding_config.model, "search_query"),
+        };
         let store = self.ensure_cohere_store(&embedding_model).await?;
 
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_anthropic(
         &self,
         _collection_name: &str,
@@ -502,7 +488,6 @@ impl SqliteVectorManager {
         warn!("Anthropic doesn't provide embedding models.");
         Err(anyhow!("Anthropic doesn't support embedding models. Please use OpenAI, Cohere, or other embedding providers."))
     }
-
     async fn search_similar_gemini(
         &self,
         collection_name: &str,
@@ -525,7 +510,6 @@ impl SqliteVectorManager {
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_deepseek(
         &self,
         collection_name: &str,
@@ -533,13 +517,12 @@ impl SqliteVectorManager {
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
         let client = self.openai_compatible_client("DEEPSEEK_API_KEY", "https://api.deepseek.com/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
 
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_moonshot(
         &self,
         collection_name: &str,
@@ -547,13 +530,12 @@ impl SqliteVectorManager {
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
         let client = self.openai_compatible_client("MOONSHOT_API_KEY", "https://api.moonshot.cn/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
 
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_openrouter(
         &self,
         collection_name: &str,
@@ -562,13 +544,12 @@ impl SqliteVectorManager {
     ) -> Result<Vec<QueryResult>> {
         let client =
             self.openai_compatible_client("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
 
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_modelscope(
         &self,
         collection_name: &str,
@@ -579,13 +560,12 @@ impl SqliteVectorManager {
             "MODELSCOPE_API_KEY",
             "https://api-inference.modelscope.cn/v1",
         )?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
 
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_lmstudio(
         &self,
         collection_name: &str,
@@ -593,13 +573,12 @@ impl SqliteVectorManager {
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
         let client = self.openai_compatible_client("OPENAI_API_KEY", "http://localhost:1234/v1")?;
-        let embedding_model: OpenAiEmbedding = client.embedding_model(&self.embedding_config.model);
+        let embedding_model = self.openai_embedding_model(&client)?;
         let store = self.ensure_openai_store(&embedding_model).await?;
 
         self.search_similar_impl(collection_name, query, top_k, embedding_model, store)
             .await
     }
-
     async fn search_similar_impl<M>(
         &self,
         collection_name: &str,
@@ -634,7 +613,6 @@ impl SqliteVectorManager {
         }
         Ok(results)
     }
-
     pub async fn delete_collection(&self, collection_name: &str) -> Result<()> {
         let conn = self.connection().await?;
         let collection_name = collection_name.to_string();
@@ -680,7 +658,6 @@ impl SqliteVectorManager {
         info!("Deleted collection: {}", collection_name_for_log);
         Ok(())
     }
-
     pub async fn list_collections(&self) -> Result<Vec<String>> {
         let conn = self.connection().await?;
 
@@ -709,7 +686,6 @@ impl SqliteVectorManager {
 
         Ok(names)
     }
-
     pub async fn get_collection_stats(&self, collection_name: &str) -> Result<(usize, usize)> {
         let conn = self.connection().await?;
         let collection_name = collection_name.to_string();
@@ -739,7 +715,6 @@ impl SqliteVectorManager {
 
         Ok((source_count.max(0) as usize, chunk_count.max(0) as usize))
     }
-
     async fn connection(&self) -> Result<Connection> {
         let guard = self.conn.read().await;
         guard
@@ -747,7 +722,6 @@ impl SqliteVectorManager {
             .cloned()
             .ok_or_else(|| anyhow!("SQLite vector store not initialized"))
     }
-
     async fn rollback_stale_transaction(&self, conn: &Connection) -> Result<()> {
         let result = conn
             .call(|conn| match conn.execute_batch("ROLLBACK") {
@@ -757,7 +731,7 @@ impl SqliteVectorManager {
                     if msg.contains("no transaction is active") {
                         Ok(false)
                     } else {
-                        Err(e)
+                        Err(tokio_rusqlite::Error::Rusqlite(e))
                     }
                 }
             })
@@ -769,7 +743,6 @@ impl SqliteVectorManager {
         }
         Ok(())
     }
-
     async fn reopen_connection(&self) -> Result<Connection> {
         register_sqlite_vec_extension();
         let conn = Connection::open(&self.database_path)
@@ -780,13 +753,55 @@ impl SqliteVectorManager {
         *guard = Some(conn.clone());
         Ok(conn)
     }
-
     fn is_nested_transaction_error(message: &str) -> bool {
         message
             .to_lowercase()
             .contains("cannot start a transaction within a transaction")
     }
+    fn validate_nonzero_dimensions<M: EmbeddingModel>(&self, embedding_model: &M) -> Result<()> {
+        if embedding_model.ndims() == 0 {
+            return Err(anyhow!(
+                "Embedding dimension resolved to 0 for provider '{}' model '{}'. Please set RAG embedding_dimensions to a positive value (LM Studio nomic-embed-text-v1.5 usually uses 768).",
+                self.embedding_config.provider,
+                self.embedding_config.model
+            ));
+        }
+        Ok(())
+    }
+    async fn init_store_with_recovery<M>(
+        &self,
+        conn: &Connection,
+        embedding_model: &M,
+    ) -> Result<SqliteVectorStore<M, RagVectorRow>>
+    where
+        M: EmbeddingModel + Sync + Send + Clone + 'static,
+    {
+        self.validate_nonzero_dimensions(embedding_model)?;
+        self.rollback_stale_transaction(conn).await?;
 
+        match SqliteVectorStore::new(conn.clone(), embedding_model).await {
+            Ok(store) => Ok(store),
+            Err(e) => {
+                let message = e.to_string();
+                if Self::is_nested_transaction_error(&message) {
+                    warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
+                    let reopened = self.reopen_connection().await?;
+                    self.rollback_stale_transaction(&reopened).await?;
+                    SqliteVectorStore::new(reopened, embedding_model).await.map_err(|retry_err| {
+                        anyhow!(
+                            "Failed to initialize sqlite vector store after retry: {}",
+                            retry_err
+                        )
+                    })
+                } else {
+                    Err(anyhow!(
+                        "Failed to initialize sqlite vector store: {}",
+                        message
+                    ))
+                }
+            }
+        }
+    }
     async fn ensure_openai_store(
         &self,
         embedding_model: &OpenAiEmbedding,
@@ -800,37 +815,12 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                self.rollback_stale_transaction(&conn).await?;
-                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
-                    Ok(store) => store,
-                    Err(e) => {
-                        let message = e.to_string();
-                        if Self::is_nested_transaction_error(&message) {
-                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
-                            let reopened = self.reopen_connection().await?;
-                            self.rollback_stale_transaction(&reopened).await?;
-                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
-                                |retry_err| {
-                                    anyhow!(
-                                        "Failed to initialize sqlite vector store after retry: {}",
-                                        retry_err
-                                    )
-                                },
-                            )?
-                        } else {
-                            return Err(anyhow!(
-                                "Failed to initialize sqlite vector store: {}",
-                                message
-                            ));
-                        }
-                    }
-                };
+                let store = self.init_store_with_recovery(&conn, embedding_model).await?;
                 *guard = Some(ProviderStore::OpenAi(store.clone()));
                 Ok(store)
             }
         }
     }
-
     async fn ensure_ollama_store(
         &self,
         embedding_model: &OllamaEmbedding,
@@ -844,37 +834,12 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                self.rollback_stale_transaction(&conn).await?;
-                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
-                    Ok(store) => store,
-                    Err(e) => {
-                        let message = e.to_string();
-                        if Self::is_nested_transaction_error(&message) {
-                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
-                            let reopened = self.reopen_connection().await?;
-                            self.rollback_stale_transaction(&reopened).await?;
-                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
-                                |retry_err| {
-                                    anyhow!(
-                                        "Failed to initialize sqlite vector store after retry: {}",
-                                        retry_err
-                                    )
-                                },
-                            )?
-                        } else {
-                            return Err(anyhow!(
-                                "Failed to initialize sqlite vector store: {}",
-                                message
-                            ));
-                        }
-                    }
-                };
+                let store = self.init_store_with_recovery(&conn, embedding_model).await?;
                 *guard = Some(ProviderStore::Ollama(store.clone()));
                 Ok(store)
             }
         }
     }
-
     async fn ensure_cohere_store(
         &self,
         embedding_model: &CohereEmbedding,
@@ -888,37 +853,12 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                self.rollback_stale_transaction(&conn).await?;
-                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
-                    Ok(store) => store,
-                    Err(e) => {
-                        let message = e.to_string();
-                        if Self::is_nested_transaction_error(&message) {
-                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
-                            let reopened = self.reopen_connection().await?;
-                            self.rollback_stale_transaction(&reopened).await?;
-                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
-                                |retry_err| {
-                                    anyhow!(
-                                        "Failed to initialize sqlite vector store after retry: {}",
-                                        retry_err
-                                    )
-                                },
-                            )?
-                        } else {
-                            return Err(anyhow!(
-                                "Failed to initialize sqlite vector store: {}",
-                                message
-                            ));
-                        }
-                    }
-                };
+                let store = self.init_store_with_recovery(&conn, embedding_model).await?;
                 *guard = Some(ProviderStore::Cohere(store.clone()));
                 Ok(store)
             }
         }
     }
-
     async fn ensure_gemini_store(
         &self,
         embedding_model: &GeminiEmbedding,
@@ -932,37 +872,24 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                self.rollback_stale_transaction(&conn).await?;
-                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
-                    Ok(store) => store,
-                    Err(e) => {
-                        let message = e.to_string();
-                        if Self::is_nested_transaction_error(&message) {
-                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
-                            let reopened = self.reopen_connection().await?;
-                            self.rollback_stale_transaction(&reopened).await?;
-                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
-                                |retry_err| {
-                                    anyhow!(
-                                        "Failed to initialize sqlite vector store after retry: {}",
-                                        retry_err
-                                    )
-                                },
-                            )?
-                        } else {
-                            return Err(anyhow!(
-                                "Failed to initialize sqlite vector store: {}",
-                                message
-                            ));
-                        }
-                    }
-                };
+                let store = self.init_store_with_recovery(&conn, embedding_model).await?;
                 *guard = Some(ProviderStore::Gemini(store.clone()));
                 Ok(store)
             }
         }
     }
-
+    fn openai_embedding_model(
+        &self,
+        client: &rig::providers::openai::Client,
+    ) -> Result<OpenAiEmbedding> {
+        let model = &self.embedding_config.model;
+        let embedding_model = match self.embedding_config.dimensions {
+            Some(dim) if dim > 0 => client.embedding_model_with_ndims(model, dim),
+            _ => client.embedding_model(model),
+        };
+        self.validate_nonzero_dimensions(&embedding_model)?;
+        Ok(embedding_model)
+    }
     fn openai_compatible_client(
         &self,
         api_key_env: &str,
@@ -988,7 +915,6 @@ impl SqliteVectorManager {
         Ok(rig::providers::openai::Client::from_env())
     }
 }
-
 fn register_sqlite_vec_extension() {
     SQLITE_VEC_REGISTER.call_once(|| unsafe {
         sqlite3_auto_extension(Some(std::mem::transmute::<*const (), SqliteExtensionFn>(
@@ -996,7 +922,6 @@ fn register_sqlite_vec_extension() {
         )));
     });
 }
-
 fn normalize_openai_base_url(url: &str) -> String {
     let trimmed = url.trim_end_matches('/');
     if trimmed.ends_with("/v1") {
@@ -1005,7 +930,6 @@ fn normalize_openai_base_url(url: &str) -> String {
         format!("{trimmed}/v1")
     }
 }
-
 fn chunks_to_rows(collection_name: &str, chunks: Vec<DocumentChunk>) -> Vec<RagVectorRow> {
     chunks
         .into_iter()
@@ -1018,7 +942,6 @@ fn chunks_to_rows(collection_name: &str, chunks: Vec<DocumentChunk>) -> Vec<RagV
         })
         .collect()
 }
-
 fn map_row_to_query_result(row: RagVectorRow, score: f64, rank: usize) -> QueryResult {
     let content = row.definition.clone();
     let chunk_index = row.chunk_index.parse::<usize>().unwrap_or(0);

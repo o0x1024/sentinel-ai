@@ -7,6 +7,12 @@ edition = "2021"
 name = "sentinel_core"
 path = "src/lib.rs"
 
+[features]
+default = ["db-sqlite"]
+db-sqlite = ["sqlx/sqlite"]
+db-postgres = ["sqlx/postgres"]
+db-mysql = ["sqlx/mysql"]
+
 [dependencies]
 anyhow = "1.0"
 thiserror = "1.0"
@@ -15,9 +21,10 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1.0"
-sqlx = { version = "0.8.6", features = [
+sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",
-    "postgres",
+    "derive",
+    "macros",
     "chrono",
     "uuid",
 ] }

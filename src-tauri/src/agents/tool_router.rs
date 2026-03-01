@@ -1965,7 +1965,7 @@ Return ONLY the tool names, one per line."#,
         config: &ToolConfig,
         llm_config: Option<&sentinel_llm::LlmConfig>,
         _allowed_groups: &[String],
-        _db_pool: Option<&sqlx::postgres::PgPool>,
+        _db_pool: Option<&sentinel_db::sqlx_compat::PgPool>,
     ) -> Result<ToolSelectionPlan> {
         use sentinel_db::Database;
         use sentinel_llm::{LlmClient, LlmConfig};

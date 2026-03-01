@@ -46,6 +46,9 @@ export interface MessageMetadata {
   team_member_id?: string
   team_member_name?: string
   team_member_role?: string
+  team_session_id?: string
+  team_stream_id?: string
+  team_tool_call_key?: string
   segment_index?: number  // 段落摘要：段落索引
   summary_tokens?: number  // 摘要：token数
   summary_content?: string  // 摘要：完整内容

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::postgres::PgPool;
+use crate::database_service::sqlx_compat::PgPool;
 
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;

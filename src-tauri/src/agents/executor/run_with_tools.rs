@@ -325,6 +325,73 @@ async fn persist_ai_message_with_retry(
     }
 }
 
+async fn ensure_ai_conversation_exists_for_persistence(
+    db: &DatabaseService,
+    execution_id: &str,
+    model: &str,
+    provider: &str,
+) {
+    match db.get_ai_conversation(execution_id).await {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                "Failed to check ai_conversation before persistence (execution_id={}): {}",
+                execution_id,
+                e
+            );
+            return;
+        }
+    }
+
+    use sentinel_core::models::database as core_db;
+    let now = chrono::Utc::now();
+    let conv = core_db::AiConversation {
+        id: execution_id.to_string(),
+        title: None,
+        service_name: if provider.trim().is_empty() {
+            "default".to_string()
+        } else {
+            provider.to_string()
+        },
+        model_name: if model.trim().is_empty() {
+            "default".to_string()
+        } else {
+            model.to_string()
+        },
+        model_provider: Some(provider.to_string()),
+        context_type: None,
+        project_id: None,
+        vulnerability_id: None,
+        scan_task_id: None,
+        conversation_data: None,
+        summary: None,
+        total_messages: 0,
+        total_tokens: 0,
+        cost: 0.0,
+        tags: None,
+        tool_config: None,
+        is_archived: false,
+        created_at: now,
+        updated_at: now,
+    };
+
+    if let Err(e) = db.create_ai_conversation(&conv).await {
+        let err = e.to_string().to_lowercase();
+        let already_exists = err.contains("unique")
+            || err.contains("duplicate")
+            || err.contains("already exists")
+            || err.contains("constraint failed");
+        if !already_exists {
+            tracing::warn!(
+                "Failed to create ai_conversation for persistence (execution_id={}): {}",
+                execution_id,
+                e
+            );
+        }
+    }
+}
+
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
     params: AgentExecuteParams,
@@ -481,9 +548,23 @@ pub async fn execute_agent_with_tools(
     let execution_id = params.execution_id.clone();
     let team_stream_context = parse_team_stream_context(&execution_id);
     let app = app_handle.clone();
-    let db_for_stream: Option<std::sync::Arc<sentinel_db::DatabaseService>> = app_handle
-        .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
-        .map(|s| s.inner().clone());
+    let db_for_stream: Option<std::sync::Arc<sentinel_db::DatabaseService>> =
+        if params.persist_messages {
+            app_handle
+                .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
+                .map(|s| s.inner().clone())
+        } else {
+            None
+        };
+    if let Some(db) = db_for_stream.as_ref() {
+        ensure_ai_conversation_exists_for_persistence(
+            db.as_ref(),
+            &execution_id,
+            &params.model,
+            &params.rig_provider,
+        )
+        .await;
+    }
 
     // 用于收集工具调用信息
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -1461,9 +1542,7 @@ pub async fn execute_agent_with_tools(
                                 }),
                             );
 
-                            if let Some(db) = app_handle
-                                .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
-                            {
+                            if let Some(db) = db_for_stream.clone() {
                                 use sentinel_core::models::database as core_db;
                                 let tools_preview = {
                                     let preview = current_tool_ids
@@ -1502,7 +1581,7 @@ pub async fn execute_agent_with_tools(
                                     architecture_meta: None,
                                     structured_data: None,
                                 };
-                                let db_clone = db.inner().clone();
+                                let db_clone = db;
                                 tauri::async_runtime::spawn(async move {
                                     if let Err(e) = db_clone.upsert_ai_message_append(&msg).await {
                                         tracing::warn!(

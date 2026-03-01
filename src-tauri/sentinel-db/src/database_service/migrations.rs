@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::postgres::PgPool;
+use crate::database_service::sqlx_compat::PgPool;
 use tracing::info;
 
 /// Database migration for ASM (Attack Surface Management) enhancements

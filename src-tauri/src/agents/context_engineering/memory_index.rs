@@ -1,5 +1,4 @@
-//! Memory index with hybrid retrieval (keyword + vector via SQLite)
-//! and knowledge-graph-based associative expansion.
+//! Memory index with hybrid retrieval (keyword + vector via SQLite).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -8,7 +7,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::agents::context_engineering::checkpoint::{ContextMemoryItem, ContextRunState};
-use crate::agents::context_engineering::knowledge_graph::MemoryKnowledgeGraph;
 
 const MAX_MEMORY_ITEMS: usize = 200;
 const VECTOR_WEIGHT: f64 = 0.55;
@@ -140,10 +138,7 @@ pub async fn retrieve_memory_items_hybrid(
 ) -> Vec<RetrievedMemoryItem> {
     let now_ms = Utc::now().timestamp_millis();
 
-    // 1) Build knowledge graph from immutable snapshot (before mutable borrows)
-    let kg = build_kg_from_items(&state.memory_items);
-
-    // 2) Snapshot keyword scores (avoids holding mutable borrow across async)
+    // 1) Snapshot keyword scores (avoids holding mutable borrow across async)
     let keyword_scores: HashMap<String, (f64, String, String, u8, i64)> = state
         .memory_items
         .iter()
@@ -162,7 +157,7 @@ pub async fn retrieve_memory_items_hybrid(
         })
         .collect();
 
-    // 3) Get vector scores from SQLite vector store
+    // 2) Get vector scores from SQLite vector store
     let vector_results = match vector_retrieve(app_handle, &query.query, query.top_k * 2).await {
         Ok(results) => results,
         Err(e) => {
@@ -174,7 +169,7 @@ pub async fn retrieve_memory_items_hybrid(
         }
     };
 
-    // 4) Merge: combine vector results with keyword scores
+    // 3) Merge: combine vector results with keyword scores
     let mut scored: Vec<RetrievedMemoryItem> = Vec::new();
     let mut seen_texts: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -247,44 +242,6 @@ pub async fn retrieve_memory_items_hybrid(
     });
     scored.truncate(query.top_k.max(1));
 
-    // 5) Expand with knowledge graph associations
-    let retrieved_ids: Vec<String> = scored.iter().map(|r| r.id.clone()).collect();
-    let max_extra = (query.top_k / 3).max(1).min(3);
-    let extra_ids = kg.expand_related(&retrieved_ids, max_extra);
-
-    for extra_id in &extra_ids {
-        if let Some(node) = kg.get_node(extra_id) {
-            if scored.iter().any(|r| r.id == *extra_id) {
-                continue;
-            }
-            scored.push(RetrievedMemoryItem {
-                id: node.id.clone(),
-                text: node.text.clone(),
-                kind: format!("{}", node.kind),
-                importance: node.importance,
-                created_at_ms: node.created_at_ms,
-                score: 0.15,
-            });
-        }
-    }
-
-    // Log contradiction warnings
-    for item in &scored {
-        let contradictions = kg.contradictions(&item.id);
-        if !contradictions.is_empty() {
-            let contra_texts: Vec<&str> = contradictions.iter().map(|c| c.text.as_str()).collect();
-            tracing::info!(
-                "Memory contradiction detected for '{}': conflicts with {:?}",
-                truncate_str(&item.text, 60),
-                contra_texts
-            );
-        }
-    }
-
-    if kg.node_count() > 0 {
-        tracing::debug!("Memory knowledge graph: {}", kg.summary());
-    }
-
     // Update last_used_at for retrieved items
     let retrieved_texts: std::collections::HashSet<String> =
         scored.iter().map(|r| r.text.clone()).collect();
@@ -295,24 +252,6 @@ pub async fn retrieve_memory_items_hybrid(
     }
 
     scored
-}
-
-fn build_kg_from_items(items: &[ContextMemoryItem]) -> MemoryKnowledgeGraph {
-    let mut kg = MemoryKnowledgeGraph::new();
-    let tuples: Vec<(String, String, String, u8, i64)> = items
-        .iter()
-        .map(|item| {
-            (
-                item.id.clone(),
-                item.text.clone(),
-                item.kind.clone(),
-                item.importance,
-                item.created_at_ms,
-            )
-        })
-        .collect();
-    kg.build_from_items(&tuples);
-    kg
 }
 
 // ---------------------------------------------------------------------------

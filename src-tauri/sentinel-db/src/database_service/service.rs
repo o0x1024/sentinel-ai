@@ -5,9 +5,9 @@ use crate::database_service::db_config::{
 };
 use crate::database_service::migration::DatabaseMigration;
 use crate::database_service::migrations::AgentTeamMigration;
+use crate::database_service::sqlx_compat::{MySqlRow, PgPool, PgPoolOptions, PgRow};
 use anyhow::Result;
 use serde_json::Value;
-use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::{Column, Row, TypeInfo};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -200,6 +200,13 @@ impl DatabaseService {
                 DatabaseConfig::default()
             }
         };
+
+        #[cfg(not(feature = "db-postgres"))]
+        if matches!(config.db_type, DatabaseType::PostgreSQL) {
+            return Err(anyhow::anyhow!(
+                "PostgreSQL support is disabled. Rebuild with feature `db-postgres`."
+            ));
+        }
 
         self.config = Some(config.clone());
         self.write_semaphore = Arc::new(Semaphore::new(
@@ -1376,7 +1383,7 @@ fn count_from_result(rows: Vec<Value>) -> i64 {
         .unwrap_or(0)
 }
 
-fn rows_to_json_pg(rows: Vec<sqlx::postgres::PgRow>) -> Vec<Value> {
+fn rows_to_json_pg(rows: Vec<PgRow>) -> Vec<Value> {
     rows_to_json_internal(rows)
 }
 
@@ -1384,7 +1391,7 @@ fn rows_to_json_sqlite(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<Value> {
     rows_to_json_internal(rows)
 }
 
-fn rows_to_json_mysql(rows: Vec<sqlx::mysql::MySqlRow>) -> Vec<Value> {
+fn rows_to_json_mysql(rows: Vec<MySqlRow>) -> Vec<Value> {
     rows_to_json_internal(rows)
 }
 

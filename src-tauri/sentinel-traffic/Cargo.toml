@@ -3,12 +3,36 @@ name = "sentinel-traffic"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["db-sqlite"]
+db-sqlite = [
+    "sqlx/sqlite",
+    "sentinel-core/db-sqlite",
+    "sentinel-db/db-sqlite",
+    "sentinel-tools/db-sqlite",
+    "sentinel-plugins/db-sqlite",
+]
+db-postgres = [
+    "sqlx/postgres",
+    "sentinel-core/db-postgres",
+    "sentinel-db/db-postgres",
+    "sentinel-tools/db-postgres",
+    "sentinel-plugins/db-postgres",
+]
+db-mysql = [
+    "sqlx/mysql",
+    "sentinel-core/db-mysql",
+    "sentinel-db/db-mysql",
+    "sentinel-tools/db-mysql",
+    "sentinel-plugins/db-mysql",
+]
+
 [dependencies]
 # 内部依赖
-sentinel-core = { path = "../sentinel-core" }
-sentinel-tools = { path = "../sentinel-tools" }
-sentinel-plugins = { path = "../sentinel-plugins" }
-sentinel-db = { path = "../sentinel-db" }
+sentinel-core = { path = "../sentinel-core", default-features = false }
+sentinel-tools = { path = "../sentinel-tools", default-features = false }
+sentinel-plugins = { path = "../sentinel-plugins", default-features = false }
+sentinel-db = { path = "../sentinel-db", default-features = false }
 
 # HTTP 代理
 hudsucker = { version = "0.24.0", features = ["http2"] }
@@ -52,9 +76,10 @@ serde_json = "1.0"
 base64 = "0.22"
 
 # 数据库
-sqlx = { version = "0.8", features = [
+sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
-    "postgres",
+    "derive",
+    "macros",
     "chrono",
     "uuid",
 ] }

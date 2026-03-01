@@ -19,6 +19,7 @@ use tracing::{debug, info};
 
 use super::service::DatabaseService;
 use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::sqlx_compat::{MySql, Postgres};
 
 /// 压缩阈值（字节）- 超过此大小才压缩
 const COMPRESSION_THRESHOLD: usize = 1024; // 1KB
@@ -322,7 +323,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
@@ -402,7 +403,7 @@ impl DatabaseService {
                 Ok(records)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
                     SELECT id, plugin_id, vuln_type, severity, confidence, title, description,
                            cwe, owasp, remediation, status, signature, first_seen_at, last_seen_at,
@@ -483,7 +484,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
                     SELECT COUNT(*)
                     FROM traffic_vulnerabilities
@@ -539,7 +540,7 @@ impl DatabaseService {
                 Ok(row.0)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
                     SELECT COUNT(*)
                     FROM traffic_vulnerabilities
@@ -1642,7 +1643,14 @@ impl DatabaseService {
                 .bind(response_compressed)
                 .execute(pool)
                 .await?;
-                Ok(result.last_insert_id() as i64)
+                #[cfg(feature = "db-mysql")]
+                {
+                    Ok(result.last_insert_id() as i64)
+                }
+                #[cfg(not(feature = "db-mysql"))]
+                {
+                    Ok(result.last_insert_rowid())
+                }
             }
         }
     }
@@ -1659,7 +1667,7 @@ impl DatabaseService {
 
         let mut records = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
                     SELECT id, url, host, protocol, method, status_code,
                            request_headers, request_body, response_headers, response_body,
@@ -1747,7 +1755,7 @@ impl DatabaseService {
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
                     SELECT id, url, host, protocol, method, status_code,
                            request_headers, request_body, response_headers, response_body,
@@ -1825,7 +1833,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
                     SELECT COUNT(*)
                     FROM proxy_requests
@@ -1889,7 +1897,7 @@ impl DatabaseService {
                 Ok(row.0)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
                     SELECT COUNT(*)
                     FROM proxy_requests
@@ -2938,7 +2946,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
                            lifecycle_stage, verification_status,
@@ -3054,7 +3062,7 @@ impl DatabaseService {
                 Ok(records)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     r#"
                     SELECT id, conversation_id, finding_id, signature, title, severity, status,
                            lifecycle_stage, verification_status,
@@ -3125,7 +3133,7 @@ impl DatabaseService {
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+                let mut query_builder = sqlx::QueryBuilder::<Postgres>::new(
                     "SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1",
                 );
                 if let Some(ref conversation_id) = filters.conversation_id {
@@ -3203,7 +3211,7 @@ impl DatabaseService {
                 Ok(row.0)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                let mut query_builder = sqlx::QueryBuilder::<MySql>::new(
                     "SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1",
                 );
                 if let Some(ref conversation_id) = filters.conversation_id {

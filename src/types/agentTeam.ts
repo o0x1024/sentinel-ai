@@ -314,7 +314,17 @@ export interface TeamBlackboardEntry {
     agent_id?: string
     entry_type: string
     content: string
-    metadata?: any
+    metadata?: {
+        revision?: number
+        summary?: string
+        artifact?: {
+            path?: string
+            bytes?: number
+            host_path?: string
+            container_path?: string
+        }
+        [key: string]: any
+    }
     created_at: string
     updated_at: string
 }

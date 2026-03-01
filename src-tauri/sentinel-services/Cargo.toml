@@ -7,10 +7,31 @@ edition = "2021"
 name = "sentinel_services"
 path = "src/lib.rs"
 
+[features]
+default = ["db-sqlite"]
+db-sqlite = [
+    "sqlx/sqlite",
+    "sentinel-core/db-sqlite",
+    "sentinel-db/db-sqlite",
+    "sentinel-tools/db-sqlite",
+]
+db-postgres = [
+    "sqlx/postgres",
+    "sentinel-core/db-postgres",
+    "sentinel-db/db-postgres",
+    "sentinel-tools/db-postgres",
+]
+db-mysql = [
+    "sqlx/mysql",
+    "sentinel-core/db-mysql",
+    "sentinel-db/db-mysql",
+    "sentinel-tools/db-mysql",
+]
+
 [dependencies]
-sentinel-core = { path = "../sentinel-core" }
-sentinel-db = { path = "../sentinel-db" }
-sentinel-tools = { path = "../sentinel-tools" }
+sentinel-core = { path = "../sentinel-core", default-features = false }
+sentinel-db = { path = "../sentinel-db", default-features = false }
+sentinel-tools = { path = "../sentinel-tools", default-features = false }
 sentinel-rag = { path = "../sentinel-rag" }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -21,11 +42,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 async-trait = "0.1"
 tauri = { version = "2.1.1", features = [] }
 rand = "0.8"
-sqlx = { version = "0.8.6", features = [
+sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",
-    "postgres",
-    "sqlite",
-    "mysql",
+    "derive",
+    "macros",
     "chrono",
     "uuid",
 ] }

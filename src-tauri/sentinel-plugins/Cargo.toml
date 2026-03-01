@@ -5,16 +5,23 @@ edition = "2021"
 description = "Built-in security scanning plugins for Sentinel AI traffic scanner"
 authors = ["Sentinel AI Team"]
 
+[features]
+default = ["db-sqlite"]
+db-sqlite = ["sqlx/sqlite", "sentinel-core/db-sqlite"]
+db-postgres = ["sqlx/postgres", "sentinel-core/db-postgres"]
+db-mysql = ["sqlx/mysql", "sentinel-core/db-mysql"]
+plugin-ts-transpile = ["dep:deno_ast"]
+
 [dependencies]
 # Sentinel core for proxy support
-sentinel-core = { path = "../sentinel-core" }
+sentinel-core = { path = "../sentinel-core", default-features = false }
 # SQLx for database queries (dictionary access)
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "derive", "macros"] }
 
 # Deno Core and extensions for plugin execution
 # Using deno_core 0.373.0 for stability, file system via custom ops
 deno_core = "0.373.0"
-deno_ast = { version = "0.51.0", features = ["transpiling"] }
+deno_ast = { version = "0.51.0", features = ["transpiling"], optional = true }
 deno_error = "0.7.0"
 deno_features = "0.20.0"
 deno_net = "0.215.0"

@@ -123,12 +123,22 @@
                 <td>{{ collection.document_count }}</td>
                 <td>{{ formatDate(collection.created_at) }}</td>
                 <td class="text-center">
-                  <input 
-                    type="checkbox" 
+                  <template v-if="isAgentMemoryCollection(collection)">
+                    <span
+                      class="inline-flex items-center text-success text-xs font-medium"
+                      :title="t('ragManagement.collection.memoryTooltip')"
+                    >
+                      <i class="fas fa-lock mr-1"></i>
+                      {{ t('ragManagement.collections.activated') }}
+                    </span>
+                  </template>
+                  <input
+                    v-else
+                    type="checkbox"
                     class="toggle toggle-primary"
-                    :checked="!!collection.is_active"
+                    :checked="isCollectionActive(collection)"
                     @change="onActiveToggle(collection, $event)"
-                    :aria-label="collection.is_active ? t('ragManagement.collections.activated') : t('ragManagement.collections.notActivated')"
+                    :aria-label="isCollectionActive(collection) ? t('ragManagement.collections.activated') : t('ragManagement.collections.notActivated')"
                   />
                 </td>
                 <td>
@@ -729,8 +739,16 @@ const loadingDetails = ref(false)
 const loadingDocuments = ref(false)
 const loadingChunks = ref(false)
 
+const isAgentMemoryCollection = (collection: any) => collection?.name === 'agent_memory'
+const isCollectionActive = (collection: any) =>
+  isAgentMemoryCollection(collection) || !!collection?.is_active
+
 // 激活集合管理（后端持久化）
 const onActiveToggle = async (collection: any, ev: Event) => {
+  if (isAgentMemoryCollection(collection)) {
+    collection.is_active = true
+    return
+  }
   const checked = (ev.target as HTMLInputElement)?.checked ?? false
   try {
     await invoke('set_rag_collection_active', { collectionId: collection.id, active: checked })
@@ -859,9 +877,9 @@ const filteredCollections = computed(() => {
   }
 
   if (statusFilter.value === 'active') {
-    filtered = filtered.filter(c => !!c.is_active)
+    filtered = filtered.filter(c => isCollectionActive(c))
   } else if (statusFilter.value === 'inactive') {
-    filtered = filtered.filter(c => !c.is_active)
+    filtered = filtered.filter(c => !isCollectionActive(c))
   }
 
   return filtered
@@ -906,7 +924,12 @@ const formatBytes = (bytes: number) => {
 const refreshCollections = async () => {
   try {
     const status = await invoke('get_rag_status') as any
-    collections.value = status.collections || []
+    collections.value = (status.collections || []).map((collection: any) => {
+      if (isAgentMemoryCollection(collection)) {
+        return { ...collection, is_active: true }
+      }
+      return collection
+    })
   } catch (error) {
     console.error('获取集合列表失败:', error)
     showToast(t('ragManagement.messages.loadFailed'), 'error')

@@ -1311,14 +1311,14 @@ const replayRun = (run: LlmTestRunView) => {
   createForm.value.target.env = run.target.env || 'staging'
 
   // Pre-fill auth config if available
-  const auth = run.auth_config
+  const auth = run.auth_config as any
   if (auth) {
     createForm.value.auth.type = String(auth.type ?? 'none')
     createForm.value.auth.bearer_token = String(auth.bearer_token ?? '')
   }
 
   // Pre-fill adapter config if available
-  const adapter = run.adapter_config
+  const adapter = run.adapter_config as any
   if (adapter) {
     createForm.value.adapter.message_template = String(adapter.message_template ?? '')
     createForm.value.adapter.response_extract_path = String(adapter.response_extract_path ?? '')

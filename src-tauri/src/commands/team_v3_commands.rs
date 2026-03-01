@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::commands::team_v3_artifact_store::persist_team_v3_task_output_artifact;
 use crate::agents::executor::{execute_agent as execute_team_agent, AgentExecuteParams};
 use crate::agents::tool_router::{ToolConfig, ToolSelectionStrategy};
 use crate::agents::ContextPolicy;
@@ -23,6 +24,10 @@ type AiState<'r> = State<'r, Arc<AiServiceManager>>;
 static TEAM_EXECUTION_CANCELLATIONS: LazyLock<Mutex<HashMap<String, (u64, CancellationToken)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static TEAM_EXECUTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static TEAM_V3_BLACKBOARD_SESSION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+const TEAM_V3_BLACKBOARD_INLINE_CHAR_LIMIT: usize = 2_000;
 
 fn create_team_execution_cancellation(session_id: &str) -> (u64, CancellationToken) {
     let generation = TEAM_EXECUTION_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
@@ -59,8 +64,25 @@ fn clear_team_execution_cancellation(session_id: &str, generation: u64) {
         if let Some((current_generation, _)) = guard.get(session_id) {
             if *current_generation == generation {
                 guard.remove(session_id);
+                clear_team_v3_blackboard_session_lock(session_id);
             }
         }
+    }
+}
+
+fn team_v3_blackboard_session_lock(session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    if let Ok(mut guard) = TEAM_V3_BLACKBOARD_SESSION_LOCKS.lock() {
+        return guard
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+    }
+    Arc::new(tokio::sync::Mutex::new(()))
+}
+
+fn clear_team_v3_blackboard_session_lock(session_id: &str) {
+    if let Ok(mut guard) = TEAM_V3_BLACKBOARD_SESSION_LOCKS.lock() {
+        guard.remove(session_id);
     }
 }
 
@@ -366,7 +388,7 @@ async fn reset_schema_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn reset_schema_pg(pool: &sqlx::PgPool) -> Result<()> {
+async fn reset_schema_pg(pool: &sentinel_db::sqlx_compat::PgPool) -> Result<()> {
     let ddl = [
         "DROP TABLE IF EXISTS team_v3_task_events CASCADE",
         "DROP TABLE IF EXISTS team_v3_blackboard_entries CASCADE",
@@ -607,7 +629,7 @@ async fn ensure_schema_sqlite(pool: &sqlx::SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn ensure_schema_pg(pool: &sqlx::PgPool) -> Result<()> {
+async fn ensure_schema_pg(pool: &sentinel_db::sqlx_compat::PgPool) -> Result<()> {
     let ddl = [
         r#"CREATE TABLE IF NOT EXISTS team_v3_templates (
             id TEXT PRIMARY KEY,
@@ -1828,6 +1850,61 @@ async fn clear_team_v3_blackboard_entries(
     Ok(())
 }
 
+fn blackboard_revision_from_metadata_value(metadata: &Value) -> Option<i64> {
+    let raw = metadata.get("revision")?;
+    if let Some(value) = raw.as_i64() {
+        return Some(value);
+    }
+    if let Some(value) = raw.as_u64() {
+        return i64::try_from(value).ok();
+    }
+    if let Some(text) = raw.as_str() {
+        return text.trim().parse::<i64>().ok();
+    }
+    None
+}
+
+async fn get_team_v3_latest_blackboard_revision(
+    runtime_pool: &DatabasePool,
+    session_id: &str,
+) -> Result<i64> {
+    let metadata_text_opt: Option<String> = match runtime_pool {
+        DatabasePool::SQLite(pool) => {
+            let row = sqlx::query(
+                r#"SELECT metadata
+                   FROM team_v3_blackboard_entries
+                   WHERE session_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?;
+            row.map(|record| record.get("metadata"))
+        }
+        DatabasePool::PostgreSQL(pool) => {
+            let row = sqlx::query(
+                r#"SELECT metadata::text as metadata
+                   FROM team_v3_blackboard_entries
+                   WHERE session_id = $1
+                   ORDER BY created_at DESC
+                   LIMIT 1"#,
+            )
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?;
+            row.map(|record| record.get("metadata"))
+        }
+        DatabasePool::MySQL(_) => return Err(anyhow!("Team V3 does not support MySQL")),
+    };
+
+    let Some(metadata_text) = metadata_text_opt else {
+        return Ok(0);
+    };
+    let metadata = parse_state_data_text(&metadata_text);
+    Ok(blackboard_revision_from_metadata_value(&metadata).unwrap_or(0))
+}
+
 async fn append_team_v3_blackboard_entry(
     runtime_pool: &DatabasePool,
     session_id: &str,
@@ -1837,9 +1914,21 @@ async fn append_team_v3_blackboard_entry(
     content: &str,
     metadata: Option<&Value>,
 ) -> Result<()> {
+    let blackboard_lock = team_v3_blackboard_session_lock(session_id);
+    let _guard = blackboard_lock.lock().await;
+    let next_revision = get_team_v3_latest_blackboard_revision(runtime_pool, session_id).await? + 1;
+
+    let mut metadata_json = metadata.cloned().unwrap_or_else(|| json!({}));
+    if !metadata_json.is_object() {
+        metadata_json = json!({ "payload": metadata_json });
+    }
+    if let Some(meta_obj) = metadata_json.as_object_mut() {
+        meta_obj.insert("revision".to_string(), json!(next_revision));
+    }
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let metadata_text = serde_json::to_string(metadata.unwrap_or(&json!({})))?;
+    let metadata_text = serde_json::to_string(&metadata_json)?;
     match runtime_pool {
         DatabasePool::SQLite(pool) => {
             sqlx::query(
@@ -2027,14 +2116,54 @@ fn format_blackboard_entry(entry: &TeamV3BlackboardEntry, max_chars: usize) -> S
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("-");
+    if entry.entry_type == "artifact_ref" {
+        let summary = entry
+            .metadata
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(entry.content.as_str());
+        let file_path = entry
+            .metadata
+            .get("artifact")
+            .and_then(|value| value.get("path"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-");
+        let file_bytes = entry
+            .metadata
+            .get("artifact")
+            .and_then(|value| value.get("bytes"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let revision = blackboard_revision_from_metadata_value(&entry.metadata).unwrap_or(0);
+        let summary_content =
+            truncate_chars(collapse_whitespace(summary).as_str(), max_chars.saturating_sub(40));
+        let path_content = truncate_chars(file_path, 140);
+        return format!(
+            "- [{}][rev={}][agent={}][task={}][bytes={}] {} | file={}",
+            entry.entry_type, revision, agent, task, file_bytes, summary_content, path_content
+        );
+    }
     let content = truncate_chars(
         collapse_whitespace(entry.content.as_str()).as_str(),
         max_chars,
     );
+    let revision = blackboard_revision_from_metadata_value(&entry.metadata).unwrap_or(0);
     format!(
-        "- [{}][agent={}][task={}] {}",
-        entry.entry_type, agent, task, content
+        "- [{}][rev={}][agent={}][task={}] {}",
+        entry.entry_type, revision, agent, task, content
     )
+}
+
+fn latest_blackboard_revision(entries: &[TeamV3BlackboardEntry]) -> i64 {
+    entries
+        .iter()
+        .filter_map(|entry| blackboard_revision_from_metadata_value(&entry.metadata))
+        .max()
+        .unwrap_or(0)
 }
 
 fn build_blackboard_section(
@@ -2192,6 +2321,25 @@ fn build_task_checkpoint_content(task_key: &str, task_title: &str, output: &str)
     ];
     lines.extend(points.into_iter().map(|point| format!("- {}", point)));
     lines.join("\n")
+}
+
+fn build_task_artifact_summary(output: &str) -> String {
+    let points = collect_checkpoint_points(output, 4, 220);
+    if points.is_empty() {
+        return "未提取到摘要，请直接阅读 artifact 文件。".to_string();
+    }
+    points
+        .into_iter()
+        .map(|point| format!("- {}", point))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_task_artifact_ref_content(summary: &str, path: &str, bytes: usize) -> String {
+    format!(
+        "任务产出较长，已落地为 artifact。\n摘要：\n{}\n\nartifact_path: {}\nartifact_bytes: {}",
+        summary, path, bytes
+    )
 }
 
 async fn append_team_v3_task_memory_layers(
@@ -2642,13 +2790,15 @@ fn build_team_v3_task_prompt(
     task: &TeamV3Task,
     dependency_context: &str,
     blackboard_context: &str,
+    blackboard_snapshot_revision: i64,
     checkpoint_only: bool,
 ) -> String {
     if dependency_context.trim().is_empty() && blackboard_context.trim().is_empty() {
         format!(
-            "Team 总目标：{}\n用户输入：{}\n\n当前子任务：{}\n任务说明：{}\n\n请直接执行该子任务，并输出结构化结论（结论、依据、风险、下一步）。",
+            "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n请直接执行该子任务，并输出结构化结论（结论、依据、风险、下一步）。",
             goal,
             user_input,
+            blackboard_snapshot_revision,
             task.title,
             task.instruction
         )
@@ -2662,18 +2812,20 @@ fn build_team_v3_task_prompt(
         }
         if checkpoint_only {
             format!(
-                "Team 总目标：{}\n用户输入：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n你必须只基于 Checkpoint（阶段总结）完成收敛，不要重新展开全量分析日志。输出结构化结论（最终结论、关键证据、风险、下一步行动）。",
+                "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n你必须只基于 Checkpoint（阶段总结）完成收敛，不要重新展开全量分析日志。输出结构化结论（最终结论、关键证据、风险、下一步行动）。",
                 goal,
                 user_input,
+                blackboard_snapshot_revision,
                 task.title,
                 task.instruction,
                 context_sections.join("\n\n")
             )
         } else {
             format!(
-                "Team 总目标：{}\n用户输入：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n请基于共享信息继续执行，并输出结构化结论（结论、依据、风险、下一步）。",
+                "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n请基于共享信息继续执行，并输出结构化结论（结论、依据、风险、下一步）。",
                 goal,
                 user_input,
+                blackboard_snapshot_revision,
                 task.title,
                 task.instruction,
                 context_sections.join("\n\n")
@@ -3154,12 +3306,14 @@ async fn run_team_v3_execution_orchestrator(
             } else {
                 build_blackboard_context(&blackboard_entries)
             };
+            let blackboard_snapshot_revision = latest_blackboard_revision(&blackboard_entries);
             let prompt = build_team_v3_task_prompt(
                 goal_text.as_str(),
                 user_input.as_str(),
                 &task,
                 dependency_context.as_str(),
                 blackboard_context.as_str(),
+                blackboard_snapshot_revision,
                 is_summary_task,
             );
 
@@ -3282,17 +3436,82 @@ async fn run_team_v3_execution_orchestrator(
                         normalized_content.as_str(),
                     )
                     .await?;
-                    let output_meta = json!({ "task_key": task_key });
-                    append_team_v3_blackboard_entry(
-                        &runtime_pool,
-                        &session_id,
-                        Some(task_id.as_str()),
-                        Some(member_id.as_str()),
-                        "task_output",
-                        normalized_content.as_str(),
-                        Some(&output_meta),
-                    )
-                    .await?;
+                    if normalized_content.chars().count() > TEAM_V3_BLACKBOARD_INLINE_CHAR_LIMIT {
+                        let artifact_result = persist_team_v3_task_output_artifact(
+                            session_id.as_str(),
+                            task_id.as_str(),
+                            task_key.as_str(),
+                            member_id.as_str(),
+                            task_title.as_str(),
+                            normalized_content.as_str(),
+                        )
+                        .await;
+                        match artifact_result {
+                            Ok(artifact_ref) => {
+                                let summary_text =
+                                    build_task_artifact_summary(normalized_content.as_str());
+                                let artifact_content = build_task_artifact_ref_content(
+                                    summary_text.as_str(),
+                                    artifact_ref.path.as_str(),
+                                    artifact_ref.bytes,
+                                );
+                                let output_meta = json!({
+                                    "task_key": task_key,
+                                    "summary": summary_text,
+                                    "artifact": {
+                                        "path": artifact_ref.path,
+                                        "bytes": artifact_ref.bytes,
+                                        "host_path": artifact_ref.host_path,
+                                        "container_path": artifact_ref.container_path
+                                    }
+                                });
+                                append_team_v3_blackboard_entry(
+                                    &runtime_pool,
+                                    &session_id,
+                                    Some(task_id.as_str()),
+                                    Some(member_id.as_str()),
+                                    "artifact_ref",
+                                    artifact_content.as_str(),
+                                    Some(&output_meta),
+                                )
+                                .await?;
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    "Team task {} artifact persist failed, fallback to inline blackboard entry: {}",
+                                    task_key,
+                                    error
+                                );
+                                let output_meta = json!({
+                                    "task_key": task_key,
+                                    "artifact_fallback": "inline",
+                                    "artifact_error": error.to_string(),
+                                });
+                                append_team_v3_blackboard_entry(
+                                    &runtime_pool,
+                                    &session_id,
+                                    Some(task_id.as_str()),
+                                    Some(member_id.as_str()),
+                                    "task_output",
+                                    normalized_content.as_str(),
+                                    Some(&output_meta),
+                                )
+                                .await?;
+                            }
+                        }
+                    } else {
+                        let output_meta = json!({ "task_key": task_key });
+                        append_team_v3_blackboard_entry(
+                            &runtime_pool,
+                            &session_id,
+                            Some(task_id.as_str()),
+                            Some(member_id.as_str()),
+                            "task_output",
+                            normalized_content.as_str(),
+                            Some(&output_meta),
+                        )
+                        .await?;
+                    }
                     append_team_v3_task_memory_layers(
                         &runtime_pool,
                         &session_id,

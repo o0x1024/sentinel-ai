@@ -429,22 +429,7 @@ impl StreamingLlmClient {
 
         let api_key = self.config.api_key.clone().unwrap_or_default();
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-
-        // Apply global proxy configuration
-        let builder_req = reqwest::Client::builder().default_headers(headers);
-        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
-        let http_client = builder_req
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-
-        let mut builder = deepseek::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client);
+        let mut builder = deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -580,21 +565,7 @@ impl StreamingLlmClient {
             .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
             .ok_or_else(|| anyhow::anyhow!("MOONSHOT_API_KEY not set"))?;
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-
-        let builder_req = reqwest::Client::builder().default_headers(headers);
-        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
-        let http_client = builder_req
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-
-        let mut builder = moonshot::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client);
+        let mut builder = moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -636,22 +607,7 @@ impl StreamingLlmClient {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-
-        // Apply global proxy configuration
-        let builder_req = reqwest::Client::builder().default_headers(headers);
-        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
-        let http_client = builder_req
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-
-        let mut builder = anthropic::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client);
+        let mut builder = anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
             if !base_url.is_empty() {
@@ -728,22 +684,7 @@ impl StreamingLlmClient {
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-
-        // Apply global proxy configuration
-        let builder_req = reqwest::Client::builder().default_headers(headers);
-        let builder_req = sentinel_core::global_proxy::apply_proxy_to_client(builder_req).await;
-        let http_client = builder_req
-            .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-
-        let mut builder = deepseek::Client::<reqwest::Client>::builder()
-            .api_key(api_key)
-            .http_client(http_client);
+        let mut builder = deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -969,7 +910,7 @@ impl StreamingLlmClient {
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::Reasoning(r),
                 )) => {
-                    let piece = r.reasoning.join("");
+                    let piece = r.display_text();
                     if !piece.is_empty() && !on_content(StreamContent::Reasoning(piece)) {
                         info!("Stream cancelled by callback");
                         break;

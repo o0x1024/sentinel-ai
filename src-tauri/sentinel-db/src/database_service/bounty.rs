@@ -8,6 +8,7 @@ use tracing::info;
 
 use super::service::DatabaseService;
 use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::sqlx_compat::PgRow;
 
 // ============================================================================
 // Helper Functions
@@ -28,7 +29,7 @@ fn optional_timestamp_string_to_datetime(
 }
 
 /// Convert TIMESTAMP WITH TIME ZONE to String for struct fields
-fn timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> String {
+fn timestamp_to_string(row: &PgRow, column: &str) -> String {
     row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
         .map(|dt| dt.to_rfc3339())
         .or_else(|_| row.try_get::<String, _>(column))
@@ -36,7 +37,7 @@ fn timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> String {
 }
 
 /// Convert optional TIMESTAMP WITH TIME ZONE to Option<String> for struct fields
-fn optional_timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> Option<String> {
+fn optional_timestamp_to_string(row: &PgRow, column: &str) -> Option<String> {
     row.try_get::<chrono::DateTime<chrono::Utc>, _>(column)
         .map(|dt| Some(dt.to_rfc3339()))
         .or_else(|_| row.try_get::<Option<String>, _>(column))
@@ -44,7 +45,7 @@ fn optional_timestamp_to_string(row: &sqlx::postgres::PgRow, column: &str) -> Op
 }
 
 /// Map PgRow to BountyProgramRow
-fn row_to_bounty_program(row: sqlx::postgres::PgRow) -> BountyProgramRow {
+fn row_to_bounty_program(row: PgRow) -> BountyProgramRow {
     BountyProgramRow {
         id: row.get("id"),
         name: row.get("name"),
@@ -72,7 +73,7 @@ fn row_to_bounty_program(row: sqlx::postgres::PgRow) -> BountyProgramRow {
 }
 
 /// Map PgRow to ProgramScopeRow
-fn row_to_program_scope(row: sqlx::postgres::PgRow) -> ProgramScopeRow {
+fn row_to_program_scope(row: PgRow) -> ProgramScopeRow {
     ProgramScopeRow {
         id: row.get("id"),
         program_id: row.get("program_id"),
@@ -94,7 +95,7 @@ fn row_to_program_scope(row: sqlx::postgres::PgRow) -> ProgramScopeRow {
 }
 
 /// Map PgRow to BountyFindingRow
-fn row_to_bounty_finding(row: sqlx::postgres::PgRow) -> BountyFindingRow {
+fn row_to_bounty_finding(row: PgRow) -> BountyFindingRow {
     BountyFindingRow {
         id: row.get("id"),
         program_id: row.get("program_id"),
@@ -128,7 +129,7 @@ fn row_to_bounty_finding(row: sqlx::postgres::PgRow) -> BountyFindingRow {
 }
 
 /// Map PgRow to BountySubmissionRow
-fn row_to_bounty_submission(row: sqlx::postgres::PgRow) -> BountySubmissionRow {
+fn row_to_bounty_submission(row: PgRow) -> BountySubmissionRow {
     BountySubmissionRow {
         id: row.get("id"),
         program_id: row.get("program_id"),
@@ -168,7 +169,7 @@ fn row_to_bounty_submission(row: sqlx::postgres::PgRow) -> BountySubmissionRow {
 }
 
 /// Map PgRow to BountyEvidenceRow
-fn row_to_bounty_evidence(row: sqlx::postgres::PgRow) -> BountyEvidenceRow {
+fn row_to_bounty_evidence(row: PgRow) -> BountyEvidenceRow {
     BountyEvidenceRow {
         id: row.get("id"),
         finding_id: row.get("finding_id"),
@@ -192,7 +193,7 @@ fn row_to_bounty_evidence(row: sqlx::postgres::PgRow) -> BountyEvidenceRow {
 }
 
 /// Map PgRow to BountyChangeEventRow
-fn row_to_bounty_change_event(row: sqlx::postgres::PgRow) -> BountyChangeEventRow {
+fn row_to_bounty_change_event(row: PgRow) -> BountyChangeEventRow {
     BountyChangeEventRow {
         id: row.get("id"),
         program_id: row.get("program_id"),
@@ -220,7 +221,7 @@ fn row_to_bounty_change_event(row: sqlx::postgres::PgRow) -> BountyChangeEventRo
 }
 
 /// Map PgRow to BountyWorkflowTemplateRow
-fn row_to_bounty_workflow_template(row: sqlx::postgres::PgRow) -> BountyWorkflowTemplateRow {
+fn row_to_bounty_workflow_template(row: PgRow) -> BountyWorkflowTemplateRow {
     BountyWorkflowTemplateRow {
         id: row.get("id"),
         name: row.get("name"),
@@ -294,7 +295,7 @@ impl From<BountyProgramCompatRow> for BountyProgramRow {
 }
 
 /// Map PgRow to BountyWorkflowBindingRow
-fn row_to_bounty_workflow_binding(row: sqlx::postgres::PgRow) -> BountyWorkflowBindingRow {
+fn row_to_bounty_workflow_binding(row: PgRow) -> BountyWorkflowBindingRow {
     BountyWorkflowBindingRow {
         id: row.get("id"),
         program_id: row.get("program_id"),
@@ -313,7 +314,7 @@ fn row_to_bounty_workflow_binding(row: sqlx::postgres::PgRow) -> BountyWorkflowB
 }
 
 /// Map PgRow to BountyAssetRow
-fn row_to_bounty_asset(row: sqlx::postgres::PgRow) -> BountyAssetRow {
+fn row_to_bounty_asset(row: PgRow) -> BountyAssetRow {
     BountyAssetRow {
         id: row.get("id"),
         program_id: row.get("program_id"),

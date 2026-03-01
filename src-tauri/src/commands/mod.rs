@@ -31,6 +31,7 @@ pub mod scan_task_commands;
 pub mod security_rule_commands;
 pub mod shell_commands;
 pub mod task_tool_commands;
+pub mod team_v3_artifact_store;
 pub mod team_v3_commands;
 pub mod terminal_commands;
 pub mod test_proxy;

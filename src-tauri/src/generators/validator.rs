@@ -170,6 +170,17 @@ impl PluginValidator {
 
     /// Validate TypeScript syntax using Deno AST
     async fn validate_typescript_syntax(&self, code: &str) -> Result<bool> {
+        #[cfg(not(feature = "plugin-generation"))]
+        {
+            log::debug!(
+                "Skipping deno_ast TypeScript validation because feature `plugin-generation` is disabled"
+            );
+            let _ = code;
+            return Ok(true);
+        }
+
+        #[cfg(feature = "plugin-generation")]
+        {
         log::debug!("Validating TypeScript syntax using deno_ast");
 
         // Use deno_ast to parse TypeScript code
@@ -202,6 +213,7 @@ impl PluginValidator {
                 log::error!("TypeScript syntax validation failed: {}", e);
                 Err(anyhow::anyhow!("Syntax error: {}", e))
             }
+        }
         }
     }
 

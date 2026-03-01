@@ -267,17 +267,21 @@ export const agentTeamApi = {
       sessionId,
       limit,
     })
-    return rows.map((row) => ({
-      id: row.id,
-      session_id: row.session_id,
-      task_id: row.task_id ?? undefined,
-      agent_id: row.agent_id ?? undefined,
-      entry_type: row.entry_type,
-      content: row.content,
-      metadata: row.metadata,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }))
+    return rows.map((row) => {
+      const metadata =
+        row?.metadata && typeof row.metadata === 'object' ? row.metadata : undefined
+      return {
+        id: row.id,
+        session_id: row.session_id,
+        task_id: row.task_id ?? undefined,
+        agent_id: row.agent_id ?? undefined,
+        entry_type: row.entry_type,
+        content: row.content,
+        metadata,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      }
+    })
   },
 
   async submitMessage(req: SubmitAgentTeamMessageRequest): Promise<void> {

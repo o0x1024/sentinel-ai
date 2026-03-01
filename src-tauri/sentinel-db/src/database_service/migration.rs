@@ -9,6 +9,7 @@ use tokio::fs;
 use tracing::{info, warn};
 
 use super::connection_manager::DatabasePool;
+use super::sqlx_compat::{MySql, PgPool, PgRow, Postgres};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExportFormat {
@@ -286,7 +287,7 @@ impl DatabaseMigration {
     }
 
     /// Create PostgreSQL database schema
-    async fn create_postgresql_schema(&self, pool: &sqlx::PgPool) -> Result<()> {
+    async fn create_postgresql_schema(&self, pool: &PgPool) -> Result<()> {
         info!("Creating PostgreSQL tables...");
 
         // First, drop existing tables if they exist to avoid conflicts
@@ -478,7 +479,7 @@ impl DatabaseMigration {
                 let rows = sqlx::query(query).fetch_all(pool).await?;
                 let tables: Vec<String> = rows
                     .iter()
-                    .filter_map(|row: &sqlx::postgres::PgRow| row.try_get::<String, _>(0).ok())
+                    .filter_map(|row: &PgRow| row.try_get::<String, _>(0).ok())
                     .collect();
                 Ok(tables)
             }
@@ -815,7 +816,7 @@ impl DatabaseMigration {
                         insert_query.push_str(" ON CONFLICT DO NOTHING");
                     }
 
-                    let mut query = sqlx::query::<sqlx::Postgres>(&insert_query);
+                    let mut query = sqlx::query::<Postgres>(&insert_query);
 
                     for col in &columns {
                         let value = &row_data[*col];
@@ -925,7 +926,7 @@ impl DatabaseMigration {
                         placeholders.join(", ")
                     );
 
-                    let mut query = sqlx::query::<sqlx::MySql>(&insert_query);
+                    let mut query = sqlx::query::<MySql>(&insert_query);
 
                     for col in &columns {
                         let value = &row_data[*col];
@@ -1104,7 +1105,7 @@ impl DatabaseMigration {
                     placeholders.join(", ")
                 );
 
-                let mut query = sqlx::query::<sqlx::Postgres>(&insert_query);
+                let mut query = sqlx::query::<Postgres>(&insert_query);
 
                 for col in &columns {
                     let value = &row_data[*col];
@@ -1203,7 +1204,7 @@ impl DatabaseMigration {
                     placeholders.join(", ")
                 );
 
-                let mut query = sqlx::query::<sqlx::MySql>(&insert_query);
+                let mut query = sqlx::query::<MySql>(&insert_query);
 
                 for col in &columns {
                     let value = &row_data[*col];

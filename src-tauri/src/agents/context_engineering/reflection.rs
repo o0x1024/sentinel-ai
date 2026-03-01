@@ -1,9 +1,6 @@
 //! Reflection memory — auto-generates reflections after task execution
-//! and persists them as high-priority memory items for future recall.
-
-use std::collections::HashMap;
-use std::sync::Arc;
-use tauri::{AppHandle, Manager};
+//! and stores them in run-state memory.
+use tauri::AppHandle;
 
 use crate::agents::context_engineering::checkpoint::{
     load_run_state, save_run_state, ContextMemoryItem,
@@ -41,7 +38,6 @@ pub async fn record_execution_reflection(app_handle: &AppHandle, outcome: &Execu
     let reflection = build_failure_reflection(outcome);
     if !reflection.is_empty() {
         persist_reflection(app_handle, &outcome.execution_id, &reflection).await;
-        persist_reflection_to_vector_store(app_handle, &reflection).await;
     }
 }
 
@@ -138,54 +134,6 @@ async fn persist_reflection(app_handle: &AppHandle, execution_id: &str, reflecti
             execution_id,
             truncate_str(reflection_text, 80)
         );
-    }
-}
-
-async fn persist_reflection_to_vector_store(app_handle: &AppHandle, reflection_text: &str) {
-    let db = match app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
-        Some(db) => db,
-        None => return,
-    };
-
-    let rag_service =
-        match crate::commands::rag_commands::get_or_init_rag_service(db.inner().clone()).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!("RAG service unavailable for reflection persistence: {}", e);
-                return;
-            }
-        };
-
-    let collection_id =
-        match crate::commands::rag_commands::ensure_memory_collection_exists(db.inner().clone())
-            .await
-        {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::debug!("Memory collection unavailable: {}", e);
-                return;
-            }
-        };
-
-    let title = format!("[reflection] {}", truncate_str(reflection_text, 80));
-    let mut metadata = HashMap::new();
-    metadata.insert("type".to_string(), "agent_memory".to_string());
-    metadata.insert("kind".to_string(), "reflection".to_string());
-    metadata.insert(
-        "created_at".to_string(),
-        chrono::Utc::now().timestamp_millis().to_string(),
-    );
-
-    if let Err(e) = rag_service
-        .ingest_text(
-            &title,
-            reflection_text,
-            Some(&collection_id),
-            Some(metadata),
-        )
-        .await
-    {
-        tracing::warn!("Failed to persist reflection to vector store: {}", e);
     }
 }
 

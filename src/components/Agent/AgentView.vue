@@ -224,144 +224,20 @@
               @mousedown="startResize"
             ></div>
             
-            <div v-if="isTeamWorkspaceActive" class="h-full flex flex-col overflow-hidden">
-              <div class="flex border-b border-base-300 overflow-x-auto">
-                <button
-                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'tasks' ? 'text-secondary border-b-2 border-secondary bg-secondary/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'tasks'"
-                >
-                  <i class="fas fa-list-check mr-1"></i> Tasks
-                </button>
-                <button
-                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'inbox' ? 'text-accent border-b-2 border-accent bg-accent/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'inbox'"
-                >
-                  <i class="fas fa-inbox mr-1"></i> Inbox
-                </button>
-                <button
-                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'blackboard' ? 'text-warning border-b-2 border-warning bg-warning/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'blackboard'"
-                >
-                  <i class="fas fa-chalkboard mr-1"></i> Blackboard
-                </button>
-                <button
-                  class="flex-1 py-2 text-xs font-medium transition-colors whitespace-nowrap px-2"
-                  :class="teamWorkspaceTab === 'agents' ? 'text-info border-b-2 border-info bg-info/5' : 'text-base-content/50 hover:text-base-content'"
-                  @click="teamWorkspaceTab = 'agents'"
-                >
-                  <i class="fas fa-users mr-1"></i> Agents
-                </button>
-              </div>
-
-              <div v-if="teamWorkspaceLoading" class="flex-1 flex items-center justify-center text-sm text-base-content/50">
-                <i class="fas fa-spinner fa-spin mr-2"></i> Team 工作台加载中...
-              </div>
-
-              <div v-else-if="teamWorkspaceTab === 'tasks'" class="flex-1 overflow-auto p-3">
-                <div v-if="teamTasks.length === 0" class="text-sm text-base-content/50">暂无任务数据</div>
-                <div v-else class="space-y-2">
-                  <div class="flex items-center justify-between rounded-lg border border-base-300 bg-base-100 px-2 py-1.5 text-[11px] text-base-content/65">
-                    <span>消息视图: {{ selectedTeamTaskTitle || '全局' }}</span>
-                    <button
-                      v-if="selectedTeamTaskId"
-                      class="btn btn-ghost btn-xs"
-                      @click="clearSelectedTeamTask"
-                    >
-                      取消选择
-                    </button>
-                  </div>
-                  <div
-                    v-for="task in teamTasks"
-                    :key="task.id"
-                    class="cursor-pointer rounded-lg border bg-base-100 p-2 transition-colors"
-                    :class="selectedTeamTaskId === task.id ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-base-300 hover:border-primary/40 hover:bg-base-200/40'"
-                    @click="toggleSelectedTeamTask(task)"
-                  >
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="text-sm font-medium truncate">{{ task.title || task.task_id }}</div>
-                      <span class="badge badge-xs" :class="taskStatusBadgeClass(task.status)">{{ task.status }}</span>
-                    </div>
-                    <div class="mt-1 text-xs text-base-content/55 line-clamp-2">{{ task.instruction || '—' }}</div>
-                    <div class="mt-1 flex items-center gap-2 text-[11px] text-base-content/50">
-                      <span>负责人: {{ resolveAgentName(task.assignee_agent_id) }}</span>
-                      <span>Attempt: {{ task.attempt }}/{{ task.max_attempts }}</span>
-                    </div>
-                    <div class="mt-1 text-[11px] text-primary/90">
-                      {{ selectedTeamTaskId === task.id ? '已选中，消息窗已切换到该 Agent' : '点击切换到该 Agent 消息窗' }}
-                    </div>
-                    <div v-if="task.last_error" class="mt-1 text-[11px] text-error line-clamp-2">{{ task.last_error }}</div>
-                  </div>
-                </div>
-              </div>
-              <div v-else-if="teamWorkspaceTab === 'inbox'" class="flex-1 overflow-auto p-3">
-                <div v-if="teamSessionMessages.length === 0" class="text-sm text-base-content/50">暂无线程消息</div>
-                <div v-else class="space-y-2">
-                  <div
-                    v-for="msg in teamSessionMessages"
-                    :key="msg.id"
-                    class="rounded-lg border border-base-300 bg-base-100 p-2"
-                  >
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="text-xs font-semibold">{{ msg.role }}</div>
-                      <span class="text-[11px] text-base-content/45">{{ formatTimestamp(msg.timestamp) }}</span>
-                    </div>
-                    <div class="mt-1 text-[11px] text-base-content/60">
-                      {{ msg.member_name || msg.member_id || 'system' }}
-                    </div>
-                    <div class="mt-1 text-[11px] bg-base-200/60 rounded p-1.5 whitespace-pre-wrap break-words">{{ msg.content || '—' }}</div>
-                  </div>
-                </div>
-              </div>
-              <div v-else-if="teamWorkspaceTab === 'blackboard'" class="flex-1 overflow-auto p-3">
-                <div v-if="teamBlackboardEntries.length === 0" class="text-sm text-base-content/50">暂无白板信息</div>
-                <div v-else class="space-y-2">
-                  <div
-                    v-for="entry in teamBlackboardEntries"
-                    :key="entry.id"
-                    class="rounded-lg border border-base-300 bg-base-100 p-2"
-                  >
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="badge badge-xs" :class="teamBlackboardEntryBadgeClass(entry.entry_type)">{{ entry.entry_type }}</span>
-                      <span class="text-[11px] text-base-content/45">{{ formatTimestamp(entry.created_at) }}</span>
-                    </div>
-                    <div class="mt-1 text-[11px] text-base-content/60">
-                      Agent: {{ resolveAgentName(entry.agent_id) }} · Task: {{ entry.task_id || '-' }}
-                    </div>
-                    <div class="mt-1 text-[11px] bg-base-200/60 rounded p-1.5 whitespace-pre-wrap break-words">{{ entry.content || '—' }}</div>
-                  </div>
-                </div>
-              </div>
-              <div v-else-if="teamWorkspaceTab === 'agents'" class="flex-1 overflow-auto p-3">
-                <div v-if="(teamSessionDetail?.members || []).length === 0" class="text-sm text-base-content/50">暂无 Agent</div>
-                <div v-else class="space-y-2">
-                  <div
-                    v-for="member in (teamSessionDetail?.members || [])"
-                    :key="member.id"
-                    class="rounded-lg border border-base-300 bg-base-100 p-2"
-                  >
-                    <div class="flex items-center justify-between">
-                      <div class="text-sm font-medium">{{ member.name }}</div>
-                      <span class="badge badge-xs" :class="member.is_active ? 'badge-success' : 'badge-ghost'">
-                        {{ member.is_active ? 'ACTIVE' : 'IDLE' }}
-                      </span>
-                    </div>
-                    <div class="mt-1 text-[11px] text-base-content/55">{{ member.responsibility || '未设置职责' }}</div>
-                    <div class="mt-1 text-[11px] text-base-content/50">
-                      Tokens: {{ member.token_usage }} · Tools: {{ member.tool_calls_count }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div v-else class="flex-1 overflow-auto p-4">
-                <div class="rounded-xl border border-base-300 bg-base-100 p-4 text-sm text-base-content/70">
-                  Team V3 工作台已启用。
-                  当前可在 Tasks / Inbox / Blackboard / Agents 查看运行状态。
-                </div>
-              </div>
-            </div>
+            <TeamWorkspacePanel
+              v-if="isTeamWorkspaceActive"
+              v-model:tab="teamWorkspaceTab"
+              :loading="teamWorkspaceLoading"
+              :tasks="teamTasks"
+              :selected-task-id="selectedTeamTaskId"
+              :selected-task-title="selectedTeamTaskTitle"
+              :session-messages="teamSessionMessages"
+              :blackboard-entries="teamBlackboardEntries"
+              :session-detail="teamSessionDetail"
+              :resolve-agent-name="resolveAgentName"
+              @clear-selected-task="clearSelectedTeamTask"
+              @toggle-selected-task="toggleSelectedTeamTask"
+            />
 
             <WebExplorerPanel 
                v-else-if="isWebExplorerActive"
@@ -469,6 +345,7 @@ import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
 import ToolConfigPanel from './ToolConfigPanel.vue'
+import TeamWorkspacePanel from './TeamWorkspacePanel.vue'
 
 // Traffic reference type
 type TrafficSendType = 'request' | 'response' | 'both'
@@ -1275,8 +1152,8 @@ const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
     allowlist = [...manualSet].filter((tool) => !disabledSet.has(tool))
   } else if (strategy.mode === 'Skills') {
     const allowSet = new Set([...TEAM_SKILLS_BASE_TOOLS, ...fixedSet])
-    if (!disabledSet.has('memory_manager')) {
-      allowSet.add('memory_manager')
+    if (!disabledSet.has('memory')) {
+      allowSet.add('memory')
     }
     if (!disabledSet.has('todos')) {
       allowSet.add('todos')
@@ -2548,13 +2425,39 @@ const inferTeamToolSuccess = (result: unknown): boolean => {
   return true
 }
 
-const findTeamToolCallMessage = (toolCallId?: string | null): AgentMessage | null => {
-  const normalizedId = String(toolCallId || '').trim()
-  if (!normalizedId) return null
+const buildTeamToolCallCompositeKey = (
+  toolCallId?: string | null,
+  memberId?: string | null,
+  memberName?: string | null,
+  streamId?: string | null,
+): string | null => {
+  const normalizedCallId = String(toolCallId || '').trim()
+  if (!normalizedCallId) return null
+  const normalizedMemberId = String(memberId || '').trim()
+  const normalizedMemberName = String(memberName || '').trim()
+  const normalizedStreamId = String(streamId || '').trim()
+  const sessionId = String(activeTeamSessionId.value || '').trim()
+  const ownerKey = normalizedMemberId || normalizedMemberName || normalizedStreamId || 'unknown'
+  return `team:${sessionId}:${ownerKey}:${normalizedCallId}`
+}
+
+const findTeamToolCallMessage = (
+  compositeKey?: string | null,
+  legacyToolCallId?: string | null,
+): AgentMessage | null => {
+  const normalizedComposite = String(compositeKey || '').trim()
+  const normalizedLegacyId = String(legacyToolCallId || '').trim()
+  if (!normalizedComposite && !normalizedLegacyId) return null
   return agentEvents.messages.value.find((item) => {
-    if (item.id === normalizedId) return true
+    if (normalizedComposite && item.id === normalizedComposite) return true
+    const existingComposite = String(item.metadata?.team_tool_call_key || '').trim()
+    if (normalizedComposite && existingComposite.length > 0 && existingComposite === normalizedComposite) {
+      return true
+    }
+    if (!normalizedLegacyId) return false
+    if (item.id === normalizedLegacyId) return true
     const existingCallId = String(item.metadata?.tool_call_id || '').trim()
-    return existingCallId.length > 0 && existingCallId === normalizedId
+    return existingCallId.length > 0 && existingCallId === normalizedLegacyId
   }) || null
 }
 
@@ -2567,12 +2470,19 @@ const upsertTeamToolCallToMainFlow = (params: {
   timestamp?: number
   memberId?: string
   memberName?: string
+  streamId?: string
   phase?: string
   mode: 'start' | 'result'
 }) => {
   const normalizedId = (params.toolCallId || '').trim()
-  const stableId = normalizedId || `team-toolcall:${crypto.randomUUID()}`
-  const existing = findTeamToolCallMessage(normalizedId || stableId)
+  const compositeKey = buildTeamToolCallCompositeKey(
+    normalizedId,
+    params.memberId,
+    params.memberName,
+    params.streamId,
+  )
+  const stableId = compositeKey || normalizedId || `team-toolcall:${crypto.randomUUID()}`
+  const existing = findTeamToolCallMessage(compositeKey || stableId, normalizedId)
   const existingMeta = (existing?.metadata || {}) as Record<string, any>
   const toolName = (params.toolName || existingMeta.tool_name || 'unknown').trim() || 'unknown'
   const nextArgs =
@@ -2588,12 +2498,17 @@ const upsertTeamToolCallToMainFlow = (params: {
     : params.mode === 'result'
       ? inferTeamToolSuccess(nextResult)
       : existingMeta.success !== false
-  const status = params.mode === 'start'
-    ? 'running'
-    : success
-      ? 'completed'
-      : 'failed'
-  const content = params.mode === 'start'
+  const existingStatus = String(existingMeta.status || '').toLowerCase()
+  const hasTerminalStatus = existingStatus === 'completed' || existingStatus === 'failed'
+  const isLateStartAfterTerminal = params.mode === 'start' && hasTerminalStatus
+  const status: 'running' | 'completed' | 'failed' = isLateStartAfterTerminal
+    ? (existingStatus as 'completed' | 'failed')
+    : params.mode === 'start'
+      ? 'running'
+      : success
+        ? 'completed'
+        : 'failed'
+  const content = status === 'running'
     ? `正在调用工具: ${toolName}`
     : `工具调用完成: ${toolName}`
   const timestamp = existing?.timestamp ?? params.timestamp ?? Date.now()
@@ -2604,10 +2519,12 @@ const upsertTeamToolCallToMainFlow = (params: {
     tool_args: nextArgs,
     tool_result: nextResult,
     tool_call_id: normalizedId || stableId,
+    team_tool_call_key: compositeKey || existingMeta.team_tool_call_key,
     status,
     success,
     team_member_id: params.memberId || existingMeta.team_member_id,
     team_member_name: params.memberName || existingMeta.team_member_name,
+    team_stream_id: params.streamId || existingMeta.team_stream_id,
     team_session_id: activeTeamSessionId.value || existingMeta.team_session_id,
   }
 
@@ -2768,6 +2685,7 @@ const handleTeamToolCall = (payload: AgentTeamToolCallEvent) => {
     timestamp: parseTeamMessageTimestamp(payload.timestamp || ''),
     memberId: payload.member_id,
     memberName: payload.member_name,
+    streamId: payload.stream_id,
     phase: payload.phase,
     mode: 'start',
   })
@@ -2782,6 +2700,7 @@ const handleTeamToolResult = (payload: AgentTeamToolResultEvent) => {
     timestamp: parseTeamMessageTimestamp(payload.timestamp || ''),
     memberId: payload.member_id,
     memberName: payload.member_name,
+    streamId: payload.stream_id,
     phase: payload.phase,
     mode: 'result',
   })
