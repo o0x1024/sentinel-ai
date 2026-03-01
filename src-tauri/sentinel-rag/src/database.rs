@@ -748,6 +748,45 @@ impl SqliteVectorManager {
             .ok_or_else(|| anyhow!("SQLite vector store not initialized"))
     }
 
+    async fn rollback_stale_transaction(&self, conn: &Connection) -> Result<()> {
+        let result = conn
+            .call(|conn| match conn.execute_batch("ROLLBACK") {
+                Ok(()) => Ok(true),
+                Err(e) => {
+                    let msg = e.to_string().to_lowercase();
+                    if msg.contains("no transaction is active") {
+                        Ok(false)
+                    } else {
+                        Err(e)
+                    }
+                }
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to reset sqlite transaction state: {}", e))?;
+
+        if result {
+            warn!("Rolled back stale sqlite transaction before vector store initialization");
+        }
+        Ok(())
+    }
+
+    async fn reopen_connection(&self) -> Result<Connection> {
+        register_sqlite_vec_extension();
+        let conn = Connection::open(&self.database_path)
+            .await
+            .map_err(|e| anyhow!("Failed to reopen sqlite vector DB: {}", e))?;
+
+        let mut guard = self.conn.write().await;
+        *guard = Some(conn.clone());
+        Ok(conn)
+    }
+
+    fn is_nested_transaction_error(message: &str) -> bool {
+        message
+            .to_lowercase()
+            .contains("cannot start a transaction within a transaction")
+    }
+
     async fn ensure_openai_store(
         &self,
         embedding_model: &OpenAiEmbedding,
@@ -761,9 +800,31 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                let store = SqliteVectorStore::new(conn, embedding_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to initialize sqlite vector store: {}", e))?;
+                self.rollback_stale_transaction(&conn).await?;
+                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
+                    Ok(store) => store,
+                    Err(e) => {
+                        let message = e.to_string();
+                        if Self::is_nested_transaction_error(&message) {
+                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
+                            let reopened = self.reopen_connection().await?;
+                            self.rollback_stale_transaction(&reopened).await?;
+                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
+                                |retry_err| {
+                                    anyhow!(
+                                        "Failed to initialize sqlite vector store after retry: {}",
+                                        retry_err
+                                    )
+                                },
+                            )?
+                        } else {
+                            return Err(anyhow!(
+                                "Failed to initialize sqlite vector store: {}",
+                                message
+                            ));
+                        }
+                    }
+                };
                 *guard = Some(ProviderStore::OpenAi(store.clone()));
                 Ok(store)
             }
@@ -783,9 +844,31 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                let store = SqliteVectorStore::new(conn, embedding_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to initialize sqlite vector store: {}", e))?;
+                self.rollback_stale_transaction(&conn).await?;
+                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
+                    Ok(store) => store,
+                    Err(e) => {
+                        let message = e.to_string();
+                        if Self::is_nested_transaction_error(&message) {
+                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
+                            let reopened = self.reopen_connection().await?;
+                            self.rollback_stale_transaction(&reopened).await?;
+                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
+                                |retry_err| {
+                                    anyhow!(
+                                        "Failed to initialize sqlite vector store after retry: {}",
+                                        retry_err
+                                    )
+                                },
+                            )?
+                        } else {
+                            return Err(anyhow!(
+                                "Failed to initialize sqlite vector store: {}",
+                                message
+                            ));
+                        }
+                    }
+                };
                 *guard = Some(ProviderStore::Ollama(store.clone()));
                 Ok(store)
             }
@@ -805,9 +888,31 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                let store = SqliteVectorStore::new(conn, embedding_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to initialize sqlite vector store: {}", e))?;
+                self.rollback_stale_transaction(&conn).await?;
+                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
+                    Ok(store) => store,
+                    Err(e) => {
+                        let message = e.to_string();
+                        if Self::is_nested_transaction_error(&message) {
+                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
+                            let reopened = self.reopen_connection().await?;
+                            self.rollback_stale_transaction(&reopened).await?;
+                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
+                                |retry_err| {
+                                    anyhow!(
+                                        "Failed to initialize sqlite vector store after retry: {}",
+                                        retry_err
+                                    )
+                                },
+                            )?
+                        } else {
+                            return Err(anyhow!(
+                                "Failed to initialize sqlite vector store: {}",
+                                message
+                            ));
+                        }
+                    }
+                };
                 *guard = Some(ProviderStore::Cohere(store.clone()));
                 Ok(store)
             }
@@ -827,9 +932,31 @@ impl SqliteVectorManager {
                 "Vector store provider mismatch. Restart RAG service after provider change."
             )),
             None => {
-                let store = SqliteVectorStore::new(conn, embedding_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to initialize sqlite vector store: {}", e))?;
+                self.rollback_stale_transaction(&conn).await?;
+                let store = match SqliteVectorStore::new(conn.clone(), embedding_model).await {
+                    Ok(store) => store,
+                    Err(e) => {
+                        let message = e.to_string();
+                        if Self::is_nested_transaction_error(&message) {
+                            warn!("Detected nested sqlite transaction during vector store init, reopening connection and retrying once");
+                            let reopened = self.reopen_connection().await?;
+                            self.rollback_stale_transaction(&reopened).await?;
+                            SqliteVectorStore::new(reopened, embedding_model).await.map_err(
+                                |retry_err| {
+                                    anyhow!(
+                                        "Failed to initialize sqlite vector store after retry: {}",
+                                        retry_err
+                                    )
+                                },
+                            )?
+                        } else {
+                            return Err(anyhow!(
+                                "Failed to initialize sqlite vector store: {}",
+                                message
+                            ));
+                        }
+                    }
+                };
                 *guard = Some(ProviderStore::Gemini(store.clone()));
                 Ok(store)
             }
