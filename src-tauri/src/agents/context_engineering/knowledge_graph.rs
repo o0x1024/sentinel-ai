@@ -3,7 +3,7 @@
 //! Nodes represent memory entries (facts, decisions, todos, reflections).
 //! Edges capture semantic relationships discovered during ingestion.
 //! The graph lives in-process and is rebuilt per execution from the
-//! run-state memory items + any cross-session items pulled from LanceDB.
+//! run-state memory items + any cross-session items pulled from SQLite vector store.
 
 use std::collections::HashMap;
 
@@ -481,21 +481,21 @@ mod tests {
         let items = vec![
             (
                 "1".into(),
-                "Use LanceDB for vector storage".into(),
+                "Use SQLite for vector storage".into(),
                 "decision".into(),
                 4u8,
                 1000i64,
             ),
             (
                 "2".into(),
-                "LanceDB supports HNSW index".into(),
+                "SQLite vector index supports nearest-neighbor search".into(),
                 "fact".into(),
                 3,
                 2000,
             ),
             (
                 "3".into(),
-                "Remove LanceDB dependency".into(),
+                "Remove old vector DB dependency".into(),
                 "decision".into(),
                 3,
                 3000,
@@ -506,7 +506,7 @@ mod tests {
         assert!(kg.node_count() > 3); // memories + entities
         assert!(kg.edge_count() > 0);
 
-        // "1" and "2" share LanceDB entity → should be related
+        // "1" and "2" share vector-store entity → should be related
         let related = kg.related_memories("1");
         assert!(!related.is_empty());
 
@@ -552,8 +552,8 @@ mod tests {
     #[test]
     fn entity_extraction() {
         let entities =
-            extract_entities("Use `LanceDB` for storage at /tmp/data with MyConfig setting");
-        assert!(entities.iter().any(|e| e.contains("LanceDB")));
+            extract_entities("Use `SQLite` for storage at /tmp/data with MyConfig setting");
+        assert!(entities.iter().any(|e| e.contains("SQLite")));
         assert!(entities.iter().any(|e| e.contains("MyConfig")));
         assert!(entities.iter().any(|e| e.contains("/tmp/data")));
     }

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::chunker::DocumentChunker;
 use crate::config::{EmbeddingConfig, RagConfig};
-use crate::database::LanceDbManager;
+use crate::database::SqliteVectorManager;
 use crate::db::RagDatabase;
 use crate::embeddings::{create_reranking_provider, RerankingManager};
 use crate::models::{
@@ -15,11 +15,11 @@ use crate::models::{
     QueryResult, RagQueryRequest, RagQueryResponse, RagStatus,
 };
 
-/// RAG服务主类 - 使用 Rig + LanceDB
+/// RAG服务主类 - 使用 Rig + SQLite
 pub struct RagService<D: RagDatabase> {
     _config: RagConfig,
     database: Arc<D>,
-    vector_store: Arc<LanceDbManager>,
+    vector_store: Arc<SqliteVectorManager>,
     chunker: DocumentChunker,
     ingestion_status: RwLock<HashMap<String, IngestionStatus>>,
     reranker: Option<RerankingManager>,
@@ -28,11 +28,11 @@ pub struct RagService<D: RagDatabase> {
 impl<D: RagDatabase> RagService<D> {
     /// 创建新的RAG服务实例
     pub async fn new(config: RagConfig, database: Arc<D>) -> Result<Self> {
-        info!("初始化RAG服务 (使用 Rig + LanceDB)");
+        info!("初始化RAG服务 (使用 Rig + SQLite)");
 
         let chunker = DocumentChunker::new(config.clone());
 
-        // Initialize LanceDB vector store
+        // Initialize SQLite vector store
         let db_path = config
             .database_path
             .as_ref()
@@ -52,7 +52,10 @@ impl<D: RagDatabase> RagService<D> {
                 let app_data_dir = dirs::data_dir()
                     .unwrap_or_else(|| std::path::PathBuf::from("."))
                     .join("sentinel-ai");
-                app_data_dir.join("lancedb").to_string_lossy().to_string()
+                app_data_dir
+                    .join("rag_vectors.db")
+                    .to_string_lossy()
+                    .to_string()
             });
 
         // Build embedding config for vector store
@@ -64,9 +67,9 @@ impl<D: RagDatabase> RagService<D> {
             dimensions: config.embedding_dimensions,
         };
 
-        info!("RAG服务使用LanceDB路径: {}", db_path);
+        info!("RAG服务使用SQLite路径: {}", db_path);
 
-        let vector_store = Arc::new(LanceDbManager::new(db_path, embedding_config));
+        let vector_store = Arc::new(SqliteVectorManager::new(db_path, embedding_config));
         vector_store.initialize().await?;
 
         let mut reranker: Option<RerankingManager> = None;
@@ -379,7 +382,7 @@ impl<D: RagDatabase> RagService<D> {
             "default".to_string()
         };
 
-        // Insert into vector store using Rig + LanceDB
+        // Insert into vector store using Rig + SQLite
         let chunks_created = match self
             .vector_store
             .insert_chunks(&collection_name, chunks.clone())
@@ -421,7 +424,7 @@ impl<D: RagDatabase> RagService<D> {
                     &collection_id,
                     &chunk.content,
                     index as i32,
-                    None, // No embedding in SQL - stored in LanceDB
+                    None, // No embedding in SQL - stored in SQLite vector table
                     &metadata_json,
                 )
                 .await
@@ -889,9 +892,9 @@ impl<D: RagDatabase> RagService<D> {
         Ok(expanded_results)
     }
 
-    /// 查询相似文档 - 使用 Rig + LanceDB
+    /// 查询相似文档 - 使用 Rig + SQLite
     pub async fn query(&self, request: RagQueryRequest) -> Result<RagQueryResponse> {
-        info!("执行RAG查询 (使用 Rig + LanceDB): {}", request.query);
+        info!("执行RAG查询 (使用 Rig + SQLite): {}", request.query);
 
         let start_time = std::time::Instant::now();
 
@@ -913,7 +916,7 @@ impl<D: RagDatabase> RagService<D> {
 
         let top_k = request.top_k.unwrap_or(5);
 
-        // 使用 Rig + LanceDB 进行语义搜索
+        // 使用 Rig + SQLite 进行语义搜索
         let mut query_results = self
             .vector_store
             .search_similar(&collection_name, &request.query, top_k)

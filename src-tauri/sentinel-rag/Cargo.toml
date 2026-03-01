@@ -19,11 +19,6 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
-# LanceDB and vector search
-lancedb = "0.23.1"
-arrow-array = "56.2.0"
-arrow-schema = "56.2.0"
-
 # HTTP client for embeddings
 reqwest = { version = "0.12", features = ["json"] }
 
@@ -33,10 +28,11 @@ rand = "0.9"
 log = "0.4"
 dirs = "5.0"
 
-rig-core = { workspace = true }
-rig-lancedb = { workspace = true }
-
-#  rig-lancedb= "0.2.29"
+rig-core = { version = "0.31.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
+rig-sqlite = "0.1.34"
+tokio-rusqlite = { version = "0.6.0", features = ["bundled"], default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1"
 regex = "1.11"
 pulldown-cmark = "0.12"
 futures-util = "0.3"

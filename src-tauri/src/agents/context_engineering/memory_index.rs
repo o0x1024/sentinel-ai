@@ -1,4 +1,4 @@
-//! Memory index with hybrid retrieval (keyword + vector via LanceDB)
+//! Memory index with hybrid retrieval (keyword + vector via SQLite)
 //! and knowledge-graph-based associative expansion.
 
 use anyhow::Result;
@@ -60,7 +60,7 @@ pub fn ingest_memory_items(
     }
 }
 
-/// Ingest memory items and persist them to LanceDB for cross-session retrieval.
+/// Ingest memory items and persist them to SQLite for cross-session retrieval.
 pub async fn ingest_memory_items_persistent(
     app_handle: &AppHandle,
     state: &mut ContextRunState,
@@ -130,7 +130,7 @@ pub fn retrieve_memory_items(
 }
 
 // ---------------------------------------------------------------------------
-// Retrieval — hybrid (keyword + vector via LanceDB)
+// Retrieval — hybrid (keyword + vector via SQLite)
 // ---------------------------------------------------------------------------
 
 pub async fn retrieve_memory_items_hybrid(
@@ -162,7 +162,7 @@ pub async fn retrieve_memory_items_hybrid(
         })
         .collect();
 
-    // 3) Get vector scores from LanceDB
+    // 3) Get vector scores from SQLite vector store
     let vector_results = match vector_retrieve(app_handle, &query.query, query.top_k * 2).await {
         Ok(results) => results,
         Err(e) => {
@@ -316,7 +316,7 @@ fn build_kg_from_items(items: &[ContextMemoryItem]) -> MemoryKnowledgeGraph {
 }
 
 // ---------------------------------------------------------------------------
-// Vector store integration (LanceDB via RAG service)
+// Vector store integration (SQLite via RAG service)
 // ---------------------------------------------------------------------------
 
 async fn vector_retrieve(

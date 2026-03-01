@@ -68,7 +68,7 @@ fn default_chunk_expansion_after() -> usize {
 impl Default for RagConfig {
     fn default() -> Self {
         Self {
-            database_path: Some(PathBuf::from("AppData/lancedb")),
+            database_path: Some(PathBuf::from("AppData/rag_vectors.db")),
             chunk_size_chars: 1500,
             chunk_overlap_chars: 150,
             top_k: 5,

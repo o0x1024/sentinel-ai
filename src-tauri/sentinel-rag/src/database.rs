@@ -1,35 +1,74 @@
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, HashSet};
+use rig::OneOrMany;
+use rig::client::{EmbeddingsClient, ProviderClient};
+use rig::embeddings::embedding::{Embedding, EmbeddingModel};
+use rig::vector_store::request::{SearchFilter, VectorSearchRequest};
+use rig::vector_store::VectorStoreIndex;
+use rig_sqlite::{
+    Column, ColumnValue, SqliteSearchFilter, SqliteVectorStore, SqliteVectorStoreTable,
+};
+use rusqlite::ffi::{sqlite3, sqlite3_api_routines, sqlite3_auto_extension};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Once;
 use tokio::sync::RwLock;
+use tokio_rusqlite::Connection;
 use tracing::{error, info, warn};
 
 use crate::config::EmbeddingConfig;
 use crate::models::{DocumentChunk, QueryResult};
 
-use arrow_array::{
-    Array, ArrayRef, FixedSizeListArray, Float64Array, Int64Array, RecordBatch, StringArray,
-};
-use futures_util::StreamExt;
-use lancedb::arrow::arrow_schema::{DataType, Field, Fields, Schema};
-use lancedb::query::ExecutableQuery;
-use lancedb::query::QueryBase;
-use lancedb::{connect, Connection};
-use rig::client::EmbeddingsClient;
-use rig::client::ProviderClient;
-use rig::embeddings::embedding::EmbeddingModel;
-use rig::vector_store::VectorSearchRequest;
-use rig::vector_store::VectorStoreIndex;
-use rig_lancedb::{LanceDbVectorIndex, SearchParams};
-use std::sync::Arc;
+type SqliteExtensionFn =
+    unsafe extern "C" fn(*mut sqlite3, *mut *mut i8, *const sqlite3_api_routines) -> i32;
+static SQLITE_VEC_REGISTER: Once = Once::new();
 
-pub struct LanceDbManager {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RagVectorRow {
+    id: String,
+    collection_name: String,
+    source_id: String,
+    chunk_index: String,
+    definition: String,
+}
+
+impl SqliteVectorStoreTable for RagVectorRow {
+    fn name() -> &'static str {
+        "rag_vectors"
+    }
+
+    fn schema() -> Vec<Column> {
+        vec![
+            Column::new("id", "TEXT PRIMARY KEY"),
+            Column::new("collection_name", "TEXT").indexed(),
+            Column::new("source_id", "TEXT").indexed(),
+            Column::new("chunk_index", "TEXT"),
+            Column::new("definition", "TEXT"),
+        ]
+    }
+
+    fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn column_values(&self) -> Vec<(&'static str, Box<dyn ColumnValue>)> {
+        vec![
+            ("id", Box::new(self.id.clone())),
+            ("collection_name", Box::new(self.collection_name.clone())),
+            ("source_id", Box::new(self.source_id.clone())),
+            ("chunk_index", Box::new(self.chunk_index.clone())),
+            ("definition", Box::new(self.definition.clone())),
+        ]
+    }
+}
+
+pub struct SqliteVectorManager {
     database_path: String,
     embedding_config: EmbeddingConfig,
     conn: RwLock<Option<Connection>>,
 }
 
-impl LanceDbManager {
+impl SqliteVectorManager {
     pub fn new(database_path: String, embedding_config: EmbeddingConfig) -> Self {
         Self {
             database_path,
@@ -43,12 +82,17 @@ impl LanceDbManager {
         if let Some(parent) = db_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        let conn = connect(&self.database_path).execute().await?;
-        {
-            let mut guard = self.conn.write().await;
-            *guard = Some(conn);
-        }
-        info!("LanceDB connected at: {}", self.database_path);
+
+        register_sqlite_vec_extension();
+
+        let conn = Connection::open(&self.database_path)
+            .await
+            .map_err(|e| anyhow!("Failed to open sqlite vector DB: {}", e))?;
+
+        let mut guard = self.conn.write().await;
+        *guard = Some(conn);
+
+        info!("SQLite vector store connected at: {}", self.database_path);
         Ok(())
     }
 
@@ -57,7 +101,7 @@ impl LanceDbManager {
         _collection_name: &str,
         _embedding_dim: usize,
     ) -> Result<()> {
-        info!("Collection will be created on first insert");
+        // Collection rows are created on first insert.
         Ok(())
     }
 
@@ -76,7 +120,6 @@ impl LanceDbManager {
             provider, self.embedding_config.model
         );
 
-        // Dispatch to provider-specific implementation
         match provider.as_str() {
             "ollama" => self.insert_chunks_ollama(collection_name, chunks).await,
             "openai" => self.insert_chunks_openai(collection_name, chunks).await,
@@ -107,16 +150,15 @@ impl LanceDbManager {
             .base_url
             .as_deref()
             .unwrap_or("http://localhost:11434");
-        info!("Using Ollama embedding service at: {}", base_url);
 
-        let client = rig::providers::ollama::Client::builder()
+        let client = rig::providers::ollama::Client::<rig::http_client::ReqwestClient>::builder()
             .api_key(rig::client::Nothing)
             .base_url(base_url)
             .build()
             .map_err(|e| anyhow!("Failed to create Ollama client: {}", e))?;
 
         let dimensions = self.embedding_config.dimensions.unwrap_or(768);
-        let embedding_model: rig::providers::ollama::EmbeddingModel<reqwest::Client> =
+        let embedding_model: rig::providers::ollama::EmbeddingModel<rig::http_client::ReqwestClient> =
             rig::providers::ollama::EmbeddingModel::new(
                 client,
                 &self.embedding_config.model,
@@ -132,14 +174,7 @@ impl LanceDbManager {
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .ok_or_else(|| anyhow!("OpenAI API key not configured"))?;
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client("OPENAI_API_KEY", "https://api.openai.com/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
             .await
@@ -156,11 +191,10 @@ impl LanceDbManager {
             .clone()
             .or_else(|| std::env::var("COHERE_API_KEY").ok())
             .ok_or_else(|| anyhow!("Cohere API key not configured"))?;
+
         std::env::set_var("COHERE_API_KEY", &api_key_str);
         let client = rig::providers::cohere::Client::from_env();
-        // Cohere requires input_type parameter: "search_document" for indexing
-        let embedding_model =
-            client.embedding_model(&self.embedding_config.model, "search_document");
+        let embedding_model = client.embedding_model(&self.embedding_config.model, "search_document");
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
             .await
     }
@@ -170,8 +204,7 @@ impl LanceDbManager {
         _collection_name: &str,
         _chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        // Anthropic doesn't have native embedding models
-        warn!("Anthropic doesn't provide embedding models. Consider using OpenAI or other providers for embeddings.");
+        warn!("Anthropic doesn't provide embedding models.");
         Err(anyhow!("Anthropic doesn't support embedding models. Please use OpenAI, Cohere, or other embedding providers."))
     }
 
@@ -187,7 +220,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
             .or_else(|| std::env::var("GEMINI_API_KEY").ok())
             .ok_or_else(|| anyhow!("Google/Gemini API key not configured"))?;
-        std::env::set_var("GOOGLE_API_KEY", &api_key_str);
+
+        std::env::set_var("GEMINI_API_KEY", &api_key_str);
         let client = rig::providers::gemini::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
@@ -199,18 +233,7 @@ impl LanceDbManager {
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        // DeepSeek uses OpenAI-compatible API
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
-            .ok_or_else(|| anyhow!("DeepSeek API key not configured"))?;
-
-        // For OpenAI-compatible APIs, we use OpenAI client
-        // Note: Custom base URLs need to be set via environment or client configuration
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client("DEEPSEEK_API_KEY", "https://api.deepseek.com/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
             .await
@@ -221,16 +244,7 @@ impl LanceDbManager {
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        // Moonshot uses OpenAI-compatible API
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-            .ok_or_else(|| anyhow!("Moonshot API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client("MOONSHOT_API_KEY", "https://api.moonshot.cn/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
             .await
@@ -241,16 +255,8 @@ impl LanceDbManager {
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        // OpenRouter uses OpenAI-compatible API
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-            .ok_or_else(|| anyhow!("OpenRouter API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client =
+            self.openai_compatible_client("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
             .await
@@ -261,16 +267,10 @@ impl LanceDbManager {
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        // ModelScope may use OpenAI-compatible API or custom implementation
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("MODELSCOPE_API_KEY").ok())
-            .ok_or_else(|| anyhow!("ModelScope API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client(
+            "MODELSCOPE_API_KEY",
+            "https://api-inference.modelscope.cn/v1",
+        )?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.insert_chunks_impl(collection_name, chunks, embedding_model)
             .await
@@ -281,283 +281,20 @@ impl LanceDbManager {
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
     ) -> Result<usize> {
-        let base_url = self
-            .embedding_config
-            .base_url
-            .as_deref()
-            .unwrap_or("http://localhost:1234");
-        info!("Using LM Studio embedding service at: {}", base_url);
-
-        let ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
-        let source_ids: Vec<String> = chunks.iter().map(|c| c.source_id.clone()).collect();
-        let chunk_indices: Vec<i64> = chunks.iter().map(|c| c.chunk_index as i64).collect();
-        let definitions: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-        let file_names: Vec<String> = chunks
-            .iter()
-            .map(|c| c.metadata.file_name.clone())
-            .collect();
-        let file_paths: Vec<String> = chunks
-            .iter()
-            .map(|c| c.metadata.file_path.clone())
-            .collect();
-        let start_chars: Vec<i64> = chunks
-            .iter()
-            .map(|c| c.metadata.chunk_start_char as i64)
-            .collect();
-        let end_chars: Vec<i64> = chunks
-            .iter()
-            .map(|c| c.metadata.chunk_end_char as i64)
-            .collect();
-
-        // Call LM Studio embedding API
-        let embeddings = self.call_lmstudio_embedding(&definitions).await?;
-
-        if embeddings.len() != definitions.len() {
-            return Err(anyhow!(
-                "Embedding count mismatch: expected {}, got {}",
-                definitions.len(),
-                embeddings.len()
-            ));
-        }
-        let embedding_dim = embeddings.first().map(|e| e.len()).unwrap_or(0);
-        if embedding_dim == 0 {
-            return Err(anyhow!("Embedding dims is 0"));
-        }
-        let mut flat: Vec<f64> = Vec::with_capacity(definitions.len() * embedding_dim);
-        for e in &embeddings {
-            flat.extend(e.iter().map(|&f| f as f64));
-        }
-
-        let id_arr = Arc::new(StringArray::from(ids)) as ArrayRef;
-        let source_id_arr = Arc::new(StringArray::from(source_ids)) as ArrayRef;
-        let chunk_index_arr = Arc::new(Int64Array::from(chunk_indices)) as ArrayRef;
-        let definition_arr = Arc::new(StringArray::from(definitions)) as ArrayRef;
-        let file_name_arr = Arc::new(StringArray::from(file_names)) as ArrayRef;
-        let file_path_arr = Arc::new(StringArray::from(file_paths)) as ArrayRef;
-        let start_char_arr = Arc::new(Int64Array::from(start_chars)) as ArrayRef;
-        let end_char_arr = Arc::new(Int64Array::from(end_chars)) as ArrayRef;
-        let flat_arr = Arc::new(Float64Array::from(flat)) as ArrayRef;
-        let list_size_i32: i32 = embedding_dim.try_into().unwrap_or(0);
-        let child_field = Arc::new(Field::new("item", DataType::Float64, true));
-        let embedding_arr = Arc::new(
-            FixedSizeListArray::try_new(child_field, list_size_i32, flat_arr.clone(), None)
-                .map_err(|e| anyhow!(e.to_string()))?,
-        ) as ArrayRef;
-        let schema = Arc::new(Schema::new(Fields::from(vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new("source_id", DataType::Utf8, true),
-            Field::new("chunk_index", DataType::Int64, true),
-            Field::new("definition", DataType::Utf8, false),
-            Field::new(
-                "embedding",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float64, true)),
-                    list_size_i32,
-                ),
-                false,
-            ),
-            Field::new("file_name", DataType::Utf8, true),
-            Field::new("file_path", DataType::Utf8, true),
-            Field::new("start_char", DataType::Int64, true),
-            Field::new("end_char", DataType::Int64, true),
-        ])));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                id_arr,
-                source_id_arr,
-                chunk_index_arr,
-                definition_arr,
-                embedding_arr,
-                file_name_arr,
-                file_path_arr,
-                start_char_arr,
-                end_char_arr,
-            ],
-        )
-        .map_err(|e| anyhow!(e.to_string()))?;
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
-
-        // Check if table exists and validate schema
-        if let Ok(existing_table) = conn.open_table(collection_name).execute().await {
-            // Validate embedding dimensions
-            let existing_schema = existing_table.schema().await?;
-            if let Ok(embedding_field) = existing_schema.field_with_name("embedding") {
-                if let DataType::FixedSizeList(_, existing_dim) = embedding_field.data_type() {
-                    if *existing_dim != list_size_i32 {
-                        return Err(anyhow!(
-                            "Embedding dimension mismatch: Collection '{}' was created with dimension {} but current model generates dimension {}. \
-                            Please either: 1) Use the same embedding model (check RAG settings), or 2) Delete this collection and recreate it with the new model.",
-                            collection_name, existing_dim, list_size_i32
-                        ));
-                    }
-                }
-            }
-            // Table exists, append data
-            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-            existing_table
-                .add(Box::new(reader))
-                .execute()
-                .await
-                .map_err(|e| anyhow!("Failed to insert into vector store: {}", e))?;
-        } else {
-            // Create new table with data
-            let reader =
-                arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema.clone());
-            conn.create_table(collection_name, Box::new(reader))
-                .execute()
-                .await?;
-        }
-
-        // Get final count
-        let table = conn.open_table(collection_name).execute().await?;
-        let count = table.count_rows(None).await.unwrap_or(0) as usize;
-        info!(
-            "Inserted {} chunks into collection '{}' (total rows: {})",
-            chunks.len(),
-            collection_name,
-            count
-        );
-        Ok(chunks.len())
+        let client = self.openai_compatible_client("OPENAI_API_KEY", "http://localhost:1234/v1")?;
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.insert_chunks_impl(collection_name, chunks, embedding_model)
+            .await
     }
 
-    async fn call_lmstudio_embedding(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let base_url_config = self
-            .embedding_config
-            .base_url
-            .as_deref()
-            .unwrap_or("http://localhost:1234");
-        // Ensure base_url does not end with /v1 or / to avoid duplication when appending /v1/embeddings
-        let base_url = base_url_config
-            .trim_end_matches('/')
-            .trim_end_matches("/v1")
-            .trim_end_matches('/');
-        // Apply global proxy configuration
-        let builder = reqwest::Client::builder();
-        let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
-        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Content-Type", "application/json".parse().unwrap());
-        if let Some(api_key) = &self.embedding_config.api_key {
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", api_key).parse().unwrap(),
-            );
-        }
-
-        let input = if texts.len() == 1 {
-            serde_json::Value::String(texts[0].clone())
-        } else {
-            serde_json::Value::Array(
-                texts
-                    .iter()
-                    .map(|t| serde_json::Value::String(t.clone()))
-                    .collect(),
-            )
-        };
-        let payload = serde_json::json!({ "model": self.embedding_config.model, "input": input });
-
-        let mut retry_count = 0;
-        let max_retries = 3;
-        loop {
-            let response = client
-                .post(format!("{}/v1/embeddings", base_url))
-                .headers(headers.clone())
-                .json(&payload)
-                .send()
-                .await;
-
-            match response {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let response_text = resp.text().await?;
-                    if status.is_success() {
-                        let result: serde_json::Value = serde_json::from_str(&response_text)?;
-                        if let Some(data) = result.get("data").and_then(|d| d.as_array()) {
-                            let mut out = Vec::new();
-                            for item in data {
-                                if let Some(ev) = item.get("embedding").and_then(|v| v.as_array()) {
-                                    let embedding: Vec<f32> = ev
-                                        .iter()
-                                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                                        .collect();
-                                    out.push(embedding);
-                                } else {
-                                    return Err(anyhow!(
-                                        "Invalid embedding format in LM Studio response"
-                                    ));
-                                }
-                            }
-                            return Ok(out);
-                        } else {
-                            return Err(anyhow!("LM Studio response data invalid"));
-                        }
-                    } else {
-                        error!(
-                            "LM Studio request failed (status: {}): {}",
-                            status, response_text
-                        );
-                        return Err(anyhow!(
-                            "LM Studio embedding request failed ({}): {}",
-                            status,
-                            response_text
-                        ));
-                    }
-                }
-                Err(e) => {
-                    retry_count += 1;
-                    if retry_count >= max_retries {
-                        error!(
-                            "Failed to call LM Studio after {} retries: {}",
-                            max_retries, e
-                        );
-                        return Err(anyhow!("Failed to call LM Studio embedding API: {}. Please check if LM Studio is running at {}", e, base_url));
-                    }
-                    let delay = std::time::Duration::from_secs(2u64.pow(retry_count));
-                    warn!(
-                        "LM Studio request failed (attempt {}/{}): {}. Retrying in {:?}...",
-                        retry_count, max_retries, e, delay
-                    );
-                    tokio::time::sleep(delay).await;
-                }
-            }
-        }
-    }
-
-    async fn insert_chunks_impl<M: EmbeddingModel>(
+    async fn insert_chunks_impl<M: EmbeddingModel + Sync + Send + Clone + 'static>(
         &self,
         collection_name: &str,
         chunks: Vec<DocumentChunk>,
         embedding_model: M,
     ) -> Result<usize> {
-        let ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
-        let source_ids: Vec<String> = chunks.iter().map(|c| c.source_id.clone()).collect();
-        let chunk_indices: Vec<i64> = chunks.iter().map(|c| c.chunk_index as i64).collect();
         let definitions: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
-        let file_names: Vec<String> = chunks
-            .iter()
-            .map(|c| c.metadata.file_name.clone())
-            .collect();
-        let file_paths: Vec<String> = chunks
-            .iter()
-            .map(|c| c.metadata.file_path.clone())
-            .collect();
-        let start_chars: Vec<i64> = chunks
-            .iter()
-            .map(|c| c.metadata.chunk_start_char as i64)
-            .collect();
-        let end_chars: Vec<i64> = chunks
-            .iter()
-            .map(|c| c.metadata.chunk_end_char as i64)
-            .collect();
 
-        // Retry embedding with exponential backoff
         let mut retry_count = 0;
         let max_retries = 3;
         let embeddings = loop {
@@ -570,7 +307,11 @@ impl LanceDbManager {
                             "Failed to generate embeddings after {} retries: {}",
                             max_retries, e
                         );
-                        return Err(anyhow!("Failed to generate embeddings: {}. Please check if embedding service ({}) is running", e, self.embedding_config.provider));
+                        return Err(anyhow!(
+                            "Failed to generate embeddings: {}. Please check if embedding service ({}) is running",
+                            e,
+                            self.embedding_config.provider
+                        ));
                     }
                     let delay = std::time::Duration::from_secs(2u64.pow(retry_count));
                     warn!(
@@ -581,6 +322,7 @@ impl LanceDbManager {
                 }
             }
         };
+
         if embeddings.len() != definitions.len() {
             return Err(anyhow!(
                 "Embedding count mismatch: expected {}, got {}",
@@ -588,115 +330,24 @@ impl LanceDbManager {
                 embeddings.len()
             ));
         }
-        let embedding_dim = embeddings.first().map(|e| e.vec.len()).unwrap_or(0);
-        if embedding_dim == 0 {
-            return Err(anyhow!("Embedding dims is 0"));
-        }
-        let mut flat: Vec<f64> = Vec::with_capacity(definitions.len() * embedding_dim);
-        for e in embeddings {
-            flat.extend_from_slice(&e.vec);
-        }
 
-        let id_arr = Arc::new(StringArray::from(ids)) as ArrayRef;
-        let source_id_arr = Arc::new(StringArray::from(source_ids)) as ArrayRef;
-        let chunk_index_arr = Arc::new(Int64Array::from(chunk_indices)) as ArrayRef;
-        let definition_arr = Arc::new(StringArray::from(definitions)) as ArrayRef;
-        let file_name_arr = Arc::new(StringArray::from(file_names)) as ArrayRef;
-        let file_path_arr = Arc::new(StringArray::from(file_paths)) as ArrayRef;
-        let start_char_arr = Arc::new(Int64Array::from(start_chars)) as ArrayRef;
-        let end_char_arr = Arc::new(Int64Array::from(end_chars)) as ArrayRef;
-        let flat_arr = Arc::new(Float64Array::from(flat)) as ArrayRef;
-        let list_size_i32: i32 = embedding_dim.try_into().unwrap_or(0);
-        let child_field = Arc::new(Field::new("item", DataType::Float64, true));
-        let embedding_arr = Arc::new(
-            FixedSizeListArray::try_new(child_field, list_size_i32, flat_arr.clone(), None)
-                .map_err(|e| anyhow!(e.to_string()))?,
-        ) as ArrayRef;
-        let schema = Arc::new(Schema::new(Fields::from(vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new("source_id", DataType::Utf8, true),
-            Field::new("chunk_index", DataType::Int64, true),
-            Field::new("definition", DataType::Utf8, false),
-            Field::new(
-                "embedding",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float64, true)),
-                    list_size_i32,
-                ),
-                false,
-            ),
-            Field::new("file_name", DataType::Utf8, true),
-            Field::new("file_path", DataType::Utf8, true),
-            Field::new("start_char", DataType::Int64, true),
-            Field::new("end_char", DataType::Int64, true),
-        ])));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                id_arr,
-                source_id_arr,
-                chunk_index_arr,
-                definition_arr,
-                embedding_arr,
-                file_name_arr,
-                file_path_arr,
-                start_char_arr,
-                end_char_arr,
-            ],
-        )
-        .map_err(|e| anyhow!(e.to_string()))?;
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
+        let conn = self.connection().await?;
+        let store = SqliteVectorStore::<M, RagVectorRow>::new(conn, &embedding_model)
+            .await
+            .map_err(|e| anyhow!("Failed to initialize sqlite vector store: {}", e))?;
 
-        // Check if table exists and validate schema
-        if let Ok(existing_table) = conn.open_table(collection_name).execute().await {
-            // Table exists, validate embedding dimensions
-            let existing_schema = existing_table.schema().await?;
+        let docs = chunks_to_rows(collection_name, chunks)
+            .into_iter()
+            .zip(embeddings.into_iter())
+            .map(|(row, embedding)| (row, OneOrMany::one(embedding)))
+            .collect::<Vec<(RagVectorRow, OneOrMany<Embedding>)>>();
 
-            // Extract embedding dimension from existing schema
-            if let Ok(embedding_field) = existing_schema.field_with_name("embedding") {
-                if let DataType::FixedSizeList(_, existing_dim) = embedding_field.data_type() {
-                    if *existing_dim != list_size_i32 {
-                        return Err(anyhow!(
-                            "Embedding dimension mismatch: Collection '{}' was created with dimension {} but current model generates dimension {}. \
-                            Please either: 1) Use the same embedding model (check RAG settings), or 2) Delete this collection and recreate it with the new model.",
-                            collection_name, existing_dim, list_size_i32
-                        ));
-                    }
-                }
-            }
+        store
+            .add_rows(docs.clone())
+            .await
+            .map_err(|e| anyhow!("Failed to insert into sqlite vector store: {}", e))?;
 
-            // Dimensions match, add the data
-            let reader = arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-            existing_table
-                .add(Box::new(reader))
-                .execute()
-                .await
-                .map_err(|e| anyhow!("Failed to insert into vector store: {}", e))?;
-        } else {
-            // Table doesn't exist, create it with the data
-            let reader =
-                arrow_array::RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema.clone());
-            conn.create_table(collection_name, Box::new(reader))
-                .execute()
-                .await?;
-        }
-
-        // Get final count
-        let table = conn.open_table(collection_name).execute().await?;
-        let count = table.count_rows(None).await.unwrap_or(0) as usize;
-        info!(
-            "Inserted {} chunks into collection '{}' (total rows: {})",
-            chunks.len(),
-            collection_name,
-            count
-        );
-        Ok(chunks.len())
+        Ok(docs.len())
     }
 
     pub async fn search_similar(
@@ -705,9 +356,12 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
+        if top_k == 0 {
+            return Ok(Vec::new());
+        }
+
         let provider = self.embedding_config.provider.to_lowercase();
 
-        // Dispatch to provider-specific implementation
         match provider.as_str() {
             "ollama" => {
                 self.search_similar_ollama(collection_name, query, top_k)
@@ -721,10 +375,7 @@ impl LanceDbManager {
                 self.search_similar_cohere(collection_name, query, top_k)
                     .await
             }
-            "anthropic" => {
-                self.search_similar_anthropic(collection_name, query, top_k)
-                    .await
-            }
+            "anthropic" => self.search_similar_anthropic(collection_name, query, top_k).await,
             "gemini" | "google" => {
                 self.search_similar_gemini(collection_name, query, top_k)
                     .await
@@ -767,16 +418,15 @@ impl LanceDbManager {
             .base_url
             .as_deref()
             .unwrap_or("http://localhost:11434");
-        info!("Using Ollama embedding service for search at: {}", base_url);
 
-        let client = rig::providers::ollama::Client::builder()
+        let client = rig::providers::ollama::Client::<rig::http_client::ReqwestClient>::builder()
             .api_key(rig::client::Nothing)
             .base_url(base_url)
             .build()
             .map_err(|e| anyhow!("Failed to create Ollama client: {}", e))?;
 
         let dimensions = self.embedding_config.dimensions.unwrap_or(768);
-        let embedding_model: rig::providers::ollama::EmbeddingModel<reqwest::Client> =
+        let embedding_model: rig::providers::ollama::EmbeddingModel<rig::http_client::ReqwestClient> =
             rig::providers::ollama::EmbeddingModel::new(
                 client,
                 &self.embedding_config.model,
@@ -793,14 +443,7 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .ok_or_else(|| anyhow!("OpenAI API key not configured"))?;
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client("OPENAI_API_KEY", "https://api.openai.com/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
@@ -818,9 +461,9 @@ impl LanceDbManager {
             .clone()
             .or_else(|| std::env::var("COHERE_API_KEY").ok())
             .ok_or_else(|| anyhow!("Cohere API key not configured"))?;
+
         std::env::set_var("COHERE_API_KEY", &api_key_str);
         let client = rig::providers::cohere::Client::from_env();
-        // Cohere requires input_type parameter: "search_query" for querying
         let embedding_model = client.embedding_model(&self.embedding_config.model, "search_query");
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
@@ -849,7 +492,8 @@ impl LanceDbManager {
             .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
             .or_else(|| std::env::var("GEMINI_API_KEY").ok())
             .ok_or_else(|| anyhow!("Google/Gemini API key not configured"))?;
-        std::env::set_var("GOOGLE_API_KEY", &api_key_str);
+
+        std::env::set_var("GEMINI_API_KEY", &api_key_str);
         let client = rig::providers::gemini::Client::from_env();
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
@@ -862,15 +506,7 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
-            .ok_or_else(|| anyhow!("DeepSeek API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client("DEEPSEEK_API_KEY", "https://api.deepseek.com/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
@@ -882,15 +518,7 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-            .ok_or_else(|| anyhow!("Moonshot API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client("MOONSHOT_API_KEY", "https://api.moonshot.cn/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
@@ -902,15 +530,8 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-            .ok_or_else(|| anyhow!("OpenRouter API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client =
+            self.openai_compatible_client("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1")?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
@@ -922,15 +543,10 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
-        let api_key_str = self
-            .embedding_config
-            .api_key
-            .clone()
-            .or_else(|| std::env::var("MODELSCOPE_API_KEY").ok())
-            .ok_or_else(|| anyhow!("ModelScope API key not configured"))?;
-
-        std::env::set_var("OPENAI_API_KEY", &api_key_str);
-        let client = rig::providers::openai::Client::from_env();
+        let client = self.openai_compatible_client(
+            "MODELSCOPE_API_KEY",
+            "https://api-inference.modelscope.cn/v1",
+        )?;
         let embedding_model = client.embedding_model(&self.embedding_config.model);
         self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
@@ -942,173 +558,10 @@ impl LanceDbManager {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<QueryResult>> {
-        let base_url = self
-            .embedding_config
-            .base_url
-            .as_deref()
-            .unwrap_or("http://localhost:1234");
-        info!(
-            "Using LM Studio embedding service for search at: {}",
-            base_url
-        );
-
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
-        let table = match conn.open_table(collection_name).execute().await {
-            Ok(t) => t,
-            Err(_) => return Ok(Vec::new()),
-        };
-
-        // Generate query embedding using LM Studio
-        let query_embeddings = self.call_lmstudio_embedding(&[query.to_string()]).await?;
-        let query_embedding = query_embeddings
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow!("Failed to get query embedding"))?;
-        let query_vec: Vec<f64> = query_embedding.iter().map(|&f| f as f64).collect();
-
-        // Perform vector search
-        let mut stream = table
-            .vector_search(query_vec)?
-            .limit(top_k)
-            .execute()
+        let client = self.openai_compatible_client("OPENAI_API_KEY", "http://localhost:1234/v1")?;
+        let embedding_model = client.embedding_model(&self.embedding_config.model);
+        self.search_similar_impl(collection_name, query, top_k, embedding_model)
             .await
-            .map_err(|e| anyhow!(e.to_string()))?;
-
-        let mut results = Vec::new();
-        let mut rank = 0;
-        while let Some(batch_res) = stream.next().await {
-            let batch = batch_res.map_err(|e| anyhow!(e.to_string()))?;
-            let schema = batch.schema();
-
-            // Debug: log all column names to find the distance field
-            if rank == 0 {
-                let column_names: Vec<String> = schema
-                    .fields()
-                    .iter()
-                    .map(|f| f.name().to_string())
-                    .collect();
-                info!("LanceDB schema columns: {:?}", column_names);
-            }
-
-            let id_idx = schema.index_of("id").ok();
-            let source_id_idx = schema.index_of("source_id").ok();
-            let definition_idx = schema.index_of("definition").ok();
-            let file_name_idx = schema.index_of("file_name").ok();
-            let file_path_idx = schema.index_of("file_path").ok();
-            let chunk_index_idx = schema.index_of("chunk_index").ok();
-            let start_char_idx = schema.index_of("start_char").ok();
-            let end_char_idx = schema.index_of("end_char").ok();
-            // Try different possible distance field names
-            let distance_idx = schema
-                .index_of("_distance")
-                .ok()
-                .or_else(|| schema.index_of("distance").ok())
-                .or_else(|| schema.index_of("score").ok());
-
-            for row in 0..batch.num_rows() {
-                let id = id_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<StringArray>())
-                    .map(|a| a.value(row).to_string())
-                    .unwrap_or_default();
-                let source_id = source_id_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<StringArray>())
-                    .map(|a| a.value(row).to_string())
-                    .unwrap_or_default();
-                let content = definition_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<StringArray>())
-                    .map(|a| a.value(row).to_string())
-                    .unwrap_or_default();
-                let file_name = file_name_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<StringArray>())
-                    .map(|a| a.value(row).to_string())
-                    .unwrap_or_default();
-                let file_path = file_path_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<StringArray>())
-                    .map(|a| a.value(row).to_string())
-                    .unwrap_or_default();
-                let chunk_index = chunk_index_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<Int64Array>())
-                    .map(|a| a.value(row) as usize)
-                    .unwrap_or(0);
-                let start_char = start_char_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<Int64Array>())
-                    .map(|a| a.value(row) as usize)
-                    .unwrap_or(0);
-                let end_char = end_char_idx
-                    .and_then(|i| batch.column(i).as_any().downcast_ref::<Int64Array>())
-                    .map(|a| a.value(row) as usize)
-                    .unwrap_or(0);
-
-                // Try to read distance as Float64 or Float32
-                let distance = if let Some(idx) = distance_idx {
-                    batch
-                        .column(idx)
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .map(|a| a.value(row) as f32)
-                        .or_else(|| {
-                            batch
-                                .column(idx)
-                                .as_any()
-                                .downcast_ref::<arrow_array::Float32Array>()
-                                .map(|a| a.value(row))
-                        })
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "Failed to read distance value at row {}, using default",
-                                row
-                            );
-                            f32::MAX // Use large distance as fallback
-                        })
-                } else {
-                    warn!("Distance column not found in schema, using default");
-                    f32::MAX // Use large distance as fallback
-                };
-
-                // Convert distance to similarity score
-                // For L2 distance: smaller is better, convert to similarity score [0, 1]
-                let score = 1.0 / (1.0 + distance as f64);
-
-                if rank == 0 && row == 0 {
-                    info!("First result: distance={}, score={}", distance, score);
-                }
-
-                let chunk = DocumentChunk {
-                    id,
-                    source_id,
-                    content: content.clone(),
-                    content_hash: format!("{:x}", md5::compute(content.as_bytes())),
-                    chunk_index,
-                    metadata: crate::models::ChunkMetadata {
-                        file_path,
-                        file_name,
-                        file_type: "unknown".to_string(),
-                        file_size: 0,
-                        chunk_start_char: start_char,
-                        chunk_end_char: end_char,
-                        page_number: None,
-                        section_title: None,
-                        custom_fields: HashMap::new(),
-                    },
-                    embedding: None,
-                    created_at: chrono::Utc::now(),
-                };
-                results.push(QueryResult { chunk, score, rank });
-                rank += 1;
-            }
-        }
-        info!(
-            "Found {} similar chunks in collection '{}' using LM Studio",
-            results.len(),
-            collection_name
-        );
-        Ok(results)
     }
 
     async fn search_similar_impl<M>(
@@ -1119,178 +572,231 @@ impl LanceDbManager {
         embedding_model: M,
     ) -> Result<Vec<QueryResult>>
     where
-        M: EmbeddingModel + Sync + Send,
+        M: EmbeddingModel + Sync + Send + Clone + 'static,
     {
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
-        let table = match conn.open_table(collection_name).execute().await {
-            Ok(t) => t,
-            Err(_) => return Ok(Vec::new()),
-        };
+        let conn = self.connection().await?;
+        let store = SqliteVectorStore::<M, RagVectorRow>::new(conn, &embedding_model)
+            .await
+            .map_err(|e| anyhow!("Failed to initialize sqlite vector store: {}", e))?;
+        let index = store.index(embedding_model);
 
-        // Retry index creation with better error handling
-        let index = match LanceDbVectorIndex::new(
-            table,
-            embedding_model,
-            "id",
-            SearchParams::default(),
-        )
-        .await
-        {
-            Ok(idx) => idx,
-            Err(e) => {
-                error!("Failed to create LanceDB vector index: {}. Please check if embedding service ({}) is running", e, self.embedding_config.provider);
-                return Err(anyhow!("Failed to create vector index: {}", e));
-            }
-        };
-
-        // 构建VectorSearchRequest
-        let search_request = VectorSearchRequest::builder()
+        let req = VectorSearchRequest::builder()
             .query(query)
             .samples(top_k as u64)
-            .build()?;
-        let top_docs: Vec<(f64, String, serde_json::Value)> =
-            <LanceDbVectorIndex<M> as VectorStoreIndex>::top_n::<serde_json::Value>(
-                &index,
-                search_request,
-            )
-            .await?;
+            .filter(SqliteSearchFilter::eq(
+                "collection_name",
+                collection_name.to_string().into(),
+            ))
+            .build()
+            .map_err(|e| anyhow!("Failed to build vector search request: {}", e))?;
 
-        let mut results = Vec::new();
-        for (rank, (score, _id, value)) in top_docs.into_iter().enumerate() {
-            let id = value
-                .get("id")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let source_id = value
-                .get("source_id")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let content = value
-                .get("definition")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let file_name = value
-                .get("file_name")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let file_path = value
-                .get("file_path")
-                .and_then(|v: &serde_json::Value| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let chunk_index = value
-                .get("chunk_index")
-                .and_then(|v: &serde_json::Value| v.as_i64())
-                .unwrap_or(0) as usize;
-            let start_char = value
-                .get("start_char")
-                .and_then(|v: &serde_json::Value| v.as_i64())
-                .unwrap_or(0) as usize;
-            let end_char = value
-                .get("end_char")
-                .and_then(|v: &serde_json::Value| v.as_i64())
-                .unwrap_or(0) as usize;
-            let chunk = DocumentChunk {
-                id,
-                source_id,
-                content: content.clone(),
-                content_hash: format!("{:x}", md5::compute(content.as_bytes())),
-                chunk_index,
-                metadata: crate::models::ChunkMetadata {
-                    file_path,
-                    file_name,
-                    file_type: "unknown".to_string(),
-                    file_size: 0,
-                    chunk_start_char: start_char,
-                    chunk_end_char: end_char,
-                    page_number: None,
-                    section_title: None,
-                    custom_fields: HashMap::new(),
-                },
-                embedding: None,
-                created_at: chrono::Utc::now(),
-            };
-            results.push(QueryResult { chunk, score, rank });
+        let hits = index
+            .top_n::<RagVectorRow>(req)
+            .await
+            .map_err(|e| anyhow!("Vector search failed: {}", e))?;
+
+        let mut results = Vec::with_capacity(hits.len());
+        for (rank, (score, _id, row)) in hits.into_iter().enumerate() {
+            results.push(map_row_to_query_result(row, score, rank));
         }
-        info!(
-            "Found {} similar chunks in collection '{}'",
-            results.len(),
-            collection_name
-        );
         Ok(results)
     }
 
     pub async fn delete_collection(&self, collection_name: &str) -> Result<()> {
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
-        let _ = conn.drop_table(collection_name, &[]).await;
-        info!("Deleted collection: {}", collection_name);
+        let conn = self.connection().await?;
+        let collection_name = collection_name.to_string();
+        let collection_name_for_log = collection_name.clone();
+
+        conn.call(move |conn| {
+            let table_exists: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vectors'",
+                [],
+                |row| row.get(0),
+            )?;
+
+            if table_exists == 0 {
+                return Ok(());
+            }
+
+            let tx = conn.transaction()?;
+
+            let embeddings_exists: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vectors_embeddings'",
+                [],
+                |row| row.get(0),
+            )?;
+
+            if embeddings_exists > 0 {
+                tx.execute(
+                    "DELETE FROM rag_vectors_embeddings WHERE rowid IN (SELECT rowid FROM rag_vectors WHERE collection_name = ?1)",
+                    rusqlite::params![collection_name],
+                )?;
+            }
+
+            tx.execute(
+                "DELETE FROM rag_vectors WHERE collection_name = ?1",
+                rusqlite::params![collection_name],
+            )?;
+
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to delete collection: {}", e))?;
+
+        info!("Deleted collection: {}", collection_name_for_log);
         Ok(())
     }
 
     pub async fn list_collections(&self) -> Result<Vec<String>> {
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
-        let names = conn.table_names().execute().await.unwrap_or_default();
+        let conn = self.connection().await?;
+
+        let names = conn
+            .call(|conn| {
+                let table_exists: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vectors'",
+                    [],
+                    |row| row.get(0),
+                )?;
+
+                if table_exists == 0 {
+                    return Ok(Vec::new());
+                }
+
+                let mut stmt = conn.prepare(
+                    "SELECT DISTINCT collection_name FROM rag_vectors ORDER BY collection_name",
+                )?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
+
         Ok(names)
     }
 
     pub async fn get_collection_stats(&self, collection_name: &str) -> Result<(usize, usize)> {
-        let conn = {
-            let guard = self.conn.read().await;
-            guard
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| anyhow!("LanceDB not initialized"))?
-        };
-        let table = match conn.open_table(collection_name).execute().await {
-            Ok(t) => t,
-            Err(_) => return Ok((0, 0)),
-        };
-        let chunk_count = table.count_rows(None).await.unwrap_or(0) as usize;
-        let mut unique_sources: HashSet<String> = HashSet::new();
-        let mut stream = table
-            .query()
-            .select(lancedb::query::Select::Columns(vec![
-                "source_id".to_string()
-            ]))
-            .execute()
-            .await
-            .map_err(|e| anyhow!(e.to_string()))?;
-        while let Some(batch_res) = stream.next().await {
-            let batch = batch_res.map_err(|e| anyhow!(e.to_string()))?;
-            if let Ok(idx) = batch.schema().index_of("source_id") {
-                let col = batch.column(idx);
-                if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
-                    for i in 0..arr.len() {
-                        if arr.is_null(i) {
-                            continue;
-                        }
-                        unique_sources.insert(arr.value(i).to_string());
-                    }
+        let conn = self.connection().await?;
+        let collection_name = collection_name.to_string();
+
+        let (source_count, chunk_count) = conn
+            .call(move |conn| {
+                let table_exists: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vectors'",
+                    [],
+                    |row| row.get(0),
+                )?;
+
+                if table_exists == 0 {
+                    return Ok((0_i64, 0_i64));
                 }
-            }
-        }
-        Ok((unique_sources.len(), chunk_count))
+
+                let row = conn.query_row(
+                    "SELECT COUNT(DISTINCT source_id), COUNT(*) FROM rag_vectors WHERE collection_name = ?1",
+                    rusqlite::params![collection_name],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )?;
+
+                Ok(row)
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to get collection stats: {}", e))?;
+
+        Ok((source_count.max(0) as usize, chunk_count.max(0) as usize))
+    }
+
+    async fn connection(&self) -> Result<Connection> {
+        let guard = self.conn.read().await;
+        guard
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow!("SQLite vector store not initialized"))
+    }
+
+    fn openai_compatible_client(
+        &self,
+        api_key_env: &str,
+        default_base: &str,
+    ) -> Result<rig::providers::openai::Client> {
+        let api_key = self
+            .embedding_config
+            .api_key
+            .clone()
+            .or_else(|| std::env::var(api_key_env).ok())
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .ok_or_else(|| anyhow!("{} not configured", api_key_env))?;
+
+        std::env::set_var("OPENAI_API_KEY", &api_key);
+
+        let base = self
+            .embedding_config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| default_base.to_string());
+        std::env::set_var("OPENAI_BASE_URL", normalize_openai_base_url(&base));
+
+        Ok(rig::providers::openai::Client::from_env())
+    }
+}
+
+fn register_sqlite_vec_extension() {
+    SQLITE_VEC_REGISTER.call_once(|| unsafe {
+        sqlite3_auto_extension(Some(std::mem::transmute::<*const (), SqliteExtensionFn>(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
+
+fn normalize_openai_base_url(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
+}
+
+fn chunks_to_rows(collection_name: &str, chunks: Vec<DocumentChunk>) -> Vec<RagVectorRow> {
+    chunks
+        .into_iter()
+        .map(|chunk| RagVectorRow {
+            id: chunk.id,
+            collection_name: collection_name.to_string(),
+            source_id: chunk.source_id,
+            chunk_index: chunk.chunk_index.to_string(),
+            definition: chunk.content,
+        })
+        .collect()
+}
+
+fn map_row_to_query_result(row: RagVectorRow, score: f64, rank: usize) -> QueryResult {
+    let content = row.definition.clone();
+    let chunk_index = row.chunk_index.parse::<usize>().unwrap_or(0);
+
+    QueryResult {
+        chunk: DocumentChunk {
+            id: row.id,
+            source_id: row.source_id,
+            content: content.clone(),
+            content_hash: format!("{:x}", md5::compute(content.as_bytes())),
+            chunk_index,
+            metadata: crate::models::ChunkMetadata {
+                file_path: String::new(),
+                file_name: String::new(),
+                file_type: "unknown".to_string(),
+                file_size: 0,
+                chunk_start_char: 0,
+                chunk_end_char: 0,
+                page_number: None,
+                section_title: None,
+                custom_fields: HashMap::new(),
+            },
+            embedding: None,
+            created_at: chrono::Utc::now(),
+        },
+        score,
+        rank,
     }
 }
