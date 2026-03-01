@@ -1,15 +1,15 @@
 //! Prompt构建器
-//! 
+//!
 //! 实现动态prompt组装和优化功能，支持：
 //! - 模板变量替换
 //! - 上下文注入
 //! - 动态工具信息生成
 //! - Prompt优化和验证
 use super::*;
+use anyhow::{anyhow, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use regex::Regex;
 
 /// Prompt构建器
 #[derive(Debug, Clone)]
@@ -296,44 +296,67 @@ impl PromptBuilder {
             user_preferences: HashMap::new(),
         };
 
-        let optimal_config = self.config_manager.get_optimal_config(&selection_context).await?;
+        let optimal_config = self
+            .config_manager
+            .get_optimal_config(&selection_context)
+            .await?;
 
         // 准备变量
         let mut variables = HashMap::new();
-        variables.insert("user_query".to_string(), format!("**用户输入：** {}", context.user_query));
-        variables.insert("domain_specific_instructions".to_string(), optimal_config.domain_template.domain_instructions);
-        variables.insert("available_tools_info".to_string(), self.format_tools_info(&context.available_tools)?);
-        variables.insert("custom_constraints".to_string(), optimal_config.custom_constraints.join("\n- "));
+        variables.insert(
+            "user_query".to_string(),
+            format!("**用户输入：** {}", context.user_query),
+        );
+        variables.insert(
+            "domain_specific_instructions".to_string(),
+            optimal_config.domain_template.domain_instructions,
+        );
+        variables.insert(
+            "available_tools_info".to_string(),
+            self.format_tools_info(&context.available_tools)?,
+        );
+        variables.insert(
+            "custom_constraints".to_string(),
+            optimal_config.custom_constraints.join("\n- "),
+        );
 
         // 添加目标信息
         if let Some(target_info) = &context.target_info {
-            variables.insert("target_info".to_string(), self.format_target_info(target_info)?);
+            variables.insert(
+                "target_info".to_string(),
+                self.format_target_info(target_info)?,
+            );
         }
 
         // 添加历史上下文
         if !context.history.is_empty() {
-            variables.insert("history_context".to_string(), self.format_history(&context.history)?);
+            variables.insert(
+                "history_context".to_string(),
+                self.format_history(&context.history)?,
+            );
         }
 
         // 添加RAG检索上下文
         if let Some(rag_context) = &context.rag_context {
             if rag_context.enabled && !rag_context.formatted_context.is_empty() {
-                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+                variables.insert(
+                    "rag_context".to_string(),
+                    self.format_rag_context(rag_context)?,
+                );
             }
         }
 
         // 构建prompt
-        let prompt = self.variable_resolver.resolve_variables(
-            &optimal_config.core_templates.planner_core,
-            &variables,
-        )?;
+        let prompt = self
+            .variable_resolver
+            .resolve_variables(&optimal_config.core_templates.planner_core, &variables)?;
 
         let build_time = start_time.elapsed().as_millis() as u64;
 
         let variable_count = variables.len();
         let template_length = optimal_config.core_templates.planner_core.len();
         let tool_count = context.available_tools.len();
-        
+
         Ok(PromptBuildResult {
             prompt,
             template_id: "planner_core".to_string(),
@@ -364,13 +387,22 @@ impl PromptBuilder {
             user_preferences: HashMap::new(),
         };
 
-        let optimal_config = self.config_manager.get_optimal_config(&selection_context).await?;
+        let optimal_config = self
+            .config_manager
+            .get_optimal_config(&selection_context)
+            .await?;
 
         // 准备变量
         let mut variables = HashMap::new();
-        variables.insert("step_specific_instructions".to_string(), step_instructions.to_string());
-        variables.insert("available_tools".to_string(), self.format_tools_info(&context.available_tools)?);
-        
+        variables.insert(
+            "step_specific_instructions".to_string(),
+            step_instructions.to_string(),
+        );
+        variables.insert(
+            "available_tools".to_string(),
+            self.format_tools_info(&context.available_tools)?,
+        );
+
         // 格式化执行上下文
         let execution_context_str = if let Some(exec_ctx) = &context.execution_context {
             self.format_execution_context(exec_ctx)?
@@ -382,22 +414,24 @@ impl PromptBuilder {
         // 添加RAG检索上下文
         if let Some(rag_context) = &context.rag_context {
             if rag_context.enabled && !rag_context.formatted_context.is_empty() {
-                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+                variables.insert(
+                    "rag_context".to_string(),
+                    self.format_rag_context(rag_context)?,
+                );
             }
         }
 
         // 构建prompt
-        let prompt = self.variable_resolver.resolve_variables(
-            &optimal_config.core_templates.executor_core,
-            &variables,
-        )?;
+        let prompt = self
+            .variable_resolver
+            .resolve_variables(&optimal_config.core_templates.executor_core, &variables)?;
 
         let build_time = start_time.elapsed().as_millis() as u64;
 
         let variable_count = variables.len();
         let template_length = optimal_config.core_templates.executor_core.len();
         let tool_count = context.available_tools.len();
-        
+
         Ok(PromptBuildResult {
             prompt,
             template_id: "executor_core".to_string(),
@@ -429,38 +463,54 @@ impl PromptBuilder {
             user_preferences: HashMap::new(),
         };
 
-        let optimal_config = self.config_manager.get_optimal_config(&selection_context).await?;
+        let optimal_config = self
+            .config_manager
+            .get_optimal_config(&selection_context)
+            .await?;
 
         // 准备变量
         let mut variables = HashMap::new();
-        variables.insert("execution_results".to_string(), execution_results.to_string());
+        variables.insert(
+            "execution_results".to_string(),
+            execution_results.to_string(),
+        );
         variables.insert("original_plan".to_string(), original_plan.to_string());
-        variables.insert("domain_specific_evaluation".to_string(), 
-            optimal_config.domain_template.evaluation_criteria.join("\n- "));
+        variables.insert(
+            "domain_specific_evaluation".to_string(),
+            optimal_config
+                .domain_template
+                .evaluation_criteria
+                .join("\n- "),
+        );
 
         // 添加触发器信息
-        let triggers = optimal_config.domain_template.critical_triggers.join("\n- ");
+        let triggers = optimal_config
+            .domain_template
+            .critical_triggers
+            .join("\n- ");
         variables.insert("critical_triggers".to_string(), triggers);
 
         // 添加RAG检索上下文
         if let Some(rag_context) = &context.rag_context {
             if rag_context.enabled && !rag_context.formatted_context.is_empty() {
-                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+                variables.insert(
+                    "rag_context".to_string(),
+                    self.format_rag_context(rag_context)?,
+                );
             }
         }
 
         // 构建prompt
-        let prompt = self.variable_resolver.resolve_variables(
-            &optimal_config.core_templates.replanner_core,
-            &variables,
-        )?;
+        let prompt = self
+            .variable_resolver
+            .resolve_variables(&optimal_config.core_templates.replanner_core, &variables)?;
 
         let build_time = start_time.elapsed().as_millis() as u64;
 
         let variable_count = variables.len();
         let template_length = optimal_config.core_templates.replanner_core.len();
         let tool_count = context.available_tools.len();
-        
+
         Ok(PromptBuildResult {
             prompt,
             template_id: "replanner_core".to_string(),
@@ -492,19 +542,30 @@ impl PromptBuilder {
             user_preferences: HashMap::new(),
         };
 
-        let optimal_config = self.config_manager.get_optimal_config(&selection_context).await?;
+        let optimal_config = self
+            .config_manager
+            .get_optimal_config(&selection_context)
+            .await?;
 
         // 准备变量
         let mut variables = HashMap::new();
-        variables.insert("execution_summary".to_string(), execution_summary.to_string());
+        variables.insert(
+            "execution_summary".to_string(),
+            execution_summary.to_string(),
+        );
         variables.insert("target_audience".to_string(), target_audience.to_string());
-        variables.insert("report_domain_template".to_string(), 
-            optimal_config.domain_template.domain_instructions);
+        variables.insert(
+            "report_domain_template".to_string(),
+            optimal_config.domain_template.domain_instructions,
+        );
 
         // 添加RAG检索上下文
         if let Some(rag_context) = &context.rag_context {
             if rag_context.enabled && !rag_context.formatted_context.is_empty() {
-                variables.insert("rag_context".to_string(), self.format_rag_context(rag_context)?);
+                variables.insert(
+                    "rag_context".to_string(),
+                    self.format_rag_context(rag_context)?,
+                );
             }
         }
 
@@ -519,7 +580,7 @@ impl PromptBuilder {
         let variable_count = variables.len();
         let template_length = optimal_config.core_templates.report_generator_core.len();
         let tool_count = context.available_tools.len();
-        
+
         Ok(PromptBuildResult {
             prompt,
             template_id: "report_generator_core".to_string(),
@@ -542,14 +603,31 @@ impl PromptBuilder {
 
         // 基于关键词复杂度
         let complex_keywords = vec![
-            "多步骤", "复杂", "深度", "全面", "详细", "综合",
-            "multi-step", "complex", "deep", "comprehensive", "detailed"
+            "多步骤",
+            "复杂",
+            "深度",
+            "全面",
+            "详细",
+            "综合",
+            "multi-step",
+            "complex",
+            "deep",
+            "comprehensive",
+            "detailed",
         ];
-        
-        let keyword_complexity = complex_keywords.iter()
-            .map(|&keyword| if query.to_lowercase().contains(keyword) { 1.0 } else { 0.0 })
-            .sum::<f32>() / complex_keywords.len() as f32;
-        
+
+        let keyword_complexity = complex_keywords
+            .iter()
+            .map(|&keyword| {
+                if query.to_lowercase().contains(keyword) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f32>()
+            / complex_keywords.len() as f32;
+
         complexity += keyword_complexity * 0.7;
 
         Ok(complexity.min(1.0))
@@ -562,7 +640,7 @@ impl PromptBuilder {
         }
 
         let mut formatted = String::from("**可用工具：**\n");
-        
+
         for tool in tools {
             formatted.push_str(&format!(
                 "- **{}** ({}): {}\n  - 预估时间: {}秒\n  - 资源需求: 内存{}MB, CPU{}%\n",
@@ -586,8 +664,7 @@ impl PromptBuilder {
     fn format_target_info(&self, target_info: &TargetInfo) -> Result<String> {
         let mut formatted = format!(
             "**目标信息：**\n- 类型: {}\n- 地址: {}\n",
-            target_info.target_type,
-            target_info.address
+            target_info.target_type, target_info.address
         );
 
         if let Some(ports) = &target_info.ports {
@@ -610,7 +687,10 @@ impl PromptBuilder {
         let mut formatted = format!("**执行上下文：**\n- 当前步骤: {}\n", context.current_step);
 
         if !context.completed_steps.is_empty() {
-            formatted.push_str(&format!("- 已完成步骤: {}\n", context.completed_steps.join(", ")));
+            formatted.push_str(&format!(
+                "- 已完成步骤: {}\n",
+                context.completed_steps.join(", ")
+            ));
         }
 
         if !context.errors.is_empty() {
@@ -637,10 +717,10 @@ impl PromptBuilder {
         }
 
         let mut formatted = String::from("**历史上下文：**\n");
-        
+
         // 只显示最近的几条记录
         let recent_history = if history.len() > 5 {
-            &history[history.len()-5..]
+            &history[history.len() - 5..]
         } else {
             history
         };
@@ -669,7 +749,7 @@ impl PromptBuilder {
         for (i, doc) in rag_context.retrieved_documents.iter().enumerate() {
             formatted.push_str(&format!("### 文档 {} (相似度: {:.3})\n", i + 1, doc.score));
             formatted.push_str(&format!("**来源:** {}\n", doc.source));
-            
+
             if !doc.metadata.is_empty() {
                 formatted.push_str("**元数据:** ");
                 for (key, value) in &doc.metadata {
@@ -677,7 +757,7 @@ impl PromptBuilder {
                 }
                 formatted.push('\n');
             }
-            
+
             formatted.push_str(&format!("**内容:**\n{}\n\n", doc.content));
         }
 
@@ -685,9 +765,10 @@ impl PromptBuilder {
         if let Some(collection) = &rag_context.retrieval_config.collection_name {
             formatted.push_str(&format!("*检索集合: {}*\n", collection));
         }
-        formatted.push_str(&format!("*Top-K: {}, 相似度阈值: {:.3}*\n", 
-            rag_context.retrieval_config.top_k, 
-            rag_context.retrieval_config.similarity_threshold));
+        formatted.push_str(&format!(
+            "*Top-K: {}, 相似度阈值: {:.3}*\n",
+            rag_context.retrieval_config.top_k, rag_context.retrieval_config.similarity_threshold
+        ));
 
         Ok(formatted)
     }
@@ -777,14 +858,22 @@ impl VariableResolver {
     pub fn new() -> Self {
         let variable_pattern = Regex::new(r"\{([^}]+)\}").unwrap();
         let mut builtin_variables = HashMap::new();
-        
+
         // 添加内置变量
-        builtin_variables.insert("timestamp".to_string(), 
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string());
-        builtin_variables.insert("date".to_string(), 
-            chrono::Utc::now().format("%Y-%m-%d").to_string());
-        builtin_variables.insert("time".to_string(), 
-            chrono::Utc::now().format("%H:%M:%S").to_string());
+        builtin_variables.insert(
+            "timestamp".to_string(),
+            chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
+        );
+        builtin_variables.insert(
+            "date".to_string(),
+            chrono::Utc::now().format("%Y-%m-%d").to_string(),
+        );
+        builtin_variables.insert(
+            "time".to_string(),
+            chrono::Utc::now().format("%H:%M:%S").to_string(),
+        );
 
         Self {
             variable_pattern,
@@ -812,11 +901,12 @@ impl VariableResolver {
 
         // 检查是否还有未解析的变量
         if self.variable_pattern.is_match(&result) {
-            let unresolved: Vec<&str> = self.variable_pattern
+            let unresolved: Vec<&str> = self
+                .variable_pattern
                 .captures_iter(&result)
                 .map(|cap| cap.get(1).unwrap().as_str())
                 .collect();
-            
+
             return Err(anyhow!("未解析的变量: {:?}", unresolved));
         }
 
@@ -840,10 +930,10 @@ mod tests {
     fn test_variable_resolver() {
         let resolver = VariableResolver::new();
         let template = "Hello {name}, today is {date}";
-        
+
         let mut variables = HashMap::new();
         variables.insert("name".to_string(), "World".to_string());
-        
+
         let result = resolver.resolve_variables(template, &variables).unwrap();
         assert!(result.contains("Hello World"));
         assert!(result.contains("today is"));
@@ -853,7 +943,7 @@ mod tests {
     fn test_extract_variables() {
         let resolver = VariableResolver::new();
         let template = "Test {var1} and {var2} with {var1} again";
-        
+
         let variables = resolver.extract_variables(template);
         assert_eq!(variables.len(), 3); // var1, var2, var1
         assert!(variables.contains(&"var1".to_string()));
@@ -864,7 +954,7 @@ mod tests {
     async fn test_prompt_builder() {
         let config_manager = PromptConfigManager::new();
         let builder = PromptBuilder::new(config_manager);
-        
+
         let context = PromptBuildContext {
             user_query: "测试查询".to_string(),
             target_info: None,

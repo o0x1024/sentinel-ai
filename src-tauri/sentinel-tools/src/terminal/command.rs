@@ -213,13 +213,7 @@ fn normalize_tail(parts: &[&str]) -> Option<String> {
 
     let new_cmd = parts
         .iter()
-        .map(|&p| {
-            if p == "-f" || p == "-F" {
-                "-n"
-            } else {
-                p
-            }
-        })
+        .map(|&p| if p == "-f" || p == "-F" { "-n" } else { p })
         .collect::<Vec<_>>()
         .join(" ");
 

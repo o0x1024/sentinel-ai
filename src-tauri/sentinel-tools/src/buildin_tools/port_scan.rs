@@ -26,9 +26,15 @@ pub struct PortScanArgs {
     pub timeout_secs: u64,
 }
 
-fn default_ports() -> String { "common".to_string() }
-fn default_threads() -> usize { 100 }
-fn default_timeout() -> u64 { 3 }
+fn default_ports() -> String {
+    "common".to_string()
+}
+fn default_threads() -> usize {
+    100
+}
+fn default_timeout() -> u64 {
+    3
+}
 
 /// Port scan result
 #[derive(Debug, Clone, Serialize)]
@@ -71,8 +77,8 @@ impl PortScanTool {
     /// Get common ports list
     fn common_ports() -> Vec<u16> {
         vec![
-            21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 993, 995,
-            1723, 3306, 3389, 5432, 5900, 8080, 8443,
+            21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 993, 995, 1723, 3306, 3389, 5432,
+            5900, 8080, 8443,
         ]
     }
 
@@ -88,23 +94,28 @@ impl PortScanTool {
             if part.contains('-') {
                 let range: Vec<&str> = part.split('-').collect();
                 if range.len() == 2 {
-                    let start: u16 = range[0].parse()
-                        .map_err(|_| PortScanError::InvalidPorts(format!("Invalid range: {}", part)))?;
-                    let end: u16 = range[1].parse()
-                        .map_err(|_| PortScanError::InvalidPorts(format!("Invalid range: {}", part)))?;
+                    let start: u16 = range[0].parse().map_err(|_| {
+                        PortScanError::InvalidPorts(format!("Invalid range: {}", part))
+                    })?;
+                    let end: u16 = range[1].parse().map_err(|_| {
+                        PortScanError::InvalidPorts(format!("Invalid range: {}", part))
+                    })?;
                     for port in start..=end {
                         ports.push(port);
                     }
                 }
             } else {
-                let port: u16 = part.parse()
+                let port: u16 = part
+                    .parse()
                     .map_err(|_| PortScanError::InvalidPorts(format!("Invalid port: {}", part)))?;
                 ports.push(port);
             }
         }
 
         if ports.is_empty() {
-            return Err(PortScanError::InvalidPorts("No valid ports specified".to_string()));
+            return Err(PortScanError::InvalidPorts(
+                "No valid ports specified".to_string(),
+            ));
         }
         Ok(ports)
     }
@@ -167,7 +178,6 @@ impl Tool for PortScanTool {
     type Output = PortScanOutput;
     type Error = PortScanError;
 
-
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
@@ -181,7 +191,9 @@ impl Tool for PortScanTool {
         let start_time = Instant::now();
 
         // Parse target IP
-        let target_ip: IpAddr = args.target.parse()
+        let target_ip: IpAddr = args
+            .target
+            .parse()
             .map_err(|_| PortScanError::InvalidTarget(args.target.clone()))?;
 
         // Parse ports
@@ -215,15 +227,15 @@ impl Tool for PortScanTool {
                 }
             }
         }
-        
+
         // Sort by port number
         open_ports.sort_by_key(|p| p.port);
-        
+
         let max_ports = 500; // Hard limit to prevent huge JSON
         if open_ports.len() > max_ports {
-             open_ports.truncate(max_ports);
-             // Maybe add a warning or indicator in the output struct, but struct is fixed.
-             // We'll just truncate for now, the user can scan smaller ranges if needed.
+            open_ports.truncate(max_ports);
+            // Maybe add a warning or indicator in the output struct, but struct is fixed.
+            // We'll just truncate for now, the user can scan smaller ranges if needed.
         }
 
         let scan_duration_ms = start_time.elapsed().as_millis() as u64;
@@ -253,8 +265,10 @@ mod tests {
     #[test]
     fn test_identify_service() {
         assert_eq!(PortScanTool::identify_service(80), Some("HTTP".to_string()));
-        assert_eq!(PortScanTool::identify_service(443), Some("HTTPS".to_string()));
+        assert_eq!(
+            PortScanTool::identify_service(443),
+            Some("HTTPS".to_string())
+        );
         assert_eq!(PortScanTool::identify_service(12345), None);
     }
 }
-

@@ -1,5 +1,5 @@
 //! License Generator Tool
-//! 
+//!
 //! This tool is used to generate license keys for Sentinel AI.
 //! It should be run by the software vendor, NOT distributed to end users.
 //!
@@ -7,11 +7,11 @@
 //!   license_generator generate-keys     - Generate a new key pair
 //!   license_generator sign <machine_id> - Sign a license for a machine ID
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier};
-use sha2::{Sha256, Digest};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use serde::{Serialize, Deserialize};
 
 const KEYS_FILE: &str = "license_keys.json";
 
@@ -30,12 +30,12 @@ struct LicenseKey {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.len() < 2 {
         print_help();
         return;
     }
-    
+
     match args[1].as_str() {
         "generate-keys" | "gen" => generate_keys(),
         "sign" => {
@@ -65,7 +65,8 @@ fn main() {
 }
 
 fn print_help() {
-    println!(r#"
+    println!(
+        r#"
 Sentinel AI License Generator
 ==============================
 
@@ -88,28 +89,29 @@ Notes:
   - Keep the private key secure! Never share it.
   - The public key should be embedded in the application (crypto.rs).
   - Machine IDs are in format: XXXX-XXXX-XXXX-XXXX
-"#);
+"#
+    );
 }
 
 fn generate_keys() {
     println!("Generating new Ed25519 key pair...\n");
-    
+
     let mut rng = rand::thread_rng();
     let signing_key = SigningKey::generate(&mut rng);
     let verifying_key = signing_key.verifying_key();
-    
+
     let private_key_b64 = BASE64.encode(signing_key.to_bytes());
     let public_key_b64 = BASE64.encode(verifying_key.to_bytes());
-    
+
     let key_store = KeyPairStore {
         public_key: public_key_b64.clone(),
         private_key: private_key_b64.clone(),
     };
-    
+
     // Save to file
     let json = serde_json::to_string_pretty(&key_store).unwrap();
     fs::write(KEYS_FILE, &json).expect("Failed to write keys file");
-    
+
     println!("Keys generated and saved to: {}\n", KEYS_FILE);
     println!("=== PUBLIC KEY (embed in application) ===");
     println!("{}\n", public_key_b64);
@@ -126,7 +128,7 @@ fn load_keys() -> Option<KeyPairStore> {
 
 fn sign_license(machine_id: &str, metadata: Option<&str>) {
     println!("Signing license for machine ID: {}\n", machine_id);
-    
+
     // Load keys
     let keys = match load_keys() {
         Some(k) => k,
@@ -135,7 +137,7 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
             return;
         }
     };
-    
+
     // Decode private key
     let private_key_bytes = match BASE64.decode(&keys.private_key) {
         Ok(b) => b,
@@ -144,7 +146,7 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
             return;
         }
     };
-    
+
     let key_array: [u8; 32] = match private_key_bytes.try_into() {
         Ok(a) => a,
         Err(_) => {
@@ -152,9 +154,9 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
             return;
         }
     };
-    
+
     let signing_key = SigningKey::from_bytes(&key_array);
-    
+
     // Parse machine ID - support both display format (XXXX-XXXX-XXXX-XXXX) and full hash
     let machine_id_clean = machine_id.replace("-", "").to_lowercase();
     let machine_id_hash: Vec<u8> = if machine_id_clean.len() == 64 {
@@ -172,7 +174,7 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
         eprintln!("⚠️  Warning: Using partial machine ID (display format).");
         eprintln!("   For exact match, use the full 64-char hash.");
         eprintln!("   The license will work if the first 16 hex chars match.\n");
-        
+
         let mut hash = match hex::decode(&machine_id_clean) {
             Ok(h) => h,
             Err(_) => {
@@ -184,11 +186,14 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
         hash.resize(32, 0);
         hash
     } else {
-        eprintln!("Error: Invalid machine ID format. Got {} chars.", machine_id_clean.len());
+        eprintln!(
+            "Error: Invalid machine ID format. Got {} chars.",
+            machine_id_clean.len()
+        );
         eprintln!("Expected: XXXX-XXXX-XXXX-XXXX (16 hex chars) or 64-char hex (full hash)");
         return;
     };
-    
+
     // Create message to sign
     let mut hasher = Sha256::new();
     hasher.update(&machine_id_hash);
@@ -196,21 +201,21 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
         hasher.update(meta.as_bytes());
     }
     let message: [u8; 32] = hasher.finalize().into();
-    
+
     // Sign
     let signature = signing_key.sign(&message);
-    
+
     // Create license key
     let license = LicenseKey {
         machine_id: hex::encode(&machine_id_hash),
         signature: BASE64.encode(signature.to_bytes()),
         metadata: metadata.map(|s| s.to_string()),
     };
-    
+
     // Encode to final format
     let json = serde_json::to_string(&license).unwrap();
     let license_key = BASE64.encode(json.as_bytes());
-    
+
     println!("=== LICENSE KEY ===");
     println!("{}\n", license_key);
     println!("Machine ID (full): {}", license.machine_id);
@@ -221,7 +226,7 @@ fn sign_license(machine_id: &str, metadata: Option<&str>) {
 
 fn verify_license(license_key: &str) {
     println!("Verifying license key...\n");
-    
+
     // Load keys
     let keys = match load_keys() {
         Some(k) => k,
@@ -230,7 +235,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     // Decode public key
     let public_key_bytes = match BASE64.decode(&keys.public_key) {
         Ok(b) => b,
@@ -239,7 +244,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     let key_array: [u8; 32] = match public_key_bytes.try_into() {
         Ok(a) => a,
         Err(_) => {
@@ -247,7 +252,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     let verifying_key = match VerifyingKey::from_bytes(&key_array) {
         Ok(k) => k,
         Err(e) => {
@@ -255,7 +260,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     // Decode license
     let license_json = match BASE64.decode(license_key.trim()) {
         Ok(b) => b,
@@ -264,7 +269,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     let license: LicenseKey = match serde_json::from_slice(&license_json) {
         Ok(l) => l,
         Err(e) => {
@@ -272,7 +277,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     // Decode machine ID and signature
     let machine_id_bytes = match hex::decode(&license.machine_id) {
         Ok(b) => b,
@@ -281,7 +286,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     let sig_bytes = match BASE64.decode(&license.signature) {
         Ok(b) => b,
         Err(e) => {
@@ -289,7 +294,7 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     let sig_array: [u8; 64] = match sig_bytes.try_into() {
         Ok(a) => a,
         Err(_) => {
@@ -297,9 +302,9 @@ fn verify_license(license_key: &str) {
             return;
         }
     };
-    
+
     let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
-    
+
     // Recreate message
     let mut hasher = Sha256::new();
     hasher.update(&machine_id_bytes);
@@ -307,7 +312,7 @@ fn verify_license(license_key: &str) {
         hasher.update(meta.as_bytes());
     }
     let message: [u8; 32] = hasher.finalize().into();
-    
+
     // Verify
     match verifying_key.verify(&message, &signature) {
         Ok(_) => {
@@ -331,7 +336,7 @@ fn show_public_key() {
             return;
         }
     };
-    
+
     println!("=== PUBLIC KEY ===");
     println!("Copy this to sentinel-license/src/crypto.rs:\n");
     println!("const EMBEDDED_PUBLIC_KEY: &str = \"{}\";", keys.public_key);

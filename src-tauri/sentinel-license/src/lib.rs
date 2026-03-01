@@ -7,20 +7,22 @@
 //! - String encryption
 //! - Validation logic obfuscation
 
-mod machine_id;
-mod crypto;
 mod anti_debug;
-mod obfuscate;
-mod validator;
-mod storage;
+mod crypto;
 mod integrity;
+mod machine_id;
+mod obfuscate;
+mod storage;
+mod validator;
 
-pub use machine_id::MachineId;
-pub use crypto::{LicenseKey, generate_keypair, sign_license, KeyPair};
-pub use validator::{LicenseValidator, LicenseStatus, ValidationResult};
-pub use storage::LicenseStorage;
 pub use anti_debug::is_debugger_present;
-pub use integrity::{verify_integrity, is_integrity_ok, function_checksum, verify_function_checksum};
+pub use crypto::{generate_keypair, sign_license, KeyPair, LicenseKey};
+pub use integrity::{
+    function_checksum, is_integrity_ok, verify_function_checksum, verify_integrity,
+};
+pub use machine_id::MachineId;
+pub use storage::LicenseStorage;
+pub use validator::{LicenseStatus, LicenseValidator, ValidationResult};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -73,12 +75,12 @@ pub fn initialize() -> ValidationResult {
             Some(license_key) => {
                 let validator = LicenseValidator::new();
                 let result = validator.validate(&license_key);
-                
+
                 if matches!(result, ValidationResult::Valid) {
                     LICENSE_VALID.store(true, Ordering::SeqCst);
                     VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
                 }
-                
+
                 result
             }
             None => ValidationResult::NotActivated,
@@ -101,7 +103,7 @@ pub fn is_licensed() -> bool {
         // Verify token integrity
         let stored_token = VALIDATION_TOKEN.load(Ordering::SeqCst);
         let expected_token = compute_valid_token();
-        
+
         LICENSE_VALID.load(Ordering::SeqCst) && stored_token == expected_token
     }
 }
@@ -134,18 +136,18 @@ pub fn activate(license_key: &str) -> ValidationResult {
 
     let validator = LicenseValidator::new();
     let result = validator.validate_str(license_key);
-    
+
     if matches!(result, ValidationResult::Valid) {
         // Save license
         if let Err(e) = LicenseStorage::save(license_key) {
             tracing::error!("Failed to save license: {}", e);
             return ValidationResult::Invalid("Failed to save license".to_string());
         }
-        
+
         LICENSE_VALID.store(true, Ordering::SeqCst);
         VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
     }
-    
+
     result
 }
 
@@ -176,7 +178,7 @@ pub fn needs_activation() -> bool {
 fn compute_valid_token() -> u64 {
     let machine_id = MachineId::generate();
     let hash = machine_id.to_hash();
-    
+
     // Take first 8 bytes as u64
     let bytes: [u8; 8] = hash[..8].try_into().unwrap_or([0; 8]);
     u64::from_le_bytes(bytes)

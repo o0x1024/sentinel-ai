@@ -109,12 +109,24 @@ impl Language {
             Self::Rust => &["struct_item", "enum_item", "trait_item"],
             Self::JavaScript | Self::TypeScript => &["class_declaration", "class"],
             Self::Python => &["class_definition"],
-            Self::Java => &["class_declaration", "interface_declaration", "enum_declaration"],
+            Self::Java => &[
+                "class_declaration",
+                "interface_declaration",
+                "enum_declaration",
+            ],
             Self::Go => &["type_declaration"],
             Self::C => &["struct_specifier"],
             Self::Cpp => &["class_specifier", "struct_specifier"],
-            Self::CSharp => &["class_declaration", "interface_declaration", "struct_declaration"],
-            Self::Php => &["class_declaration", "interface_declaration", "trait_declaration"],
+            Self::CSharp => &[
+                "class_declaration",
+                "interface_declaration",
+                "struct_declaration",
+            ],
+            Self::Php => &[
+                "class_declaration",
+                "interface_declaration",
+                "trait_declaration",
+            ],
             Self::Ruby => &["class", "module"],
         }
     }

@@ -1,19 +1,16 @@
 pub use sentinel_core as core;
 pub use sentinel_db as db;
-pub use sentinel_tools as tools;
 pub use sentinel_rag as rag;
+pub use sentinel_tools as tools;
 
 // 导出迁移的服务模块
+pub mod dictionary;
 pub mod message_emitter;
 pub mod performance;
-pub mod dictionary;
 
 // 重新导出常用类型
+pub use dictionary::DictionaryService;
 pub use message_emitter::{MessageEmitter, TauriMessageEmitter};
 pub use performance::{
-    PerformanceConfig, PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer,
-    monitor_async,
+    monitor_async, PerformanceConfig, PerformanceMetrics, PerformanceMonitor, PerformanceOptimizer,
 };
-pub use dictionary::DictionaryService;
-
-

@@ -23,7 +23,7 @@ impl CpuMonitor {
         let mut system = System::new_all();
         system.refresh_all();
         let pid = sysinfo::get_current_pid().unwrap();
-        
+
         Self {
             system,
             pid,
@@ -33,7 +33,7 @@ impl CpuMonitor {
 
     fn sample(&mut self) {
         self.system.refresh_process(self.pid);
-        
+
         if let Some(process) = self.system.process(self.pid) {
             let cpu_percent = process.cpu_usage();
             self.samples.push(cpu_percent as f64);
@@ -54,7 +54,7 @@ impl CpuMonitor {
 
     fn print_report(&self, test_name: &str, duration: Duration, iterations: usize) {
         let (peak, avg, min) = self.get_stats();
-        
+
         println!("\n{}", "=".repeat(80));
         println!("CPU Stress Test Report: {}", test_name);
         println!("{}", "=".repeat(80));
@@ -63,7 +63,10 @@ impl CpuMonitor {
         println!("CPU Peak: {:.2}%", peak);
         println!("CPU Avg: {:.2}%", avg);
         println!("CPU Min: {:.2}%", min);
-        println!("Throughput: {:.2} ops/sec", iterations as f64 / duration.as_secs_f64());
+        println!(
+            "Throughput: {:.2} ops/sec",
+            iterations as f64 / duration.as_secs_f64()
+        );
         println!("{}", "=".repeat(80));
     }
 }
@@ -73,7 +76,7 @@ fn create_test_transaction(body_size_kb: usize) -> HttpTransaction {
     use std::collections::HashMap;
 
     let body = vec![b'A'; body_size_kb * 1024];
-    
+
     HttpTransaction {
         request: sentinel_plugins::RequestContext {
             id: uuid::Uuid::new_v4().to_string(),
@@ -151,7 +154,6 @@ export function scan_transaction(transaction) {
 "#;
 
     let executor = PluginExecutor::new(metadata.clone(), code.to_string(), 1000).unwrap();
-    
 
     let mut monitor = CpuMonitor::new();
     let start = Instant::now();
@@ -228,7 +230,6 @@ export function scan_transaction(transaction) {
 "#;
 
     let executor = PluginExecutor::new(metadata.clone(), code.to_string(), 1000).unwrap();
-    
 
     let mut monitor = CpuMonitor::new();
     let start = Instant::now();
@@ -312,7 +313,6 @@ export function scan_transaction(transaction) {
 "#;
 
     let executor = PluginExecutor::new(metadata.clone(), code.to_string(), 1000).unwrap();
-    
 
     let mut monitor = CpuMonitor::new();
     let start = Instant::now();
@@ -413,7 +413,6 @@ export function scan_transaction(transaction) {
 "#;
 
     let executor = PluginExecutor::new(metadata.clone(), code.to_string(), 1000).unwrap();
-    
 
     let mut monitor = CpuMonitor::new();
     let start = Instant::now();
@@ -497,7 +496,6 @@ export function scan_transaction(transaction) {
 "#;
 
     let executor = PluginExecutor::new(metadata.clone(), code.to_string(), 1000).unwrap();
-    
 
     let mut monitor = CpuMonitor::new();
     let start = Instant::now();
@@ -609,6 +607,9 @@ export function scan_transaction(transaction) {
     let duration = start.elapsed();
     monitor.print_report("Concurrent CPU Intensive", duration, iterations);
 
-    println!("Success rate: {}/{}", success.load(Ordering::Relaxed), iterations);
+    println!(
+        "Success rate: {}/{}",
+        success.load(Ordering::Relaxed),
+        iterations
+    );
 }
-

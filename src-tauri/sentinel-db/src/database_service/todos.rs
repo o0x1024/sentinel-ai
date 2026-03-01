@@ -72,7 +72,7 @@ impl DatabaseService {
         let rows = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, AgentTodoItem>(
-                    "SELECT * FROM agent_todos WHERE execution_id = $1 ORDER BY item_index ASC"
+                    "SELECT * FROM agent_todos WHERE execution_id = $1 ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
@@ -80,7 +80,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, AgentTodoItem>(
-                    "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC"
+                    "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
@@ -88,7 +88,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, AgentTodoItem>(
-                    "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC"
+                    "SELECT * FROM agent_todos WHERE execution_id = ? ORDER BY item_index ASC",
                 )
                 .bind(execution_id)
                 .fetch_all(pool)
@@ -99,7 +99,11 @@ impl DatabaseService {
     }
 
     /// Save or replace all todos for an execution
-    pub async fn save_agent_todos(&self, execution_id: &str, items: &[TodoItemInput]) -> Result<()> {
+    pub async fn save_agent_todos(
+        &self,
+        execution_id: &str,
+        items: &[TodoItemInput],
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -551,7 +555,11 @@ impl DatabaseService {
     }
 
     /// Add todo items to the end of the list
-    pub async fn append_agent_todos(&self, execution_id: &str, items: &[TodoItemInput]) -> Result<()> {
+    pub async fn append_agent_todos(
+        &self,
+        execution_id: &str,
+        items: &[TodoItemInput],
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -560,7 +568,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let max_index: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = $1"
+                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = $1",
                 )
                 .bind(execution_id)
                 .fetch_one(pool)
@@ -588,7 +596,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let max_index: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?"
+                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?",
                 )
                 .bind(execution_id)
                 .fetch_one(pool)
@@ -616,7 +624,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let max_index: Option<i32> = sqlx::query_scalar(
-                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?"
+                    "SELECT MAX(item_index) FROM agent_todos WHERE execution_id = ?",
                 )
                 .bind(execution_id)
                 .fetch_one(pool)

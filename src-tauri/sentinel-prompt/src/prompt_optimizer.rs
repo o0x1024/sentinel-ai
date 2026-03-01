@@ -1,5 +1,5 @@
 //! Prompt优化器
-//! 
+//!
 //! 实现基于反馈的自动prompt优化功能，支持：
 //! - 性能指标分析
 //! - 自动优化建议
@@ -7,13 +7,13 @@
 //! - 强化学习优化
 //! - 多目标优化
 use super::*;
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// Prompt优化器
 pub struct PromptOptimizer {
@@ -30,7 +30,10 @@ pub struct PromptOptimizer {
 impl std::fmt::Debug for PromptOptimizer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PromptOptimizer")
-            .field("strategies", &format!("[{} strategies]", self.strategies.len()))
+            .field(
+                "strategies",
+                &format!("[{} strategies]", self.strategies.len()),
+            )
             .field("performance_history", &"<performance_history>")
             .field("config", &self.config)
             .field("ab_test_manager", &"<ab_test_manager>")
@@ -43,7 +46,7 @@ impl std::fmt::Debug for PromptOptimizer {
 pub trait OptimizationStrategy {
     /// 策略名称
     fn name(&self) -> &str;
-    
+
     /// 生成优化建议
     async fn generate_suggestions(
         &self,
@@ -51,7 +54,7 @@ pub trait OptimizationStrategy {
         performance_data: &[PerformanceRecord],
         context: &OptimizationContext,
     ) -> Result<Vec<OptimizationSuggestion>>;
-    
+
     /// 评估建议的优先级
     fn evaluate_priority(
         &self,
@@ -820,22 +823,21 @@ impl Default for OptimizerConfig {
 
 impl PromptOptimizer {
     /// 创建新的优化器
-    pub fn new(
-        config: OptimizerConfig,
-        ab_test_manager: Arc<PromptABTestManager>,
-    ) -> Self {
+    pub fn new(config: OptimizerConfig, ab_test_manager: Arc<PromptABTestManager>) -> Self {
         let mut strategies: Vec<Box<dyn OptimizationStrategy + Send + Sync>> = Vec::new();
-        
+
         // 添加启用的策略
         for strategy_name in &config.enabled_strategies {
             match strategy_name.as_str() {
                 "rule_based" => strategies.push(Box::new(RuleBasedStrategy::new())),
                 "genetic_algorithm" => strategies.push(Box::new(GeneticAlgorithmStrategy::new())),
-                "reinforcement_learning" => strategies.push(Box::new(ReinforcementLearningStrategy::new())),
+                "reinforcement_learning" => {
+                    strategies.push(Box::new(ReinforcementLearningStrategy::new()))
+                }
                 _ => eprintln!("Unknown optimization strategy: {}", strategy_name),
             }
         }
-        
+
         Self {
             strategies,
             performance_history: Arc::new(RwLock::new(HashMap::new())),
@@ -847,7 +849,8 @@ impl PromptOptimizer {
     /// 记录性能数据
     pub async fn record_performance(&self, record: PerformanceRecord) -> Result<()> {
         let mut history = self.performance_history.write().await;
-        history.entry(record.config_id.clone())
+        history
+            .entry(record.config_id.clone())
             .or_insert_with(Vec::new)
             .push(record);
         Ok(())
@@ -860,51 +863,50 @@ impl PromptOptimizer {
         current_config: &PromptConfig,
     ) -> Result<OptimizationResult> {
         let optimization_id = Uuid::new_v4().to_string();
-        
+
         // 获取性能历史
         let history = self.performance_history.read().await;
         let performance_data = history.get(config_id).cloned().unwrap_or_default();
-        
+
         // 构建优化上下文
         let context = self.build_optimization_context(&performance_data)?;
-        
+
         // 生成优化建议
         let mut all_suggestions = Vec::new();
         for strategy in &self.strategies {
-            let suggestions = strategy.generate_suggestions(
-                current_config,
-                &performance_data,
-                &context,
-            ).await?;
+            let suggestions = strategy
+                .generate_suggestions(current_config, &performance_data, &context)
+                .await?;
             all_suggestions.extend(suggestions);
         }
-        
+
         // 评估和排序建议
         self.evaluate_and_rank_suggestions(&mut all_suggestions, &context);
-        
+
         // 选择最佳建议组合
         let selected_suggestions = self.select_optimal_suggestions(&all_suggestions, &context)?;
-        
+
         // 应用建议
         let optimized_config = self.apply_suggestions(current_config, &selected_suggestions)?;
-        
+
         // 验证优化结果
         let validation_results = if !self.config.safe_mode {
             None
         } else {
-            Some(self.validate_optimization(
-                current_config,
-                &optimized_config,
-                &selected_suggestions,
-            ).await?)
+            Some(
+                self.validate_optimization(
+                    current_config,
+                    &optimized_config,
+                    &selected_suggestions,
+                )
+                .await?,
+            )
         };
-        
+
         // 计算性能改进
-        let performance_improvement = self.calculate_performance_improvement(
-            &performance_data,
-            &selected_suggestions,
-        )?;
-        
+        let performance_improvement =
+            self.calculate_performance_improvement(&performance_data, &selected_suggestions)?;
+
         Ok(OptimizationResult {
             optimization_id,
             original_config: current_config.clone(),
@@ -925,17 +927,15 @@ impl PromptOptimizer {
         let history = self.performance_history.read().await;
         let performance_data = history.get(config_id).cloned().unwrap_or_default();
         let context = self.build_optimization_context(&performance_data)?;
-        
+
         let mut all_suggestions = Vec::new();
         for strategy in &self.strategies {
-            let suggestions = strategy.generate_suggestions(
-                current_config,
-                &performance_data,
-                &context,
-            ).await?;
+            let suggestions = strategy
+                .generate_suggestions(current_config, &performance_data, &context)
+                .await?;
             all_suggestions.extend(suggestions);
         }
-        
+
         self.evaluate_and_rank_suggestions(&mut all_suggestions, &context);
         Ok(all_suggestions)
     }
@@ -957,40 +957,51 @@ impl PromptOptimizer {
     ) -> Result<PerformanceAnalysis> {
         let history = self.performance_history.read().await;
         let performance_data = history.get(config_id).cloned().unwrap_or_default();
-        
+
         let (start_time, end_time) = time_range.unwrap_or_else(|| {
             let now = Utc::now();
             let week_ago = now - chrono::Duration::days(7);
             (week_ago, now)
         });
-        
+
         // 过滤时间范围内的数据
-        let filtered_data: Vec<_> = performance_data.into_iter()
+        let filtered_data: Vec<_> = performance_data
+            .into_iter()
             .filter(|record| record.timestamp >= start_time && record.timestamp <= end_time)
             .collect();
-        
+
         if filtered_data.is_empty() {
-            return Err(anyhow!("No performance data found for the specified time range"));
+            return Err(anyhow!(
+                "No performance data found for the specified time range"
+            ));
         }
-        
+
         // 计算总体统计
         let total_requests = filtered_data.len() as f64;
-        let success_rate = filtered_data.iter()
+        let success_rate = filtered_data
+            .iter()
             .filter(|r| r.system_metrics.error_rate < 0.1)
-            .count() as f64 / total_requests as f64;
-        
-        let avg_response_time_ms = filtered_data.iter()
+            .count() as f64
+            / total_requests as f64;
+
+        let avg_response_time_ms = filtered_data
+            .iter()
             .map(|r| r.system_metrics.response_time_ms)
-            .sum::<f64>() / total_requests as f64;
-        
-        let avg_accuracy = filtered_data.iter()
+            .sum::<f64>()
+            / total_requests as f64;
+
+        let avg_accuracy = filtered_data
+            .iter()
             .filter_map(|r| r.metrics.get("accuracy"))
-            .sum::<f64>() / total_requests as f64;
-        
-        let avg_cost_usd = filtered_data.iter()
+            .sum::<f64>()
+            / total_requests as f64;
+
+        let avg_cost_usd = filtered_data
+            .iter()
             .map(|r| r.system_metrics.token_usage.cost_usd)
-            .sum::<f64>() / total_requests as f64;
-        
+            .sum::<f64>()
+            / total_requests as f64;
+
         let overall_stats = OverallStats {
             total_requests,
             success_rate,
@@ -998,16 +1009,16 @@ impl PromptOptimizer {
             avg_accuracy,
             avg_cost_usd,
         };
-        
+
         // 分析趋势
         let trend_analysis = self.analyze_trends(&filtered_data);
-        
+
         // 识别瓶颈
         let bottlenecks = self.identify_bottlenecks(&filtered_data, &overall_stats);
-        
+
         // 生成建议
         let recommendations = self.generate_analysis_recommendations(&overall_stats, &bottlenecks);
-        
+
         Ok(PerformanceAnalysis {
             analysis_id: Uuid::new_v4().to_string(),
             config_id: config_id.to_string(),
@@ -1019,7 +1030,7 @@ impl PromptOptimizer {
             analyzed_at: Utc::now(),
         })
     }
-    
+
     /// 批量测试配置
     pub async fn batch_test_configs(
         &self,
@@ -1028,78 +1039,102 @@ impl PromptOptimizer {
     ) -> Result<BatchTestResult> {
         let test_id = Uuid::new_v4().to_string();
         let started_at = Utc::now();
-        
+
         let mut config_results = HashMap::new();
-        let scenario_ids: Vec<String> = test_scenarios.iter().map(|s| s.scenario_id.clone()).collect();
-        
+        let scenario_ids: Vec<String> = test_scenarios
+            .iter()
+            .map(|s| s.scenario_id.clone())
+            .collect();
+
         for config_id in &config_ids {
             let mut scenario_results = HashMap::new();
             let mut total_score = 0.0;
             let mut performance_metrics = HashMap::new();
             let mut errors = Vec::new();
-            
+
             for scenario in &test_scenarios {
                 let start_time = std::time::Instant::now();
-                
+
                 // 模拟测试执行
-                let (passed, score, details) = self.execute_test_scenario(config_id, scenario).await
+                let (passed, score, details) = self
+                    .execute_test_scenario(config_id, scenario)
+                    .await
                     .unwrap_or_else(|e| {
                         errors.push(format!("Scenario {} failed: {}", scenario.scenario_id, e));
                         (false, 0.0, HashMap::new())
                     });
-                
+
                 let execution_time_ms = start_time.elapsed().as_millis() as f64;
-                
-                scenario_results.insert(scenario.scenario_id.clone(), ScenarioResult {
-                    scenario_id: scenario.scenario_id.clone(),
-                    passed,
-                    score,
-                    details,
-                    execution_time_ms,
-                });
-                
+
+                scenario_results.insert(
+                    scenario.scenario_id.clone(),
+                    ScenarioResult {
+                        scenario_id: scenario.scenario_id.clone(),
+                        passed,
+                        score,
+                        details,
+                        execution_time_ms,
+                    },
+                );
+
                 total_score += score;
             }
-            
+
             let overall_score = if !test_scenarios.is_empty() {
                 total_score / test_scenarios.len() as f64
             } else {
                 0.0
             };
-            
+
             // 计算性能指标
             performance_metrics.insert("overall_score".to_string(), overall_score);
-            performance_metrics.insert("success_rate".to_string(), 
-                scenario_results.values().filter(|r| r.passed).count() as f64 / scenario_results.len() as f64);
-            
-            config_results.insert(config_id.clone(), ConfigTestResult {
-                config_id: config_id.clone(),
-                scenario_results,
-                overall_score,
-                performance_metrics,
-                errors,
-            });
+            performance_metrics.insert(
+                "success_rate".to_string(),
+                scenario_results.values().filter(|r| r.passed).count() as f64
+                    / scenario_results.len() as f64,
+            );
+
+            config_results.insert(
+                config_id.clone(),
+                ConfigTestResult {
+                    config_id: config_id.clone(),
+                    scenario_results,
+                    overall_score,
+                    performance_metrics,
+                    errors,
+                },
+            );
         }
-        
+
         let completed_at = Utc::now();
-        
+
         // 找到最佳配置
-        let best_config = config_results.iter()
-            .max_by(|a, b| a.1.overall_score.partial_cmp(&b.1.overall_score).unwrap_or(std::cmp::Ordering::Equal))
+        let best_config = config_results
+            .iter()
+            .max_by(|a, b| {
+                a.1.overall_score
+                    .partial_cmp(&b.1.overall_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|(config_id, _)| config_id.clone());
-        
+
         // 计算摘要统计
         let total_configs = config_ids.len();
         let total_scenarios = test_scenarios.len();
-        let success_rate = config_results.values()
-            .map(|r| r.scenario_results.values().filter(|s| s.passed).count() as f64 / r.scenario_results.len() as f64)
-            .sum::<f64>() / total_configs as f64;
-        
+        let success_rate = config_results
+            .values()
+            .map(|r| {
+                r.scenario_results.values().filter(|s| s.passed).count() as f64
+                    / r.scenario_results.len() as f64
+            })
+            .sum::<f64>()
+            / total_configs as f64;
+
         let scores: Vec<f64> = config_results.values().map(|r| r.overall_score).collect();
         let average_score = scores.iter().sum::<f64>() / scores.len() as f64;
         let highest_score = scores.iter().fold(0.0f64, |a, &b| a.max(b));
         let lowest_score = scores.iter().fold(100.0f64, |a, &b| a.min(b));
-        
+
         let summary = BatchTestSummary {
             total_configs,
             total_scenarios,
@@ -1108,7 +1143,7 @@ impl PromptOptimizer {
             highest_score,
             lowest_score,
         };
-        
+
         Ok(BatchTestResult {
             test_id,
             tested_configs: config_ids,
@@ -1120,7 +1155,7 @@ impl PromptOptimizer {
             summary,
         })
     }
-    
+
     /// 生成配置报告
     pub async fn generate_config_report(
         &self,
@@ -1130,10 +1165,12 @@ impl PromptOptimizer {
         let report_id = Uuid::new_v4().to_string();
         let generated_at = Utc::now();
         let time_range = (generated_at - chrono::Duration::days(30), generated_at);
-        
+
         // 获取性能分析
-        let analysis = self.get_performance_analysis(config_id, Some(time_range)).await?;
-        
+        let analysis = self
+            .get_performance_analysis(config_id, Some(time_range))
+            .await?;
+
         let title = match report_type {
             ReportType::Performance => format!("性能报告 - 配置 {}", config_id),
             ReportType::Optimization => format!("优化报告 - 配置 {}", config_id),
@@ -1142,20 +1179,35 @@ impl PromptOptimizer {
             ReportType::Detailed => format!("详细报告 - 配置 {}", config_id),
             ReportType::Summary => format!("摘要报告 - 配置 {}", config_id),
         };
-        
+
         let executive_summary = self.generate_executive_summary(&analysis, &report_type);
-        
+
         let mut key_metrics = HashMap::new();
-        key_metrics.insert("total_requests".to_string(), analysis.overall_stats.total_requests as f64);
-        key_metrics.insert("success_rate".to_string(), analysis.overall_stats.success_rate);
-        key_metrics.insert("avg_response_time_ms".to_string(), analysis.overall_stats.avg_response_time_ms);
-        key_metrics.insert("avg_accuracy".to_string(), analysis.overall_stats.avg_accuracy);
-        key_metrics.insert("avg_cost_usd".to_string(), analysis.overall_stats.avg_cost_usd);
-        
+        key_metrics.insert(
+            "total_requests".to_string(),
+            analysis.overall_stats.total_requests as f64,
+        );
+        key_metrics.insert(
+            "success_rate".to_string(),
+            analysis.overall_stats.success_rate,
+        );
+        key_metrics.insert(
+            "avg_response_time_ms".to_string(),
+            analysis.overall_stats.avg_response_time_ms,
+        );
+        key_metrics.insert(
+            "avg_accuracy".to_string(),
+            analysis.overall_stats.avg_accuracy,
+        );
+        key_metrics.insert(
+            "avg_cost_usd".to_string(),
+            analysis.overall_stats.avg_cost_usd,
+        );
+
         let detailed_analysis = self.generate_detailed_analysis(&analysis, &report_type);
         let recommendations = self.generate_report_recommendations(&analysis);
         let attachments = self.generate_report_attachments(&analysis);
-        
+
         Ok(ConfigReport {
             report_id,
             config_id: config_id.to_string(),
@@ -1178,15 +1230,16 @@ impl PromptOptimizer {
     ) -> Result<OptimizationContext> {
         let mut baseline_performance = HashMap::new();
         let mut performance_trends = HashMap::new();
-        
+
         if !performance_data.is_empty() {
             // 计算基线性能
             for target in &self.config.optimization_targets {
-                let values: Vec<f64> = performance_data.iter()
+                let values: Vec<f64> = performance_data
+                    .iter()
                     .filter_map(|r| r.metrics.get(&target.name))
                     .copied()
                     .collect();
-                
+
                 if !values.is_empty() {
                     let avg = values.iter().sum::<f64>() / values.len() as f64;
                     baseline_performance.insert(target.name.clone(), avg);
@@ -1194,7 +1247,7 @@ impl PromptOptimizer {
                 }
             }
         }
-        
+
         Ok(OptimizationContext {
             baseline_performance,
             performance_trends,
@@ -1221,15 +1274,15 @@ impl PromptOptimizer {
     ) {
         for suggestion in suggestions.iter_mut() {
             let mut total_priority = 0.0;
-            
+
             for strategy in &self.strategies {
                 let priority = strategy.evaluate_priority(suggestion, context);
                 total_priority += priority;
             }
-            
+
             suggestion.priority = total_priority / self.strategies.len() as f32;
         }
-        
+
         // 按优先级排序
         suggestions.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap());
     }
@@ -1241,14 +1294,14 @@ impl PromptOptimizer {
         _context: &OptimizationContext,
     ) -> Result<Vec<OptimizationSuggestion>> {
         let mut selected = Vec::new();
-        
+
         // 简单策略：选择前N个高优先级建议
         for suggestion in suggestions.iter().take(3) {
             if suggestion.priority > 0.5 && suggestion.confidence > 0.7 {
                 selected.push(suggestion.clone());
             }
         }
-        
+
         Ok(selected)
     }
 
@@ -1259,48 +1312,44 @@ impl PromptOptimizer {
         suggestions: &[OptimizationSuggestion],
     ) -> Result<PromptConfig> {
         let mut optimized_config = current_config.clone();
-        
+
         for suggestion in suggestions {
             for change in &suggestion.changes {
                 self.apply_change(&mut optimized_config, change)?;
             }
         }
-        
+
         Ok(optimized_config)
     }
 
     /// 应用单个变更
-    fn apply_change(
-        &self,
-        config: &mut PromptConfig,
-        change: &PromptChange,
-    ) -> Result<()> {
+    fn apply_change(&self, config: &mut PromptConfig, change: &PromptChange) -> Result<()> {
         match change.target_path.as_str() {
             "core_templates.planner_core" => {
                 if let serde_json::Value::String(new_template) = &change.new_value {
                     config.core_templates.planner_core = new_template.clone();
                 }
-            },
+            }
             "core_templates.executor_core" => {
                 if let serde_json::Value::String(new_template) = &change.new_value {
                     config.core_templates.executor_core = new_template.clone();
                 }
-            },
+            }
             "core_templates.replanner_core" => {
                 if let serde_json::Value::String(new_template) = &change.new_value {
                     config.core_templates.replanner_core = new_template.clone();
                 }
-            },
+            }
             "domain_template.domain_instructions" => {
                 if let serde_json::Value::String(new_instructions) = &change.new_value {
                     config.domain_template.domain_instructions = new_instructions.clone();
                 }
-            },
+            }
             _ => {
                 return Err(anyhow!("Unsupported change target: {}", change.target_path));
             }
         }
-        
+
         Ok(())
     }
 
@@ -1333,7 +1382,7 @@ impl PromptOptimizer {
                     prompt_config: optimized_config.clone(),
                     traffic_weight: 0.5,
                     variant_config: HashMap::new(),
-                }
+                },
             ],
             traffic_allocation: TrafficAllocation {
                 strategy: AllocationStrategy::Random,
@@ -1341,20 +1390,20 @@ impl PromptOptimizer {
                 variant_weights: [
                     ("original".to_string(), 0.5),
                     ("optimized".to_string(), 0.5),
-                ].into_iter().collect(),
+                ]
+                .into_iter()
+                .collect(),
                 user_segmentation: None,
             },
-            metrics: vec![
-                EvaluationMetric {
-                    name: "accuracy".to_string(),
-                    metric_type: MetricType::Accuracy,
-                    description: "Task accuracy".to_string(),
-                    target_value: Some(0.8),
-                    weight: 1.0,
-                    is_primary: true,
-                    calculation_method: CalculationMethod::Average,
-                },
-            ],
+            metrics: vec![EvaluationMetric {
+                name: "accuracy".to_string(),
+                metric_type: MetricType::Accuracy,
+                description: "Task accuracy".to_string(),
+                target_value: Some(0.8),
+                weight: 1.0,
+                is_primary: true,
+                calculation_method: CalculationMethod::Average,
+            }],
             conditions: TestConditions {
                 min_sample_size: 50,
                 max_duration_hours: Some(24),
@@ -1364,9 +1413,9 @@ impl PromptOptimizer {
             },
             metadata: HashMap::new(),
         };
-        
+
         let _test = self.ab_test_manager.create_test(test_request).await?;
-        
+
         // 简化验证结果
         Ok(ValidationResults {
             passed: true,
@@ -1383,17 +1432,17 @@ impl PromptOptimizer {
         suggestions: &[OptimizationSuggestion],
     ) -> Result<HashMap<String, f64>> {
         let mut improvement = HashMap::new();
-        
+
         for suggestion in suggestions {
             for (metric, expected_improvement) in &suggestion.expected_improvement {
                 let current = improvement.get(metric).unwrap_or(&0.0);
                 improvement.insert(metric.clone(), current + expected_improvement);
             }
         }
-        
+
         Ok(improvement)
     }
-    
+
     /// 分析趋势
     fn analyze_trends(&self, _performance_data: &[PerformanceRecord]) -> TrendAnalysis {
         // 简化的趋势分析实现
@@ -1404,7 +1453,7 @@ impl PromptOptimizer {
             satisfaction_trend: TrendDirection::Stable,
         }
     }
-    
+
     /// 识别性能瓶颈
     fn identify_bottlenecks(
         &self,
@@ -1412,7 +1461,7 @@ impl PromptOptimizer {
         overall_stats: &OverallStats,
     ) -> Vec<PerformanceBottleneck> {
         let mut bottlenecks = Vec::new();
-        
+
         // 检查响应时间瓶颈
         if overall_stats.avg_response_time_ms > 3000.0 {
             bottlenecks.push(PerformanceBottleneck {
@@ -1425,23 +1474,20 @@ impl PromptOptimizer {
                 ],
             });
         }
-        
+
         // 检查准确性瓶颈
         if overall_stats.avg_accuracy < 0.8 {
             bottlenecks.push(PerformanceBottleneck {
                 bottleneck_type: BottleneckType::Accuracy,
                 description: "准确性低于预期".to_string(),
                 impact_level: ImpactLevel::Medium,
-                suggested_solutions: vec![
-                    "增强上下文信息".to_string(),
-                    "改进示例".to_string(),
-                ],
+                suggested_solutions: vec!["增强上下文信息".to_string(), "改进示例".to_string()],
             });
         }
-        
+
         bottlenecks
     }
-    
+
     /// 生成分析建议
     fn generate_analysis_recommendations(
         &self,
@@ -1449,18 +1495,18 @@ impl PromptOptimizer {
         bottlenecks: &[PerformanceBottleneck],
     ) -> Vec<String> {
         let mut recommendations = Vec::new();
-        
+
         if overall_stats.success_rate < 0.9 {
             recommendations.push("提高系统稳定性，减少错误率".to_string());
         }
-        
+
         for bottleneck in bottlenecks {
             recommendations.extend(bottleneck.suggested_solutions.clone());
         }
-        
+
         recommendations
     }
-    
+
     /// 执行测试场景
     async fn execute_test_scenario(
         &self,
@@ -1471,11 +1517,14 @@ impl PromptOptimizer {
         let passed = true; // 简化实现
         let score = 85.0; // 模拟评分
         let mut details = HashMap::new();
-        details.insert("scenario_name".to_string(), serde_json::Value::String(scenario.name.clone()));
-        
+        details.insert(
+            "scenario_name".to_string(),
+            serde_json::Value::String(scenario.name.clone()),
+        );
+
         Ok((passed, score, details))
     }
-    
+
     /// 生成执行摘要
     fn generate_executive_summary(
         &self,
@@ -1491,60 +1540,58 @@ impl PromptOptimizer {
                     analysis.overall_stats.success_rate * 100.0,
                     analysis.overall_stats.avg_response_time_ms
                 )
-            },
+            }
             _ => "报告摘要".to_string(),
         }
     }
-    
+
     /// 生成详细分析
     fn generate_detailed_analysis(
         &self,
         analysis: &PerformanceAnalysis,
         _report_type: &ReportType,
     ) -> Vec<AnalysisSection> {
-        vec![
-            AnalysisSection {
-                title: "性能概览".to_string(),
-                content: format!(
-                    "总请求数: {}\n成功率: {:.1}%\n平均响应时间: {:.0}ms",
-                    analysis.overall_stats.total_requests,
-                    analysis.overall_stats.success_rate * 100.0,
-                    analysis.overall_stats.avg_response_time_ms
-                ),
-                charts: vec![],
-                tables: vec![],
-            }
-        ]
+        vec![AnalysisSection {
+            title: "性能概览".to_string(),
+            content: format!(
+                "总请求数: {}\n成功率: {:.1}%\n平均响应时间: {:.0}ms",
+                analysis.overall_stats.total_requests,
+                analysis.overall_stats.success_rate * 100.0,
+                analysis.overall_stats.avg_response_time_ms
+            ),
+            charts: vec![],
+            tables: vec![],
+        }]
     }
-    
+
     /// 生成报告建议
     fn generate_report_recommendations(
         &self,
         analysis: &PerformanceAnalysis,
     ) -> Vec<Recommendation> {
-        analysis.recommendations.iter().map(|rec| {
-            Recommendation {
+        analysis
+            .recommendations
+            .iter()
+            .map(|rec| Recommendation {
                 title: rec.clone(),
                 description: format!("建议: {}", rec),
                 priority: Priority::Medium,
                 expected_impact: "中等影响".to_string(),
                 implementation_effort: ImplementationEffort::Medium,
-            }
-        }).collect()
+            })
+            .collect()
     }
-    
+
     /// 生成报告附件
     fn generate_report_attachments(
         &self,
         _analysis: &PerformanceAnalysis,
     ) -> Vec<ReportAttachment> {
-        vec![
-            ReportAttachment {
-                name: "原始数据".to_string(),
-                attachment_type: AttachmentType::RawData,
-                content: serde_json::Value::Object(serde_json::Map::new()),
-            }
-        ]
+        vec![ReportAttachment {
+            name: "原始数据".to_string(),
+            attachment_type: AttachmentType::RawData,
+            content: serde_json::Value::Object(serde_json::Map::new()),
+        }]
     }
 }
 
@@ -1568,7 +1615,8 @@ pub struct OptimizationRule {
     /// 条件
     pub condition: Box<dyn Fn(&PromptConfig, &[PerformanceRecord]) -> bool + Send + Sync>,
     /// 建议生成器
-    pub suggestion_generator: Box<dyn Fn(&PromptConfig, &[PerformanceRecord]) -> OptimizationSuggestion + Send + Sync>,
+    pub suggestion_generator:
+        Box<dyn Fn(&PromptConfig, &[PerformanceRecord]) -> OptimizationSuggestion + Send + Sync>,
 }
 
 impl std::fmt::Debug for OptimizationRule {
@@ -1602,7 +1650,7 @@ impl OptimizationStrategy for RuleBasedStrategy {
     fn name(&self) -> &str {
         "rule_based"
     }
-    
+
     async fn generate_suggestions(
         &self,
         current_config: &PromptConfig,
@@ -1610,7 +1658,7 @@ impl OptimizationStrategy for RuleBasedStrategy {
         _context: &OptimizationContext,
     ) -> Result<Vec<OptimizationSuggestion>> {
         let mut suggestions = Vec::new();
-        
+
         // 示例规则：如果响应时间过长，建议简化模板
         if let Some(avg_response_time) = self.calculate_average_response_time(performance_data) {
             if avg_response_time > 3000.0 {
@@ -1619,9 +1667,9 @@ impl OptimizationStrategy for RuleBasedStrategy {
                     suggestion_type: SuggestionType::TemplateOptimization,
                     description: "简化prompt模板以减少响应时间".to_string(),
                     priority: 0.8,
-                    expected_improvement: [
-                        ("response_time".to_string(), -500.0),
-                    ].into_iter().collect(),
+                    expected_improvement: [("response_time".to_string(), -500.0)]
+                        .into_iter()
+                        .collect(),
                     confidence: 0.7,
                     implementation_complexity: Complexity::Medium,
                     risk_assessment: RiskAssessment {
@@ -1630,51 +1678,63 @@ impl OptimizationStrategy for RuleBasedStrategy {
                         mitigation_strategies: vec!["保留核心指令".to_string()],
                         rollback_plan: Some("恢复原始模板".to_string()),
                     },
-                    changes: vec![
-                        PromptChange {
-                            change_type: ChangeType::Modify,
-                            target_path: "core_templates.planner_core".to_string(),
-                            original_value: Some(serde_json::Value::String(current_config.core_templates.planner_core.clone())),
-                            new_value: serde_json::Value::String(self.simplify_template(&current_config.core_templates.planner_core)),
-                            reason: "减少模板复杂度以提高响应速度".to_string(),
-                        },
-                    ],
+                    changes: vec![PromptChange {
+                        change_type: ChangeType::Modify,
+                        target_path: "core_templates.planner_core".to_string(),
+                        original_value: Some(serde_json::Value::String(
+                            current_config.core_templates.planner_core.clone(),
+                        )),
+                        new_value: serde_json::Value::String(
+                            self.simplify_template(&current_config.core_templates.planner_core),
+                        ),
+                        reason: "减少模板复杂度以提高响应速度".to_string(),
+                    }],
                     generated_by: self.name().to_string(),
                     generated_at: Utc::now(),
                 });
             }
         }
-        
+
         Ok(suggestions)
     }
-    
+
     fn evaluate_priority(
         &self,
         suggestion: &OptimizationSuggestion,
         _context: &OptimizationContext,
     ) -> f32 {
         // 基于建议的置信度和预期改进计算优先级
-        suggestion.confidence * 0.6 + 
-        suggestion.expected_improvement.values().map(|v| v.abs() as f32).sum::<f32>() * 0.4
+        suggestion.confidence * 0.6
+            + suggestion
+                .expected_improvement
+                .values()
+                .map(|v| v.abs() as f32)
+                .sum::<f32>()
+                * 0.4
     }
 }
 
 impl RuleBasedStrategy {
-    fn calculate_average_response_time(&self, performance_data: &[PerformanceRecord]) -> Option<f64> {
+    fn calculate_average_response_time(
+        &self,
+        performance_data: &[PerformanceRecord],
+    ) -> Option<f64> {
         if performance_data.is_empty() {
             return None;
         }
-        
-        let total: f64 = performance_data.iter()
+
+        let total: f64 = performance_data
+            .iter()
             .map(|r| r.system_metrics.response_time_ms)
             .sum();
-        
+
         Some(total / performance_data.len() as f64)
     }
-    
+
     fn simplify_template(&self, template: &str) -> String {
         // 简化模板的示例实现
-        template.lines()
+        template
+            .lines()
             .filter(|line| !line.trim().is_empty())
             .take(10) // 只保留前10行
             .collect::<Vec<_>>()
@@ -1714,7 +1774,7 @@ impl OptimizationStrategy for GeneticAlgorithmStrategy {
     fn name(&self) -> &str {
         "genetic_algorithm"
     }
-    
+
     async fn generate_suggestions(
         &self,
         _current_config: &PromptConfig,
@@ -1724,7 +1784,7 @@ impl OptimizationStrategy for GeneticAlgorithmStrategy {
         // 遗传算法实现（简化版本）
         Ok(vec![])
     }
-    
+
     fn evaluate_priority(
         &self,
         _suggestion: &OptimizationSuggestion,
@@ -1763,7 +1823,7 @@ impl OptimizationStrategy for ReinforcementLearningStrategy {
     fn name(&self) -> &str {
         "reinforcement_learning"
     }
-    
+
     async fn generate_suggestions(
         &self,
         _current_config: &PromptConfig,
@@ -1773,7 +1833,7 @@ impl OptimizationStrategy for ReinforcementLearningStrategy {
         // 强化学习实现（简化版本）
         Ok(vec![])
     }
-    
+
     fn evaluate_priority(
         &self,
         _suggestion: &OptimizationSuggestion,
@@ -1796,13 +1856,13 @@ mod tests {
     //         temp_dir.path().to_path_buf(),
     //         prompt_ab_test_manager::ABTestConfig::default(),
     //     ));
-        
+
     //     let config = OptimizerConfig::default();
     //     let optimizer = PromptOptimizer::new(config, ab_test_manager);
-        
+
     //     let prompt_config = PromptConfig::default();
     //     let suggestions = optimizer.get_suggestions("test_config", &prompt_config).await.unwrap();
-        
+
     //     // 由于没有性能数据，建议列表应该为空或很少
     //     assert!(suggestions.len() <= 1);
     // }

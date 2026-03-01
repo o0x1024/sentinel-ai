@@ -3,15 +3,15 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
 
 /// Message emitter trait for sending events
 #[async_trait]
 pub trait MessageEmitter: Send + Sync {
     /// Emit an event with payload
     async fn emit(&self, event: &str, payload: Value) -> Result<()>;
-    
+
     /// Emit an event to all listeners with payload
     async fn emit_all(&self, event: &str, payload: Value) -> Result<()>;
 }
@@ -36,7 +36,7 @@ impl MessageEmitter for TauriMessageEmitter {
         self.app_handle.emit(event, payload)?;
         Ok(())
     }
-    
+
     async fn emit_all(&self, event: &str, payload: Value) -> Result<()> {
         self.app_handle.emit(event, payload)?;
         Ok(())

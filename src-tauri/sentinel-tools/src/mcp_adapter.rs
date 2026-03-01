@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-    
+
 use crate::dynamic_tool::{create_executor, DynamicToolDef, ToolExecutor, ToolSource};
 use crate::tool_server::ToolServer;
 
@@ -223,11 +223,11 @@ pub async fn refresh_mcp_tools(tool_server: &ToolServer) {
 
                 tool_server
                     .register_mcp_tool(
-                       &server_name,
-                       &tool_meta.tool_name,
-                       tool_meta.description.as_deref().unwrap_or_default(),
-                       tool_meta.input_schema.clone(),
-                       executor,
+                        &server_name,
+                        &tool_meta.tool_name,
+                        tool_meta.description.as_deref().unwrap_or_default(),
+                        tool_meta.input_schema.clone(),
+                        executor,
                     )
                     .await;
             }

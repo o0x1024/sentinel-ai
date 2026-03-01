@@ -1,12 +1,12 @@
 use anyhow::Result;
 use chrono::{TimeZone, Utc};
+use sentinel_core::models::database::MemoryExecution;
+use sentinel_db::client::DatabaseClient;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use sentinel_core::models::database::MemoryExecution;
-use sentinel_db::client::DatabaseClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallSummary {
@@ -206,7 +206,11 @@ impl MemoryManager {
             }
         }
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(request.max_results.max(1));
         Ok(results)
     }
@@ -231,7 +235,10 @@ impl MemoryManager {
             success: record.success,
             error: record.error.clone(),
             response_excerpt: record.response_excerpt.clone(),
-            created_at: Utc.timestamp_opt(record.created_at, 0).single().unwrap_or_else(Utc::now),
+            created_at: Utc
+                .timestamp_opt(record.created_at, 0)
+                .single()
+                .unwrap_or_else(Utc::now),
         };
 
         db.create_memory_execution(&db_record).await?;
@@ -307,9 +314,7 @@ pub fn get_global_memory() -> MemoryManager {
 }
 
 fn tokenize(text: &str) -> HashSet<String> {
-    text.split_whitespace()
-        .map(|t| t.to_lowercase())
-        .collect()
+    text.split_whitespace().map(|t| t.to_lowercase()).collect()
 }
 
 fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {

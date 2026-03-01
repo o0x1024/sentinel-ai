@@ -1,13 +1,21 @@
+use anyhow::Result;
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
-use std::pin::Pin;
 use std::future::Future;
-use anyhow::Result;
+use std::pin::Pin;
+use std::sync::OnceLock;
 
-pub type StoreMemoryFn = Box<dyn Fn(String, Option<String>, Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
-pub type RetrieveMemoryFn = Box<dyn Fn(String, usize) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send>> + Send + Sync>;
+pub type StoreMemoryFn = Box<
+    dyn Fn(String, Option<String>, Vec<String>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+pub type RetrieveMemoryFn = Box<
+    dyn Fn(String, usize) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send>>
+        + Send
+        + Sync,
+>;
 
 static STORE_FN: OnceLock<StoreMemoryFn> = OnceLock::new();
 static RETRIEVE_FN: OnceLock<RetrieveMemoryFn> = OnceLock::new();
@@ -22,16 +30,16 @@ pub fn register_memory_functions(store: StoreMemoryFn, retrieve: RetrieveMemoryF
 pub struct MemoryManagerArgs {
     /// The action to perform: "store" or "retrieve"
     pub action: String,
-    
+
     /// Content to store (if action="store") or query to retrieve (if action="retrieve")
     pub content: String,
 
     /// Optional title for the memory (only for "store"). If not provided, a title will be generated from content.
     pub title: Option<String>,
-    
+
     /// Tags to categorize the memory (only for "store")
     pub tags: Option<Vec<String>>,
-    
+
     /// Max number of results to return (only for "retrieve"), default 5
     pub limit: Option<usize>,
 }
@@ -80,7 +88,8 @@ impl Tool for MemoryManagerTool {
             "store" => {
                 let handler = STORE_FN.get().ok_or(MemoryManagerError::MissingHandler)?;
                 let tags = args.tags.unwrap_or_default();
-                handler(args.content, args.title, tags).await
+                handler(args.content, args.title, tags)
+                    .await
                     .map_err(|e| MemoryManagerError::OperationFailed(e.to_string()))?;
                 Ok(MemoryManagerOutput {
                     success: true,
@@ -89,9 +98,12 @@ impl Tool for MemoryManagerTool {
                 })
             }
             "retrieve" => {
-                let handler = RETRIEVE_FN.get().ok_or(MemoryManagerError::MissingHandler)?;
+                let handler = RETRIEVE_FN
+                    .get()
+                    .ok_or(MemoryManagerError::MissingHandler)?;
                 let limit = args.limit.unwrap_or(5);
-                let results = handler(args.content, limit).await
+                let results = handler(args.content, limit)
+                    .await
                     .map_err(|e| MemoryManagerError::OperationFailed(e.to_string()))?;
                 Ok(MemoryManagerOutput {
                     success: true,

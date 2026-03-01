@@ -15,12 +15,12 @@ use crate::types::{Finding, PluginMetadata};
 use deno_ast::{
     EmitOptions, MediaType, ParseParams, SourceMapOption, TranspileModuleOptions, TranspileOptions,
 };
+use deno_core::v8;
 use deno_core::{
     url::Url, FastString, JsRuntime, ModuleCodeString, ModuleLoadOptions, ModuleLoadResponse,
     ModuleLoader, ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, ResolutionKind,
     RuntimeOptions,
 };
-use deno_core::v8;
 use deno_features::FeatureChecker;
 #[cfg(not(target_os = "windows"))]
 use deno_permissions::{PermissionsContainer, RuntimePermissionDescriptorParser};
@@ -57,7 +57,7 @@ impl PluginModuleLoader {
 
         // Create default HTTP client (proxy will be applied when actually used)
         let http_client = reqwest::Client::new();
-        
+
         Self {
             modules: std::cell::RefCell::new(std::collections::HashMap::new()),
             http_client,
@@ -182,24 +182,18 @@ impl ModuleLoader for PluginModuleLoader {
                 let cache_path = cache_dir.join(format!("{}{}", hash, ext));
 
                 let source = if cache_path.exists() {
-                    tokio::fs::read_to_string(&cache_path)
-                        .await
-                        .map_err(|e| {
-                            JsErrorBox::generic(format!("Failed to read cache {}: {}", url, e))
-                        })?
+                    tokio::fs::read_to_string(&cache_path).await.map_err(|e| {
+                        JsErrorBox::generic(format!("Failed to read cache {}: {}", url, e))
+                    })?
                 } else {
                     // Create a new client with proxy support for this request
                     let builder = reqwest::Client::builder();
                     let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
                     let client_with_proxy = builder.build().unwrap_or_else(|_| client.clone());
-                    
-                    let response = client_with_proxy
-                        .get(&url)
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            JsErrorBox::generic(format!("Failed to fetch {}: {}", url, e))
-                        })?;
+
+                    let response = client_with_proxy.get(&url).send().await.map_err(|e| {
+                        JsErrorBox::generic(format!("Failed to fetch {}: {}", url, e))
+                    })?;
 
                     if !response.status().is_success() {
                         return Err(JsErrorBox::generic(format!(
@@ -324,7 +318,7 @@ impl PluginEngine {
         {
             let op_state = runtime.op_state();
             let mut state = op_state.borrow_mut();
-            
+
             #[cfg(not(target_os = "windows"))]
             {
                 let parser = Arc::new(RuntimePermissionDescriptorParser::new(
@@ -332,14 +326,14 @@ impl PluginEngine {
                 ));
                 state.put(PermissionsContainer::allow_all(parser));
             }
-            
+
             #[cfg(target_os = "windows")]
             {
                 // On Windows, skip permission setup due to cross-compilation issues
                 // Plugins will run without permission checks
                 tracing::warn!("Running without permission checks on Windows");
             }
-            
+
             let mut features = FeatureChecker::default();
             features.enable_feature(deno_net::UNSTABLE_FEATURE_NAME);
             state.put(Arc::new(features));
@@ -359,9 +353,7 @@ impl PluginEngine {
         );
         runtime
             .execute_script("<platform_patch>", platform_patch)
-            .map_err(|e| {
-                PluginError::Load(format!("Failed to patch Deno.build: {}", e))
-            })?;
+            .map_err(|e| PluginError::Load(format!("Failed to patch Deno.build: {}", e)))?;
 
         Ok(Self {
             runtime,
@@ -504,7 +496,9 @@ if (typeof get_metadata === 'function') {
         // 直接将返回值解析为 Finding 数组
         let findings: Vec<Finding> = if let Some(val) = raw_result {
             // 尝试将返回值转换为 JsFinding 数组,然后转换为 Finding 数组
-            if let Ok(js_findings) = serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(val) {
+            if let Ok(js_findings) =
+                serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(val)
+            {
                 js_findings.into_iter().map(Finding::from).collect()
             } else {
                 debug!("Plugin returned non-array or invalid finding format");
@@ -518,7 +512,7 @@ if (typeof get_metadata === 'function') {
     }
 
     /// 执行Agent工具（调用插件的 analyze/run/execute）
-    /// 
+    ///
     /// Agent 插件应返回包含以下字段的对象:
     /// - success: boolean
     /// - data: 工具执行结果
@@ -553,7 +547,9 @@ if (typeof get_metadata === 'function') {
         let (findings, tool_result) = if let Some(val) = raw_result {
             // 提取 findings 字段(如果存在)
             let findings: Vec<Finding> = if let Some(findings_val) = val.get("findings") {
-                if let Ok(js_findings) = serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(findings_val.clone()) {
+                if let Ok(js_findings) = serde_json::from_value::<Vec<crate::plugin_ops::JsFinding>>(
+                    findings_val.clone(),
+                ) {
                     js_findings.into_iter().map(Finding::from).collect()
                 } else {
                     vec![]
@@ -561,7 +557,7 @@ if (typeof get_metadata === 'function') {
             } else {
                 vec![]
             };
-            
+
             // 工具结果保留完整的返回对象
             (findings, Some(val))
         } else {
@@ -614,8 +610,13 @@ if (typeof get_metadata === 'function') {
         "#;
 
         self.runtime
-            .execute_script("get_input_schema", FastString::from(call_script.to_string()))
-            .map_err(|e| PluginError::Execution(format!("Failed to call get_input_schema: {}", e)))?;
+            .execute_script(
+                "get_input_schema",
+                FastString::from(call_script.to_string()),
+            )
+            .map_err(|e| {
+                PluginError::Execution(format!("Failed to call get_input_schema: {}", e))
+            })?;
 
         // 从 PluginContext 获取结果
         let result = {
@@ -667,8 +668,13 @@ if (typeof get_metadata === 'function') {
         "#;
 
         self.runtime
-            .execute_script("get_output_schema", FastString::from(call_script.to_string()))
-            .map_err(|e| PluginError::Execution(format!("Failed to call get_output_schema: {}", e)))?;
+            .execute_script(
+                "get_output_schema",
+                FastString::from(call_script.to_string()),
+            )
+            .map_err(|e| {
+                PluginError::Execution(format!("Failed to call get_output_schema: {}", e))
+            })?;
 
         // 从 PluginContext 获取结果
         let result = {
@@ -742,9 +748,11 @@ if (typeof get_metadata === 'function') {
 
         let exec_result: Result<()> = async {
             let result = self
-            .runtime
-            .execute_script("call_plugin", FastString::from(call_script))
-            .map_err(|e| PluginError::Execution(format!("Failed to call {}: {}", fn_name, e)))?;
+                .runtime
+                .execute_script("call_plugin", FastString::from(call_script))
+                .map_err(|e| {
+                    PluginError::Execution(format!("Failed to call {}: {}", fn_name, e))
+                })?;
 
             // 如果函数返回 Promise，需要等待其完成
             let promise = self.runtime.resolve(result);
@@ -762,7 +770,8 @@ if (typeof get_metadata === 'function') {
             debug!("Plugin function {} executed successfully", fn_name);
 
             Ok(())
-        }.await;
+        }
+        .await;
 
         // If termination was requested, ensure we clear it before next run.
         self.cancel_terminate_execution();

@@ -1,5 +1,6 @@
 //! Docker sandbox for secure shell command execution
 
+use once_cell::sync::Lazy;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,7 +11,6 @@ use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
-use once_cell::sync::Lazy;
 
 /// Docker sandbox configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -85,7 +85,7 @@ impl ContainerPool {
             if let Some(container_id) = Self::find_persistent_container(config).await? {
                 info!("Reusing persistent container: {}", container_id);
                 Self::ensure_container_running(&container_id).await?;
-                
+
                 // Update tracking info
                 if let Some(info) = self.containers.get_mut(&container_id) {
                     info.last_used = std::time::Instant::now();
@@ -100,7 +100,7 @@ impl ContainerPool {
                         },
                     );
                 }
-                
+
                 return Ok(container_id);
             }
         }
@@ -133,7 +133,7 @@ impl ContainerPool {
                 use_count: 1,
             },
         );
-        
+
         Ok(container_id)
     }
 
@@ -144,9 +144,10 @@ impl ContainerPool {
             .find(|(_, info)| info.use_count < self.max_reuse_count)
     }
 
-
     /// Find persistent container by name
-    async fn find_persistent_container(config: &DockerSandboxConfig) -> Result<Option<String>, DockerError> {
+    async fn find_persistent_container(
+        config: &DockerSandboxConfig,
+    ) -> Result<Option<String>, DockerError> {
         let container_name = match &config.container_name {
             Some(name) => name,
             None => return Ok(None),
@@ -171,11 +172,14 @@ impl ContainerPool {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(DockerError::CommandFailed(format!("Docker ps failed: {}", stderr)));
+            return Err(DockerError::CommandFailed(format!(
+                "Docker ps failed: {}",
+                stderr
+            )));
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        
+
         if container_id.is_empty() {
             info!("No persistent container found");
             Ok(None)
@@ -193,7 +197,9 @@ impl ContainerPool {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| DockerError::CommandFailed(format!("Failed to inspect container: {}", e)))?;
+            .map_err(|e| {
+                DockerError::CommandFailed(format!("Failed to inspect container: {}", e))
+            })?;
 
         let is_running = String::from_utf8_lossy(&output.stdout).trim() == "true";
 
@@ -205,11 +211,16 @@ impl ContainerPool {
                 .stderr(Stdio::piped())
                 .output()
                 .await
-                .map_err(|e| DockerError::CommandFailed(format!("Failed to start container: {}", e)))?;
+                .map_err(|e| {
+                    DockerError::CommandFailed(format!("Failed to start container: {}", e))
+                })?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(DockerError::CommandFailed(format!("Failed to start container: {}", stderr)));
+                return Err(DockerError::CommandFailed(format!(
+                    "Failed to start container: {}",
+                    stderr
+                )));
             }
 
             info!("Container started successfully");
@@ -244,10 +255,7 @@ impl ContainerPool {
 
     /// Create a new Docker container
     async fn create_container(config: &DockerSandboxConfig) -> Result<String, DockerError> {
-        let mut args = vec![
-            "run",
-            "-d",
-        ];
+        let mut args = vec!["run", "-d"];
 
         // Add container name if persistent reuse is enabled
         let name_str;
@@ -312,20 +320,25 @@ impl ContainerPool {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| DockerError::CommandFailed(format!("Failed to create container: {}", e)))?;
+            .map_err(|e| {
+                DockerError::CommandFailed(format!("Failed to create container: {}", e))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             // If container name already exists, try to remove and retry
             if stderr.contains("already in use") && config.reuse_container {
                 if let Some(ref name) = config.container_name {
-                    warn!("Container name already in use, removing old container: {}", name);
+                    warn!(
+                        "Container name already in use, removing old container: {}",
+                        name
+                    );
                     let _ = Command::new("docker")
                         .args(&["rm", "-f", name])
                         .output()
                         .await;
-                    
+
                     // Retry creation
                     let retry_output = Command::new("docker")
                         .args(&args)
@@ -333,19 +346,29 @@ impl ContainerPool {
                         .stderr(Stdio::piped())
                         .output()
                         .await
-                        .map_err(|e| DockerError::CommandFailed(format!("Failed to create container (retry): {}", e)))?;
-                    
+                        .map_err(|e| {
+                            DockerError::CommandFailed(format!(
+                                "Failed to create container (retry): {}",
+                                e
+                            ))
+                        })?;
+
                     if !retry_output.status.success() {
                         let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
-                        return Err(DockerError::CommandFailed(format!("Docker run failed (retry): {}", retry_stderr)));
+                        return Err(DockerError::CommandFailed(format!(
+                            "Docker run failed (retry): {}",
+                            retry_stderr
+                        )));
                     }
-                    
-                    let container_id = String::from_utf8_lossy(&retry_output.stdout).trim().to_string();
+
+                    let container_id = String::from_utf8_lossy(&retry_output.stdout)
+                        .trim()
+                        .to_string();
                     info!("Container created (after retry): {}", container_id);
                     return Ok(container_id);
                 }
             }
-            
+
             return Err(DockerError::CommandFailed(format!(
                 "Docker run failed: {}",
                 stderr
@@ -362,7 +385,9 @@ impl ContainerPool {
             .args(&["rm", "-f", container_id])
             .output()
             .await
-            .map_err(|e| DockerError::CommandFailed(format!("Failed to remove container: {}", e)))?;
+            .map_err(|e| {
+                DockerError::CommandFailed(format!("Failed to remove container: {}", e))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -470,7 +495,8 @@ impl DockerSandbox {
         command: &str,
         timeout_secs: u64,
     ) -> Result<(String, String, i32), DockerError> {
-        self.execute_with_cancellation(command, timeout_secs, None).await
+        self.execute_with_cancellation(command, timeout_secs, None)
+            .await
     }
 
     /// Execute command in Docker sandbox with cancellation support
@@ -486,15 +512,28 @@ impl DockerSandbox {
             pool.get_container(&self.config).await?
         };
 
-        debug!("Executing command in container {}: {}", container_id, command);
+        debug!(
+            "Executing command in container {}: {}",
+            container_id, command
+        );
 
         // Execute command in container as root (for tools like nmap -sS that require privileges)
         let mut child = Command::new("docker")
-            .args(&["exec", "--user", "root", &container_id, "bash", "-c", command])
+            .args(&[
+                "exec",
+                "--user",
+                "root",
+                &container_id,
+                "bash",
+                "-c",
+                command,
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| DockerError::ExecutionFailed(format!("Failed to execute command: {}", e)))?;
+            .map_err(|e| {
+                DockerError::ExecutionFailed(format!("Failed to execute command: {}", e))
+            })?;
 
         let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
         tokio::pin!(timeout_sleep);
@@ -510,10 +549,9 @@ impl DockerSandbox {
 
             match child.try_wait() {
                 Ok(Some(_)) => {
-                    let output = child
-                        .wait_with_output()
-                        .await
-                        .map_err(|e| DockerError::ExecutionFailed(format!("Failed to read output: {}", e)))?;
+                    let output = child.wait_with_output().await.map_err(|e| {
+                        DockerError::ExecutionFailed(format!("Failed to read output: {}", e))
+                    })?;
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                     let exit_code = output.status.code().unwrap_or(-1);
@@ -556,7 +594,9 @@ impl DockerSandbox {
                 .stderr(Stdio::piped())
                 .output()
                 .await
-                .map_err(|e| DockerError::CommandFailed(format!("Failed to remove container: {}", e)))?;
+                .map_err(|e| {
+                    DockerError::CommandFailed(format!("Failed to remove container: {}", e))
+                })?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -586,21 +626,26 @@ impl DockerSandbox {
             pool.get_container(&self.config).await?
         };
 
-        info!("Copying file to container: {} -> {}:{}", host_path, container_id, container_path);
+        info!(
+            "Copying file to container: {} -> {}:{}",
+            host_path, container_id, container_path
+        );
 
         // Create parent directory in container
         let parent_dir = std::path::Path::new(container_path)
             .parent()
             .and_then(|p| p.to_str())
             .unwrap_or("/workspace/uploads");
-        
+
         let mkdir_output = Command::new("docker")
             .args(&["exec", &container_id, "mkdir", "-p", parent_dir])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| DockerError::CommandFailed(format!("Failed to create directory: {}", e)))?;
+            .map_err(|e| {
+                DockerError::CommandFailed(format!("Failed to create directory: {}", e))
+            })?;
 
         if !mkdir_output.status.success() {
             let stderr = String::from_utf8_lossy(&mkdir_output.stderr);
@@ -609,7 +654,11 @@ impl DockerSandbox {
 
         // Copy file using docker cp
         let output = Command::new("docker")
-            .args(&["cp", host_path, &format!("{}:{}", container_id, container_path)])
+            .args(&[
+                "cp",
+                host_path,
+                &format!("{}:{}", container_id, container_path),
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -639,10 +688,17 @@ impl DockerSandbox {
             pool.get_container(&self.config).await?
         };
 
-        info!("Copying file from container: {}:{} -> {}", container_id, container_path, host_path);
+        info!(
+            "Copying file from container: {}:{} -> {}",
+            container_id, container_path, host_path
+        );
 
         let output = Command::new("docker")
-            .args(&["cp", &format!("{}:{}", container_id, container_path), host_path])
+            .args(&[
+                "cp",
+                &format!("{}:{}", container_id, container_path),
+                host_path,
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()

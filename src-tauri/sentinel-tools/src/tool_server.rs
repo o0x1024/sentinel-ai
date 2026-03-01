@@ -3,22 +3,21 @@
 //! Manages all tools (builtin, MCP, plugin, workflow) in a unified way.
 //! Provides tool registration, execution, and lifecycle management.
 
-use std::sync::Arc;
 use once_cell::sync::Lazy;
 use rig::tool::ToolSet;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
-    CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
-    LocalTimeTool, PortScanTool, ShellTool, SubdomainBruteTool,
-    browser::constants as browser_constants, TenthManTool, TodosTool, MemoryManagerTool,
-    WebSearchTool, OcrTool, SkillsTool,
-    ReadFileTool, ProjectOverviewTool, AuditCoverageTool, DependencyAuditTool,
-    CrossFileTaintTool, AuditReportTool, BuildCpgTool, QueryCpgTool, CpgTaintAnalysisTool,
-    CpgSecurityScanTool,
-    GetFunctionDetailTool, GetAttackSurfaceTool, SmartFileSummaryTool, TraceDataFlowTool,
+    browser::constants as browser_constants, AuditCoverageTool, AuditReportTool, BuildCpgTool,
+    CallGraphLiteTool, CodeSearchTool, CpgSecurityScanTool, CpgTaintAnalysisTool,
+    CrossFileTaintTool, DependencyAuditTool, GetAttackSurfaceTool, GetFunctionDetailTool,
+    GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool, LocalTimeTool, MemoryManagerTool, OcrTool,
+    PortScanTool, ProjectOverviewTool, QueryCpgTool, ReadFileTool, ShellTool, SkillsTool,
+    SmartFileSummaryTool, SubdomainBruteTool, TenthManTool, TodosTool, TraceDataFlowTool,
+    WebSearchTool,
 };
 
 use crate::terminal::server::TerminalServer;
@@ -31,21 +30,25 @@ use crate::dynamic_tool::{
 static TOOL_SERVER: Lazy<Arc<ToolServer>> = Lazy::new(|| Arc::new(ToolServer::new()));
 
 /// Global Tavily API key storage
-static TAVILY_API_KEY: Lazy<Arc<RwLock<Option<String>>>> = Lazy::new(|| Arc::new(RwLock::new(None)));
+static TAVILY_API_KEY: Lazy<Arc<RwLock<Option<String>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(None)));
 
 /// Strip ANSI escape sequences and clean up redundant whitespace from text
 fn strip_ansi_codes(text: &str) -> String {
     // Strip ANSI codes
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[^\x07]*\x07|\x1b[=>]|\x1b\][0-9];[^\x07]*\x07").unwrap();
+    let re = regex::Regex::new(
+        r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][0-9;]*[^\x07]*\x07|\x1b[=>]|\x1b\][0-9];[^\x07]*\x07",
+    )
+    .unwrap();
     let without_ansi = re.replace_all(text, "").to_string();
-    
+
     // Normalize line endings: \r\n -> \n, standalone \r -> \n
     let normalized = without_ansi.replace("\r\n", "\n").replace('\r', "\n");
-    
+
     // Remove consecutive blank lines (keep at most one blank line)
     let re_blank = regex::Regex::new(r"\n{3,}").unwrap();
     let cleaned = re_blank.replace_all(&normalized, "\n\n").to_string();
-    
+
     cleaned.trim().to_string()
 }
 
@@ -197,14 +200,16 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::http_request::HttpRequestArgs;
                 use rig::tool::Tool;
-                
+
                 let tool_args: HttpRequestArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = HttpRequestTool::default();
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("HTTP request failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -235,14 +240,16 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::local_time::LocalTimeArgs;
                 use rig::tool::Tool;
-                
+
                 let tool_args: LocalTimeArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = LocalTimeTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Local time failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -293,7 +300,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = CodeSearchTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Code search failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -403,7 +412,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = GitDiffScopeTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Git diff scope failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -450,7 +461,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = CallGraphLiteTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Call graph lite failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -494,7 +507,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = ReadFileTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Read file failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -533,7 +548,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = ProjectOverviewTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Project overview failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -581,7 +598,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = AuditCoverageTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Audit coverage failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -620,7 +639,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = DependencyAuditTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Dependency audit failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -673,7 +694,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = CrossFileTaintTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Cross file taint failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -727,7 +750,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = AuditReportTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Audit report failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -741,9 +766,12 @@ impl ToolServer {
         // Register build_cpg tool
         let build_cpg_def = DynamicToolBuilder::new(BuildCpgTool::NAME.to_string())
             .description(BuildCpgTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::cpg::tools::BuildCpgArgs
-            )).unwrap_or_default())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::cpg::tools::BuildCpgArgs
+                ))
+                .unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .category("security")
             .executor(|args| async move {
@@ -754,7 +782,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = BuildCpgTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Build CPG failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -768,9 +798,12 @@ impl ToolServer {
         // Register query_cpg tool
         let query_cpg_def = DynamicToolBuilder::new(QueryCpgTool::NAME.to_string())
             .description(QueryCpgTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::cpg::tools::QueryCpgArgs
-            )).unwrap_or_default())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::cpg::tools::QueryCpgArgs
+                ))
+                .unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .category("security")
             .executor(|args| async move {
@@ -781,7 +814,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = QueryCpgTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Query CPG failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -793,38 +828,47 @@ impl ToolServer {
         self.registry.register(query_cpg_def).await;
 
         // Register cpg_taint_analysis tool
-        let cpg_taint_analysis_def = DynamicToolBuilder::new(CpgTaintAnalysisTool::NAME.to_string())
-            .description(CpgTaintAnalysisTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::cpg::tools::CpgTaintAnalysisArgs
-            )).unwrap_or_default())
-            .source(ToolSource::Builtin)
-            .category("security")
-            .executor(|args| async move {
-                use crate::buildin_tools::cpg::tools::CpgTaintAnalysisArgs;
-                use rig::tool::Tool;
+        let cpg_taint_analysis_def =
+            DynamicToolBuilder::new(CpgTaintAnalysisTool::NAME.to_string())
+                .description(CpgTaintAnalysisTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::cpg::tools::CpgTaintAnalysisArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category("security")
+                .executor(|args| async move {
+                    use crate::buildin_tools::cpg::tools::CpgTaintAnalysisArgs;
+                    use rig::tool::Tool;
 
-                let tool_args: CpgTaintAnalysisArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                    let tool_args: CpgTaintAnalysisArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = CpgTaintAnalysisTool;
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("CPG taint analysis failed: {}", e))?;
+                    let tool = CpgTaintAnalysisTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("CPG taint analysis failed: {}", e))?;
 
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build cpg_taint_analysis tool");
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build cpg_taint_analysis tool");
 
         self.registry.register(cpg_taint_analysis_def).await;
 
         // Register cpg_security_scan tool
         let cpg_security_scan_def = DynamicToolBuilder::new(CpgSecurityScanTool::NAME.to_string())
             .description(CpgSecurityScanTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::cpg::tools::CpgSecurityScanArgs
-            )).unwrap_or_default())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::cpg::tools::CpgSecurityScanArgs
+                ))
+                .unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .category("security")
             .executor(|args| async move {
@@ -835,7 +879,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = CpgSecurityScanTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("CPG security scan failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -849,92 +895,113 @@ impl ToolServer {
         // ── V2 Audit Tools ──────────────────────────────────────────────────
 
         // Register get_function_detail tool
-        let get_function_detail_def = DynamicToolBuilder::new(GetFunctionDetailTool::NAME.to_string())
-            .description(GetFunctionDetailTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::audit_tools_v2::GetFunctionDetailArgs
-            )).unwrap_or_default())
-            .source(ToolSource::Builtin)
-            .category("security")
-            .executor(|args| async move {
-                use crate::buildin_tools::audit_tools_v2::GetFunctionDetailArgs;
-                use rig::tool::Tool;
+        let get_function_detail_def =
+            DynamicToolBuilder::new(GetFunctionDetailTool::NAME.to_string())
+                .description(GetFunctionDetailTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::audit_tools_v2::GetFunctionDetailArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category("security")
+                .executor(|args| async move {
+                    use crate::buildin_tools::audit_tools_v2::GetFunctionDetailArgs;
+                    use rig::tool::Tool;
 
-                let tool_args: GetFunctionDetailArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                    let tool_args: GetFunctionDetailArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = GetFunctionDetailTool;
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("get_function_detail failed: {}", e))?;
+                    let tool = GetFunctionDetailTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("get_function_detail failed: {}", e))?;
 
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build get_function_detail tool");
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build get_function_detail tool");
 
         self.registry.register(get_function_detail_def).await;
 
         // Register get_attack_surface tool
-        let get_attack_surface_def = DynamicToolBuilder::new(GetAttackSurfaceTool::NAME.to_string())
-            .description(GetAttackSurfaceTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::audit_tools_v2::GetAttackSurfaceArgs
-            )).unwrap_or_default())
-            .source(ToolSource::Builtin)
-            .category("security")
-            .executor(|args| async move {
-                use crate::buildin_tools::audit_tools_v2::GetAttackSurfaceArgs;
-                use rig::tool::Tool;
+        let get_attack_surface_def =
+            DynamicToolBuilder::new(GetAttackSurfaceTool::NAME.to_string())
+                .description(GetAttackSurfaceTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::audit_tools_v2::GetAttackSurfaceArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category("security")
+                .executor(|args| async move {
+                    use crate::buildin_tools::audit_tools_v2::GetAttackSurfaceArgs;
+                    use rig::tool::Tool;
 
-                let tool_args: GetAttackSurfaceArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                    let tool_args: GetAttackSurfaceArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = GetAttackSurfaceTool;
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("get_attack_surface failed: {}", e))?;
+                    let tool = GetAttackSurfaceTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("get_attack_surface failed: {}", e))?;
 
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build get_attack_surface tool");
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build get_attack_surface tool");
 
         self.registry.register(get_attack_surface_def).await;
 
         // Register smart_file_summary tool
-        let smart_file_summary_def = DynamicToolBuilder::new(SmartFileSummaryTool::NAME.to_string())
-            .description(SmartFileSummaryTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::audit_tools_v2::SmartFileSummaryArgs
-            )).unwrap_or_default())
-            .source(ToolSource::Builtin)
-            .category("security")
-            .executor(|args| async move {
-                use crate::buildin_tools::audit_tools_v2::SmartFileSummaryArgs;
-                use rig::tool::Tool;
+        let smart_file_summary_def =
+            DynamicToolBuilder::new(SmartFileSummaryTool::NAME.to_string())
+                .description(SmartFileSummaryTool::DESCRIPTION.to_string())
+                .input_schema(
+                    serde_json::to_value(schemars::schema_for!(
+                        crate::buildin_tools::audit_tools_v2::SmartFileSummaryArgs
+                    ))
+                    .unwrap_or_default(),
+                )
+                .source(ToolSource::Builtin)
+                .category("security")
+                .executor(|args| async move {
+                    use crate::buildin_tools::audit_tools_v2::SmartFileSummaryArgs;
+                    use rig::tool::Tool;
 
-                let tool_args: SmartFileSummaryArgs = serde_json::from_value(args)
-                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+                    let tool_args: SmartFileSummaryArgs = serde_json::from_value(args)
+                        .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = SmartFileSummaryTool;
-                let result = tool.call(tool_args).await
-                    .map_err(|e| format!("smart_file_summary failed: {}", e))?;
+                    let tool = SmartFileSummaryTool;
+                    let result = tool
+                        .call(tool_args)
+                        .await
+                        .map_err(|e| format!("smart_file_summary failed: {}", e))?;
 
-                serde_json::to_value(result)
-                    .map_err(|e| format!("Failed to serialize result: {}", e))
-            })
-            .build()
-            .expect("Failed to build smart_file_summary tool");
+                    serde_json::to_value(result)
+                        .map_err(|e| format!("Failed to serialize result: {}", e))
+                })
+                .build()
+                .expect("Failed to build smart_file_summary tool");
 
         self.registry.register(smart_file_summary_def).await;
 
         // Register trace_data_flow tool
         let trace_data_flow_def = DynamicToolBuilder::new(TraceDataFlowTool::NAME.to_string())
             .description(TraceDataFlowTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::audit_tools_v2::TraceDataFlowArgs
-            )).unwrap_or_default())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::audit_tools_v2::TraceDataFlowArgs
+                ))
+                .unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .category("security")
             .executor(|args| async move {
@@ -945,7 +1012,9 @@ impl ToolServer {
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
                 let tool = TraceDataFlowTool;
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("trace_data_flow failed: {}", e))?;
 
                 serde_json::to_value(result)
@@ -987,14 +1056,16 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::shell::ShellArgs;
                 use rig::tool::Tool;
-                
+
                 let tool_args: ShellArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = ShellTool::new();
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Shell execution failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -1133,10 +1204,12 @@ impl ToolServer {
         // Register skills tool
         let skills_def = DynamicToolBuilder::new(SkillsTool::NAME.to_string())
             .description(SkillsTool::DESCRIPTION.to_string())
-            .input_schema(serde_json::to_value(schemars::schema_for!(
-                crate::buildin_tools::skills::SkillsToolArgs
-            ))
-            .unwrap_or_default())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::skills::SkillsToolArgs
+                ))
+                .unwrap_or_default(),
+            )
             .source(ToolSource::Builtin)
             .category("system")
             .executor(|args| async move {
@@ -1236,22 +1309,24 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::web_search::WebSearchArgs;
                 use rig::tool::Tool;
-                
+
                 let tool_args: WebSearchArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 // Get API key from global storage
                 let api_key = get_tavily_api_key().await;
-                
+
                 let tool = if let Some(key) = api_key {
                     crate::buildin_tools::WebSearchTool::with_api_key(key)
                 } else {
                     crate::buildin_tools::WebSearchTool::default()
                 };
-                
-                let result = tool.call(tool_args).await
+
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Web search failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -1277,14 +1352,16 @@ impl ToolServer {
             .executor(|args| async move {
                 use crate::buildin_tools::ocr::{OcrArgs, OcrTool};
                 use rig::tool::Tool;
-                
+
                 let tool_args: OcrArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
-                
+
                 let tool = OcrTool::default();
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("OCR failed: {}", e))?;
-                
+
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
             })
@@ -1297,7 +1374,7 @@ impl ToolServer {
         self.register_subagent_tools().await;
 
         // Register tenth_man_review tool
-            let tenth_man_def = DynamicToolBuilder::new(TenthManTool::NAME.to_string())
+        let tenth_man_def = DynamicToolBuilder::new(TenthManTool::NAME.to_string())
             .description(TenthManTool::DESCRIPTION.to_string())
             .input_schema(serde_json::json!({
                 "type": "object",
@@ -1366,7 +1443,9 @@ impl ToolServer {
         let interactive_shell_desc = {
             let config = crate::buildin_tools::shell::get_shell_config().await;
             let mut desc = TerminalServer::DESCRIPTION.to_string();
-            if config.default_execution_mode == crate::buildin_tools::shell::ShellExecutionMode::Docker {
+            if config.default_execution_mode
+                == crate::buildin_tools::shell::ShellExecutionMode::Docker
+            {
                 desc.push_str(" [ENVIRONMENT: This interactive shell runs in a Kali Linux docker sandbox with pre-installed cybersecurity tools like nmap, sqlmap, msfconsole, masscan, dirb, etc. Do not hesitate to use these tools directly.]");
             } else {
                 desc.push_str(" [ENVIRONMENT: This interactive shell runs on the Host OS.]");
@@ -1719,313 +1798,330 @@ impl ToolServer {
         self.registry.register(browser_open_def).await;
 
         // browser_snapshot
-        let browser_snapshot_def = DynamicToolBuilder::new(browser_constants::BROWSER_SNAPSHOT_NAME.to_string())
-            .description(browser_constants::BROWSER_SNAPSHOT_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "interactive_only": {
-                        "type": "boolean",
-                        "description": "Only show interactive elements (buttons, inputs, links)",
-                        "default": true
-                    },
-                    "compact": {
-                        "type": "boolean",
-                        "description": "Remove empty structural elements",
-                        "default": true
-                    },
-                    "max_depth": {
-                        "type": "integer",
-                        "description": "Maximum tree depth"
-                    },
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector to scope the snapshot"
-                    }
+        let browser_snapshot_def = DynamicToolBuilder::new(
+            browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
+        )
+        .description(browser_constants::BROWSER_SNAPSHOT_DESC.to_string())
+        .input_schema(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "interactive_only": {
+                    "type": "boolean",
+                    "description": "Only show interactive elements (buttons, inputs, links)",
+                    "default": true
+                },
+                "compact": {
+                    "type": "boolean",
+                    "description": "Remove empty structural elements",
+                    "default": true
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum tree depth"
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector to scope the snapshot"
                 }
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_snapshot(args).await })
-            .build()
-            .expect("Failed to build browser_snapshot tool");
+            }
+        }))
+        .source(ToolSource::Builtin)
+        .executor(|args| async move { execute_browser_snapshot(args).await })
+        .build()
+        .expect("Failed to build browser_snapshot tool");
         self.registry.register(browser_snapshot_def).await;
 
         // browser_click
-        let browser_click_def = DynamicToolBuilder::new(browser_constants::BROWSER_CLICK_NAME.to_string())
-            .description(browser_constants::BROWSER_CLICK_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Element ref (e.g., '@e1') or CSS selector"
-                    }
-                },
-                "required": ["target"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_click(args).await })
-            .build()
-            .expect("Failed to build browser_click tool");
+        let browser_click_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_CLICK_NAME.to_string())
+                .description(browser_constants::BROWSER_CLICK_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Element ref (e.g., '@e1') or CSS selector"
+                        }
+                    },
+                    "required": ["target"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_click(args).await })
+                .build()
+                .expect("Failed to build browser_click tool");
         self.registry.register(browser_click_def).await;
 
         // browser_fill
-        let browser_fill_def = DynamicToolBuilder::new(browser_constants::BROWSER_FILL_NAME.to_string())
-            .description(browser_constants::BROWSER_FILL_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Element ref (e.g., '@e3') or CSS selector"
+        let browser_fill_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_FILL_NAME.to_string())
+                .description(browser_constants::BROWSER_FILL_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Element ref (e.g., '@e3') or CSS selector"
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Text to fill"
+                        }
                     },
-                    "value": {
-                        "type": "string",
-                        "description": "Text to fill"
-                    }
-                },
-                "required": ["target", "value"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_fill(args).await })
-            .build()
-            .expect("Failed to build browser_fill tool");
+                    "required": ["target", "value"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_fill(args).await })
+                .build()
+                .expect("Failed to build browser_fill tool");
         self.registry.register(browser_fill_def).await;
 
         // browser_type
-        let browser_type_def = DynamicToolBuilder::new(browser_constants::BROWSER_TYPE_NAME.to_string())
-            .description(browser_constants::BROWSER_TYPE_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Element ref or CSS selector"
+        let browser_type_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_TYPE_NAME.to_string())
+                .description(browser_constants::BROWSER_TYPE_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Element ref or CSS selector"
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "Text to type"
+                        },
+                        "delay_ms": {
+                            "type": "integer",
+                            "description": "Delay between keystrokes in milliseconds"
+                        }
                     },
-                    "text": {
-                        "type": "string",
-                        "description": "Text to type"
-                    },
-                    "delay_ms": {
-                        "type": "integer",
-                        "description": "Delay between keystrokes in milliseconds"
-                    }
-                },
-                "required": ["target", "text"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_type(args).await })
-            .build()
-            .expect("Failed to build browser_type tool");
+                    "required": ["target", "text"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_type(args).await })
+                .build()
+                .expect("Failed to build browser_type tool");
         self.registry.register(browser_type_def).await;
 
         // browser_select
-        let browser_select_def = DynamicToolBuilder::new(browser_constants::BROWSER_SELECT_NAME.to_string())
-            .description(browser_constants::BROWSER_SELECT_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Element ref or CSS selector for the select element"
+        let browser_select_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_SELECT_NAME.to_string())
+                .description(browser_constants::BROWSER_SELECT_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Element ref or CSS selector for the select element"
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Option value to select"
+                        }
                     },
-                    "value": {
-                        "type": "string",
-                        "description": "Option value to select"
-                    }
-                },
-                "required": ["target", "value"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_select(args).await })
-            .build()
-            .expect("Failed to build browser_select tool");
+                    "required": ["target", "value"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_select(args).await })
+                .build()
+                .expect("Failed to build browser_select tool");
         self.registry.register(browser_select_def).await;
 
         // browser_scroll
-        let browser_scroll_def = DynamicToolBuilder::new(browser_constants::BROWSER_SCROLL_NAME.to_string())
-            .description(browser_constants::BROWSER_SCROLL_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "direction": {
-                        "type": "string",
-                        "description": "Scroll direction",
-                        "default": "down",
-                        "enum": ["up", "down", "left", "right"]
-                    },
-                    "amount": {
-                        "type": "integer",
-                        "description": "Scroll amount in pixels",
-                        "default": 300
+        let browser_scroll_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_SCROLL_NAME.to_string())
+                .description(browser_constants::BROWSER_SCROLL_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "direction": {
+                            "type": "string",
+                            "description": "Scroll direction",
+                            "default": "down",
+                            "enum": ["up", "down", "left", "right"]
+                        },
+                        "amount": {
+                            "type": "integer",
+                            "description": "Scroll amount in pixels",
+                            "default": 300
+                        }
                     }
-                }
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_scroll(args).await })
-            .build()
-            .expect("Failed to build browser_scroll tool");
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_scroll(args).await })
+                .build()
+                .expect("Failed to build browser_scroll tool");
         self.registry.register(browser_scroll_def).await;
 
         // browser_wait
-        let browser_wait_def = DynamicToolBuilder::new(browser_constants::BROWSER_WAIT_NAME.to_string())
-            .description(browser_constants::BROWSER_WAIT_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector to wait for"
-                    },
-                    "timeout_ms": {
-                        "type": "integer",
-                        "description": "Maximum wait time in milliseconds",
-                        "default": 30000
+        let browser_wait_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_WAIT_NAME.to_string())
+                .description(browser_constants::BROWSER_WAIT_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "selector": {
+                            "type": "string",
+                            "description": "CSS selector to wait for"
+                        },
+                        "timeout_ms": {
+                            "type": "integer",
+                            "description": "Maximum wait time in milliseconds",
+                            "default": 30000
+                        }
                     }
-                }
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_wait(args).await })
-            .build()
-            .expect("Failed to build browser_wait tool");
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_wait(args).await })
+                .build()
+                .expect("Failed to build browser_wait tool");
         self.registry.register(browser_wait_def).await;
 
         // browser_get_text
-        let browser_get_text_def = DynamicToolBuilder::new(browser_constants::BROWSER_GET_TEXT_NAME.to_string())
-            .description(browser_constants::BROWSER_GET_TEXT_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Element ref or CSS selector"
-                    }
-                },
-                "required": ["target"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_get_text(args).await })
-            .build()
-            .expect("Failed to build browser_get_text tool");
+        let browser_get_text_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_GET_TEXT_NAME.to_string())
+                .description(browser_constants::BROWSER_GET_TEXT_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Element ref or CSS selector"
+                        }
+                    },
+                    "required": ["target"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_get_text(args).await })
+                .build()
+                .expect("Failed to build browser_get_text tool");
         self.registry.register(browser_get_text_def).await;
 
         // browser_screenshot
-        let browser_screenshot_def = DynamicToolBuilder::new(browser_constants::BROWSER_SCREENSHOT_NAME.to_string())
-            .description(browser_constants::BROWSER_SCREENSHOT_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "full_page": {
-                        "type": "boolean",
-                        "description": "Capture full page including scrollable area",
-                        "default": false
+        let browser_screenshot_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_SCREENSHOT_NAME.to_string())
+                .description(browser_constants::BROWSER_SCREENSHOT_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "full_page": {
+                            "type": "boolean",
+                            "description": "Capture full page including scrollable area",
+                            "default": false
+                        }
                     }
-                }
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_screenshot(args).await })
-            .build()
-            .expect("Failed to build browser_screenshot tool");
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_screenshot(args).await })
+                .build()
+                .expect("Failed to build browser_screenshot tool");
         self.registry.register(browser_screenshot_def).await;
 
         // browser_back
-        let browser_back_def = DynamicToolBuilder::new(browser_constants::BROWSER_BACK_NAME.to_string())
-            .description(browser_constants::BROWSER_BACK_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_back(args).await })
-            .build()
-            .expect("Failed to build browser_back tool");
+        let browser_back_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_BACK_NAME.to_string())
+                .description(browser_constants::BROWSER_BACK_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_back(args).await })
+                .build()
+                .expect("Failed to build browser_back tool");
         self.registry.register(browser_back_def).await;
 
         // browser_press
-        let browser_press_def = DynamicToolBuilder::new(browser_constants::BROWSER_PRESS_NAME.to_string())
-            .description(browser_constants::BROWSER_PRESS_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Key to press (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown')"
-                    },
-                    "target": {
-                        "type": "string",
-                        "description": "Optional element ref or selector to focus first"
-                    }
+        let browser_press_def = DynamicToolBuilder::new(
+            browser_constants::BROWSER_PRESS_NAME.to_string(),
+        )
+        .description(browser_constants::BROWSER_PRESS_DESC.to_string())
+        .input_schema(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Key to press (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown')"
                 },
-                "required": ["key"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_press(args).await })
-            .build()
-            .expect("Failed to build browser_press tool");
+                "target": {
+                    "type": "string",
+                    "description": "Optional element ref or selector to focus first"
+                }
+            },
+            "required": ["key"]
+        }))
+        .source(ToolSource::Builtin)
+        .executor(|args| async move { execute_browser_press(args).await })
+        .build()
+        .expect("Failed to build browser_press tool");
         self.registry.register(browser_press_def).await;
 
         // browser_hover
-        let browser_hover_def = DynamicToolBuilder::new(browser_constants::BROWSER_HOVER_NAME.to_string())
-            .description(browser_constants::BROWSER_HOVER_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Element ref or CSS selector"
-                    }
-                },
-                "required": ["target"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_hover(args).await })
-            .build()
-            .expect("Failed to build browser_hover tool");
+        let browser_hover_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_HOVER_NAME.to_string())
+                .description(browser_constants::BROWSER_HOVER_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Element ref or CSS selector"
+                        }
+                    },
+                    "required": ["target"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_hover(args).await })
+                .build()
+                .expect("Failed to build browser_hover tool");
         self.registry.register(browser_hover_def).await;
 
         // browser_evaluate
-        let browser_evaluate_def = DynamicToolBuilder::new(browser_constants::BROWSER_EVALUATE_NAME.to_string())
-            .description(browser_constants::BROWSER_EVALUATE_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "script": {
-                        "type": "string",
-                        "description": "JavaScript code to execute"
-                    }
-                },
-                "required": ["script"]
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_evaluate(args).await })
-            .build()
-            .expect("Failed to build browser_evaluate tool");
+        let browser_evaluate_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_EVALUATE_NAME.to_string())
+                .description(browser_constants::BROWSER_EVALUATE_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "script": {
+                            "type": "string",
+                            "description": "JavaScript code to execute"
+                        }
+                    },
+                    "required": ["script"]
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_evaluate(args).await })
+                .build()
+                .expect("Failed to build browser_evaluate tool");
         self.registry.register(browser_evaluate_def).await;
 
         // browser_get_url
-        let browser_get_url_def = DynamicToolBuilder::new(browser_constants::BROWSER_GET_URL_NAME.to_string())
-            .description(browser_constants::BROWSER_GET_URL_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_get_url(args).await })
-            .build()
-            .expect("Failed to build browser_get_url tool");
+        let browser_get_url_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_GET_URL_NAME.to_string())
+                .description(browser_constants::BROWSER_GET_URL_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_get_url(args).await })
+                .build()
+                .expect("Failed to build browser_get_url tool");
         self.registry.register(browser_get_url_def).await;
 
         // browser_close
-        let browser_close_def = DynamicToolBuilder::new(browser_constants::BROWSER_CLOSE_NAME.to_string())
-            .description(browser_constants::BROWSER_CLOSE_DESC.to_string())
-            .input_schema(serde_json::json!({
-                "type": "object",
-                "properties": {}
-            }))
-            .source(ToolSource::Builtin)
-            .executor(|args| async move { execute_browser_close(args).await })
-            .build()
-            .expect("Failed to build browser_close tool");
+        let browser_close_def =
+            DynamicToolBuilder::new(browser_constants::BROWSER_CLOSE_NAME.to_string())
+                .description(browser_constants::BROWSER_CLOSE_DESC.to_string())
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {}
+                }))
+                .source(ToolSource::Builtin)
+                .executor(|args| async move { execute_browser_close(args).await })
+                .build()
+                .expect("Failed to build browser_close tool");
         self.registry.register(browser_close_def).await;
 
         tracing::info!("Browser tools registered");
@@ -2105,7 +2201,10 @@ impl ToolServer {
     }
 
     /// Get tool definitions for LLM
-    pub async fn get_tool_definitions(&self, tool_names: &[String]) -> Vec<rig::completion::ToolDefinition> {
+    pub async fn get_tool_definitions(
+        &self,
+        tool_names: &[String],
+    ) -> Vec<rig::completion::ToolDefinition> {
         self.registry.get_definitions(tool_names).await
     }
 
@@ -2129,7 +2228,7 @@ impl ToolServer {
         executor: ToolExecutor,
     ) {
         let full_name = format!("mcp__{}__{}", server_name, tool_name);
-        
+
         let def = DynamicToolDef {
             name: full_name,
             description: description.to_string(),
@@ -2157,8 +2256,8 @@ impl ToolServer {
         executor: ToolExecutor,
     ) {
         let sanitized_id = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-    let full_name = format!("plugin__{}", sanitized_id);
-        
+        let full_name = format!("plugin__{}", sanitized_id);
+
         let def = DynamicToolDef {
             name: full_name,
             description: description.to_string(),
@@ -2185,7 +2284,7 @@ impl ToolServer {
         executor: ToolExecutor,
     ) {
         let full_name = format!("workflow__{}", workflow_id);
-        
+
         let def = DynamicToolDef {
             name: full_name,
             description: description.to_string(),
@@ -2242,14 +2341,12 @@ impl ToolServer {
             .list()
             .await
             .into_iter()
-            .filter(|def| {
-                match source_type {
-                    "builtin" => matches!(def.source, ToolSource::Builtin),
-                    "mcp" => matches!(def.source, ToolSource::Mcp { .. }),
-                    "plugin" => matches!(def.source, ToolSource::Plugin { .. }),
-                    "workflow" => matches!(def.source, ToolSource::Workflow { .. }),
-                    _ => true,
-                }
+            .filter(|def| match source_type {
+                "builtin" => matches!(def.source, ToolSource::Builtin),
+                "mcp" => matches!(def.source, ToolSource::Mcp { .. }),
+                "plugin" => matches!(def.source, ToolSource::Plugin { .. }),
+                "workflow" => matches!(def.source, ToolSource::Workflow { .. }),
+                _ => true,
             })
             .map(|def| ToolInfo {
                 name: def.name.clone(),
@@ -2355,7 +2452,9 @@ impl ToolServer {
                 let tool_args: SubagentAwaitArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
                 let tool = SubagentAwaitTool::new();
-                let result = tool.call(tool_args).await
+                let result = tool
+                    .call(tool_args)
+                    .await
                     .map_err(|e| format!("Subagent await failed: {}", e))?;
                 serde_json::to_value(result)
                     .map_err(|e| format!("Failed to serialize result: {}", e))
@@ -2408,9 +2507,9 @@ mod tests {
     async fn test_tool_server_init() {
         let server = ToolServer::new();
         server.init_builtin_tools().await;
-        
+
         assert!(server.tool_count().await >= 7);
-        
+
         // Check builtin tools exist
         assert!(server.get_tool("port_scan").await.is_some());
         assert!(server.get_tool("http_request").await.is_some());
@@ -2425,11 +2524,16 @@ mod tests {
     async fn test_local_time_execution() {
         let server = ToolServer::new();
         server.init_builtin_tools().await;
-        
-        let result = server.execute("local_time", serde_json::json!({
-            "timezone": "utc"
-        })).await;
-        
+
+        let result = server
+            .execute(
+                "local_time",
+                serde_json::json!({
+                    "timezone": "utc"
+                }),
+            )
+            .await;
+
         assert!(result.success);
         assert!(result.output.is_some());
     }

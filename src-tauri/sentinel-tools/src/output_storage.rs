@@ -1,19 +1,20 @@
 //! Tool Output Storage Module
-//! 
+//!
 //! Stores large tool outputs to files in Docker container for on-demand retrieval
 //! All tools (HTTP, Shell, etc.) use unified container storage: /workspace/context/
 
-use serde::{Serialize, Deserialize};
 use crate::docker_sandbox::DockerSandbox;
+use serde::{Deserialize, Serialize};
 
 /// Default storage threshold (16KB)
 const DEFAULT_STORAGE_THRESHOLD: usize = 16_000;
 
-use std::sync::RwLock;
 use once_cell::sync::Lazy;
+use std::sync::RwLock;
 
 /// Global storage threshold configuration
-static STORAGE_THRESHOLD: Lazy<RwLock<usize>> = Lazy::new(|| RwLock::new(DEFAULT_STORAGE_THRESHOLD));
+static STORAGE_THRESHOLD: Lazy<RwLock<usize>> =
+    Lazy::new(|| RwLock::new(DEFAULT_STORAGE_THRESHOLD));
 
 /// Set storage threshold
 pub fn set_storage_threshold(threshold: usize) {
@@ -24,7 +25,10 @@ pub fn set_storage_threshold(threshold: usize) {
 
 /// Get storage threshold
 pub fn get_storage_threshold() -> usize {
-    STORAGE_THRESHOLD.read().map(|t| *t).unwrap_or(DEFAULT_STORAGE_THRESHOLD)
+    STORAGE_THRESHOLD
+        .read()
+        .map(|t| *t)
+        .unwrap_or(DEFAULT_STORAGE_THRESHOLD)
 }
 
 /// Container context directory (unified for all tools)
@@ -46,7 +50,7 @@ pub fn get_host_context_dir() -> std::path::PathBuf {
 
 /// Generate platform-specific file access commands
 fn generate_file_access_commands(file_path: &str) -> String {
-#[cfg(target_os = "windows")]
+    #[cfg(target_os = "windows")]
     {
         format!(
             r#"PowerShell:
@@ -61,10 +65,18 @@ CMD:
    • powershell -Command "Get-Content '{}' -Tail 50"  (view last 50 lines)
    • powershell -Command "Get-Content '{}' -Head 50"  (view first 50 lines)
    • type "{}"                                   (view full content)"#,
-            file_path, file_path, file_path, file_path, file_path, file_path, file_path, file_path, file_path
+            file_path,
+            file_path,
+            file_path,
+            file_path,
+            file_path,
+            file_path,
+            file_path,
+            file_path,
+            file_path
         )
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         format!(
@@ -125,7 +137,9 @@ pub async fn store_output_in_container(
 
     // Generate filename
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let call_suffix = call_id.map(|id| format!("_{}", &id[..8.min(id.len())])).unwrap_or_default();
+    let call_suffix = call_id
+        .map(|id| format!("_{}", &id[..8.min(id.len())]))
+        .unwrap_or_default();
     let filename = format!("{}_{}{}.txt", tool_name, timestamp, call_suffix);
     let container_path = format!("{}/{}", CONTAINER_CONTEXT_DIR, filename);
 
@@ -136,18 +150,16 @@ pub async fn store_output_in_container(
     // Write output to file in container using echo with base64 encoding to avoid quote issues
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(output);
-    let write_cmd = format!(
-        "echo '{}' | base64 -d > {}",
-        encoded,
-        container_path
-    );
-    
-    sandbox.execute(&write_cmd, 30).await
+    let write_cmd = format!("echo '{}' | base64 -d > {}", encoded, container_path);
+
+    sandbox
+        .execute(&write_cmd, 30)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to write output to container: {}", e))?;
 
     let lines = output.lines().count();
     let size = output.len();
-    
+
     // Generate preview (first 500 chars)
     let preview = output.chars().take(500).collect::<String>();
     let preview_end = if output.len() > 500 { "\n..." } else { "" };
@@ -228,13 +240,11 @@ pub async fn store_history_in_container_with_id(
     // Write history using base64 encoding
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(history_content);
-    let write_cmd = format!(
-        "echo '{}' | base64 -d > {}",
-        encoded,
-        container_path
-    );
-    
-    sandbox.execute(&write_cmd, 30).await
+    let write_cmd = format!("echo '{}' | base64 -d > {}", encoded, container_path);
+
+    sandbox
+        .execute(&write_cmd, 30)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to write history to container: {}", e))?;
 
     Ok(container_path)
@@ -280,20 +290,22 @@ pub fn get_history_path(context_dir: &str, execution_id: Option<&str>) -> String
 /// Initialize context directory in container
 pub async fn init_container_context(sandbox: &DockerSandbox) -> anyhow::Result<()> {
     let mkdir_cmd = format!("mkdir -p {}", CONTAINER_CONTEXT_DIR);
-    sandbox.execute(&mkdir_cmd, 5).await
+    sandbox
+        .execute(&mkdir_cmd, 5)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to create context directory: {}", e))?;
     Ok(())
 }
 
 /// Clean up context files in container for a specific execution
 /// Should be called when execution completes
-/// 
+///
 /// Removes:
 /// - Tool output files: http_response_*.txt, shell_stdout_*.txt, shell_stderr_*.txt
 /// - Temporary files in /workspace root: *.py, *.js, *.php, *.txt, etc.
 /// - Temporary directories in /workspace (except context/)
 /// - The specific execution's history file (history_{execution_id}.txt)
-/// 
+///
 /// Preserves:
 /// - Other executions' history files
 pub async fn cleanup_container_context(sandbox: &DockerSandbox) -> anyhow::Result<()> {
@@ -306,11 +318,11 @@ pub async fn cleanup_container_context_with_id(
     execution_id: Option<&str>,
 ) -> anyhow::Result<()> {
     tracing::info!("Cleaning up container workspace and context directories");
-    
+
     // 1. Preserve context files generated during execution.
     // Do not bulk-delete /workspace/context, because users may need those artifacts
     // (e.g. extracted files like /workspace/context/pdf_content.txt) after completion.
-    
+
     // 2. If execution_id provided, also remove that specific history file
     if let Some(id) = execution_id {
         if !id.is_empty() {
@@ -321,7 +333,7 @@ pub async fn cleanup_container_context_with_id(
             tracing::info!("Removed execution-specific history file: {}", history_file);
         }
     }
-    
+
     // 2. Clean up temporary files in /workspace root (preserve essential directories)
     // Keep both context/ and uploads/ so uploaded files and generated context artifacts survive.
     let cleanup_workspace_cmd = r#"
@@ -329,11 +341,13 @@ pub async fn cleanup_container_context_with_id(
         find . -maxdepth 1 -type f -delete 2>/dev/null || true && \
         find . -maxdepth 1 -type d ! -name '.' ! -name 'context' ! -name 'uploads' -exec rm -rf {} + 2>/dev/null || true
     "#;
-    
+
     // Execute cleanup command
-    sandbox.execute(cleanup_workspace_cmd, 15).await
+    sandbox
+        .execute(cleanup_workspace_cmd, 15)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to cleanup workspace directory: {}", e))?;
-    
+
     tracing::info!("Container workspace cleanup completed");
     Ok(())
 }
@@ -341,7 +355,7 @@ pub async fn cleanup_container_context_with_id(
 /// Clean up host context files for a specific execution
 pub fn cleanup_host_context_with_id(execution_id: Option<&str>) -> anyhow::Result<()> {
     let context_dir = get_host_context_dir();
-    
+
     if !context_dir.exists() {
         return Ok(());
     }
@@ -358,7 +372,10 @@ pub fn cleanup_host_context_with_id(execution_id: Option<&str>) -> anyhow::Resul
                         let expected = format!("history_{}.txt", short_id);
                         if filename == expected {
                             let _ = std::fs::remove_file(&path);
-                            tracing::info!("Removed execution-specific history file: {}", path.display());
+                            tracing::info!(
+                                "Removed execution-specific history file: {}",
+                                path.display()
+                            );
                         }
                     }
                     continue;
@@ -368,29 +385,31 @@ pub fn cleanup_host_context_with_id(execution_id: Option<&str>) -> anyhow::Resul
             }
         }
     }
-    
+
     tracing::info!("Host context cleanup completed");
     Ok(())
 }
 
 /// Clean up all workspace files including context and tool outputs
 /// Use with caution - removes everything in /workspace except context/history.txt
-/// 
+///
 /// Alternative cleanup option that does the same as cleanup_container_context
 /// but uses a single find command for efficiency
 pub async fn cleanup_container_workspace_full(sandbox: &DockerSandbox) -> anyhow::Result<()> {
     tracing::info!("Full cleanup of container workspace (alternative method)");
-    
+
     // Remove everything except context/history.txt
     // This includes all tool output files and temporary files
     let cleanup_cmd = r#"
         cd /workspace 2>/dev/null && \
         find . ! -path './context/history.txt' ! -path './context' ! -path '.' -delete 2>/dev/null || true
     "#;
-    
-    sandbox.execute(cleanup_cmd, 15).await
+
+    sandbox
+        .execute(cleanup_cmd, 15)
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to full cleanup workspace: {}", e))?;
-    
+
     tracing::info!("Full container workspace cleanup completed");
     Ok(())
 }
@@ -415,7 +434,9 @@ pub async fn store_output_on_host(
 
     // Generate filename
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let call_suffix = call_id.map(|id| format!("_{}", &id[..8.min(id.len())])).unwrap_or_default();
+    let call_suffix = call_id
+        .map(|id| format!("_{}", &id[..8.min(id.len())]))
+        .unwrap_or_default();
     let filename = format!("{}_{}{}.txt", tool_name, timestamp, call_suffix);
     let host_path = context_dir.join(&filename);
 
@@ -425,16 +446,16 @@ pub async fn store_output_on_host(
 
     let lines = output.lines().count();
     let size = output.len();
-    
+
     // Generate preview (first 500 chars)
     let preview = output.chars().take(500).collect::<String>();
     let preview_end = if output.len() > 500 { "\n..." } else { "" };
 
     let host_path_str = host_path.display().to_string();
-    
+
     // Generate platform-specific command suggestions
     let access_commands = generate_file_access_commands(&host_path_str);
-    
+
     // Create summary with instructions for host-based file access
     let summary = format!(
         r#"[Large Output Stored to Host File]
@@ -500,7 +521,10 @@ pub async fn store_output_unified(
     match store_output_in_container(&sandbox, tool_name, output, call_id).await {
         Ok(result) => Ok(result),
         Err(e) => {
-            tracing::warn!("Container storage failed ({}), falling back to host storage", e);
+            tracing::warn!(
+                "Container storage failed ({}), falling back to host storage",
+                e
+            );
             store_output_on_host(tool_name, output, call_id).await
         }
     }

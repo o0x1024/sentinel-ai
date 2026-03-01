@@ -1,12 +1,12 @@
 //! macOS Network Extension 绑定
 //!
 //! 提供 Rust 接口管理 Network Extension
-//! 
+//!
 //! 注意：完整的 Network Extension 功能需要：
 //! 1. Apple Developer 账号
 //! 2. Network Extension entitlement 审批
 //! 3. 构建 Swift System Extension
-//! 
+//!
 //! 当前提供 stub 实现，允许项目编译通过
 
 use serde::Serialize;
@@ -69,7 +69,7 @@ impl From<i32> for VPNStatus {
 }
 
 /// Network Extension 管理器
-/// 
+///
 /// 当前为 stub 实现，完整功能需要链接 Swift 库
 pub struct NetworkExtensionManager;
 
@@ -88,8 +88,11 @@ impl NetworkExtensionManager {
     /// 安装 Extension
     pub fn install() -> Result<(), String> {
         warn!("Network Extension install: Swift library not linked");
-        Err("Network Extension 功能需要先构建 Swift System Extension。\n\
-             请参考 src-tauri/macos-extension/SETUP.md 进行配置。".to_string())
+        Err(
+            "Network Extension 功能需要先构建 Swift System Extension。\n\
+             请参考 src-tauri/macos-extension/SETUP.md 进行配置。"
+                .to_string(),
+        )
     }
 
     /// 卸载 Extension
@@ -101,8 +104,11 @@ impl NetworkExtensionManager {
     /// 启动代理
     pub fn start_proxy(_host: &str, _port: u16, _target_apps: &[String]) -> Result<(), String> {
         warn!("Network Extension start_proxy: Swift library not linked");
-        Err("Network Extension 功能需要先构建 Swift System Extension。\n\
-             当前可以使用「系统代理」方式代理支持系统代理的应用。".to_string())
+        Err(
+            "Network Extension 功能需要先构建 Swift System Extension。\n\
+             当前可以使用「系统代理」方式代理支持系统代理的应用。"
+                .to_string(),
+        )
     }
 
     /// 停止代理
@@ -115,7 +121,7 @@ impl NetworkExtensionManager {
     pub fn get_proxy_status() -> VPNStatus {
         VPNStatus::NotAvailable
     }
-    
+
     /// 检查 Network Extension 是否可用
     pub fn is_available() -> bool {
         // 当 Swift 库链接后，这个函数应该返回 true
@@ -214,10 +220,10 @@ impl NetworkExtensionManager {
 
     pub fn start_proxy(host: &str, port: u16, target_apps: &[String]) -> Result<(), String> {
         let host_cstr = CString::new(host).map_err(|e| e.to_string())?;
-        
+
         let apps_json = serde_json::to_string(target_apps).map_err(|e| e.to_string())?;
         let apps_cstr = CString::new(apps_json).map_err(|e| e.to_string())?;
-        
+
         let mut error_buffer = vec![0u8; ERROR_BUFFER_SIZE];
         let result = unsafe {
             sentinel_proxy_start(
@@ -262,7 +268,7 @@ impl NetworkExtensionManager {
         let status = unsafe { sentinel_proxy_get_status() };
         VPNStatus::from(status)
     }
-    
+
     pub fn is_available() -> bool {
         true
     }

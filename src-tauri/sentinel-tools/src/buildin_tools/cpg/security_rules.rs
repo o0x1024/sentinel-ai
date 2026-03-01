@@ -97,8 +97,7 @@ impl PatternSpec {
             }
         }
         // Substring match (case-insensitive)
-        symbol.to_lowercase().contains(&pattern.to_lowercase())
-            || symbol == *pattern
+        symbol.to_lowercase().contains(&pattern.to_lowercase()) || symbol == *pattern
     }
 
     /// Check if this pattern applies to a given language.
@@ -212,7 +211,9 @@ fn sql_injection_rule() -> SecurityRule {
             PatternSpec::new("createQuery").langs(&["java"]),
             PatternSpec::new("createNativeQuery").langs(&["java"]),
             PatternSpec::new("createSQLQuery").langs(&["java"]),
-            PatternSpec::new("prepareStatement").langs(&["java"]).desc("May be safe if parameterized"),
+            PatternSpec::new("prepareStatement")
+                .langs(&["java"])
+                .desc("May be safe if parameterized"),
             PatternSpec::new("executeQuery").langs(&["java"]),
             PatternSpec::new("executeUpdate").langs(&["java"]),
             PatternSpec::new("jdbcTemplate.query").langs(&["java"]),
@@ -220,7 +221,9 @@ fn sql_injection_rule() -> SecurityRule {
             PatternSpec::new("cursor.execute").langs(&["python"]),
             PatternSpec::new("session.execute").langs(&["python"]),
             PatternSpec::new("engine.execute").langs(&["python"]),
-            PatternSpec::new("text(").langs(&["python"]).desc("SQLAlchemy text()"),
+            PatternSpec::new("text(")
+                .langs(&["python"])
+                .desc("SQLAlchemy text()"),
             // PHP
             PatternSpec::new("mysqli_query").langs(&["php"]),
             PatternSpec::new("pg_query").langs(&["php"]),
@@ -441,7 +444,9 @@ fn deserialization_rule() -> SecurityRule {
             PatternSpec::new("ObjectInputStream").langs(&["java"]),
             PatternSpec::new("readObject").langs(&["java"]),
             PatternSpec::new("XMLDecoder").langs(&["java"]),
-            PatternSpec::new("yaml.load").langs(&["python"]).desc("Use yaml.safe_load instead"),
+            PatternSpec::new("yaml.load")
+                .langs(&["python"])
+                .desc("Use yaml.safe_load instead"),
             PatternSpec::new("pickle.loads").langs(&["python"]),
             PatternSpec::new("marshal.loads").langs(&["python"]),
             PatternSpec::new("unserialize").langs(&["php"]),
@@ -590,7 +595,7 @@ fn hardcoded_secrets_rule() -> SecurityRule {
         cwe: "CWE-798".to_string(),
         severity: Severity::High,
         description: "Hardcoded passwords, API keys, or tokens in source code".to_string(),
-        sources: vec![],  // Not taint-based — pattern-only
+        sources: vec![], // Not taint-based — pattern-only
         sinks: vec![],
         sanitizers: vec![],
     }

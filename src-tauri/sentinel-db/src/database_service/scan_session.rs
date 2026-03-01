@@ -1,16 +1,19 @@
+use crate::core::models::scan_session::{
+    CreateScanSessionRequest, ScanProgress, ScanSession, ScanSessionStatus, ScanStage,
+    ScanStageProgress, ScanStageStatus, UpdateScanSessionRequest,
+};
+use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::service::DatabaseService;
-use crate::core::models::scan_session::{
-    ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
-    ScanSessionStatus, ScanStageStatus, ScanStageProgress,
-};
 use uuid::Uuid;
 
 impl DatabaseService {
-    pub async fn create_scan_session_internal(&self, request: CreateScanSessionRequest) -> Result<ScanSession> {
+    pub async fn create_scan_session_internal(
+        &self,
+        request: CreateScanSessionRequest,
+    ) -> Result<ScanSession> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -303,7 +306,9 @@ impl DatabaseService {
         }
 
         let rows = self.execute_query(&query).await?;
-        rows.into_iter().map(|r| parse_scan_session_row(&r)).collect()
+        rows.into_iter()
+            .map(|r| parse_scan_session_row(&r))
+            .collect()
     }
 
     pub async fn delete_scan_session_internal(&self, session_id: Uuid) -> Result<()> {
@@ -507,7 +512,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_scan_session_stages_internal(&self, session_id: Uuid) -> Result<Vec<ScanStage>> {
+    pub async fn get_scan_session_stages_internal(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Vec<ScanStage>> {
         let rows = self
             .execute_query(&format!(
                 r#"SELECT id, session_id, stage_name, stage_order, status, tool_name,
@@ -519,7 +527,10 @@ impl DatabaseService {
         rows.into_iter().map(|r| parse_scan_stage_row(&r)).collect()
     }
 
-    pub async fn get_scan_progress_internal(&self, session_id: Uuid) -> Result<Option<ScanProgress>> {
+    pub async fn get_scan_progress_internal(
+        &self,
+        session_id: Uuid,
+    ) -> Result<Option<ScanProgress>> {
         let session = self.get_scan_session_internal(session_id).await?;
         if let Some(session) = session {
             let stages = self.get_scan_session_stages_internal(session_id).await?;
@@ -652,7 +663,9 @@ fn parse_scan_stage_row(row: &Value) -> Result<ScanStage> {
     Ok(ScanStage {
         id: Uuid::parse_str(obj.get("id").and_then(|v| v.as_str()).unwrap_or_default())?,
         session_id: Uuid::parse_str(
-            obj.get("session_id").and_then(|v| v.as_str()).unwrap_or_default(),
+            obj.get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
         )?,
         stage_name: obj
             .get("stage_name")

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use base64::Engine as _;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NotificationMessage {
@@ -48,7 +48,10 @@ async fn send_webhook(config: Value, message: &NotificationMessage) -> Result<()
             Ok(mut v) => {
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("title".to_string(), Value::String(message.title.clone()));
-                    obj.insert("content".to_string(), Value::String(message.content.clone()));
+                    obj.insert(
+                        "content".to_string(),
+                        Value::String(message.content.clone()),
+                    );
                 }
                 v
             }
@@ -76,7 +79,11 @@ async fn send_webhook(config: Value, message: &NotificationMessage) -> Result<()
         }
     }
     let res = req.json(&payload).send().await?;
-    if res.status().is_success() { Ok(()) } else { Err(anyhow!("Webhook status: {}", res.status())) }
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(anyhow!("Webhook status: {}", res.status()))
+    }
 }
 
 async fn send_dingtalk(config: Value, message: &NotificationMessage) -> Result<()> {
@@ -86,14 +93,23 @@ async fn send_dingtalk(config: Value, message: &NotificationMessage) -> Result<(
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
         use std::time::{SystemTime, UNIX_EPOCH};
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string();
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_millis()
+            .to_string();
         let string_to_sign = format!("{}\n{}", ts, secret);
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())?;
         mac.update(string_to_sign.as_bytes());
         let sign = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
         // append query
         let sep = if url.contains('?') { '&' } else { '?' };
-        url = format!("{}{}timestamp={}&sign={}", url, sep, ts, urlencoding::encode(&sign));
+        url = format!(
+            "{}{}timestamp={}&sign={}",
+            url,
+            sep,
+            ts,
+            urlencoding::encode(&sign)
+        );
     }
     // Apply global proxy configuration
     let builder = reqwest::Client::builder();
@@ -101,17 +117,20 @@ async fn send_dingtalk(config: Value, message: &NotificationMessage) -> Result<(
     let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
     let msg_type = read_str(&config, "message_type").unwrap_or_else(|| "text".to_string());
     let payload = if msg_type == "markdown" {
-        let text = read_str(&config, "markdown_text").unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
+        let text = read_str(&config, "markdown_text")
+            .unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
         serde_json::json!({
             "msgtype": "markdown",
             "markdown": { "title": message.title, "text": text }
         })
     } else if msg_type == "card" {
         if let Some(card_json) = read_str(&config, "card_payload_json") {
-            serde_json::from_str::<Value>(&card_json).unwrap_or_else(|_| serde_json::json!({
-                "msgtype": "text",
-                "text": { "content": format!("{}\n{}", message.title, message.content) }
-            }))
+            serde_json::from_str::<Value>(&card_json).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "msgtype": "text",
+                    "text": { "content": format!("{}\n{}", message.title, message.content) }
+                })
+            })
         } else {
             serde_json::json!({
                 "msgtype": "text",
@@ -125,7 +144,11 @@ async fn send_dingtalk(config: Value, message: &NotificationMessage) -> Result<(
         })
     };
     let res = client.post(&url).json(&payload).send().await?;
-    if res.status().is_success() { Ok(()) } else { Err(anyhow!("DingTalk status: {}", res.status())) }
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(anyhow!("DingTalk status: {}", res.status()))
+    }
 }
 
 async fn send_feishu(config: Value, message: &NotificationMessage) -> Result<()> {
@@ -136,10 +159,11 @@ async fn send_feishu(config: Value, message: &NotificationMessage) -> Result<()>
     let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
     let msg_type = read_str(&config, "message_type").unwrap_or_else(|| "text".to_string());
     let payload = if msg_type == "markdown" {
-        let text = read_str(&config, "markdown_text").unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
+        let text = read_str(&config, "markdown_text")
+            .unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
         serde_json::json!({
             "msg_type": "post",
-            "content": { 
+            "content": {
                 "post": {
                     "zh_cn": {
                         "title": message.title,
@@ -150,10 +174,12 @@ async fn send_feishu(config: Value, message: &NotificationMessage) -> Result<()>
         })
     } else if msg_type == "card" {
         if let Some(card_json) = read_str(&config, "card_payload_json") {
-            serde_json::from_str::<Value>(&card_json).unwrap_or_else(|_| serde_json::json!({
-                "msg_type": "text",
-                "content": { "text": format!("{}\n{}", message.title, message.content) }
-            }))
+            serde_json::from_str::<Value>(&card_json).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "msg_type": "text",
+                    "content": { "text": format!("{}\n{}", message.title, message.content) }
+                })
+            })
         } else {
             serde_json::json!({
                 "msg_type": "text",
@@ -167,7 +193,11 @@ async fn send_feishu(config: Value, message: &NotificationMessage) -> Result<()>
         })
     };
     let res = client.post(&url).json(&payload).send().await?;
-    if res.status().is_success() { Ok(()) } else { Err(anyhow!("Feishu status: {}", res.status())) }
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(anyhow!("Feishu status: {}", res.status()))
+    }
 }
 
 async fn send_wecom(config: Value, message: &NotificationMessage) -> Result<()> {
@@ -178,17 +208,20 @@ async fn send_wecom(config: Value, message: &NotificationMessage) -> Result<()> 
     let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
     let msg_type = read_str(&config, "message_type").unwrap_or_else(|| "text".to_string());
     let payload = if msg_type == "markdown" {
-        let text = read_str(&config, "markdown_text").unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
+        let text = read_str(&config, "markdown_text")
+            .unwrap_or_else(|| format!("{}\n{}", message.title, message.content));
         serde_json::json!({
             "msgtype": "markdown",
             "markdown": { "content": text }
         })
     } else if msg_type == "card" {
         if let Some(card_json) = read_str(&config, "card_payload_json") {
-            serde_json::from_str::<Value>(&card_json).unwrap_or_else(|_| serde_json::json!({
-                "msgtype": "text",
-                "text": { "content": format!("{}\n{}", message.title, message.content) }
-            }))
+            serde_json::from_str::<Value>(&card_json).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "msgtype": "text",
+                    "text": { "content": format!("{}\n{}", message.title, message.content) }
+                })
+            })
         } else {
             serde_json::json!({
                 "msgtype": "text",
@@ -202,7 +235,11 @@ async fn send_wecom(config: Value, message: &NotificationMessage) -> Result<()> 
         })
     };
     let res = client.post(&url).json(&payload).send().await?;
-    if res.status().is_success() { Ok(()) } else { Err(anyhow!("WeCom status: {}", res.status())) }
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        Err(anyhow!("WeCom status: {}", res.status()))
+    }
 }
 
 async fn send_email(config: Value, message: &NotificationMessage) -> Result<()> {
@@ -214,13 +251,22 @@ async fn send_email(config: Value, message: &NotificationMessage) -> Result<()> 
     let from = read_str(&config, "email_from").ok_or_else(|| anyhow!("Missing email_from"))?;
     let to = read_str(&config, "email_to").ok_or_else(|| anyhow!("Missing email_to"))?;
 
-    let recipients: Vec<&str> = to.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-    if recipients.is_empty() { return Err(anyhow!("No recipients")); }
+    let recipients: Vec<&str> = to
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if recipients.is_empty() {
+        return Err(anyhow!("No recipients"));
+    }
 
     let subject = &message.title;
     let body = &message.content;
     let is_html = read_bool(&config, "email_is_html").unwrap_or(false);
-    let attachments = config.get("email_attachments").and_then(|v| v.as_array()).cloned();
+    let attachments = config
+        .get("email_attachments")
+        .and_then(|v| v.as_array())
+        .cloned();
 
     // Use blocking send in a spawn_blocking to avoid async transport complexity
     let host_clone = host.clone();
@@ -235,10 +281,10 @@ async fn send_email(config: Value, message: &NotificationMessage) -> Result<()> 
     let attachments_clone = attachments.clone();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
-        use lettre::{Message, SmtpTransport, Transport};
-        use lettre::message::{SinglePart, MultiPart};
-        use lettre::message::header::{ContentType, ContentDisposition};
+        use lettre::message::header::{ContentDisposition, ContentType};
+        use lettre::message::{MultiPart, SinglePart};
         use lettre::transport::smtp::authentication::Credentials;
+        use lettre::{Message, SmtpTransport, Transport};
 
         let creds_opt = match (username_clone, password_clone) {
             (Some(u), Some(p)) if !u.is_empty() => Some(Credentials::new(u, p)),
@@ -252,21 +298,41 @@ async fn send_email(config: Value, message: &NotificationMessage) -> Result<()> 
             SmtpTransport::relay(&host_clone).map_err(|e| anyhow!("smtp relay error: {}", e))?
         };
         builder = builder.port(port);
-        if let Some(creds) = creds_opt { builder = builder.credentials(creds); }
+        if let Some(creds) = creds_opt {
+            builder = builder.credentials(creds);
+        }
         let mailer = builder.build();
 
         for rcpt in recipients_clone.iter() {
-            let base_part = if is_html_clone { SinglePart::html(body_clone.clone()) } else { SinglePart::plain(body_clone.clone()) };
+            let base_part = if is_html_clone {
+                SinglePart::html(body_clone.clone())
+            } else {
+                SinglePart::plain(body_clone.clone())
+            };
             let mut mixed = MultiPart::mixed().singlepart(base_part);
             if let Some(atts) = &attachments_clone {
                 for att in atts.iter() {
                     if let Some(obj) = att.as_object() {
-                        let filename = obj.get("filename").and_then(|x| x.as_str()).unwrap_or("attachment").to_string();
-                        let content_b64 = obj.get("content_base64").and_then(|x| x.as_str()).unwrap_or("");
-                        let content_type_str = obj.get("content_type").and_then(|x| x.as_str()).unwrap_or("application/octet-stream");
+                        let filename = obj
+                            .get("filename")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("attachment")
+                            .to_string();
+                        let content_b64 = obj
+                            .get("content_base64")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("");
+                        let content_type_str = obj
+                            .get("content_type")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("application/octet-stream");
                         if !content_b64.is_empty() {
-                            let bytes = base64::engine::general_purpose::STANDARD.decode(content_b64).map_err(|e| anyhow!("attachment base64 decode error: {}", e))?;
-                            let ct: ContentType = content_type_str.parse().unwrap_or("application/octet-stream".parse().unwrap());
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(content_b64)
+                                .map_err(|e| anyhow!("attachment base64 decode error: {}", e))?;
+                            let ct: ContentType = content_type_str
+                                .parse()
+                                .unwrap_or("application/octet-stream".parse().unwrap());
                             let cd = ContentDisposition::attachment(&filename);
                             let part = SinglePart::builder().header(ct).header(cd).body(bytes);
                             mixed = mixed.singlepart(part);
@@ -280,13 +346,16 @@ async fn send_email(config: Value, message: &NotificationMessage) -> Result<()> 
                 .subject(subject_clone.clone())
                 .multipart(mixed)
                 .map_err(|e| anyhow!("build email error: {}", e))?;
-            let response = mailer.send(&email).map_err(|e| anyhow!("smtp send error: {}", e))?;
+            let response = mailer
+                .send(&email)
+                .map_err(|e| anyhow!("smtp send error: {}", e))?;
             if !response.is_positive() {
                 return Err(anyhow!("smtp negative response"));
             }
         }
         Ok(())
-    }).await??;
+    })
+    .await??;
 
     Ok(())
 }

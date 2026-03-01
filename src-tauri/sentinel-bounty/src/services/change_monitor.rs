@@ -2,10 +2,7 @@
 //!
 //! Monitors assets for changes and triggers workflows when changes are detected.
 
-use crate::models::{
-    ChangeEvent, ChangeEventType, ChangeSeverity,
-    CreateChangeEventRequest,
-};
+use crate::models::{ChangeEvent, ChangeEventType, ChangeSeverity, CreateChangeEventRequest};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -57,19 +54,19 @@ pub struct ChangeMonitorConfig {
     /// Plugin configuration for DNS monitoring
     #[serde(default)]
     pub dns_plugins: Vec<MonitorPluginConfig>,
-    
+
     /// Enable certificate change monitoring
     pub enable_cert_monitoring: bool,
     /// Plugin configuration for certificate monitoring
     #[serde(default)]
     pub cert_plugins: Vec<MonitorPluginConfig>,
-    
+
     /// Enable content fingerprint monitoring
     pub enable_content_monitoring: bool,
     /// Plugin configuration for content monitoring
     #[serde(default)]
     pub content_plugins: Vec<MonitorPluginConfig>,
-    
+
     /// Enable API endpoint monitoring
     pub enable_api_monitoring: bool,
     /// Plugin configuration for API monitoring
@@ -93,7 +90,7 @@ pub struct ChangeMonitorConfig {
     /// Plugin configuration for Vulnerability monitoring
     #[serde(default)]
     pub vuln_plugins: Vec<MonitorPluginConfig>,
-    
+
     /// Auto-trigger workflows on high severity events
     pub auto_trigger_enabled: bool,
     /// Minimum severity to auto-trigger
@@ -106,41 +103,29 @@ impl Default for ChangeMonitorConfig {
     fn default() -> Self {
         Self {
             enable_dns_monitoring: true,
-            dns_plugins: vec![
-                MonitorPluginConfig::with_fallbacks(
-                    "subdomain_enumerator".to_string(),
-                    vec!["dns_resolver".to_string()],
-                ),
-            ],
-            
+            dns_plugins: vec![MonitorPluginConfig::with_fallbacks(
+                "subdomain_enumerator".to_string(),
+                vec!["dns_resolver".to_string()],
+            )],
+
             enable_cert_monitoring: true,
-            cert_plugins: vec![
-                MonitorPluginConfig::new("cert_monitor".to_string()),
-            ],
-            
+            cert_plugins: vec![MonitorPluginConfig::new("cert_monitor".to_string())],
+
             enable_content_monitoring: true,
-            content_plugins: vec![
-                MonitorPluginConfig::new("content_monitor".to_string()),
-            ],
-            
+            content_plugins: vec![MonitorPluginConfig::new("content_monitor".to_string())],
+
             enable_api_monitoring: true,
-            api_plugins: vec![
-                MonitorPluginConfig::new("api_monitor".to_string()),
-            ],
+            api_plugins: vec![MonitorPluginConfig::new("api_monitor".to_string())],
 
             enable_port_monitoring: true,
-            port_plugins: vec![
-                MonitorPluginConfig::new("port_scanner".to_string()),
-            ],
+            port_plugins: vec![MonitorPluginConfig::new("port_scanner".to_string())],
 
             enable_web_monitoring: true,
-            web_plugins: vec![
-                MonitorPluginConfig::new("web_prober".to_string()),
-            ],
+            web_plugins: vec![MonitorPluginConfig::new("web_prober".to_string())],
 
             enable_vuln_monitoring: false, // Default off as it might be heavy
             vuln_plugins: vec![],
-            
+
             auto_trigger_enabled: true,
             auto_trigger_min_severity: ChangeSeverity::Medium,
             check_interval_secs: 3600, // 1 hour
@@ -151,49 +136,56 @@ impl Default for ChangeMonitorConfig {
 impl ChangeMonitorConfig {
     /// Get all DNS plugin IDs
     pub fn dns_plugin_ids(&self) -> Vec<String> {
-        self.dns_plugins.iter()
+        self.dns_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
 
     /// Get all certificate plugin IDs
     pub fn cert_plugin_ids(&self) -> Vec<String> {
-        self.cert_plugins.iter()
+        self.cert_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
 
     /// Get all content plugin IDs
     pub fn content_plugin_ids(&self) -> Vec<String> {
-        self.content_plugins.iter()
+        self.content_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
 
     /// Get all API plugin IDs
     pub fn api_plugin_ids(&self) -> Vec<String> {
-        self.api_plugins.iter()
+        self.api_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
 
     /// Get all Port plugin IDs
     pub fn port_plugin_ids(&self) -> Vec<String> {
-        self.port_plugins.iter()
+        self.port_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
 
     /// Get all Web plugin IDs
     pub fn web_plugin_ids(&self) -> Vec<String> {
-        self.web_plugins.iter()
+        self.web_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
 
     /// Get all Vuln plugin IDs
     pub fn vuln_plugin_ids(&self) -> Vec<String> {
-        self.vuln_plugins.iter()
+        self.vuln_plugins
+            .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
     }
@@ -276,7 +268,9 @@ impl ChangeMonitor {
         if let Some(old) = old_snapshot {
             // DNS change detection
             if self.config.enable_dns_monitoring {
-                if let (Some(old_dns), Some(new_dns)) = (&old.dns_records, &new_snapshot.dns_records) {
+                if let (Some(old_dns), Some(new_dns)) =
+                    (&old.dns_records, &new_snapshot.dns_records)
+                {
                     if old_dns != new_dns {
                         let mut event = ChangeEvent::new(
                             new_snapshot.asset_id.clone(),
@@ -297,7 +291,9 @@ impl ChangeMonitor {
 
             // Certificate change detection
             if self.config.enable_cert_monitoring {
-                if let (Some(old_cert), Some(new_cert)) = (&old.cert_fingerprint, &new_snapshot.cert_fingerprint) {
+                if let (Some(old_cert), Some(new_cert)) =
+                    (&old.cert_fingerprint, &new_snapshot.cert_fingerprint)
+                {
                     if old_cert != new_cert {
                         let mut event = ChangeEvent::new(
                             new_snapshot.asset_id.clone(),
@@ -318,7 +314,9 @@ impl ChangeMonitor {
 
             // Content fingerprint change detection
             if self.config.enable_content_monitoring {
-                if let (Some(old_hash), Some(new_hash)) = (&old.content_hash, &new_snapshot.content_hash) {
+                if let (Some(old_hash), Some(new_hash)) =
+                    (&old.content_hash, &new_snapshot.content_hash)
+                {
                     if old_hash != new_hash {
                         let mut event = ChangeEvent::new(
                             new_snapshot.asset_id.clone(),
@@ -358,7 +356,9 @@ impl ChangeMonitor {
 
             // API endpoint change detection
             if self.config.enable_api_monitoring {
-                if let (Some(old_api), Some(new_api)) = (&old.api_endpoints, &new_snapshot.api_endpoints) {
+                if let (Some(old_api), Some(new_api)) =
+                    (&old.api_endpoints, &new_snapshot.api_endpoints)
+                {
                     let added: Vec<_> = new_api.iter().filter(|e| !old_api.contains(e)).collect();
                     let removed: Vec<_> = old_api.iter().filter(|e| !new_api.contains(e)).collect();
 
@@ -370,10 +370,7 @@ impl ChangeMonitor {
                             "api_monitor".to_string(),
                         );
                         event.program_id = program_id.clone();
-                        event.description = format!(
-                            "Added: {:?}, Removed: {:?}",
-                            added, removed
-                        );
+                        event.description = format!("Added: {:?}, Removed: {:?}", added, removed);
                         event.severity = if !added.is_empty() {
                             ChangeSeverity::High // New endpoints are high priority
                         } else {
@@ -470,9 +467,9 @@ impl ChangeMonitor {
         event.diff = request.diff;
         event.affected_scope = request.affected_scope;
         event.tags = request.tags.unwrap_or_default();
-        event.auto_trigger_enabled = request.auto_trigger_enabled.unwrap_or(
-            self.should_auto_trigger(&event.severity)
-        );
+        event.auto_trigger_enabled = request
+            .auto_trigger_enabled
+            .unwrap_or(self.should_auto_trigger(&event.severity));
         event.calculate_risk_score();
         event
     }
@@ -515,13 +512,16 @@ mod tests {
 
         let events = monitor.detect_changes(&snapshot, None).await;
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0].event_type, ChangeEventType::AssetDiscovered));
+        assert!(matches!(
+            events[0].event_type,
+            ChangeEventType::AssetDiscovered
+        ));
     }
 
     #[tokio::test]
     async fn test_detect_dns_change() {
         let monitor = ChangeMonitor::new();
-        
+
         // First snapshot
         let snapshot1 = AssetSnapshot {
             asset_id: "test-asset".to_string(),

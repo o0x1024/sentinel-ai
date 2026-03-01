@@ -2,6 +2,7 @@
 
 use super::manager::TerminalSessionManager;
 use super::session::TerminalSessionConfig;
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,7 +10,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
-use bytes::Bytes;
 
 #[derive(serde::Deserialize)]
 struct ResizeMessage {
@@ -26,10 +26,10 @@ pub struct TerminalServer {
     running: Arc<RwLock<bool>>,
 }
 
-
 impl TerminalServer {
     pub const NAME: &'static str = "interactive_shell";
-    pub const DESCRIPTION: &'static str = "Interactive shell for interactive tools like ssh, msfconsole, sqlmap, etc.";
+    pub const DESCRIPTION: &'static str =
+        "Interactive shell for interactive tools like ssh, msfconsole, sqlmap, etc.";
 }
 
 impl TerminalServer {
@@ -97,40 +97,44 @@ impl TerminalServer {
         let (session_id, mut output_rx) = match init_msg {
             Message::Text(text) => {
                 debug!("Received init message: {}", text);
-                
+
                 // Try to parse as session ID first
                 if text.starts_with("session:") {
                     let session_id = text.strip_prefix("session:").unwrap().to_string();
-                    
+
                     // Check if session exists
                     if let Some(session_lock) = self.manager.get_session(&session_id).await {
                         info!("Reconnecting to existing session: {}", session_id);
-                        
+
                         // Create a new output channel for this WebSocket subscriber
                         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                         {
                             let session = session_lock.read().await;
                             session.add_subscriber(tx).await;
                         }
-                        
+
                         (session_id, rx)
                     } else {
                         // Session not found - client has stale session ID
                         // Create new session with default config instead of returning error
                         warn!("Session not found: {}, creating new session", session_id);
-                        self.manager.create_session(TerminalSessionConfig::default()).await?
+                        self.manager
+                            .create_session(TerminalSessionConfig::default())
+                            .await?
                     }
                 } else {
                     // Parse as config
-                    let config: TerminalSessionConfig = serde_json::from_str(&text)
-                        .unwrap_or_default();
-                    
+                    let config: TerminalSessionConfig =
+                        serde_json::from_str(&text).unwrap_or_default();
+
                     self.manager.create_session(config).await?
                 }
             }
             _ => {
                 // No config provided, use default
-                self.manager.create_session(TerminalSessionConfig::default()).await?
+                self.manager
+                    .create_session(TerminalSessionConfig::default())
+                    .await?
             }
         };
 
@@ -145,19 +149,33 @@ impl TerminalServer {
         // Spawn task to forward output to WebSocket
         let session_id_clone = session_id.clone();
         let output_task = tokio::spawn(async move {
-            info!("[WS Session {}] Output forwarding task started", session_id_clone);
+            info!(
+                "[WS Session {}] Output forwarding task started",
+                session_id_clone
+            );
             let mut chunk_count = 0;
             while let Some(data) = output_rx.recv().await {
                 chunk_count += 1;
-                info!("[WS Session {}] Forwarding chunk #{}: {} bytes", session_id_clone, chunk_count, data.len());
+                info!(
+                    "[WS Session {}] Forwarding chunk #{}: {} bytes",
+                    session_id_clone,
+                    chunk_count,
+                    data.len()
+                );
                 // Convert Vec<u8> to Bytes
                 let bytes_data = Bytes::from(data);
                 if let Err(e) = ws_sender.send(Message::Binary(bytes_data)).await {
-                    error!("[WS Session {}] Failed to send output: {}", session_id_clone, e);
+                    error!(
+                        "[WS Session {}] Failed to send output: {}",
+                        session_id_clone, e
+                    );
                     break;
                 }
             }
-            info!("[WS Session {}] Output task ended, total chunks sent: {}", session_id_clone, chunk_count);
+            info!(
+                "[WS Session {}] Output task ended, total chunks sent: {}",
+                session_id_clone, chunk_count
+            );
         });
 
         // Handle input from WebSocket

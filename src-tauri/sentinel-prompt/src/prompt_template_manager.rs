@@ -1,5 +1,5 @@
 //! Prompt模板管理器
-//! 
+//!
 //! 实现模板的加载、保存、版本控制和缓存功能，支持：
 //! - 模板文件管理
 //! - 版本控制
@@ -7,15 +7,15 @@
 //! - 热重载
 //! - 模板验证
 use super::*;
+use anyhow::{anyhow, Result};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use anyhow::{Result, anyhow};
+use std::sync::mpsc;
+use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::RwLock;
-use std::sync::Arc;
-use notify::{Watcher, RecursiveMode, Event, EventKind};
-use std::sync::mpsc;
 
 use serde_yaml;
 
@@ -182,7 +182,6 @@ pub struct TemplateStats {
     pub validation_errors: usize,
 }
 
-
 impl Default for TemplateManagerConfig {
     fn default() -> Self {
         Self {
@@ -215,17 +214,20 @@ impl Default for TemplateManagerConfig {
 
 impl PromptTemplateManager {
     /// 创建新的模板管理器
-    pub async fn new<P: AsRef<Path>>(template_dir: P, config: TemplateManagerConfig) -> Result<Self> {
+    pub async fn new<P: AsRef<Path>>(
+        template_dir: P,
+        config: TemplateManagerConfig,
+    ) -> Result<Self> {
         let template_dir = template_dir.as_ref().to_path_buf();
-        
+
         // 确保目录存在
         fs::create_dir_all(&template_dir).await?;
-        
+
         let version_dir = template_dir.join("versions");
         fs::create_dir_all(&version_dir).await?;
 
         let version_manager = TemplateVersionManager::new(version_dir)?;
-        
+
         let mut manager = Self {
             template_dir,
             template_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -261,7 +263,7 @@ impl PromptTemplateManager {
 
         // 从文件加载
         let template = self.load_template_from_file(template_id).await?;
-        
+
         // 更新缓存
         if self.config.enable_cache {
             self.update_cache(template_id, &template).await?;
@@ -271,13 +273,19 @@ impl PromptTemplateManager {
     }
 
     /// 保存模板
-    pub async fn save_template(&mut self, template_id: &str, template: &CustomTemplate) -> Result<()> {
+    pub async fn save_template(
+        &mut self,
+        template_id: &str,
+        template: &CustomTemplate,
+    ) -> Result<()> {
         // 验证模板
         self.validate_template(template)?;
 
         // 创建版本（如果启用版本控制）
         if self.config.enable_versioning {
-            self.version_manager.create_version(template_id, template).await?;
+            self.version_manager
+                .create_version(template_id, template)
+                .await?;
         }
 
         // 保存到文件
@@ -296,7 +304,7 @@ impl PromptTemplateManager {
     /// 删除模板
     pub async fn delete_template(&mut self, template_id: &str) -> Result<()> {
         let file_path = self.get_template_file_path(template_id);
-        
+
         // 删除文件
         if file_path.exists() {
             fs::remove_file(&file_path).await?;
@@ -318,10 +326,14 @@ impl PromptTemplateManager {
     pub async fn list_templates(&self) -> Result<Vec<String>> {
         let mut templates = Vec::new();
         let mut entries = fs::read_dir(&self.template_dir).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "yaml" || ext == "yml") {
+            if path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+            {
                 if let Some(stem) = path.file_stem() {
                     if let Some(template_id) = stem.to_str() {
                         templates.push(template_id.to_string());
@@ -334,7 +346,11 @@ impl PromptTemplateManager {
     }
 
     /// 搜索模板
-    pub async fn search_templates(&self, query: &str, template_type: Option<TemplateType>) -> Result<Vec<TemplateSearchResult>> {
+    pub async fn search_templates(
+        &self,
+        query: &str,
+        template_type: Option<TemplateType>,
+    ) -> Result<Vec<TemplateSearchResult>> {
         let template_ids = self.list_templates().await?;
         let mut results = Vec::new();
 
@@ -364,7 +380,7 @@ impl PromptTemplateManager {
 
         // 按匹配分数排序
         results.sort_by(|a, b| b.match_score.partial_cmp(&a.match_score).unwrap());
-        
+
         Ok(results)
     }
 
@@ -374,8 +390,15 @@ impl PromptTemplateManager {
     }
 
     /// 恢复模板版本
-    pub async fn restore_template_version(&mut self, template_id: &str, version: &str) -> Result<()> {
-        let template = self.version_manager.get_version_content(template_id, version).await?;
+    pub async fn restore_template_version(
+        &mut self,
+        template_id: &str,
+        version: &str,
+    ) -> Result<()> {
+        let template = self
+            .version_manager
+            .get_version_content(template_id, version)
+            .await?;
         self.save_template(template_id, &template).await
     }
 
@@ -383,7 +406,7 @@ impl PromptTemplateManager {
     pub async fn get_stats(&self) -> Result<TemplateStats> {
         let cache = self.template_cache.read().await;
         let total_templates = self.list_templates().await?.len();
-        
+
         // 计算缓存命中率（简化实现）
         let cache_hit_rate = if total_templates > 0 {
             cache.len() as f32 / total_templates as f32
@@ -392,7 +415,8 @@ impl PromptTemplateManager {
         };
 
         // 获取最常用模板
-        let mut usage_stats: Vec<_> = cache.iter()
+        let mut usage_stats: Vec<_> = cache
+            .iter()
             .map(|(id, cached)| (id.clone(), cached.usage_count))
             .collect();
         usage_stats.sort_by(|a, b| b.1.cmp(&a.1));
@@ -423,7 +447,7 @@ impl PromptTemplateManager {
     /// 预加载模板
     async fn preload_templates(&self) -> Result<()> {
         let template_ids = self.list_templates().await?;
-        
+
         for template_id in template_ids {
             if let Err(e) = self.load_template(&template_id).await {
                 eprintln!("Failed to preload template {}: {}", template_id, e);
@@ -436,14 +460,14 @@ impl PromptTemplateManager {
     /// 从文件加载模板
     async fn load_template_from_file(&self, template_id: &str) -> Result<CustomTemplate> {
         let file_path = self.get_template_file_path(template_id);
-        
+
         if !file_path.exists() {
             return Err(anyhow!("Template file not found: {}", template_id));
         }
 
         let content = fs::read_to_string(&file_path).await?;
         let template: CustomTemplate = serde_yaml::from_str(&content)?;
-        
+
         // 验证模板
         self.validate_template(&template)?;
 
@@ -453,20 +477,24 @@ impl PromptTemplateManager {
     /// 更新缓存
     async fn update_cache(&self, template_id: &str, template: &CustomTemplate) -> Result<()> {
         let mut cache = self.template_cache.write().await;
-        
+
         // 检查缓存大小限制
         if cache.len() >= self.config.max_cache_size {
             // 移除最旧的缓存项
-            if let Some((oldest_key, _)) = cache.iter()
+            if let Some((oldest_key, _)) = cache
+                .iter()
                 .min_by_key(|(_, cached)| cached.cached_at)
-                .map(|(k, v)| (k.clone(), v.clone())) {
+                .map(|(k, v)| (k.clone(), v.clone()))
+            {
                 cache.remove(&oldest_key);
             }
         }
 
         let file_path = self.get_template_file_path(template_id);
-        let last_modified = fs::metadata(&file_path).await?
-            .modified().unwrap_or(std::time::SystemTime::now());
+        let last_modified = fs::metadata(&file_path)
+            .await?
+            .modified()
+            .unwrap_or(std::time::SystemTime::now());
 
         let cached_template = CachedTemplate {
             template: template.clone(),
@@ -492,26 +520,38 @@ impl PromptTemplateManager {
 
         // 检查长度
         if template.content.len() > rules.max_template_length {
-            return Err(anyhow!("Template too long: {} > {}", 
-                template.content.len(), rules.max_template_length));
+            return Err(anyhow!(
+                "Template too long: {} > {}",
+                template.content.len(),
+                rules.max_template_length
+            ));
         }
 
         if template.content.len() < rules.min_template_length {
-            return Err(anyhow!("Template too short: {} < {}", 
-                template.content.len(), rules.min_template_length));
+            return Err(anyhow!(
+                "Template too short: {} < {}",
+                template.content.len(),
+                rules.min_template_length
+            ));
         }
 
         // 检查禁止内容
         for forbidden in &rules.forbidden_content {
             if template.content.contains(forbidden) {
-                return Err(anyhow!("Template contains forbidden content: {}", forbidden));
+                return Err(anyhow!(
+                    "Template contains forbidden content: {}",
+                    forbidden
+                ));
             }
         }
 
         // 检查必需的结构标记
         for marker in &rules.required_structure_markers {
             if !template.content.contains(marker) {
-                return Err(anyhow!("Template missing required structure marker: {}", marker));
+                return Err(anyhow!(
+                    "Template missing required structure marker: {}",
+                    marker
+                ));
             }
         }
 
@@ -572,10 +612,13 @@ impl PromptTemplateManager {
                                 // 清除缓存中的对应项
                                 let mut cache = cache.write().await;
                                 cache.remove(&template_id);
-                                println!("Template {} cache invalidated due to file change", template_id);
+                                println!(
+                                    "Template {} cache invalidated due to file change",
+                                    template_id
+                                );
                             }
                         }
-                    },
+                    }
                     EventKind::Remove(_) => {
                         for path in event.paths {
                             if let Some(template_id) = Self::extract_template_id(&path) {
@@ -584,7 +627,7 @@ impl PromptTemplateManager {
                                 println!("Template {} removed from cache", template_id);
                             }
                         }
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -612,10 +655,14 @@ impl TemplateVersionManager {
     }
 
     /// 创建新版本
-    pub async fn create_version(&mut self, template_id: &str, template: &CustomTemplate) -> Result<()> {
+    pub async fn create_version(
+        &mut self,
+        template_id: &str,
+        template: &CustomTemplate,
+    ) -> Result<()> {
         let version = self.generate_version_number(template_id).await?;
         let content_hash = self.calculate_content_hash(&template.content);
-        
+
         let template_version = TemplateVersion {
             version: version.clone(),
             content: template.content.clone(),
@@ -627,12 +674,15 @@ impl TemplateVersionManager {
         };
 
         // 保存版本文件
-        let version_file = self.version_dir.join(format!("{}_{}.yaml", template_id, version));
+        let version_file = self
+            .version_dir
+            .join(format!("{}_{}.yaml", template_id, version));
         let content = serde_yaml::to_string(&template_version)?;
         fs::write(version_file, content).await?;
 
         // 更新内存中的版本历史
-        self.version_history.entry(template_id.to_string())
+        self.version_history
+            .entry(template_id.to_string())
             .or_default()
             .push(template_version);
 
@@ -653,16 +703,22 @@ impl TemplateVersionManager {
     }
 
     /// 获取特定版本内容
-    pub async fn get_version_content(&self, template_id: &str, version: &str) -> Result<CustomTemplate> {
-        let version_file = self.version_dir.join(format!("{}_{}.yaml", template_id, version));
-        
+    pub async fn get_version_content(
+        &self,
+        template_id: &str,
+        version: &str,
+    ) -> Result<CustomTemplate> {
+        let version_file = self
+            .version_dir
+            .join(format!("{}_{}.yaml", template_id, version));
+
         if !version_file.exists() {
             return Err(anyhow!("Version not found: {} v{}", template_id, version));
         }
 
         let content = fs::read_to_string(version_file).await?;
         let template_version: TemplateVersion = serde_yaml::from_str(&content)?;
-        
+
         // 重构为CustomTemplate
         Ok(CustomTemplate {
             id: template_id.to_string(),
@@ -705,7 +761,7 @@ impl TemplateVersionManager {
     /// 获取版本统计
     pub async fn get_version_stats(&self) -> Result<HashMap<String, usize>> {
         let mut stats = HashMap::new();
-        
+
         for (template_id, versions) in &self.version_history {
             stats.insert(template_id.clone(), versions.len());
         }
@@ -724,7 +780,7 @@ impl TemplateVersionManager {
     fn calculate_content_hash(&self, content: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
         format!("{:x}", hasher.finish())
@@ -734,11 +790,12 @@ impl TemplateVersionManager {
     async fn load_versions_from_disk(&self, template_id: &str) -> Result<Vec<TemplateVersion>> {
         let mut versions = Vec::new();
         let mut entries = fs::read_dir(&self.version_dir).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if filename.starts_with(&format!("{}_", template_id)) && filename.ends_with(".yaml") {
+                if filename.starts_with(&format!("{}_", template_id)) && filename.ends_with(".yaml")
+                {
                     let content = fs::read_to_string(&path).await?;
                     if let Ok(version) = serde_yaml::from_str::<TemplateVersion>(&content) {
                         versions.push(version);
@@ -749,23 +806,25 @@ impl TemplateVersionManager {
 
         // 按版本号排序
         versions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        
+
         Ok(versions)
     }
 
     /// 清理旧版本
     async fn cleanup_old_versions(&mut self, template_id: &str) -> Result<()> {
         const MAX_VERSIONS: usize = 10; // 可以配置
-        
+
         if let Some(versions) = self.version_history.get_mut(template_id) {
             if versions.len() > MAX_VERSIONS {
                 // 保留最新的版本
                 versions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
                 let to_remove = versions.split_off(MAX_VERSIONS);
-                
+
                 // 删除文件
                 for version in to_remove {
-                    let version_file = self.version_dir.join(format!("{}_{}.yaml", template_id, version.version));
+                    let version_file = self
+                        .version_dir
+                        .join(format!("{}_{}.yaml", template_id, version.version));
                     if version_file.exists() {
                         fs::remove_file(version_file).await?;
                     }
@@ -786,8 +845,10 @@ mod tests {
     async fn test_template_manager() {
         let temp_dir = TempDir::new().unwrap();
         let config = TemplateManagerConfig::default();
-        let manager = PromptTemplateManager::new(temp_dir.path(), config).await.unwrap();
-        
+        let manager = PromptTemplateManager::new(temp_dir.path(), config)
+            .await
+            .unwrap();
+
         let template = CustomTemplate {
             id: "test_template".to_string(),
             name: "test_template".to_string(),
@@ -817,7 +878,7 @@ mod tests {
     fn test_version_manager() {
         let temp_dir = TempDir::new().unwrap();
         let version_manager = TemplateVersionManager::new(temp_dir.path().to_path_buf()).unwrap();
-        
+
         // 测试版本号生成
         assert!(version_manager.calculate_content_hash("test").len() > 0);
     }

@@ -316,7 +316,8 @@ impl DictionaryService {
             |q| q.bind(id)
         );
 
-        db_execute!(self, "DELETE FROM dictionaries WHERE id = $1", |q| q.bind(id));
+        db_execute!(self, "DELETE FROM dictionaries WHERE id = $1", |q| q
+            .bind(id));
 
         Ok(())
     }
@@ -540,11 +541,13 @@ impl DictionaryService {
                         dictionary = existing;
                     }
 
-                    let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
+                    let words: Vec<String> =
+                        export_data.words.into_iter().map(|w| w.word).collect();
                     self.add_words(&dictionary.id, words).await?;
                 } else {
                     dictionary = self.create_dictionary(dictionary).await?;
-                    let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
+                    let words: Vec<String> =
+                        export_data.words.into_iter().map(|w| w.word).collect();
                     self.add_words(&dictionary.id, words).await?;
                 }
 
@@ -562,7 +565,9 @@ impl DictionaryService {
                         .words
                         .into_iter()
                         .map(|w| w.word)
-                        .filter(|word| !options.skip_duplicates || !existing_word_set.contains(word))
+                        .filter(|word| {
+                            !options.skip_duplicates || !existing_word_set.contains(word)
+                        })
                         .collect();
 
                     if !new_words.is_empty() {
@@ -570,7 +575,8 @@ impl DictionaryService {
                     }
                 } else {
                     dictionary = self.create_dictionary(dictionary).await?;
-                    let words: Vec<String> = export_data.words.into_iter().map(|w| w.word).collect();
+                    let words: Vec<String> =
+                        export_data.words.into_iter().map(|w| w.word).collect();
                     self.add_words(&dictionary.id, words).await?;
                 }
 
@@ -685,9 +691,8 @@ impl DictionaryService {
         dictionary_id: &str,
         priority: Option<i32>,
     ) -> Result<DictionarySetRelation> {
-        let relation =
-            DictionarySetRelation::new(set_id.to_string(), dictionary_id.to_string())
-                .with_priority(priority.unwrap_or(0));
+        let relation = DictionarySetRelation::new(set_id.to_string(), dictionary_id.to_string())
+            .with_priority(priority.unwrap_or(0));
 
         db_execute!(
             self,
@@ -750,21 +755,99 @@ impl DictionaryService {
             self.create_dictionary(subdomain_dict).await?;
 
             let common_subdomains = vec![
-                "www", "mail", "ftp", "admin", "api", "dev", "test", "staging", "blog",
-                "shop", "store", "support", "help", "docs", "cdn", "static", "assets", "img",
-                "images", "media", "files", "download", "upload", "secure", "ssl", "vpn", "remote",
-                "portal", "dashboard", "panel", "control", "manage", "login", "auth", "sso", "oauth",
-                "app", "mobile", "m", "wap", "beta", "alpha", "demo", "sandbox", "old", "legacy",
-                "archive", "backup", "mirror", "proxy", "cache", "db", "database", "sql", "mysql",
-                "postgres", "redis", "mongo", "elastic", "search", "solr", "kibana", "grafana",
-                "prometheus", "jenkins", "ci", "cd", "build", "deploy", "git", "svn", "repo", "jira",
-                "confluence", "wiki", "forum", "chat", "slack", "teams", "monitoring", "metrics", "logs",
-                "analytics", "stats", "reports",
+                "www",
+                "mail",
+                "ftp",
+                "admin",
+                "api",
+                "dev",
+                "test",
+                "staging",
+                "blog",
+                "shop",
+                "store",
+                "support",
+                "help",
+                "docs",
+                "cdn",
+                "static",
+                "assets",
+                "img",
+                "images",
+                "media",
+                "files",
+                "download",
+                "upload",
+                "secure",
+                "ssl",
+                "vpn",
+                "remote",
+                "portal",
+                "dashboard",
+                "panel",
+                "control",
+                "manage",
+                "login",
+                "auth",
+                "sso",
+                "oauth",
+                "app",
+                "mobile",
+                "m",
+                "wap",
+                "beta",
+                "alpha",
+                "demo",
+                "sandbox",
+                "old",
+                "legacy",
+                "archive",
+                "backup",
+                "mirror",
+                "proxy",
+                "cache",
+                "db",
+                "database",
+                "sql",
+                "mysql",
+                "postgres",
+                "redis",
+                "mongo",
+                "elastic",
+                "search",
+                "solr",
+                "kibana",
+                "grafana",
+                "prometheus",
+                "jenkins",
+                "ci",
+                "cd",
+                "build",
+                "deploy",
+                "git",
+                "svn",
+                "repo",
+                "jira",
+                "confluence",
+                "wiki",
+                "forum",
+                "chat",
+                "slack",
+                "teams",
+                "monitoring",
+                "metrics",
+                "logs",
+                "analytics",
+                "stats",
+                "reports",
             ];
 
             self.add_words(
                 "builtin_subdomain_common",
-                common_subdomains.into_iter().map(|s| s.to_string()).collect(),
+                common_subdomains
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             )
             .await?;
         }

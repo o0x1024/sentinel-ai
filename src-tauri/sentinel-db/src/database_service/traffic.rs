@@ -8,14 +8,14 @@
 //! - Proxy configuration
 
 use anyhow::Result;
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
-use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use flate2::Compression;
-use std::io::{Write, Read};
-use base64::{Engine as _, engine::general_purpose};
+use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
+use tracing::{debug, info};
 
 use super::service::DatabaseService;
 use crate::database_service::connection_manager::DatabasePool;
@@ -67,7 +67,7 @@ fn smart_decompress(data: Option<String>, is_compressed: bool) -> Result<Option<
 
 impl DatabaseService {
     /// Migrate old table names
-   
+
     // ============================================================
     // Vulnerability Operations
     // ============================================================
@@ -80,8 +80,10 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let signature = finding.calculate_signature();
 
-        debug!("Inserting vulnerability: title='{}', description='{}'", 
-              finding.title, finding.description);
+        debug!(
+            "Inserting vulnerability: title='{}', description='{}'",
+            finding.title, finding.description
+        );
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -185,7 +187,11 @@ impl DatabaseService {
 
         // Insert evidence record
         let evidence = TrafficEvidenceRecord {
-            id: format!("{}-evidence-{}", finding.id, chrono::Utc::now().timestamp_millis()),
+            id: format!(
+                "{}-evidence-{}",
+                finding.id,
+                chrono::Utc::now().timestamp_millis()
+            ),
             vuln_id: finding.id.clone(),
             url: finding.url.clone(),
             method: finding.method.clone(),
@@ -198,10 +204,13 @@ impl DatabaseService {
             response_body: finding.response_body.clone(),
             timestamp: finding.created_at,
         };
-        
+
         self.insert_traffic_evidence(&evidence).await?;
 
-        debug!("Vulnerability inserted with evidence: {} - {}", finding.id, finding.title);
+        debug!(
+            "Vulnerability inserted with evidence: {} - {}",
+            finding.id, finding.title
+        );
         Ok(())
     }
 
@@ -335,7 +344,9 @@ impl DatabaseService {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
                 if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
-                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                    query_builder
+                        .push(" AND plugin_id != ")
+                        .push_bind(exclude_plugin_id);
                 }
                 query_builder.push(" ORDER BY created_at DESC");
                 if let Some(limit) = filters.limit {
@@ -373,7 +384,9 @@ impl DatabaseService {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
                 if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
-                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                    query_builder
+                        .push(" AND plugin_id != ")
+                        .push_bind(exclude_plugin_id);
                 }
                 query_builder.push(" ORDER BY created_at DESC");
                 if let Some(limit) = filters.limit {
@@ -411,7 +424,9 @@ impl DatabaseService {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
                 if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
-                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                    query_builder
+                        .push(" AND plugin_id != ")
+                        .push_bind(exclude_plugin_id);
                 }
                 query_builder.push(" ORDER BY created_at DESC");
                 if let Some(limit) = filters.limit {
@@ -435,15 +450,16 @@ impl DatabaseService {
         filters: TrafficVulnerabilityFilters,
     ) -> Result<Vec<TrafficVulnerabilityWithEvidence>> {
         let vulnerabilities = self.list_traffic_vulnerabilities(filters).await?;
-        
+
         let mut results = Vec::new();
         for vuln in vulnerabilities {
             let evidence = self.get_traffic_evidence_by_vuln_id(&vuln.id).await?;
-            
-            let (url, method) = evidence.first()
+
+            let (url, method) = evidence
+                .first()
                 .map(|e| (Some(e.url.clone()), Some(e.method.clone())))
                 .unwrap_or((None, None));
-            
+
             results.push(TrafficVulnerabilityWithEvidence {
                 vulnerability: vuln,
                 evidence,
@@ -451,12 +467,15 @@ impl DatabaseService {
                 method,
             });
         }
-        
+
         Ok(results)
     }
 
     /// Count vulnerabilities
-    pub async fn count_traffic_vulnerabilities(&self, filters: TrafficVulnerabilityFilters) -> Result<i64> {
+    pub async fn count_traffic_vulnerabilities(
+        &self,
+        filters: TrafficVulnerabilityFilters,
+    ) -> Result<i64> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -484,7 +503,9 @@ impl DatabaseService {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
                 if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
-                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                    query_builder
+                        .push(" AND plugin_id != ")
+                        .push_bind(exclude_plugin_id);
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
@@ -510,7 +531,9 @@ impl DatabaseService {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
                 if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
-                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                    query_builder
+                        .push(" AND plugin_id != ")
+                        .push_bind(exclude_plugin_id);
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
@@ -536,7 +559,9 @@ impl DatabaseService {
                     query_builder.push(" AND plugin_id = ").push_bind(plugin_id);
                 }
                 if let Some(ref exclude_plugin_id) = filters.exclude_plugin_id {
-                    query_builder.push(" AND plugin_id != ").push_bind(exclude_plugin_id);
+                    query_builder
+                        .push(" AND plugin_id != ")
+                        .push_bind(exclude_plugin_id);
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
@@ -545,7 +570,10 @@ impl DatabaseService {
     }
 
     /// Get vulnerability by ID
-    pub async fn get_traffic_vulnerability_by_id(&self, vuln_id: &str) -> Result<Option<TrafficVulnerabilityRecord>> {
+    pub async fn get_traffic_vulnerability_by_id(
+        &self,
+        vuln_id: &str,
+    ) -> Result<Option<TrafficVulnerabilityRecord>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -601,7 +629,10 @@ impl DatabaseService {
     }
 
     /// Get evidence by vulnerability ID
-    pub async fn get_traffic_evidence_by_vuln_id(&self, vuln_id: &str) -> Result<Vec<TrafficEvidenceRecord>> {
+    pub async fn get_traffic_evidence_by_vuln_id(
+        &self,
+        vuln_id: &str,
+    ) -> Result<Vec<TrafficEvidenceRecord>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -660,58 +691,56 @@ impl DatabaseService {
     }
 
     /// Update vulnerability status
-    pub async fn update_traffic_vulnerability_status(&self, vuln_id: &str, status: &str) -> Result<()> {
+    pub async fn update_traffic_vulnerability_status(
+        &self,
+        vuln_id: &str,
+        status: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let rows_affected = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    r#"
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                r#"
                     UPDATE traffic_vulnerabilities 
                     SET status = $1, updated_at = $2
                     WHERE id = $3
                     "#,
-                )
-                .bind(status)
-                .bind(Utc::now())
-                .bind(vuln_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query(
-                    r#"
+            )
+            .bind(status)
+            .bind(Utc::now())
+            .bind(vuln_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::SQLite(pool) => sqlx::query(
+                r#"
                     UPDATE traffic_vulnerabilities 
                     SET status = ?, updated_at = ?
                     WHERE id = ?
                     "#,
-                )
-                .bind(status)
-                .bind(Utc::now())
-                .bind(vuln_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query(
-                    r#"
+            )
+            .bind(status)
+            .bind(Utc::now())
+            .bind(vuln_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                r#"
                     UPDATE traffic_vulnerabilities 
                     SET status = ?, updated_at = ?
                     WHERE id = ?
                     "#,
-                )
-                .bind(status)
-                .bind(Utc::now())
-                .bind(vuln_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
+            )
+            .bind(status)
+            .bind(Utc::now())
+            .bind(vuln_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
         };
 
         if rows_affected == 0 {
@@ -928,20 +957,26 @@ impl DatabaseService {
 
     /// Register plugin with code
     pub async fn register_traffic_plugin_with_code(
-        &self, 
-        plugin: &TrafficPluginMetadata, 
-        plugin_code: &str
+        &self,
+        plugin: &TrafficPluginMetadata,
+        plugin_code: &str,
     ) -> Result<()> {
-        self.register_traffic_plugin_with_code_and_quality(plugin, plugin_code, None, Some("Approved")).await
+        self.register_traffic_plugin_with_code_and_quality(
+            plugin,
+            plugin_code,
+            None,
+            Some("Approved"),
+        )
+        .await
     }
 
     /// Register plugin with code and quality score
     pub async fn register_traffic_plugin_with_code_and_quality(
-        &self, 
-        plugin: &TrafficPluginMetadata, 
+        &self,
+        plugin: &TrafficPluginMetadata,
         plugin_code: &str,
         quality_score: Option<f64>,
-        validation_status: Option<&str>
+        validation_status: Option<&str>,
     ) -> Result<()> {
         let runtime = self
             .runtime_pool
@@ -1067,7 +1102,11 @@ impl DatabaseService {
     }
 
     /// Update plugin
-    pub async fn update_traffic_plugin(&self, plugin: &TrafficPluginMetadata, plugin_code: &str) -> Result<()> {
+    pub async fn update_traffic_plugin(
+        &self,
+        plugin: &TrafficPluginMetadata,
+        plugin_code: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -1170,16 +1209,20 @@ impl DatabaseService {
                 .await?
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query_scalar::<_, Option<String>>("SELECT plugin_code FROM plugin_registry WHERE id = ?")
-                    .bind(plugin_id)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT plugin_code FROM plugin_registry WHERE id = ?",
+                )
+                .bind(plugin_id)
+                .fetch_optional(pool)
+                .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_scalar::<_, Option<String>>("SELECT plugin_code FROM plugin_registry WHERE id = ?")
-                    .bind(plugin_id)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT plugin_code FROM plugin_registry WHERE id = ?",
+                )
+                .bind(plugin_id)
+                .fetch_optional(pool)
+                .await?
             }
         };
 
@@ -1187,15 +1230,27 @@ impl DatabaseService {
     }
 
     /// Get plugin by ID
-    pub async fn get_traffic_plugin_by_id(&self, plugin_id: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get_traffic_plugin_by_id(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Option<serde_json::Value>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let row: Option<(
-            String, String, String, Option<String>, String, String, Option<String>, 
-            String, Option<String>, bool, Option<String>
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            bool,
+            Option<String>,
         )> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as(
@@ -1238,12 +1293,24 @@ impl DatabaseService {
             }
         };
 
-        if let Some((id, name, version, author, main_category, category, description, 
-                     default_severity, tags, enabled, plugin_code)) = row {
+        if let Some((
+            id,
+            name,
+            version,
+            author,
+            main_category,
+            category,
+            description,
+            default_severity,
+            tags,
+            enabled,
+            plugin_code,
+        )) = row
+        {
             let tags_array: Vec<String> = tags
                 .and_then(|t| serde_json::from_str(&t).ok())
                 .unwrap_or_default();
-            
+
             Ok(Some(serde_json::json!({
                 "id": id,
                 "name": name,
@@ -1337,8 +1404,21 @@ impl DatabaseService {
         };
 
         let mut plugins = Vec::new();
-        for (id, name, version, author, main_category, category, description,
-             default_severity, tags, enabled, plugin_code, quality_score, validation_status) in rows
+        for (
+            id,
+            name,
+            version,
+            author,
+            main_category,
+            category,
+            description,
+            default_severity,
+            tags,
+            enabled,
+            plugin_code,
+            quality_score,
+            validation_status,
+        ) in rows
         {
             let tags_array: Vec<String> = tags
                 .and_then(|t| serde_json::from_str(&t).ok())
@@ -1365,7 +1445,11 @@ impl DatabaseService {
     }
 
     /// Update plugin enabled status
-    pub async fn update_traffic_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()> {
+    pub async fn update_traffic_plugin_enabled(
+        &self,
+        plugin_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -1465,11 +1549,11 @@ impl DatabaseService {
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        
+
         // 智能压缩请求体和响应体
         let (request_body, request_compressed) = smart_compress(request.request_body.as_ref())?;
         let (response_body, response_compressed) = smart_compress(request.response_body.as_ref())?;
-        
+
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let row: (i64,) = sqlx::query_as(
@@ -1592,13 +1676,19 @@ impl DatabaseService {
                     query_builder.push(" AND method = ").push_bind(method);
                 }
                 if let Some(ref host) = filters.host {
-                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                    query_builder
+                        .push(" AND host LIKE ")
+                        .push_bind(format!("%{}%", host));
                 }
                 if let Some(status_min) = filters.status_code_min {
-                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                    query_builder
+                        .push(" AND status_code >= ")
+                        .push_bind(status_min);
                 }
                 if let Some(status_max) = filters.status_code_max {
-                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                    query_builder
+                        .push(" AND status_code <= ")
+                        .push_bind(status_max);
                 }
                 query_builder.push(" ORDER BY timestamp DESC");
                 if let Some(limit) = filters.limit {
@@ -1630,13 +1720,19 @@ impl DatabaseService {
                     query_builder.push(" AND method = ").push_bind(method);
                 }
                 if let Some(ref host) = filters.host {
-                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                    query_builder
+                        .push(" AND host LIKE ")
+                        .push_bind(format!("%{}%", host));
                 }
                 if let Some(status_min) = filters.status_code_min {
-                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                    query_builder
+                        .push(" AND status_code >= ")
+                        .push_bind(status_min);
                 }
                 if let Some(status_max) = filters.status_code_max {
-                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                    query_builder
+                        .push(" AND status_code <= ")
+                        .push_bind(status_max);
                 }
                 query_builder.push(" ORDER BY timestamp DESC");
                 if let Some(limit) = filters.limit {
@@ -1668,13 +1764,19 @@ impl DatabaseService {
                     query_builder.push(" AND method = ").push_bind(method);
                 }
                 if let Some(ref host) = filters.host {
-                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                    query_builder
+                        .push(" AND host LIKE ")
+                        .push_bind(format!("%{}%", host));
                 }
                 if let Some(status_min) = filters.status_code_min {
-                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                    query_builder
+                        .push(" AND status_code >= ")
+                        .push_bind(status_min);
                 }
                 if let Some(status_max) = filters.status_code_max {
-                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                    query_builder
+                        .push(" AND status_code <= ")
+                        .push_bind(status_max);
                 }
                 query_builder.push(" ORDER BY timestamp DESC");
                 if let Some(limit) = filters.limit {
@@ -1691,8 +1793,10 @@ impl DatabaseService {
         };
 
         for record in &mut records {
-            record.request_body = smart_decompress(record.request_body.take(), record.request_body_compressed)?;
-            record.response_body = smart_decompress(record.response_body.take(), record.response_body_compressed)?;
+            record.request_body =
+                smart_decompress(record.request_body.take(), record.request_body_compressed)?;
+            record.response_body =
+                smart_decompress(record.response_body.take(), record.response_body_compressed)?;
         }
 
         Ok(records)
@@ -1708,7 +1812,8 @@ impl DatabaseService {
             host: Some(host.to_string()),
             limit: Some(limit),
             ..Default::default()
-        }).await
+        })
+        .await
     }
 
     /// Count proxy requests
@@ -1734,13 +1839,19 @@ impl DatabaseService {
                     query_builder.push(" AND method = ").push_bind(method);
                 }
                 if let Some(ref host) = filters.host {
-                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                    query_builder
+                        .push(" AND host LIKE ")
+                        .push_bind(format!("%{}%", host));
                 }
                 if let Some(status_min) = filters.status_code_min {
-                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                    query_builder
+                        .push(" AND status_code >= ")
+                        .push_bind(status_min);
                 }
                 if let Some(status_max) = filters.status_code_max {
-                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                    query_builder
+                        .push(" AND status_code <= ")
+                        .push_bind(status_max);
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
@@ -1760,13 +1871,19 @@ impl DatabaseService {
                     query_builder.push(" AND method = ").push_bind(method);
                 }
                 if let Some(ref host) = filters.host {
-                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                    query_builder
+                        .push(" AND host LIKE ")
+                        .push_bind(format!("%{}%", host));
                 }
                 if let Some(status_min) = filters.status_code_min {
-                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                    query_builder
+                        .push(" AND status_code >= ")
+                        .push_bind(status_min);
                 }
                 if let Some(status_max) = filters.status_code_max {
-                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                    query_builder
+                        .push(" AND status_code <= ")
+                        .push_bind(status_max);
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
@@ -1786,13 +1903,19 @@ impl DatabaseService {
                     query_builder.push(" AND method = ").push_bind(method);
                 }
                 if let Some(ref host) = filters.host {
-                    query_builder.push(" AND host LIKE ").push_bind(format!("%{}%", host));
+                    query_builder
+                        .push(" AND host LIKE ")
+                        .push_bind(format!("%{}%", host));
                 }
                 if let Some(status_min) = filters.status_code_min {
-                    query_builder.push(" AND status_code >= ").push_bind(status_min);
+                    query_builder
+                        .push(" AND status_code >= ")
+                        .push_bind(status_min);
                 }
                 if let Some(status_max) = filters.status_code_max {
-                    query_builder.push(" AND status_code <= ").push_bind(status_max);
+                    query_builder
+                        .push(" AND status_code <= ")
+                        .push_bind(status_max);
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
@@ -2182,7 +2305,7 @@ pub struct TrafficFinding {
 
 impl TrafficFinding {
     pub fn calculate_signature(&self) -> String {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&self.plugin_id);
         hasher.update(&self.vuln_type);
@@ -2428,7 +2551,10 @@ impl DatabaseService {
         }
     }
 
-    pub async fn insert_agent_audit_finding(&self, finding: &AgentAuditFindingRecord) -> Result<()> {
+    pub async fn insert_agent_audit_finding(
+        &self,
+        finding: &AgentAuditFindingRecord,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -2825,7 +2951,9 @@ impl DatabaseService {
                     "#,
                 );
                 if let Some(ref conversation_id) = filters.conversation_id {
-                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                    query_builder
+                        .push(" AND conversation_id = ")
+                        .push_bind(conversation_id);
                 }
                 if let Some(ref severity) = filters.severity {
                     query_builder.push(" AND severity = ").push_bind(severity);
@@ -2834,12 +2962,24 @@ impl DatabaseService {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
                 if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
-                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                    query_builder
+                        .push(" AND lifecycle_stage = ")
+                        .push_bind(lifecycle_stage);
                 }
-                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
-                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                if let Some(search) = filters
+                    .search
+                    .as_ref()
+                    .map(|s| format!("%{}%", s.to_lowercase()))
+                {
+                    query_builder
+                        .push(" AND (LOWER(title) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(description) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(COALESCE(cwe, '')) LIKE ")
+                        .push_bind(search);
                     query_builder.push(")");
                 }
                 query_builder.push(" ORDER BY last_seen_at DESC, created_at DESC");
@@ -2869,7 +3009,9 @@ impl DatabaseService {
                     "#,
                 );
                 if let Some(ref conversation_id) = filters.conversation_id {
-                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                    query_builder
+                        .push(" AND conversation_id = ")
+                        .push_bind(conversation_id);
                 }
                 if let Some(ref severity) = filters.severity {
                     query_builder.push(" AND severity = ").push_bind(severity);
@@ -2878,12 +3020,24 @@ impl DatabaseService {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
                 if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
-                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                    query_builder
+                        .push(" AND lifecycle_stage = ")
+                        .push_bind(lifecycle_stage);
                 }
-                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
-                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                if let Some(search) = filters
+                    .search
+                    .as_ref()
+                    .map(|s| format!("%{}%", s.to_lowercase()))
+                {
+                    query_builder
+                        .push(" AND (LOWER(title) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(description) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(COALESCE(cwe, '')) LIKE ")
+                        .push_bind(search);
                     query_builder.push(")");
                 }
                 query_builder.push(" ORDER BY last_seen_at DESC, created_at DESC");
@@ -2913,7 +3067,9 @@ impl DatabaseService {
                     "#,
                 );
                 if let Some(ref conversation_id) = filters.conversation_id {
-                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                    query_builder
+                        .push(" AND conversation_id = ")
+                        .push_bind(conversation_id);
                 }
                 if let Some(ref severity) = filters.severity {
                     query_builder.push(" AND severity = ").push_bind(severity);
@@ -2922,12 +3078,24 @@ impl DatabaseService {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
                 if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
-                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                    query_builder
+                        .push(" AND lifecycle_stage = ")
+                        .push_bind(lifecycle_stage);
                 }
-                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
-                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                if let Some(search) = filters
+                    .search
+                    .as_ref()
+                    .map(|s| format!("%{}%", s.to_lowercase()))
+                {
+                    query_builder
+                        .push(" AND (LOWER(title) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(description) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(COALESCE(cwe, '')) LIKE ")
+                        .push_bind(search);
                     query_builder.push(")");
                 }
                 query_builder.push(" ORDER BY last_seen_at DESC, created_at DESC");
@@ -2946,7 +3114,10 @@ impl DatabaseService {
         }
     }
 
-    pub async fn count_agent_audit_findings(&self, filters: AgentAuditFindingFilters) -> Result<i64> {
+    pub async fn count_agent_audit_findings(
+        &self,
+        filters: AgentAuditFindingFilters,
+    ) -> Result<i64> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -2958,7 +3129,9 @@ impl DatabaseService {
                     "SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1",
                 );
                 if let Some(ref conversation_id) = filters.conversation_id {
-                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                    query_builder
+                        .push(" AND conversation_id = ")
+                        .push_bind(conversation_id);
                 }
                 if let Some(ref severity) = filters.severity {
                     query_builder.push(" AND severity = ").push_bind(severity);
@@ -2967,22 +3140,37 @@ impl DatabaseService {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
                 if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
-                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                    query_builder
+                        .push(" AND lifecycle_stage = ")
+                        .push_bind(lifecycle_stage);
                 }
-                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
-                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                if let Some(search) = filters
+                    .search
+                    .as_ref()
+                    .map(|s| format!("%{}%", s.to_lowercase()))
+                {
+                    query_builder
+                        .push(" AND (LOWER(title) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(description) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(COALESCE(cwe, '')) LIKE ")
+                        .push_bind(search);
                     query_builder.push(")");
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
             }
             DatabasePool::SQLite(pool) => {
-                let mut query_builder =
-                    sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1");
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+                    "SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1",
+                );
                 if let Some(ref conversation_id) = filters.conversation_id {
-                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                    query_builder
+                        .push(" AND conversation_id = ")
+                        .push_bind(conversation_id);
                 }
                 if let Some(ref severity) = filters.severity {
                     query_builder.push(" AND severity = ").push_bind(severity);
@@ -2991,22 +3179,37 @@ impl DatabaseService {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
                 if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
-                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                    query_builder
+                        .push(" AND lifecycle_stage = ")
+                        .push_bind(lifecycle_stage);
                 }
-                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
-                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                if let Some(search) = filters
+                    .search
+                    .as_ref()
+                    .map(|s| format!("%{}%", s.to_lowercase()))
+                {
+                    query_builder
+                        .push(" AND (LOWER(title) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(description) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(COALESCE(cwe, '')) LIKE ")
+                        .push_bind(search);
                     query_builder.push(")");
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
                 Ok(row.0)
             }
             DatabasePool::MySQL(pool) => {
-                let mut query_builder =
-                    sqlx::QueryBuilder::<sqlx::MySql>::new("SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1");
+                let mut query_builder = sqlx::QueryBuilder::<sqlx::MySql>::new(
+                    "SELECT COUNT(*) FROM agent_audit_findings WHERE 1=1",
+                );
                 if let Some(ref conversation_id) = filters.conversation_id {
-                    query_builder.push(" AND conversation_id = ").push_bind(conversation_id);
+                    query_builder
+                        .push(" AND conversation_id = ")
+                        .push_bind(conversation_id);
                 }
                 if let Some(ref severity) = filters.severity {
                     query_builder.push(" AND severity = ").push_bind(severity);
@@ -3015,12 +3218,24 @@ impl DatabaseService {
                     query_builder.push(" AND status = ").push_bind(status);
                 }
                 if let Some(ref lifecycle_stage) = filters.lifecycle_stage {
-                    query_builder.push(" AND lifecycle_stage = ").push_bind(lifecycle_stage);
+                    query_builder
+                        .push(" AND lifecycle_stage = ")
+                        .push_bind(lifecycle_stage);
                 }
-                if let Some(search) = filters.search.as_ref().map(|s| format!("%{}%", s.to_lowercase())) {
-                    query_builder.push(" AND (LOWER(title) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(description) LIKE ").push_bind(search.clone());
-                    query_builder.push(" OR LOWER(COALESCE(cwe, '')) LIKE ").push_bind(search);
+                if let Some(search) = filters
+                    .search
+                    .as_ref()
+                    .map(|s| format!("%{}%", s.to_lowercase()))
+                {
+                    query_builder
+                        .push(" AND (LOWER(title) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(description) LIKE ")
+                        .push_bind(search.clone());
+                    query_builder
+                        .push(" OR LOWER(COALESCE(cwe, '')) LIKE ")
+                        .push_bind(search);
                     query_builder.push(")");
                 }
                 let row: (i64,) = query_builder.build_query_as().fetch_one(pool).await?;
@@ -3029,7 +3244,10 @@ impl DatabaseService {
         }
     }
 
-    pub async fn get_agent_audit_finding_by_id(&self, finding_id: &str) -> Result<Option<AgentAuditFindingRecord>> {
+    pub async fn get_agent_audit_finding_by_id(
+        &self,
+        finding_id: &str,
+    ) -> Result<Option<AgentAuditFindingRecord>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -3109,9 +3327,8 @@ impl DatabaseService {
 
         let now = Utc::now();
         let rows_affected = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    "UPDATE agent_audit_findings
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                "UPDATE agent_audit_findings
                      SET lifecycle_stage = $1,
                          verification_status = COALESCE($2, verification_status),
                          judge_json = COALESCE($3, judge_json),
@@ -3120,22 +3337,20 @@ impl DatabaseService {
                          last_transition_at = $6,
                          updated_at = $7
                      WHERE id = $8",
-                )
-                .bind(lifecycle_stage)
-                .bind(verification_status)
-                .bind(judge_json)
-                .bind(verifier_json)
-                .bind(provenance_json)
-                .bind(now)
-                .bind(now)
-                .bind(finding_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query(
-                    "UPDATE agent_audit_findings
+            )
+            .bind(lifecycle_stage)
+            .bind(verification_status)
+            .bind(judge_json)
+            .bind(verifier_json)
+            .bind(provenance_json)
+            .bind(now)
+            .bind(now)
+            .bind(finding_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::SQLite(pool) => sqlx::query(
+                "UPDATE agent_audit_findings
                      SET lifecycle_stage = ?,
                          verification_status = COALESCE(?, verification_status),
                          judge_json = COALESCE(?, judge_json),
@@ -3144,22 +3359,20 @@ impl DatabaseService {
                          last_transition_at = ?,
                          updated_at = ?
                      WHERE id = ?",
-                )
-                .bind(lifecycle_stage)
-                .bind(verification_status)
-                .bind(judge_json)
-                .bind(verifier_json)
-                .bind(provenance_json)
-                .bind(now)
-                .bind(now)
-                .bind(finding_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query(
-                    "UPDATE agent_audit_findings
+            )
+            .bind(lifecycle_stage)
+            .bind(verification_status)
+            .bind(judge_json)
+            .bind(verifier_json)
+            .bind(provenance_json)
+            .bind(now)
+            .bind(now)
+            .bind(finding_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                "UPDATE agent_audit_findings
                      SET lifecycle_stage = ?,
                          verification_status = COALESCE(?, verification_status),
                          judge_json = COALESCE(?, judge_json),
@@ -3168,71 +3381,74 @@ impl DatabaseService {
                          last_transition_at = ?,
                          updated_at = ?
                      WHERE id = ?",
-                )
-                .bind(lifecycle_stage)
-                .bind(verification_status)
-                .bind(judge_json)
-                .bind(verifier_json)
-                .bind(provenance_json)
-                .bind(now)
-                .bind(now)
-                .bind(finding_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
+            )
+            .bind(lifecycle_stage)
+            .bind(verification_status)
+            .bind(judge_json)
+            .bind(verifier_json)
+            .bind(provenance_json)
+            .bind(now)
+            .bind(now)
+            .bind(finding_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
         };
 
         if rows_affected == 0 {
-            return Err(anyhow::anyhow!("Agent audit finding not found: {}", finding_id));
+            return Err(anyhow::anyhow!(
+                "Agent audit finding not found: {}",
+                finding_id
+            ));
         }
         Ok(())
     }
 
-    pub async fn update_agent_audit_finding_status(&self, finding_id: &str, status: &str) -> Result<()> {
+    pub async fn update_agent_audit_finding_status(
+        &self,
+        finding_id: &str,
+        status: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let rows_affected = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    "UPDATE agent_audit_findings SET status = $1, updated_at = $2 WHERE id = $3",
-                )
-                .bind(status)
-                .bind(Utc::now())
-                .bind(finding_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query(
-                    "UPDATE agent_audit_findings SET status = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(status)
-                .bind(Utc::now())
-                .bind(finding_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query(
-                    "UPDATE agent_audit_findings SET status = ?, updated_at = ? WHERE id = ?",
-                )
-                .bind(status)
-                .bind(Utc::now())
-                .bind(finding_id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                "UPDATE agent_audit_findings SET status = $1, updated_at = $2 WHERE id = $3",
+            )
+            .bind(status)
+            .bind(Utc::now())
+            .bind(finding_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::SQLite(pool) => sqlx::query(
+                "UPDATE agent_audit_findings SET status = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(status)
+            .bind(Utc::now())
+            .bind(finding_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                "UPDATE agent_audit_findings SET status = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(status)
+            .bind(Utc::now())
+            .bind(finding_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
         };
 
         if rows_affected == 0 {
-            return Err(anyhow::anyhow!("Agent audit finding not found: {}", finding_id));
+            return Err(anyhow::anyhow!(
+                "Agent audit finding not found: {}",
+                finding_id
+            ));
         }
 
         Ok(())
@@ -3269,7 +3485,10 @@ impl DatabaseService {
         };
 
         if rows_affected == 0 {
-            return Err(anyhow::anyhow!("Agent audit finding not found: {}", finding_id));
+            return Err(anyhow::anyhow!(
+                "Agent audit finding not found: {}",
+                finding_id
+            ));
         }
 
         Ok(())

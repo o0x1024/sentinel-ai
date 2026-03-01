@@ -102,7 +102,6 @@ impl SubdomainBruteTool {
 
     pub const NAME: &'static str = "subdomain_brute";
     pub const DESCRIPTION: &'static str = "High-performance subdomain brute-force scanner. Discovers subdomains using dictionary attack with DNS resolution, HTTP/HTTPS verification, and wildcard detection.";
-
 }
 
 impl Tool for SubdomainBruteTool {
@@ -181,7 +180,11 @@ impl Tool for SubdomainBruteTool {
             .iter()
             .map(|r| {
                 let (http_status, https_status, title) = if let Some(ref verified) = r.verified {
-                    (verified.http_status, verified.https_status, verified.title.clone())
+                    (
+                        verified.http_status,
+                        verified.https_status,
+                        verified.title.clone(),
+                    )
                 } else {
                     (None, None, None)
                 };
@@ -226,4 +229,3 @@ mod tests {
         assert_eq!(resolvers.len(), 2);
     }
 }
-

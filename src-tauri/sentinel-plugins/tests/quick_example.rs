@@ -31,7 +31,7 @@ fn create_simple_transaction() -> HttpTransaction {
 }
 
 /// 示例1: 基本性能测试
-/// 
+///
 /// 测试单个插件引擎的基本性能
 #[tokio::test]
 #[ignore]
@@ -70,7 +70,10 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let iterations = 100;
     let start = Instant::now();
@@ -96,12 +99,16 @@ export function scan_transaction(transaction) {
     println!();
 
     // 性能断言
-    assert!(throughput > 10.0, "Throughput too low: {:.2} ops/sec", throughput);
+    assert!(
+        throughput > 10.0,
+        "Throughput too low: {:.2} ops/sec",
+        throughput
+    );
     assert_eq!(errors, 0, "Should have no errors");
 }
 
 /// 示例2: 并发性能测试
-/// 
+///
 /// 测试并发执行的性能和稳定性
 #[tokio::test]
 #[ignore]
@@ -203,11 +210,15 @@ export function scan_transaction(transaction) {
 
     // 性能断言
     assert!(error_rate < 5.0, "Error rate too high: {:.2}%", error_rate);
-    assert!(throughput > 5.0, "Throughput too low: {:.2} ops/sec", throughput);
+    assert!(
+        throughput > 5.0,
+        "Throughput too low: {:.2} ops/sec",
+        throughput
+    );
 }
 
 /// 示例3: 内存使用监控
-/// 
+///
 /// 展示如何监控内存使用情况
 #[tokio::test]
 #[ignore]
@@ -251,7 +262,10 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     // 获取初始内存
     system.refresh_process(pid);
@@ -291,11 +305,15 @@ export function scan_transaction(transaction) {
     println!();
 
     // 内存断言（允许一定增长）
-    assert!(memory_growth < 100.0, "Memory growth too high: {:.2} MB", memory_growth);
+    assert!(
+        memory_growth < 100.0,
+        "Memory growth too high: {:.2} MB",
+        memory_growth
+    );
 }
 
 /// 示例4: 找到最佳并发数
-/// 
+///
 /// 通过测试不同并发级别找到最佳配置
 #[tokio::test]
 #[ignore]
@@ -409,4 +427,3 @@ export function scan_transaction(transaction) {
     println!("  Throughput: {:.2} ops/sec", best_throughput);
     println!("{}", "=".repeat(80));
 }
-

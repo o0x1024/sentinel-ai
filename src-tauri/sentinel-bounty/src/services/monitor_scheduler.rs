@@ -3,22 +3,26 @@
 //! Provides background monitoring service that periodically checks assets for changes
 //! and automatically triggers workflows when changes are detected.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::{RwLock, Mutex};
-use tokio::time::interval;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
+use std::collections::HashMap;
 use std::future::Future;
-use tracing::{info, error};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{Mutex, RwLock};
+use tokio::time::interval;
+use tracing::{error, info};
 
-use crate::services::change_monitor::{ChangeMonitor, ChangeMonitorConfig, AssetSnapshot};
 use crate::models::ChangeEvent;
+use crate::services::change_monitor::{AssetSnapshot, ChangeMonitor, ChangeMonitorConfig};
 
 /// Callback for executing a monitor task
-pub type TaskExecutor = Arc<dyn Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync>;
+pub type TaskExecutor = Arc<
+    dyn Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Callback for change events
 pub type EventCallback = Arc<dyn Fn(ChangeEvent) + Send + Sync>;
@@ -71,7 +75,8 @@ impl MonitorTask {
     /// Calculate next run time
     pub fn calculate_next_run(&mut self) {
         if self.enabled {
-            self.next_run_at = Some(Utc::now() + chrono::Duration::seconds(self.interval_secs as i64));
+            self.next_run_at =
+                Some(Utc::now() + chrono::Duration::seconds(self.interval_secs as i64));
         } else {
             self.next_run_at = None;
         }
@@ -177,10 +182,15 @@ impl MonitorScheduler {
                     let task_to_run = {
                         let guard = tasks.read().await;
                         guard.get(&task_id).and_then(|t| {
-                            let should_run = t.enabled && t.next_run_at
-                                .map(|next| Utc::now() >= next)
-                                .unwrap_or(false);
-                            if should_run { Some(t.clone()) } else { None }
+                            let should_run = t.enabled
+                                && t.next_run_at
+                                    .map(|next| Utc::now() >= next)
+                                    .unwrap_or(false);
+                            if should_run {
+                                Some(t.clone())
+                            } else {
+                                None
+                            }
                         })
                     };
 
@@ -199,12 +209,15 @@ impl MonitorScheduler {
 
                     // Run monitoring check
                     let mut detected_events = Vec::new();
-                    
+
                     if let Some(exec) = executor {
                         info!("Executing task logic via registered executor...");
                         match exec(task.clone()).await {
                             Ok(events) => {
-                                info!("Task execution successful, {} events generated", events.len());
+                                info!(
+                                    "Task execution successful, {} events generated",
+                                    events.len()
+                                );
                                 detected_events = events;
                             }
                             Err(e) => {
@@ -214,7 +227,7 @@ impl MonitorScheduler {
                     } else {
                         info!("No task executor registered, skipping actual execution");
                     }
-                    
+
                     // 3. Update task status with a brief write lock
                     {
                         let mut guard = tasks.write().await;
@@ -223,7 +236,7 @@ impl MonitorScheduler {
                             t.run_count += 1;
                             t.calculate_next_run();
                             t.events_detected += detected_events.len() as u64;
-                            
+
                             info!(
                                 "Monitor task '{}' completed: {} events detected, next run at {:?}",
                                 t.name,
@@ -239,7 +252,7 @@ impl MonitorScheduler {
                             let guard = event_callback.lock().await;
                             guard.clone()
                         };
-                        
+
                         if let Some(cb) = callback {
                             for event in detected_events {
                                 cb(event);
@@ -268,17 +281,18 @@ impl MonitorScheduler {
     pub async fn add_task(&self, task: MonitorTask) -> Result<String, String> {
         let mut tasks = self.tasks.write().await;
         let task_id = task.id.clone();
-        
+
         info!("Adding monitor task: {} ({})", task.name, task_id);
         tasks.insert(task_id.clone(), task);
-        
+
         Ok(task_id)
     }
 
     /// Remove a monitoring task
     pub async fn remove_task(&self, task_id: &str) -> Result<(), String> {
         let mut tasks = self.tasks.write().await;
-        tasks.remove(task_id)
+        tasks
+            .remove(task_id)
             .ok_or_else(|| format!("Task not found: {}", task_id))?;
         info!("Removed monitor task: {}", task_id);
         Ok(())
@@ -297,9 +311,14 @@ impl MonitorScheduler {
     }
 
     /// Update task configuration
-    pub async fn update_task(&self, task_id: &str, update_fn: impl FnOnce(&mut MonitorTask)) -> Result<(), String> {
+    pub async fn update_task(
+        &self,
+        task_id: &str,
+        update_fn: impl FnOnce(&mut MonitorTask),
+    ) -> Result<(), String> {
         let mut tasks = self.tasks.write().await;
-        let task = tasks.get_mut(task_id)
+        let task = tasks
+            .get_mut(task_id)
             .ok_or_else(|| format!("Task not found: {}", task_id))?;
         update_fn(task);
         Ok(())
@@ -310,7 +329,8 @@ impl MonitorScheduler {
         self.update_task(task_id, |task| {
             task.enabled = true;
             task.calculate_next_run();
-        }).await
+        })
+        .await
     }
 
     /// Disable a task
@@ -318,14 +338,16 @@ impl MonitorScheduler {
         self.update_task(task_id, |task| {
             task.enabled = false;
             task.next_run_at = None;
-        }).await
+        })
+        .await
     }
 
     /// Trigger a task immediately
     pub async fn trigger_task(&self, task_id: &str) -> Result<(), String> {
         self.update_task(task_id, |task| {
             task.next_run_at = Some(Utc::now());
-        }).await
+        })
+        .await
     }
 
     /// Get scheduler statistics
@@ -337,9 +359,7 @@ impl MonitorScheduler {
         let active_tasks = tasks.values().filter(|t| t.enabled).count();
         let total_runs: u64 = tasks.values().map(|t| t.run_count).sum();
         let total_events: u64 = tasks.values().map(|t| t.events_detected).sum();
-        let last_run_at = tasks.values()
-            .filter_map(|t| t.last_run_at)
-            .max();
+        let last_run_at = tasks.values().filter_map(|t| t.last_run_at).max();
 
         let uptime_secs = start_time
             .map(|st| (Utc::now() - st).num_seconds() as u64)
@@ -367,14 +387,24 @@ impl MonitorScheduler {
     /// Set task executor
     pub async fn set_task_executor<F>(&self, executor: F)
     where
-        F: Fn(MonitorTask) -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>> + Send + Sync + 'static,
+        F: Fn(
+                MonitorTask,
+            )
+                -> Pin<Box<dyn Future<Output = Result<Vec<ChangeEvent>, String>> + Send>>
+            + Send
+            + Sync
+            + 'static,
     {
         let mut exec = self.task_executor.lock().await;
         *exec = Some(Arc::new(executor));
     }
 
     /// Store asset snapshot for a program
-    pub async fn store_snapshot(&self, program_id: &str, snapshot: AssetSnapshot) -> Result<(), String> {
+    pub async fn store_snapshot(
+        &self,
+        program_id: &str,
+        snapshot: AssetSnapshot,
+    ) -> Result<(), String> {
         let monitors = self.monitors.read().await;
         if let Some(monitor) = monitors.get(program_id) {
             monitor.store_snapshot(snapshot).await;
@@ -385,9 +415,14 @@ impl MonitorScheduler {
     }
 
     /// Get or create monitor for a program
-    pub async fn get_or_create_monitor(&self, program_id: &str, config: ChangeMonitorConfig) -> Arc<ChangeMonitor> {
+    pub async fn get_or_create_monitor(
+        &self,
+        program_id: &str,
+        config: ChangeMonitorConfig,
+    ) -> Arc<ChangeMonitor> {
         let mut monitors = self.monitors.write().await;
-        monitors.entry(program_id.to_string())
+        monitors
+            .entry(program_id.to_string())
             .or_insert_with(|| Arc::new(ChangeMonitor::with_config(config)))
             .clone()
     }
@@ -400,12 +435,12 @@ mod tests {
     #[tokio::test]
     async fn test_scheduler_lifecycle() {
         let scheduler = MonitorScheduler::new();
-        
+
         assert!(!scheduler.is_running().await);
-        
+
         scheduler.start().await.unwrap();
         assert!(scheduler.is_running().await);
-        
+
         scheduler.stop().await.unwrap();
         assert!(!scheduler.is_running().await);
     }
@@ -413,20 +448,16 @@ mod tests {
     #[tokio::test]
     async fn test_task_management() {
         let scheduler = MonitorScheduler::new();
-        
-        let task = MonitorTask::new(
-            "prog-1".to_string(),
-            "Test Monitor".to_string(),
-            3600,
-        );
+
+        let task = MonitorTask::new("prog-1".to_string(), "Test Monitor".to_string(), 3600);
         let task_id = task.id.clone();
-        
+
         scheduler.add_task(task).await.unwrap();
-        
+
         let retrieved = scheduler.get_task(&task_id).await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().name, "Test Monitor");
-        
+
         scheduler.remove_task(&task_id).await.unwrap();
         assert!(scheduler.get_task(&task_id).await.is_none());
     }
@@ -434,21 +465,17 @@ mod tests {
     #[tokio::test]
     async fn test_task_enable_disable() {
         let scheduler = MonitorScheduler::new();
-        
-        let task = MonitorTask::new(
-            "prog-1".to_string(),
-            "Test Monitor".to_string(),
-            3600,
-        );
+
+        let task = MonitorTask::new("prog-1".to_string(), "Test Monitor".to_string(), 3600);
         let task_id = task.id.clone();
-        
+
         scheduler.add_task(task).await.unwrap();
-        
+
         scheduler.disable_task(&task_id).await.unwrap();
         let task = scheduler.get_task(&task_id).await.unwrap();
         assert!(!task.enabled);
         assert!(task.next_run_at.is_none());
-        
+
         scheduler.enable_task(&task_id).await.unwrap();
         let task = scheduler.get_task(&task_id).await.unwrap();
         assert!(task.enabled);

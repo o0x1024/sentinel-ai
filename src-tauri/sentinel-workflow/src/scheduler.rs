@@ -2,22 +2,22 @@
 //!
 //! 支持间隔触发、每日触发、每周触发
 
+use chrono::{Datelike, Local, Timelike};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use serde::{Deserialize, Serialize};
-use chrono::{Local, Timelike, Datelike};
 
 /// 调度配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleConfig {
-    pub trigger_type: String,           // interval, daily, weekly
-    pub interval_seconds: Option<u64>,  // 间隔秒数
-    pub hour: Option<u32>,              // 小时
-    pub minute: Option<u32>,            // 分钟
-    pub second: Option<u32>,            // 秒
-    pub weekdays: Option<String>,       // 星期几，逗号分隔
+    pub trigger_type: String,          // interval, daily, weekly
+    pub interval_seconds: Option<u64>, // 间隔秒数
+    pub hour: Option<u32>,             // 小时
+    pub minute: Option<u32>,           // 分钟
+    pub second: Option<u32>,           // 秒
+    pub weekdays: Option<String>,      // 星期几，逗号分隔
 }
 
 /// 调度任务信息
@@ -97,14 +97,7 @@ impl WorkflowScheduler {
 
         // 启动定时任务
         let handle = tokio::spawn(async move {
-            Self::run_schedule_loop(
-                wf_id,
-                wf_name,
-                cfg,
-                token_clone,
-                executor,
-                tasks_ref,
-            ).await;
+            Self::run_schedule_loop(wf_id, wf_name, cfg, token_clone, executor, tasks_ref).await;
         });
 
         // 保存任务
@@ -123,7 +116,7 @@ impl WorkflowScheduler {
     /// 停止定时任务
     pub async fn stop_schedule(&self, workflow_id: &str) -> Result<(), String> {
         let mut tasks = self.tasks.write().await;
-        
+
         if let Some(task) = tasks.remove(workflow_id) {
             task.cancel_token.cancel();
             if let Some(handle) = task.handle {
@@ -157,12 +150,16 @@ impl WorkflowScheduler {
         executor: Arc<dyn ScheduleExecutor + Send + Sync>,
         tasks_ref: Arc<RwLock<HashMap<String, ScheduleTask>>>,
     ) {
-        tracing::info!("[Scheduler] Started schedule loop for workflow: {} ({})", workflow_name, workflow_id);
+        tracing::info!(
+            "[Scheduler] Started schedule loop for workflow: {} ({})",
+            workflow_name,
+            workflow_id
+        );
 
         loop {
             // 计算等待时间
             let wait_duration = Self::calculate_wait_duration(&config);
-            
+
             tracing::info!(
                 "[Scheduler] Workflow {} next run in {} seconds",
                 workflow_id,
@@ -174,7 +171,7 @@ impl WorkflowScheduler {
                 _ = tokio::time::sleep(wait_duration) => {
                     // 执行工作流
                     tracing::info!("[Scheduler] Triggering scheduled workflow: {}", workflow_name);
-                    
+
                     match executor.execute_workflow(&workflow_id).await {
                         Ok(exec_id) => {
                             tracing::info!("[Scheduler] Scheduled workflow started: {} (exec_id: {})", workflow_name, exec_id);
@@ -207,13 +204,11 @@ impl WorkflowScheduler {
                 let secs = config.interval_seconds.unwrap_or(60);
                 std::time::Duration::from_secs(secs)
             }
-            "daily" => {
-                Self::duration_until_time(
-                    config.hour.unwrap_or(9),
-                    config.minute.unwrap_or(0),
-                    config.second.unwrap_or(0),
-                )
-            }
+            "daily" => Self::duration_until_time(
+                config.hour.unwrap_or(9),
+                config.minute.unwrap_or(0),
+                config.second.unwrap_or(0),
+            ),
             "weekly" => {
                 let weekdays = Self::parse_weekdays(&config.weekdays.clone().unwrap_or_default());
                 Self::duration_until_weekday_time(
@@ -238,16 +233,23 @@ impl WorkflowScheduler {
     fn duration_until_time(hour: u32, minute: u32, second: u32) -> std::time::Duration {
         let now = Local::now();
         let today_target = now
-            .with_hour(hour).unwrap()
-            .with_minute(minute).unwrap()
-            .with_second(second).unwrap();
+            .with_hour(hour)
+            .unwrap()
+            .with_minute(minute)
+            .unwrap()
+            .with_second(second)
+            .unwrap();
 
         if today_target > now {
-            (today_target - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
+            (today_target - now)
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(60))
         } else {
             // 明天同一时间
             let tomorrow_target = today_target + chrono::Duration::days(1);
-            (tomorrow_target - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
+            (tomorrow_target - now)
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(60))
         }
     }
 
@@ -275,9 +277,12 @@ impl WorkflowScheduler {
             } else {
                 // 同一天，检查时间是否已过
                 let today_target = now
-                    .with_hour(hour).unwrap()
-                    .with_minute(minute).unwrap()
-                    .with_second(second).unwrap();
+                    .with_hour(hour)
+                    .unwrap()
+                    .with_minute(minute)
+                    .unwrap()
+                    .with_second(second)
+                    .unwrap();
                 if today_target > now {
                     0
                 } else {
@@ -291,12 +296,17 @@ impl WorkflowScheduler {
 
         let target = now + chrono::Duration::days(min_days as i64);
         let target = target
-            .with_hour(hour).unwrap()
-            .with_minute(minute).unwrap()
-            .with_second(second).unwrap();
+            .with_hour(hour)
+            .unwrap()
+            .with_minute(minute)
+            .unwrap()
+            .with_second(second)
+            .unwrap();
 
         if target > now {
-            (target - now).to_std().unwrap_or(std::time::Duration::from_secs(60))
+            (target - now)
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(60))
         } else {
             std::time::Duration::from_secs(60)
         }
@@ -310,4 +320,3 @@ impl WorkflowScheduler {
             .collect()
     }
 }
-

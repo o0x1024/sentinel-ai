@@ -1,7 +1,7 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentChunk {
@@ -44,7 +44,12 @@ pub struct DocumentSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum IngestionStatusEnum { Pending, Processing, Completed, Failed }
+pub enum IngestionStatusEnum {
+    Pending,
+    Processing,
+    Completed,
+    Failed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestionStatus {
@@ -60,7 +65,11 @@ pub struct IngestionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryResult { pub chunk: DocumentChunk, pub score: f64, pub rank: usize }
+pub struct QueryResult {
+    pub chunk: DocumentChunk,
+    pub score: f64,
+    pub rank: usize,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionInfo {
@@ -75,7 +84,12 @@ pub struct CollectionInfo {
 }
 
 impl DocumentChunk {
-    pub fn new(source_id: String, content: String, chunk_index: usize, metadata: ChunkMetadata) -> Self {
+    pub fn new(
+        source_id: String,
+        content: String,
+        chunk_index: usize,
+        metadata: ChunkMetadata,
+    ) -> Self {
         let content_hash = format!("{:x}", md5::compute(&content));
         Self {
             id: Uuid::new_v4().to_string(),
@@ -91,7 +105,13 @@ impl DocumentChunk {
 }
 
 impl DocumentSource {
-    pub fn new(file_path: String, file_name: String, file_type: String, file_size: u64, file_hash: String) -> Self {
+    pub fn new(
+        file_path: String,
+        file_name: String,
+        file_type: String,
+        file_size: u64,
+        file_hash: String,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             file_path,
@@ -107,4 +127,3 @@ impl DocumentSource {
         }
     }
 }
-

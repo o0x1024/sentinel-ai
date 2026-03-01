@@ -93,7 +93,7 @@
           >
             <i class="fas fa-tasks"></i>
             <span>{{ t('agent.todos') }}</span>
-            <span v-if="todosComposable.rootTodos.value.length > 0" class="badge badge-xs badge-primary">{{ todosComposable.rootTodos.value.length }}</span>
+            <span v-if="todoBadgeCount > 0" class="badge badge-xs badge-primary">{{ todoBadgeCount }}</span>
           </button>
           <!-- HTML Panel Button - shows when there is HTML content -->
           <button 
@@ -160,9 +160,9 @@
             @view-details="handleViewSubagentDetails"
           />
           <!-- Message flow -->
-          <MessageFlow 
+          <MessageFlow
             ref="messageFlowRef"
-            :messages="messages"
+            :messages="visibleMessages"
             :is-executing="isExecuting"
             :is-streaming="isStreaming"
             :streaming-content="streamingContent"
@@ -263,10 +263,22 @@
               <div v-else-if="teamWorkspaceTab === 'tasks'" class="flex-1 overflow-auto p-3">
                 <div v-if="teamTasks.length === 0" class="text-sm text-base-content/50">暂无任务数据</div>
                 <div v-else class="space-y-2">
+                  <div class="flex items-center justify-between rounded-lg border border-base-300 bg-base-100 px-2 py-1.5 text-[11px] text-base-content/65">
+                    <span>消息视图: {{ selectedTeamTaskTitle || '全局' }}</span>
+                    <button
+                      v-if="selectedTeamTaskId"
+                      class="btn btn-ghost btn-xs"
+                      @click="clearSelectedTeamTask"
+                    >
+                      取消选择
+                    </button>
+                  </div>
                   <div
                     v-for="task in teamTasks"
                     :key="task.id"
-                    class="rounded-lg border border-base-300 bg-base-100 p-2"
+                    class="cursor-pointer rounded-lg border bg-base-100 p-2 transition-colors"
+                    :class="selectedTeamTaskId === task.id ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-base-300 hover:border-primary/40 hover:bg-base-200/40'"
+                    @click="toggleSelectedTeamTask(task)"
                   >
                     <div class="flex items-center justify-between gap-2">
                       <div class="text-sm font-medium truncate">{{ task.title || task.task_id }}</div>
@@ -276,6 +288,9 @@
                     <div class="mt-1 flex items-center gap-2 text-[11px] text-base-content/50">
                       <span>负责人: {{ resolveAgentName(task.assignee_agent_id) }}</span>
                       <span>Attempt: {{ task.attempt }}/{{ task.max_attempts }}</span>
+                    </div>
+                    <div class="mt-1 text-[11px] text-primary/90">
+                      {{ selectedTeamTaskId === task.id ? '已选中，消息窗已切换到该 Agent' : '点击切换到该 Agent 消息窗' }}
                     </div>
                     <div v-if="task.last_error" class="mt-1 text-[11px] text-error line-clamp-2">{{ task.last_error }}</div>
                   </div>
@@ -372,8 +387,11 @@
               v-else-if="isTodosPanelActive" 
               :todos="todos"
               :is-active="isTodosPanelActive"
+              :source-options="todoSourceOptions"
+              :selected-source-key="selectedTodoSourceKey"
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
               @close="handleCloseTodos"
+              @source-change="handleTodoSourceChange"
             />
             <HtmlPanel
               v-else-if="isHtmlPanelActive"
@@ -421,6 +439,7 @@ import { useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, PendingDocumentAttachment, ProcessedDocumentResult } from '@/types/agent'
+import type { Todo } from '@/types/todo'
 import type {
   AgentTeamMessage,
   AgentTeamSession,
@@ -616,6 +635,14 @@ interface TeamRecoveryPreset {
   no_human_input_policy: TeamRecoveryPresetId
 }
 
+interface TeamSplitMemberOption {
+  key: string
+  label: string
+  memberId?: string
+  memberName?: string
+  status?: string
+}
+
 const props = withDefaults(defineProps<{
   executionId?: string
   showTodos?: boolean
@@ -708,21 +735,6 @@ const loadConversationSummaries = async (): Promise<ConversationSummary[]> => {
 const findConversationSummary = async (convId: string): Promise<ConversationSummary | null> => {
   const conversations = await loadConversationSummaries()
   return conversations.find(c => c.id === convId) || null
-}
-
-const findReusableEmptyConversation = async (): Promise<ConversationSummary | null> => {
-  const conversations = await loadConversationSummaries()
-  const candidates = conversations.filter((conv) => {
-    const totalMessages = Number(conv.total_messages ?? 0)
-    return totalMessages === 0 && isDefaultConversationTitle(conv.title)
-  })
-  if (candidates.length === 0) return null
-  const sorted = [...candidates].sort((a, b) => {
-    const aTs = new Date(a.updated_at || a.created_at || 0).getTime()
-    const bTs = new Date(b.updated_at || b.created_at || 0).getTime()
-    return bTs - aTs
-  })
-  return sorted[0] || null
 }
 
 const generateConversationTitleWithLlm = async (firstMessage: string): Promise<string | null> => {
@@ -837,6 +849,7 @@ const teamWorkspaceLoading = ref(false)
 const teamSessionMessages = ref<AgentTeamMessage[]>([])
 const teamSessionDetail = ref<AgentTeamSession | null>(null)
 const teamTasks = ref<TeamTask[]>([])
+const selectedTeamTaskId = ref<string | null>(null)
 const teamBlackboardEntries = ref<TeamBlackboardEntry[]>([])
 const teamOrchestrationPlanText = ref('{\n  "version": 1,\n  "steps": []\n}')
 const teamOrchestrationDraft = ref<TeamOrchestrationPlan>({ version: 1, steps: [] })
@@ -1025,7 +1038,6 @@ let unlistenAgentAssistantSaved: UnlistenFn | null = null
 let teamRunStatusPollTimer: ReturnType<typeof setInterval> | null = null
 let isPollingTeamRunStatus = false
 let teamMainFlowMessageIds = new Set<string>()
-let teamMainFlowToolCallIds = new Set<string>()
 let teamMirroredAssistantSourceIds = new Set<string>()
 let teamMirroredConversationMessageIds = new Set<string>()
 const teamStreamTempMessageByStreamId = new Map<string, string>()
@@ -1288,6 +1300,182 @@ const agentEvents = useAgentEvents(computed(() => conversationId.value || ''), {
   defaultMaxContextTokens: assistantDefaultMaxContextTokens,
 })
 const messages = computed(() => agentEvents.messages.value)
+const TEAM_SPLIT_ALL_MEMBER_KEY = '__all__'
+const isTeamScopedMainFlowMessage = (message: AgentMessage) => {
+  const metadata = message.metadata || {}
+  const kind = String(metadata.kind || '').toLowerCase()
+  const hasTeamMemberMeta =
+    String(metadata.team_member_id || '').trim().length > 0 ||
+    String(metadata.team_member_name || '').trim().length > 0
+  if (kind.startsWith('team_') || kind === 'team_bridge') return true
+  if (kind === 'tool_call' || kind === 'tool_result') {
+    return hasTeamMemberMeta || String(metadata.team_session_id || '').trim().length > 0
+  }
+  return (
+    message.id.startsWith('team:') ||
+    message.id.startsWith('team-stream:') ||
+    message.id.startsWith('team-toolcall:')
+  )
+}
+const normalizeOptionalText = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+const runtimeSpecAgentNameById = computed(() => {
+  const out = new Map<string, string>()
+  const rawAgents = (teamSessionDetail.value?.runtime_spec_v2 as any)?.agents
+  if (!Array.isArray(rawAgents)) return out
+  for (const item of rawAgents) {
+    if (!item || typeof item !== 'object') continue
+    const id = normalizeOptionalText((item as any).id)
+    if (!id) continue
+    const name = normalizeOptionalText((item as any).name)
+    out.set(id, name || id)
+  }
+  return out
+})
+const TEAM_MEMBER_STATUS_PRIORITY: Record<string, number> = {
+  idle: 0,
+  pending: 1,
+  completed: 2,
+  running: 3,
+  blocked: 4,
+  failed: 5,
+}
+const normalizeTeamMemberStatus = (value: unknown): string => {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return 'idle'
+  if (normalized.includes('fail') || normalized.includes('error')) return 'failed'
+  if (normalized.includes('block')) return 'blocked'
+  if (normalized.includes('run') || normalized.includes('execut')) return 'running'
+  if (normalized.includes('done') || normalized.includes('complete')) return 'completed'
+  if (normalized.includes('queue') || normalized.includes('pending')) return 'pending'
+  return 'idle'
+}
+const mergeTeamMemberStatus = (current: string | undefined, candidate: string) => {
+  const currentRank = TEAM_MEMBER_STATUS_PRIORITY[current || 'idle'] ?? 0
+  const candidateRank = TEAM_MEMBER_STATUS_PRIORITY[candidate] ?? 0
+  return candidateRank >= currentRank ? candidate : (current || 'idle')
+}
+const teamSplitMembers = computed<TeamSplitMemberOption[]>(() => {
+  const statusByMemberKey = new Map<string, string>()
+  const applyStatus = (key: string | undefined, candidate: string) => {
+    if (!key) return
+    const merged = mergeTeamMemberStatus(statusByMemberKey.get(key), candidate)
+    statusByMemberKey.set(key, merged)
+  }
+
+  for (const member of teamSessionDetail.value?.members || []) {
+    const memberId = normalizeOptionalText(member.id)
+    const memberName = normalizeOptionalText(member.name)
+    const baseStatus = member.is_active ? 'running' : 'idle'
+    applyStatus(memberId ? `id:${memberId}` : undefined, baseStatus)
+    applyStatus(memberName ? `name:${memberName}` : undefined, baseStatus)
+  }
+
+  for (const task of teamTasks.value || []) {
+    const assigneeId = normalizeOptionalText(task.assignee_agent_id)
+    if (!assigneeId) continue
+    const candidate = normalizeTeamMemberStatus(task.status)
+    applyStatus(`id:${assigneeId}`, candidate)
+    const matchedMember = (teamSessionDetail.value?.members || []).find((item) => item.id === assigneeId)
+    const matchedName = normalizeOptionalText(matchedMember?.name)
+    applyStatus(matchedName ? `name:${matchedName}` : undefined, candidate)
+  }
+
+  for (const message of messages.value) {
+    if (!isTeamScopedMainFlowMessage(message)) continue
+    const memberId = normalizeOptionalText(message.metadata?.team_member_id)
+    const memberName = normalizeOptionalText(message.metadata?.team_member_name)
+    const statusFromMeta = normalizeTeamMemberStatus(message.metadata?.status)
+    const statusFromType = message.type === 'error' ? 'failed' : 'idle'
+    const merged = mergeTeamMemberStatus(statusFromMeta, statusFromType)
+    applyStatus(memberId ? `id:${memberId}` : undefined, merged)
+    applyStatus(memberName ? `name:${memberName}` : undefined, merged)
+  }
+
+  let globalStatus = isTeamRunActive.value ? 'running' : 'idle'
+  for (const status of statusByMemberKey.values()) {
+    globalStatus = mergeTeamMemberStatus(globalStatus, status)
+  }
+
+  const options: TeamSplitMemberOption[] = [
+    {
+      key: TEAM_SPLIT_ALL_MEMBER_KEY,
+      label: '全局',
+      status: globalStatus,
+    },
+  ]
+  const seenKeys = new Set<string>([TEAM_SPLIT_ALL_MEMBER_KEY])
+
+  const addMemberOption = (memberId?: string, memberName?: string, status?: string) => {
+    if (memberId) {
+      const key = `id:${memberId}`
+      if (seenKeys.has(key)) return
+      seenKeys.add(key)
+      options.push({
+        key,
+        label: memberName || memberId,
+        memberId,
+        memberName,
+        status: statusByMemberKey.get(key) || status,
+      })
+      return
+    }
+    if (!memberName) return
+    const key = `name:${memberName}`
+    if (seenKeys.has(key)) return
+    seenKeys.add(key)
+    options.push({
+      key,
+      label: memberName,
+      memberName,
+      status: statusByMemberKey.get(key) || status,
+    })
+  }
+
+  for (const member of teamSessionDetail.value?.members || []) {
+    addMemberOption(
+      normalizeOptionalText(member.id),
+      normalizeOptionalText(member.name),
+      member.is_active ? 'running' : 'idle',
+    )
+  }
+
+  for (const [agentId, agentName] of runtimeSpecAgentNameById.value.entries()) {
+    addMemberOption(
+      normalizeOptionalText(agentId),
+      normalizeOptionalText(agentName),
+      statusByMemberKey.get(`id:${agentId}`),
+    )
+  }
+
+  for (const task of teamTasks.value || []) {
+    const assigneeId = normalizeOptionalText(task.assignee_agent_id)
+    if (!assigneeId) continue
+    const matchedMember = (teamSessionDetail.value?.members || []).find((item) => item.id === assigneeId)
+    const preferredName =
+      normalizeOptionalText(matchedMember?.name) ||
+      runtimeSpecAgentNameById.value.get(assigneeId) ||
+      assigneeId
+    addMemberOption(
+      assigneeId,
+      preferredName,
+      statusByMemberKey.get(`id:${assigneeId}`),
+    )
+  }
+
+  for (const message of messages.value) {
+    if (!isTeamScopedMainFlowMessage(message)) continue
+    const memberId = normalizeOptionalText(message.metadata?.team_member_id)
+    const memberName = normalizeOptionalText(message.metadata?.team_member_name)
+    if (!memberId && !memberName) continue
+    addMemberOption(memberId, memberName)
+  }
+
+  return options
+})
 const TEAM_RUNNING_STATES = new Set([
   'EXECUTING',
   'INITIALIZING',
@@ -1304,17 +1492,67 @@ const isTeamRunActive = computed(() => {
   const normalized = String(teamSessionState.value || '').trim().toUpperCase()
   return TEAM_RUNNING_STATES.has(normalized)
 })
+const selectedTeamTask = computed(() =>
+  teamTasks.value.find((task) => task.id === selectedTeamTaskId.value) || null,
+)
+const selectedTeamTaskMemberKey = computed(() => {
+  const assigneeId = normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id)
+  if (!assigneeId) return TEAM_SPLIT_ALL_MEMBER_KEY
+  const matched = teamSplitMembers.value.find((member) => member.memberId === assigneeId)
+  if (matched?.key) return matched.key
+  const byIdKey = `id:${assigneeId}`
+  if (teamSplitMembers.value.some((member) => member.key === byIdKey)) return byIdKey
+  return TEAM_SPLIT_ALL_MEMBER_KEY
+})
+const teamSplitMemberByKey = computed(() => {
+  const out = new Map<string, TeamSplitMemberOption>()
+  for (const member of teamSplitMembers.value) {
+    out.set(member.key, member)
+  }
+  return out
+})
+const matchesSelectedTeamMember = (message: AgentMessage, member: TeamSplitMemberOption): boolean => {
+  const metadata = message.metadata || {}
+  const messageMemberId = String(metadata.team_member_id || '').trim()
+  const messageMemberName = String(metadata.team_member_name || '').trim()
+  if (member.memberId && messageMemberId === member.memberId) return true
+  if (member.memberName && messageMemberName === member.memberName) return true
+  return false
+}
+const visibleMessages = computed<AgentMessage[]>(() => {
+  const all = messages.value
+  if (!teamModeEnabled.value) return all
+  if (!selectedTeamTaskId.value) return all
+  const memberKey = selectedTeamTaskMemberKey.value
+  if (!memberKey || memberKey === TEAM_SPLIT_ALL_MEMBER_KEY) return all
+  const member = teamSplitMemberByKey.value.get(memberKey)
+  if (!member) return all
+  return all.filter((message) => {
+    if (!isTeamScopedMainFlowMessage(message)) return true
+    return matchesSelectedTeamMember(message, member)
+  })
+})
+const selectedTeamTaskTitle = computed(() => {
+  const task = selectedTeamTask.value
+  if (!task) return ''
+  return task.title || resolveAgentName(task.assignee_agent_id)
+})
 const isExecuting = computed(() => agentEvents.isExecuting.value || isTeamRunActive.value)
 const isStreaming = computed(() => agentEvents.isExecuting.value && !!agentEvents.streamingContent.value)
 const streamingContent = computed(() => agentEvents.streamingContent.value)
 const contextUsage = computed(() => agentEvents.contextUsage.value)
+const scrollMessageViewportToBottom = () => {
+  messageFlowRef.value?.scrollToBottom()
+}
 const teamWorkspaceBadgeCount = computed(
   () => teamTasks.value.filter((task) => ['failed', 'blocked'].includes((task.status || '').toLowerCase())).length,
 )
 const resolveAgentName = (agentId?: string | null) => {
   if (!agentId) return 'broadcast'
   const matched = (teamSessionDetail.value?.members || []).find((member) => member.id === agentId)
-  return matched?.name || agentId
+  if (matched?.name) return matched.name
+  const runtimeName = runtimeSpecAgentNameById.value.get(agentId)
+  return runtimeName || agentId
 }
 const taskStatusBadgeClass = (status: string) => {
   const normalized = (status || '').toLowerCase()
@@ -1323,6 +1561,17 @@ const taskStatusBadgeClass = (status: string) => {
   if (normalized === 'failed') return 'badge-error'
   if (normalized === 'blocked') return 'badge-warning'
   return 'badge-ghost'
+}
+const clearSelectedTeamTask = () => {
+  selectedTeamTaskId.value = null
+}
+const toggleSelectedTeamTask = (task: TeamTask) => {
+  const nextId = task.id
+  if (!nextId) {
+    selectedTeamTaskId.value = null
+    return
+  }
+  selectedTeamTaskId.value = selectedTeamTaskId.value === nextId ? null : nextId
 }
 const teamBlackboardEntryBadgeClass = (entryType?: string | null) => {
   const normalized = String(entryType || '').toLowerCase()
@@ -1596,10 +1845,157 @@ const webExplorerEvents = useWebExplorerEvents(agentEvents.currentExecutionId)
 const isWebExplorerActive = computed(() => webExplorerEvents.isVisionActive.value)
 
 // Todos management
-const todosComposable = useTodos(computed(() => conversationId.value || ''))
-const todos = computed(() => todosComposable.todos.value)
-const hasTodos = computed(() => props.showTodos && todosComposable.hasTodos.value)
+interface TodoSourceOption {
+  key: string
+  label: string
+  count: number
+}
+
+interface ScopedTodoEntry {
+  executionId: string
+  todos: Todo[]
+  updatedAt: number
+}
+
+interface TeamTodoBucket {
+  key: string
+  label: string
+  todos: Todo[]
+  updatedAt: number
+}
+
+const TODO_SOURCE_ALL_KEY = '__all__'
+const selectedTodoSourceKey = ref<string>(TODO_SOURCE_ALL_KEY)
+const todosComposable = useTodos()
+const parseTeamTodoExecutionId = (executionId: string) => {
+  if (!executionId.startsWith('team-v3:')) return null
+  const parts = executionId.split(':')
+  if (parts.length < 4) return null
+  const sessionId = parts[1]?.trim()
+  const taskId = parts[2]?.trim()
+  if (!sessionId || !taskId) return null
+  const memberId = parts.length >= 5 ? parts[3]?.trim() : undefined
+  return {
+    sessionId,
+    taskId,
+    memberId: memberId || undefined,
+  }
+}
+const isTodoExecutionInCurrentContext = (executionId: string) => {
+  const convId = conversationId.value
+  if (convId && executionId === convId) return true
+  const parsed = parseTeamTodoExecutionId(executionId)
+  if (!parsed) return false
+  return !!activeTeamSessionId.value && parsed.sessionId === activeTeamSessionId.value
+}
+const scopedTodoEntries = computed<ScopedTodoEntry[]>(() => {
+  const entries = Object.entries(todosComposable.todosByExecutionId.value)
+    .filter(([executionId]) => isTodoExecutionInCurrentContext(executionId))
+    .map(([executionId, list]) => ({
+      executionId,
+      todos: list,
+      updatedAt: list.reduce((latest, todo) => Math.max(latest, Number(todo.updated_at || 0)), 0),
+    }))
+  return entries.sort((a, b) => b.updatedAt - a.updatedAt)
+})
+const teamTodoBuckets = computed<TeamTodoBucket[]>(() => {
+  if (!teamModeEnabled.value || !activeTeamSessionId.value) return []
+  const bucketMap = new Map<string, TeamTodoBucket>()
+
+  for (const entry of scopedTodoEntries.value) {
+    const parsed = parseTeamTodoExecutionId(entry.executionId)
+    if (!parsed || parsed.sessionId !== activeTeamSessionId.value) continue
+    const sourceKey = parsed.memberId ? `member:${parsed.memberId}` : `execution:${entry.executionId}`
+    const label = parsed.memberId
+      ? resolveAgentName(parsed.memberId)
+      : `task ${parsed.taskId}`
+    const existing = bucketMap.get(sourceKey)
+    if (existing) {
+      existing.todos = [...existing.todos, ...entry.todos]
+      existing.updatedAt = Math.max(existing.updatedAt, entry.updatedAt)
+    } else {
+      bucketMap.set(sourceKey, {
+        key: sourceKey,
+        label,
+        todos: [...entry.todos],
+        updatedAt: entry.updatedAt,
+      })
+    }
+  }
+
+  return [...bucketMap.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+})
+const todoSourceOptions = computed<TodoSourceOption[]>(() => {
+  if (!teamModeEnabled.value || teamTodoBuckets.value.length === 0) return []
+  const allCount = teamTodoBuckets.value.reduce((acc, bucket) => acc + bucket.todos.length, 0)
+  return [
+    {
+      key: TODO_SOURCE_ALL_KEY,
+      label: '全局',
+      count: allCount,
+    },
+    ...teamTodoBuckets.value.map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      count: bucket.todos.length,
+    })),
+  ]
+})
+const buildLabeledTodos = (todos: Todo[], label: string): Todo[] => {
+  return todos.map((todo) => ({
+    ...todo,
+    content: `[${label}] ${todo.content}`,
+    active_form: todo.active_form ? `[${label}] ${todo.active_form}` : todo.active_form,
+  }))
+}
+const teamTodos = computed<Todo[]>(() => {
+  if (teamTodoBuckets.value.length === 0) return []
+  const selected = selectedTodoSourceKey.value || TODO_SOURCE_ALL_KEY
+  if (selected !== TODO_SOURCE_ALL_KEY) {
+    return teamTodoBuckets.value.find((bucket) => bucket.key === selected)?.todos || []
+  }
+  if (teamTodoBuckets.value.length === 1) {
+    return [...teamTodoBuckets.value[0].todos]
+  }
+  return teamTodoBuckets.value
+    .flatMap((bucket) => buildLabeledTodos(bucket.todos, bucket.label))
+    .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))
+})
+const conversationTodos = computed<Todo[]>(() => {
+  const convId = conversationId.value
+  if (!convId) return []
+  return todosComposable.getTodosForExecution(convId)
+})
+const todos = computed<Todo[]>(() => {
+  if (teamModeEnabled.value && activeTeamSessionId.value) {
+    if (teamTodoBuckets.value.length > 0) return teamTodos.value
+  }
+  return conversationTodos.value
+})
+const todoBadgeCount = computed(() => todos.value.filter((item) => !item.metadata?.parent_id).length)
+const hasTodos = computed(() => props.showTodos && todos.value.length > 0)
 const isTodosPanelActive = computed(() => todosComposable.isTodosPanelActive.value)
+const handleTodoSourceChange = (sourceKey: string) => {
+  selectedTodoSourceKey.value = sourceKey || TODO_SOURCE_ALL_KEY
+}
+const selectedTaskTodoSourceKey = computed(() => {
+  const assigneeId = normalizeOptionalText(selectedTeamTask.value?.assignee_agent_id)
+  if (!assigneeId) return TODO_SOURCE_ALL_KEY
+  return `member:${assigneeId}`
+})
+const clearTodosForCurrentContext = () => {
+  const convId = conversationId.value
+  if (convId) {
+    todosComposable.clearTodosForExecution(convId)
+  }
+  const sessionId = activeTeamSessionId.value
+  if (!sessionId) return
+  for (const executionId of todosComposable.executionIds.value) {
+    const parsed = parseTeamTodoExecutionId(executionId)
+    if (!parsed || parsed.sessionId !== sessionId) continue
+    todosComposable.clearTodosForExecution(executionId)
+  }
+}
 
 // HTML panel - user manually triggers rendering
 const isHtmlPanelActive = ref(false)
@@ -2080,7 +2476,89 @@ const normalizeToolResult = (value: unknown): string | undefined => {
   }
 }
 
-const pushTeamToolCallToMainFlow = (params: {
+const parseToolResultObject = (value: unknown): Record<string, any> | null => {
+  if (!value) return null
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, any>
+  }
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = JSON.parse(value)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, any>
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+const buildShellFallbackNoticeFromResult = (resultValue: unknown): string | null => {
+  const parsed = parseToolResultObject(resultValue)
+  if (!parsed) return null
+  const fallbackFrom = String(parsed.fallback_from || '').trim().toLowerCase()
+  const executionMode = String(parsed.execution_mode || '').trim().toLowerCase()
+  if (fallbackFrom !== 'docker' || executionMode !== 'host') return null
+  const reason = String(parsed.fallback_reason || '').trim()
+  if (reason) {
+    return `系统提示: shell 工具在 Docker 中执行失败，已自动回退到宿主机。原因: ${reason}`
+  }
+  return '系统提示: shell 工具在 Docker 中执行失败，已自动回退到宿主机。'
+}
+
+const pushTeamShellFallbackNoticeIfNeeded = (
+  toolName: string,
+  toolCallId: string,
+  resultValue: unknown,
+  memberId?: string,
+  memberName?: string,
+) => {
+  if (toolName.toLowerCase() !== 'shell') return
+  const notice = buildShellFallbackNoticeFromResult(resultValue)
+  if (!notice) return
+  const normalizedCallId = String(toolCallId || '').trim()
+  if (normalizedCallId) {
+    const existed = agentEvents.messages.value.some((item) => {
+      if (item.metadata?.kind !== 'shell_fallback_notice') return false
+      return String(item.metadata?.tool_call_id || '').trim() === normalizedCallId
+    })
+    if (existed) return
+  }
+  agentEvents.messages.value.push({
+    id: crypto.randomUUID(),
+    type: 'system',
+    content: notice,
+    timestamp: Date.now(),
+    metadata: {
+      kind: 'shell_fallback_notice',
+      tool_call_id: normalizedCallId || undefined,
+      team_member_id: memberId,
+      team_member_name: memberName,
+      team_session_id: activeTeamSessionId.value || undefined,
+    },
+  })
+}
+
+const inferTeamToolSuccess = (result: unknown): boolean => {
+  if (typeof result !== 'string') return true
+  const normalized = result.trim().toLowerCase()
+  if (!normalized) return true
+  if (normalized.startsWith('error:')) return false
+  if (normalized.includes('"success":false') || normalized.includes('"ok":false')) return false
+  return true
+}
+
+const findTeamToolCallMessage = (toolCallId?: string | null): AgentMessage | null => {
+  const normalizedId = String(toolCallId || '').trim()
+  if (!normalizedId) return null
+  return agentEvents.messages.value.find((item) => {
+    if (item.id === normalizedId) return true
+    const existingCallId = String(item.metadata?.tool_call_id || '').trim()
+    return existingCallId.length > 0 && existingCallId === normalizedId
+  }) || null
+}
+
+const upsertTeamToolCallToMainFlow = (params: {
   toolCallId?: string
   toolName?: string
   toolArgs?: unknown
@@ -2090,33 +2568,84 @@ const pushTeamToolCallToMainFlow = (params: {
   memberId?: string
   memberName?: string
   phase?: string
-  forceType?: 'tool_call' | 'tool_result'
+  mode: 'start' | 'result'
 }) => {
   const normalizedId = (params.toolCallId || '').trim()
-  if (normalizedId && teamMainFlowToolCallIds.has(normalizedId)) return
   const stableId = normalizedId || `team-toolcall:${crypto.randomUUID()}`
-  const msgType = params.forceType || (params.toolResult !== undefined ? 'tool_result' : 'tool_call')
-  if (normalizedId) {
-    teamMainFlowToolCallIds.add(normalizedId)
+  const existing = findTeamToolCallMessage(normalizedId || stableId)
+  const existingMeta = (existing?.metadata || {}) as Record<string, any>
+  const toolName = (params.toolName || existingMeta.tool_name || 'unknown').trim() || 'unknown'
+  const nextArgs =
+    params.toolArgs !== undefined
+      ? parseToolCallArguments(params.toolArgs)
+      : parseToolCallArguments(existingMeta.tool_args)
+  const nextResult =
+    params.toolResult !== undefined
+      ? normalizeToolResult(params.toolResult)
+      : normalizeToolResult(existingMeta.tool_result)
+  const success = typeof params.success === 'boolean'
+    ? params.success
+    : params.mode === 'result'
+      ? inferTeamToolSuccess(nextResult)
+      : existingMeta.success !== false
+  const status = params.mode === 'start'
+    ? 'running'
+    : success
+      ? 'completed'
+      : 'failed'
+  const content = params.mode === 'start'
+    ? `正在调用工具: ${toolName}`
+    : `工具调用完成: ${toolName}`
+  const timestamp = existing?.timestamp ?? params.timestamp ?? Date.now()
+  const metadata = {
+    ...existingMeta,
+    kind: 'tool_call',
+    tool_name: toolName,
+    tool_args: nextArgs,
+    tool_result: nextResult,
+    tool_call_id: normalizedId || stableId,
+    status,
+    success,
+    team_member_id: params.memberId || existingMeta.team_member_id,
+    team_member_name: params.memberName || existingMeta.team_member_name,
+    team_session_id: activeTeamSessionId.value || existingMeta.team_session_id,
   }
-  teamMainFlowMessageIds.add(stableId)
+
+  if (existing) {
+    existing.type = 'tool_call'
+    existing.content = content
+    existing.timestamp = timestamp
+    existing.metadata = metadata
+    if (params.mode === 'result') {
+      pushTeamShellFallbackNoticeIfNeeded(
+        toolName,
+        normalizedId || stableId,
+        nextResult,
+        metadata.team_member_id,
+        metadata.team_member_name,
+      )
+    }
+    sortMainFlowMessagesByTimestamp()
+    return
+  }
+
   agentEvents.messages.value.push({
     id: stableId,
-    type: msgType as AgentMessage['type'],
-    content: `${t('agent.toolCallCompleted')}: ${params.toolName || 'unknown'}`,
-    timestamp: params.timestamp ?? Date.now(),
-    metadata: {
-      kind: msgType,
-      tool_name: params.toolName || 'unknown',
-      tool_args: parseToolCallArguments(params.toolArgs),
-      tool_result: normalizeToolResult(params.toolResult),
-      tool_call_id: normalizedId || undefined,
-      status: params.success === false ? 'failed' : 'completed',
-      success: params.success !== false,
-      team_member_id: params.memberId,
-      team_member_name: params.memberName,
-    },
+    type: 'tool_call',
+    content,
+    timestamp,
+    metadata,
   })
+  if (params.mode === 'result') {
+    pushTeamShellFallbackNoticeIfNeeded(
+      toolName,
+      normalizedId || stableId,
+      nextResult,
+      metadata.team_member_id,
+      metadata.team_member_name,
+    )
+  }
+  sortMainFlowMessagesByTimestamp()
 }
 
 const buildTeamMessageSignature = (
@@ -2232,7 +2761,7 @@ const handleTeamMessageStreamDone = (payload: AgentTeamMessageStreamDoneEvent) =
 
 const handleTeamToolCall = (payload: AgentTeamToolCallEvent) => {
   if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
-  pushTeamToolCallToMainFlow({
+  upsertTeamToolCallToMainFlow({
     toolCallId: payload.tool_call_id,
     toolName: payload.name,
     toolArgs: payload.arguments,
@@ -2240,25 +2769,13 @@ const handleTeamToolCall = (payload: AgentTeamToolCallEvent) => {
     memberId: payload.member_id,
     memberName: payload.member_name,
     phase: payload.phase,
-    forceType: 'tool_call',
+    mode: 'start',
   })
 }
 
 const handleTeamToolResult = (payload: AgentTeamToolResultEvent) => {
   if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
-  const existing = agentEvents.messages.value.find((item) => item.id === payload.tool_call_id)
-  if (existing) {
-    existing.type = 'tool_result'
-    existing.metadata = {
-      ...(existing.metadata || {}),
-      kind: 'tool_result',
-      tool_result: payload.result,
-      status: payload.success === false ? 'failed' : 'completed',
-      success: payload.success !== false,
-    }
-    return
-  }
-  pushTeamToolCallToMainFlow({
+  upsertTeamToolCallToMainFlow({
     toolCallId: payload.tool_call_id,
     toolResult: payload.result,
     success: payload.success,
@@ -2266,7 +2783,7 @@ const handleTeamToolResult = (payload: AgentTeamToolResultEvent) => {
     memberId: payload.member_id,
     memberName: payload.member_name,
     phase: payload.phase,
-    forceType: 'tool_result',
+    mode: 'result',
   })
 }
 
@@ -2306,6 +2823,26 @@ const buildTeamMirroredConversationRole = (role: string): string | null => {
   return null
 }
 
+const TEAM_MIRROR_PREFIX_RE = /^\[Team\/[^\]]+\]\s*/u
+const TEAM_NOISE_MESSAGE_PATTERNS = [
+  /^已触发 Team 执行[：:]/u,
+  /^主 agent 已拆解任务，共 \d+ 项[。.]?/u,
+  /^Team 执行完成[。.]?/u,
+  /^Team 执行失败[。.]?/u,
+  /^已停止当前会话运行[。.]?/u,
+]
+
+const normalizeTeamMirrorContent = (content: unknown): string => {
+  if (typeof content !== 'string') return ''
+  return content.replace(TEAM_MIRROR_PREFIX_RE, '').trim()
+}
+
+const shouldSuppressTeamMirrorNoiseMessage = (content: unknown): boolean => {
+  const normalized = normalizeTeamMirrorContent(content)
+  if (!normalized) return false
+  return TEAM_NOISE_MESSAGE_PATTERNS.some((pattern) => pattern.test(normalized))
+}
+
 const mirrorTeamMessageToConversation = async (msg: AgentTeamMessage) => {
   const convId = conversationId.value
   const sessionId = activeTeamSessionId.value
@@ -2318,9 +2855,10 @@ const mirrorTeamMessageToConversation = async (msg: AgentTeamMessage) => {
 
   const rawContent = (msg.content || '').trim()
   if (!rawContent) return
+  if (msg.role === 'system' && shouldSuppressTeamMirrorNoiseMessage(rawContent)) return
   const memberLabel = msg.member_name || msg.member_id || (msg.role === 'system' ? 'team_system' : 'team')
   const mirroredContent = `[Team/${memberLabel}] ${rawContent}`
-  const metadata = {
+  const metadata: Record<string, unknown> = {
     kind: 'team_v3_mirror',
     team_session_id: sessionId,
     team_message_id: msg.id,
@@ -2328,6 +2866,25 @@ const mirrorTeamMessageToConversation = async (msg: AgentTeamMessage) => {
     team_member_name: msg.member_name,
     team_role: msg.role,
     source: 'team_v3_messages',
+  }
+  if (msg.role === 'tool_call' || msg.role === 'tool_result') {
+    const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : []
+    const firstTool = toolCalls.find((item) => item && typeof item === 'object') as Record<string, unknown> | undefined
+    const toolName =
+      typeof firstTool?.name === 'string' && firstTool.name.trim().length > 0
+        ? firstTool.name.trim()
+        : 'unknown'
+    const parsedArgs = parseToolCallArguments(firstTool?.arguments)
+    const hasResult = firstTool?.result !== undefined || msg.role === 'tool_result'
+    const resultText = hasResult ? normalizeToolResult(firstTool?.result ?? rawContent) : undefined
+    const success = hasResult ? firstTool?.success !== false : true
+    metadata.tool_name = toolName
+    metadata.tool_args = parsedArgs
+    metadata.tool_result = resultText
+    metadata.tool_call_id =
+      typeof firstTool?.id === 'string' && firstTool.id.trim().length > 0 ? firstTool.id.trim() : msg.id
+    metadata.status = hasResult ? (success ? 'completed' : 'failed') : 'running'
+    metadata.success = success
   }
 
   try {
@@ -2357,21 +2914,24 @@ const mirrorTeamMessageToConversation = async (msg: AgentTeamMessage) => {
 
 const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
   if (!Array.isArray(messagesResp) || messagesResp.length === 0) return
-  const sorted = [...messagesResp].sort((a, b) => {
-    const ta = parseTeamMessageTimestamp(a.timestamp)
-    const tb = parseTeamMessageTimestamp(b.timestamp)
-    if (ta !== tb) return ta - tb
-    return a.id.localeCompare(b.id)
-  })
-  for (const msg of sorted) {
+  let changed = false
+  // Backend already returns messages ordered by created_at ASC.
+  // Keep backend order to avoid tie-break instability when timestamps are identical.
+  for (const msg of messagesResp) {
     if (!msg?.id || teamMainFlowMessageIds.has(msg.id)) continue
+    const mirroredId = `teamv3:${msg.id}`
+    if (teamMirroredConversationMessageIds.has(mirroredId)) {
+      teamMainFlowMessageIds.add(msg.id)
+      continue
+    }
     const msgTime = parseTeamMessageTimestamp(msg.timestamp)
     if (msg.role === 'system') {
-      if ((msg.content || '').trim()) {
+      const systemContent = (msg.content || '').trim()
+      if (systemContent && !shouldSuppressTeamMirrorNoiseMessage(systemContent)) {
         agentEvents.messages.value.push({
           id: `team:${msg.id}`,
           type: 'system',
-          content: msg.content,
+          content: systemContent,
           timestamp: msgTime,
           metadata: {
             kind: 'team_system',
@@ -2381,6 +2941,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           },
         })
         void mirrorTeamMessageToConversation(msg)
+        changed = true
       }
       teamMainFlowMessageIds.add(msg.id)
       continue
@@ -2391,28 +2952,32 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
         for (let i = 0; i < toolCalls.length; i += 1) {
           const tc = toolCalls[i]
           if (!tc || typeof tc !== 'object') continue
-          pushTeamToolCallToMainFlow({
+          const hasResult = (tc as any).result !== undefined
+          upsertTeamToolCallToMainFlow({
             toolCallId: typeof (tc as any).id === 'string' ? (tc as any).id : `team:${msg.id}:tool:${i}`,
             toolName: typeof (tc as any).name === 'string' ? (tc as any).name : 'unknown',
             toolArgs: (tc as any).arguments,
-            toolResult: (tc as any).result,
-            success: (tc as any).success !== false,
+            toolResult: hasResult ? (tc as any).result : undefined,
+            success: hasResult ? (tc as any).success !== false : undefined,
             timestamp: msgTime,
             memberId: msg.member_id,
             memberName: msg.member_name,
-            forceType: msg.role === 'tool_result' ? 'tool_result' : 'tool_call',
+            mode: msg.role === 'tool_result' || hasResult ? 'result' : 'start',
           })
         }
       } else {
-        pushTeamToolCallToMainFlow({
+        upsertTeamToolCallToMainFlow({
           toolCallId: `team:${msg.id}`,
           toolName: msg.content || 'unknown',
+          toolResult: msg.role === 'tool_result' ? msg.content : undefined,
+          success: msg.role === 'tool_result' ? true : undefined,
           timestamp: msgTime,
           memberId: msg.member_id,
           memberName: msg.member_name,
-          forceType: msg.role === 'tool_result' ? 'tool_result' : 'tool_call',
+          mode: msg.role === 'tool_result' ? 'result' : 'start',
         })
       }
+      void mirrorTeamMessageToConversation(msg)
       teamMainFlowMessageIds.add(msg.id)
       continue
     }
@@ -2432,25 +2997,30 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
         },
       })
       void mirrorTeamMessageToConversation(msg)
+      changed = true
     }
     if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
       for (let i = 0; i < msg.tool_calls.length; i += 1) {
         const tc = msg.tool_calls[i]
         if (!tc || typeof tc !== 'object') continue
         const toolCallId = typeof tc.id === 'string' ? tc.id : `team:${msg.id}:tool:${i}`
-        pushTeamToolCallToMainFlow({
+        const hasResult = (tc as any).result !== undefined
+        upsertTeamToolCallToMainFlow({
           toolCallId,
           toolName: typeof tc.name === 'string' ? tc.name : 'unknown',
           toolArgs: (tc as any).arguments,
-          toolResult: (tc as any).result,
-          success: (tc as any).success !== false,
+          toolResult: hasResult ? (tc as any).result : undefined,
+          success: hasResult ? (tc as any).success !== false : undefined,
           timestamp: msgTime,
           memberId: msg.member_id,
           memberName: msg.member_name,
-          forceType: (tc as any).result !== undefined ? 'tool_result' : 'tool_call',
+          mode: hasResult ? 'result' : 'start',
         })
       }
     }
+  }
+  if (changed) {
+    sortMainFlowMessagesByTimestamp()
   }
 }
 
@@ -2458,6 +3028,29 @@ const parseConversationMessageTimestamp = (raw: unknown): number => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw
   const parsed = Date.parse(typeof raw === 'string' ? raw : '')
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+const sortMainFlowMessagesByTimestamp = () => {
+  const current = agentEvents.messages.value
+  if (!Array.isArray(current) || current.length <= 1) return
+  const withIndex = current.map((item, index) => ({ item, index }))
+  withIndex.sort((a, b) => {
+    const ta = Number.isFinite(a.item.timestamp) ? a.item.timestamp : 0
+    const tb = Number.isFinite(b.item.timestamp) ? b.item.timestamp : 0
+    if (ta !== tb) return ta - tb
+    return a.index - b.index
+  })
+  const reordered = withIndex.map((entry) => entry.item)
+  let changed = false
+  for (let i = 0; i < current.length; i += 1) {
+    if (current[i] !== reordered[i]) {
+      changed = true
+      break
+    }
+  }
+  if (changed) {
+    agentEvents.messages.value = reordered
+  }
 }
 
 const persistTeamSessionState = async (sessionId: string, nextState: string) => {
@@ -2578,7 +3171,6 @@ const handleTeamExecutionError = async (payload: AgentErrorEvent) => {
   }
   teamSessionState.value = 'FAILED'
   await persistTeamSessionState(sessionId, 'FAILED')
-  appendTeamBridgeMessage(`[Team] 执行失败：${payload.error || 'unknown error'}`)
   if (isTeamWorkspaceActive.value) {
     await loadTeamWorkspaceData()
   }
@@ -2587,7 +3179,7 @@ const handleTeamExecutionError = async (payload: AgentErrorEvent) => {
 
 const syncTeamMessagesToMainFlow = async (sessionId?: string | null) => {
   const sid = sessionId || activeTeamSessionId.value
-  if (!sid || !teamModeEnabled.value) return
+  if (!sid) return
   try {
     const messagesResp = await agentTeamApi.getMessages(sid)
     if (!messagesResp || activeTeamSessionId.value !== sid) return
@@ -2628,11 +3220,7 @@ const applyTeamState = (nextState: string) => {
   const prev = teamSessionState.value
   if (prev === normalized) return false
   teamSessionState.value = normalized
-  if (normalized === 'COMPLETED') {
-    appendTeamBridgeMessage('[Team] 会话执行完成。')
-  } else if (normalized === 'FAILED') {
-    appendTeamBridgeMessage('[Team] 会话执行失败。')
-  } else if (normalized === 'SUSPENDED_FOR_HUMAN') {
+  if (normalized === 'SUSPENDED_FOR_HUMAN') {
     appendTeamBridgeMessage('[Team] 需要人工介入，请继续输入指导意见。')
   }
   return true
@@ -2727,6 +3315,7 @@ const handleToggleTeamMode = async (enabled: boolean) => {
   } else {
     stopTeamRunStatusPolling()
     isTeamWorkspaceActive.value = false
+    selectedTeamTaskId.value = null
   }
 }
 
@@ -3494,6 +4083,7 @@ const loadTeamWorkspaceData = async () => {
     teamSessionMessages.value = []
     teamSessionDetail.value = null
     teamTasks.value = []
+    selectedTeamTaskId.value = null
     teamBlackboardEntries.value = []
     teamSelectedOrchestrationPresetId.value = null
     teamSelectedRecoveryPresetId.value = 'balanced'
@@ -3868,7 +4458,6 @@ const handleStop = async () => {
     try {
       await agentTeamApi.stopRun(activeTeamSessionId.value)
       applyTeamState('FAILED')
-      appendTeamBridgeMessage('[Team] 已停止当前会话运行。')
     } catch (e) {
       console.error('[AgentView] Failed to stop team execution:', e)
       localError.value = t('agent.failedToStopExecution') + ': ' + e
@@ -3964,7 +4553,7 @@ const handleResendMessage = async (message: AgentMessage) => {
   restoreAttachmentsFromMessage(message)
 
   // Clear todos before resending
-  todosComposable.clearTodos()
+  clearTodosForCurrentContext()
 
   // Set user message content to input box
   inputValue.value = message.content
@@ -4033,7 +4622,7 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
   restoreAttachmentsFromMessage(message)
 
   // Clear todos before resending edited message
-  todosComposable.clearTodos()
+  clearTodosForCurrentContext()
 
   // Set edited content to input box
   inputValue.value = newContent
@@ -4106,6 +4695,13 @@ const loadConversationHistory = async (convId: string) => {
             ? JSON.parse(row.structured_data)
             : row.structured_data
         const ts = toMillis(row.timestamp)
+        const isTeamMirrorNoise =
+          parsedMetadata?.kind === 'team_v3_mirror' &&
+          shouldSuppressTeamMirrorNoiseMessage(row.content)
+
+        if (isTeamMirrorNoise) {
+          return
+        }
 
         if (row.role === 'tool') {
           // Persisted tool event message
@@ -4223,15 +4819,40 @@ const loadConversationHistory = async (convId: string) => {
       }
 
       agentEvents.messages.value = timeline
+      sortMainFlowMessagesByTimestamp()
+      await syncActiveTeamSession()
+      if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+        console.log('[AgentView] Skip stale team session sync after history load for:', convId)
+        return
+      }
+      if (activeTeamSessionId.value) {
+        await syncTeamMessagesToMainFlow(activeTeamSessionId.value)
+        if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+          console.log('[AgentView] Skip stale team message sync apply for:', convId)
+          return
+        }
+      }
 
       console.log('[AgentView] Loaded', messages.length, 'messages from conversation:', convId)
       
       // Scroll to bottom after loading messages
       nextTick(() => {
-        messageFlowRef.value?.scrollToBottom()
+        scrollMessageViewportToBottom()
       })
     } else {
       teamMirroredConversationMessageIds = new Set()
+      await syncActiveTeamSession()
+      if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+        console.log('[AgentView] Skip stale empty-history team sync for:', convId)
+        return
+      }
+      if (activeTeamSessionId.value) {
+        await syncTeamMessagesToMainFlow(activeTeamSessionId.value)
+        if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
+          console.log('[AgentView] Skip stale empty-history team message sync apply for:', convId)
+          return
+        }
+      }
       console.log('[AgentView] No messages found for conversation:', convId)
     }
   } catch (e) {
@@ -4279,16 +4900,6 @@ const handleCreateConversation = async (newConvId?: string) => {
   }
 
   try {
-    // Reuse the latest empty draft conversation to avoid duplicate empty sessions.
-    const reusableConversation = await findReusableEmptyConversation()
-    if (reusableConversation) {
-      await handleSelectConversation(reusableConversation.id)
-      nextTick(() => {
-        inputAreaRef.value?.focusInput()
-      })
-      return
-    }
-
     const convId = await invoke<string>('create_ai_conversation', {
       request: {
         title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
@@ -4349,7 +4960,7 @@ const handleSubmit = async () => {
       }
 
       nextTick(() => {
-        messageFlowRef.value?.scrollToBottom()
+        scrollMessageViewportToBottom()
       })
 
       emit('submit', fullTask)
@@ -4446,7 +5057,7 @@ const handleSubmit = async () => {
   
   // Force scroll to bottom when user sends a message
   nextTick(() => {
-    messageFlowRef.value?.scrollToBottom()
+    scrollMessageViewportToBottom()
   })
   
   // Emit submit event
@@ -4544,14 +5155,17 @@ const loadToolConfig = async () => {
 
 // Load latest conversation on startup
 const loadLatestConversation = async () => {
+  if (conversationId.value) return
   try {
     const conversations = await invoke<any[]>('get_ai_conversations')
+    if (conversationId.value) return
     if (conversations && conversations.length > 0) {
       // Sort by update time in reverse order, take the latest conversation
       const sorted = conversations.sort((a, b) => 
         new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
       )
       const latest = sorted[0]
+      if (conversationId.value) return
       conversationId.value = latest.id
       currentConversationTitle.value = latest.title || t('agent.unnamedConversation')
       await loadConversationHistory(latest.id)
@@ -4677,7 +5291,7 @@ onActivated(() => {
   console.log('[AgentView] Activated, scrolling to bottom')
   // Scroll to bottom when returning to this page
   nextTick(() => {
-    messageFlowRef.value?.scrollToBottom()
+    scrollMessageViewportToBottom()
   })
 })
 
@@ -4696,15 +5310,13 @@ watch(conversationId, async (newId) => {
       console.error('[AgentView] Failed to update conversation title:', e)
     }
   }
-  if (teamModeEnabled.value) {
-    await syncActiveTeamSession()
-  }
+  await syncActiveTeamSession()
 })
 
 watch(activeTeamSessionId, async (newId, oldId) => {
   if (newId !== oldId) {
+    selectedTeamTaskId.value = null
     teamMainFlowMessageIds = new Set<string>()
-    teamMainFlowToolCallIds = new Set<string>()
     teamMirroredAssistantSourceIds = new Set<string>()
     teamStreamTempMessageByStreamId.clear()
     teamStreamDoneIdsBySignature.clear()
@@ -4716,6 +5328,34 @@ watch(activeTeamSessionId, async (newId, oldId) => {
   if (!isTeamWorkspaceActive.value) return
   await loadTeamWorkspaceData()
 })
+
+watch(teamTasks, (tasks) => {
+  if (!selectedTeamTaskId.value) return
+  if (tasks.some((task) => task.id === selectedTeamTaskId.value)) return
+  selectedTeamTaskId.value = null
+}, { deep: true })
+
+watch(todoSourceOptions, (options) => {
+  if (options.length === 0) {
+    selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+    return
+  }
+  if (options.some((option) => option.key === selectedTodoSourceKey.value)) return
+  selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+}, { immediate: true })
+
+watch(selectedTaskTodoSourceKey, (nextKey) => {
+  if (!teamModeEnabled.value || !activeTeamSessionId.value) return
+  if (nextKey === TODO_SOURCE_ALL_KEY) {
+    selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+    return
+  }
+  if (todoSourceOptions.value.some((option) => option.key === nextKey)) {
+    selectedTodoSourceKey.value = nextKey
+    return
+  }
+  selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
+}, { immediate: true })
 
 watch(auditPolicyGate, async (newGate) => {
   if (!toolConfig.value.audit_mode) return
@@ -4733,7 +5373,7 @@ watch(currentConversationTitle, (newTitle) => {
 // Expose methods
 defineExpose({
   clearMessages: agentEvents.clearMessages,
-  scrollToBottom: () => messageFlowRef.value?.scrollToBottom(),
+  scrollToBottom: () => scrollMessageViewportToBottom(),
   addReferencedTraffic,
   loadConversationHistory,
   conversationId,

@@ -22,17 +22,9 @@ pub mod types;
 
 pub use certificate::CertificateService;
 pub use certificate_authority::ChainedCertificateAuthority;
-pub use error::{TrafficError, Result};
+pub use error::{Result, TrafficError};
 
 // Re-export traffic database types from sentinel-db
-pub use sentinel_db::{
-    TrafficEvidenceRecord as EvidenceRecord,
-    TrafficVulnerabilityFilters as VulnerabilityFilters,
-    TrafficVulnerabilityRecord as VulnerabilityRecord,
-    TrafficVulnerabilityWithEvidence as VulnerabilityWithEvidence,
-    ProxyRequestFilters,
-    ProxyRequestRecord,
-};
 pub use history_cache::{
     HistoryCacheConfig, HistoryCacheStats, HttpRequestFilters, HttpRequestRecord,
     ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem, WebSocketConnectionRecord,
@@ -44,12 +36,19 @@ pub use packet_capture::{
     ProtocolLayer,
 };
 pub use proxy::{
-    FailedConnection, InterceptAction, InterceptFilterRule, InterceptState, PendingInterceptRequest,
-    PendingInterceptResponse, PendingInterceptWebSocketMessage, ProxyConfig, ProxyService,
-    ScanSender, ScanTask, UpstreamProxyConfig, WebSocketConnectionContext,
-    WebSocketDirection as ProxyWebSocketDirection, WebSocketMessageContext,
+    FailedConnection, InterceptAction, InterceptFilterRule, InterceptState,
+    PendingInterceptRequest, PendingInterceptResponse, PendingInterceptWebSocketMessage,
+    ProxyConfig, ProxyService, ScanSender, ScanTask, UpstreamProxyConfig,
+    WebSocketConnectionContext, WebSocketDirection as ProxyWebSocketDirection,
+    WebSocketMessageContext,
 };
 pub use scanner::{FindingDeduplicator, FindingReceiver, FindingSender, ScanPipeline};
+pub use sentinel_db::{
+    ProxyRequestFilters, ProxyRequestRecord, TrafficEvidenceRecord as EvidenceRecord,
+    TrafficVulnerabilityFilters as VulnerabilityFilters,
+    TrafficVulnerabilityRecord as VulnerabilityRecord,
+    TrafficVulnerabilityWithEvidence as VulnerabilityWithEvidence,
+};
 pub use types::*;
 
 // 重导出插件系统（来自 sentinel-plugins）

@@ -1,6 +1,6 @@
-use anyhow::Result;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
 use sqlx::Row;
 
 fn timestamp_to_string<R>(row: &R, column: &str) -> String
@@ -114,7 +114,10 @@ impl DatabaseService {
         name: &str,
         description: Option<&str>,
     ) -> Result<String> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
 
@@ -161,7 +164,10 @@ impl DatabaseService {
     }
 
     pub async fn get_rag_collections_internal(&self) -> Result<Vec<RagCollectionRow>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -221,8 +227,14 @@ impl DatabaseService {
         }
     }
 
-    pub async fn get_rag_collection_by_id_internal(&self, collection_id: &str) -> Result<Option<RagCollectionRow>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_rag_collection_by_id_internal(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<RagCollectionRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -276,8 +288,14 @@ impl DatabaseService {
         }
     }
 
-    pub async fn get_rag_collection_by_name_internal(&self, name: &str) -> Result<Option<RagCollectionRow>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_rag_collection_by_name_internal(
+        &self,
+        name: &str,
+    ) -> Result<Option<RagCollectionRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -332,34 +350,81 @@ impl DatabaseService {
     }
 
     pub async fn delete_rag_collection_internal(&self, id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = $1").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = $1").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_queries WHERE collection_id = $1").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_collections WHERE id = $1").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_queries WHERE collection_id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_collections WHERE id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_collections WHERE id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_collections WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?").bind(id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_collections WHERE id = ?").bind(id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE collection_id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE collection_id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_queries WHERE collection_id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_collections WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
             }
         }
 
         Ok(())
     }
 
-    pub async fn update_rag_collection_internal(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn update_rag_collection_internal(
+        &self,
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let now = chrono::Utc::now().to_rfc3339();
 
         match runtime {
@@ -396,32 +461,41 @@ impl DatabaseService {
     }
 
     pub async fn set_rag_collection_active_internal(&self, id: &str, active: bool) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("UPDATE rag_collections SET is_active = $1, updated_at = $2 WHERE id = $3")
-                    .bind(active)
-                    .bind(chrono::Utc::now().to_rfc3339())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE rag_collections SET is_active = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(active)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
-                    .bind(active)
-                    .bind(chrono::Utc::now().to_rfc3339())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(active)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?")
-                    .bind(active)
-                    .bind(chrono::Utc::now().to_rfc3339())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE rag_collections SET is_active = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(active)
+                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
         }
 
@@ -429,19 +503,25 @@ impl DatabaseService {
     }
 
     pub async fn update_collection_stats_internal(&self, id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let now = chrono::Utc::now().to_rfc3339();
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = $1")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await?;
-                let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = $1")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await?;
+                let document_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = $1",
+                )
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+                let chunk_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = $1")
+                        .bind(id)
+                        .fetch_one(pool)
+                        .await?;
                 sqlx::query("UPDATE rag_collections SET document_count = $1, chunk_count = $2, updated_at = $3 WHERE id = $4")
                     .bind(document_count)
                     .bind(chunk_count)
@@ -451,14 +531,17 @@ impl DatabaseService {
                     .await?;
             }
             DatabasePool::SQLite(pool) => {
-                let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await?;
-                let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await?;
+                let document_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?",
+                )
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+                let chunk_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?")
+                        .bind(id)
+                        .fetch_one(pool)
+                        .await?;
                 sqlx::query("UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?")
                     .bind(document_count)
                     .bind(chunk_count)
@@ -468,14 +551,17 @@ impl DatabaseService {
                     .await?;
             }
             DatabasePool::MySQL(pool) => {
-                let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await?;
-                let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await?;
+                let document_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM rag_document_sources WHERE collection_id = ?",
+                )
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+                let chunk_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM rag_chunks WHERE collection_id = ?")
+                        .bind(id)
+                        .fetch_one(pool)
+                        .await?;
                 sqlx::query("UPDATE rag_collections SET document_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?")
                     .bind(document_count)
                     .bind(chunk_count)
@@ -489,8 +575,14 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_documents_by_collection_name_internal(&self, collection_name: &str) -> Result<Vec<RagDocumentSourceRow>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_documents_by_collection_name_internal(
+        &self,
+        collection_name: &str,
+    ) -> Result<Vec<RagDocumentSourceRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -502,7 +594,10 @@ impl DatabaseService {
                 .bind(collection_name)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| self.row_to_doc_source(r))
+                    .collect())
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
@@ -513,7 +608,10 @@ impl DatabaseService {
                 .bind(collection_name)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| self.row_to_doc_source(r))
+                    .collect())
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
@@ -524,13 +622,22 @@ impl DatabaseService {
                 .bind(collection_name)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| self.row_to_doc_source(r))
+                    .collect())
             }
         }
     }
 
-    pub async fn get_documents_by_collection_id_internal(&self, collection_id: &str) -> Result<Vec<RagDocumentSourceRow>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_documents_by_collection_id_internal(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<RagDocumentSourceRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -538,21 +645,30 @@ impl DatabaseService {
                     .bind(collection_id)
                     .fetch_all(pool)
                     .await?;
-                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| self.row_to_doc_source(r))
+                    .collect())
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC")
                     .bind(collection_id)
                     .fetch_all(pool)
                     .await?;
-                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| self.row_to_doc_source(r))
+                    .collect())
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query("SELECT * FROM rag_document_sources WHERE collection_id = ? ORDER BY created_at DESC")
                     .bind(collection_id)
                     .fetch_all(pool)
                     .await?;
-                Ok(rows.into_iter().map(|r| self.row_to_doc_source(r)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|r| self.row_to_doc_source(r))
+                    .collect())
             }
         }
     }
@@ -572,7 +688,10 @@ impl DatabaseService {
         created_at: &str,
         updated_at: &str,
     ) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -647,49 +766,82 @@ impl DatabaseService {
     }
 
     pub async fn delete_document_cascade_internal(&self, document_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = $1")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
             }
         }
 
         Ok(())
     }
 
-    pub async fn get_collection_id_by_document_id_internal(&self, document_id: &str) -> Result<Option<String>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_collection_id_by_document_id_internal(
+        &self,
+        document_id: &str,
+    ) -> Result<Option<String>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = $1")
-                    .bind(document_id)
-                    .fetch_optional(pool)
-                    .await?;
+                let id: Option<String> = sqlx::query_scalar(
+                    "SELECT collection_id FROM rag_document_sources WHERE id = $1",
+                )
+                .bind(document_id)
+                .fetch_optional(pool)
+                .await?;
                 Ok(id)
             }
             DatabasePool::SQLite(pool) => {
-                let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
-                    .bind(document_id)
-                    .fetch_optional(pool)
-                    .await?;
+                let id: Option<String> = sqlx::query_scalar(
+                    "SELECT collection_id FROM rag_document_sources WHERE id = ?",
+                )
+                .bind(document_id)
+                .fetch_optional(pool)
+                .await?;
                 Ok(id)
             }
             DatabasePool::MySQL(pool) => {
-                let id: Option<String> = sqlx::query_scalar("SELECT collection_id FROM rag_document_sources WHERE id = ?")
-                    .bind(document_id)
-                    .fetch_optional(pool)
-                    .await?;
+                let id: Option<String> = sqlx::query_scalar(
+                    "SELECT collection_id FROM rag_document_sources WHERE id = ?",
+                )
+                .bind(document_id)
+                .fetch_optional(pool)
+                .await?;
                 Ok(id)
             }
         }
@@ -709,7 +861,10 @@ impl DatabaseService {
         created_at_ts: i64,
         updated_at_ts: i64,
     ) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -780,29 +935,41 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_chunks_by_document_id_internal(&self, document_id: &str) -> Result<Vec<RagChunkRow>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_chunks_by_document_id_internal(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<RagChunkRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = $1 ORDER BY chunk_index ASC")
-                    .bind(document_id)
-                    .fetch_all(pool)
-                    .await?;
+                let rows = sqlx::query(
+                    "SELECT * FROM rag_chunks WHERE document_id = $1 ORDER BY chunk_index ASC",
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?;
                 Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
             }
             DatabasePool::SQLite(pool) => {
-                let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC")
-                    .bind(document_id)
-                    .fetch_all(pool)
-                    .await?;
+                let rows = sqlx::query(
+                    "SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC",
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?;
                 Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
             }
             DatabasePool::MySQL(pool) => {
-                let rows = sqlx::query("SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC")
-                    .bind(document_id)
-                    .fetch_all(pool)
-                    .await?;
+                let rows = sqlx::query(
+                    "SELECT * FROM rag_chunks WHERE document_id = ? ORDER BY chunk_index ASC",
+                )
+                .bind(document_id)
+                .fetch_all(pool)
+                .await?;
                 Ok(rows.into_iter().map(|r| self.row_to_rag_chunk(r)).collect())
             }
         }
@@ -812,7 +979,8 @@ impl DatabaseService {
     where
         R: sqlx::Row,
         for<'a> &'a str: sqlx::ColumnIndex<R>,
-        for<'r> chrono::DateTime<chrono::Utc>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> chrono::DateTime<chrono::Utc>:
+            sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
         for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
         for<'r> i64: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
     {
@@ -837,7 +1005,8 @@ impl DatabaseService {
     where
         R: sqlx::Row,
         for<'a> &'a str: sqlx::ColumnIndex<R>,
-        for<'r> chrono::DateTime<chrono::Utc>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'r> chrono::DateTime<chrono::Utc>:
+            sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
         for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
         for<'r> Option<Vec<u8>>: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
         for<'r> i32: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
@@ -865,7 +1034,10 @@ impl DatabaseService {
         content: &str,
         metadata: &str,
     ) -> Result<String> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let content_hash = format!("{:x}", md5::compute(content));
@@ -942,7 +1114,10 @@ impl DatabaseService {
         embedding: Option<&[f32]>,
         metadata_json: &str,
     ) -> Result<String> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
         let content_hash = format!("{:x}", md5::compute(content));
@@ -1018,8 +1193,13 @@ impl DatabaseService {
         Ok(id)
     }
 
-    pub async fn get_rag_documents_internal(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
-        let rows = self.get_documents_by_collection_id_internal(collection_id).await?;
+    pub async fn get_rag_documents_internal(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
+        let rows = self
+            .get_documents_by_collection_id_internal(collection_id)
+            .await?;
         Ok(rows.into_iter().map(rag_doc_source_to_model).collect())
     }
 
@@ -1030,7 +1210,9 @@ impl DatabaseService {
         offset: i64,
         search_query: Option<&str>,
     ) -> Result<(Vec<sentinel_rag::models::DocumentSource>, i64)> {
-        let rows = self.get_documents_by_collection_id_internal(collection_id).await?;
+        let rows = self
+            .get_documents_by_collection_id_internal(collection_id)
+            .await?;
 
         let filtered: Vec<RagDocumentSourceRow> = if let Some(search) = search_query {
             let lowered = search.to_lowercase();
@@ -1051,11 +1233,20 @@ impl DatabaseService {
             .take(limit.max(0) as usize)
             .collect::<Vec<_>>();
 
-        Ok((paged.into_iter().map(rag_doc_source_to_model).collect(), total_count))
+        Ok((
+            paged.into_iter().map(rag_doc_source_to_model).collect(),
+            total_count,
+        ))
     }
 
-    pub async fn get_rag_chunks_internal(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_rag_chunks_internal(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -1164,20 +1355,41 @@ impl DatabaseService {
     }
 
     pub async fn delete_rag_document_internal(&self, document_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1").bind(document_id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE id = $1").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = $1")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = $1")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?").bind(document_id).execute(pool).await?;
-                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?").bind(document_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rag_chunks WHERE document_id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("DELETE FROM rag_document_sources WHERE id = ?")
+                    .bind(document_id)
+                    .execute(pool)
+                    .await?;
             }
         }
 
@@ -1192,7 +1404,10 @@ impl DatabaseService {
         response: &str,
         processing_time_ms: u64,
     ) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let id = uuid::Uuid::new_v4().to_string();
 
         match runtime {

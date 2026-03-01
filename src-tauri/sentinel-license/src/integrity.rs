@@ -1,10 +1,10 @@
 //! Code integrity verification
-//! 
+//!
 //! Verifies the application binary hasn't been tampered with.
 
-use sha2::{Sha256, Digest};
-use std::sync::atomic::{AtomicBool, Ordering};
 use once_cell::sync::Lazy;
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Integrity check passed flag
 static INTEGRITY_OK: AtomicBool = AtomicBool::new(false);
@@ -63,10 +63,10 @@ pub fn is_integrity_ok() -> bool {
 fn compute_binary_hash() -> Option<[u8; 32]> {
     let exe_path = std::env::current_exe().ok()?;
     let binary_data = std::fs::read(&exe_path).ok()?;
-    
+
     let mut hasher = Sha256::new();
     hasher.update(&binary_data);
-    
+
     Some(hasher.finalize().into())
 }
 
@@ -83,12 +83,12 @@ fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    
+
     let mut result = 0u8;
     for (x, y) in a.iter().zip(b.iter()) {
         result |= x ^ y;
     }
-    
+
     result == 0
 }
 
@@ -98,18 +98,18 @@ fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 pub fn function_checksum(func_id: u32) -> u64 {
     let machine_id = crate::MachineId::generate();
     let hash = machine_id.to_hash();
-    
+
     // Derive checksum from machine ID and function ID
     let mut result = 0u64;
     for (i, &byte) in hash.iter().enumerate() {
         result = result.wrapping_add((byte as u64).wrapping_mul(func_id as u64 + i as u64 + 1));
     }
-    
+
     // Mix with license state
     if crate::is_licensed() {
         result ^= 0xDEADBEEFCAFEBABE;
     }
-    
+
     result
 }
 
@@ -136,13 +136,13 @@ mod tests {
         let func_id = 42u32;
         let checksum1 = function_checksum(func_id);
         let checksum2 = function_checksum(func_id);
-        
+
         // Should be deterministic
         assert_eq!(checksum1, checksum2);
-        
+
         // Should verify correctly
         assert!(verify_function_checksum(checksum1, func_id));
-        
+
         // Different func_id should produce different checksum
         let checksum3 = function_checksum(43);
         assert_ne!(checksum1, checksum3);
@@ -153,7 +153,7 @@ mod tests {
         let a = [1, 2, 3, 4];
         let b = [1, 2, 3, 4];
         let c = [1, 2, 3, 5];
-        
+
         assert!(constant_time_compare(&a, &b));
         assert!(!constant_time_compare(&a, &c));
     }

@@ -1,5 +1,7 @@
 //! Shell command execution tool using rig-core Tool trait
 
+use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
+use once_cell::sync::Lazy;
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,8 +13,6 @@ use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
-use once_cell::sync::Lazy;
-use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
 
 /// Shell execution mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -48,7 +48,9 @@ pub struct ShellArgs {
     pub execution_id: Option<String>,
 }
 
-fn default_timeout() -> u64 { 180 }
+fn default_timeout() -> u64 {
+    180
+}
 
 /// Shell command result
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +64,15 @@ pub struct ShellOutput {
     /// Indicates if output was stored to file
     #[serde(default)]
     pub output_stored: bool,
+    /// Actual execution mode used: "docker" | "host"
+    #[serde(default)]
+    pub execution_mode: String,
+    /// If fallback happened, indicates original mode
+    #[serde(default)]
+    pub fallback_from: Option<String>,
+    /// If fallback happened, includes failure reason
+    #[serde(default)]
+    pub fallback_reason: Option<String>,
 }
 
 /// Shell command errors
@@ -82,8 +93,7 @@ pub enum ShellError {
 }
 
 /// Shell default policy
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub enum ShellDefaultPolicy {
     /// Always proceed without asking (except denied commands)
     AlwaysProceed,
@@ -136,18 +146,18 @@ impl ShellConfig {
         if self.is_denied(command) {
             return false;
         }
-        
+
         // Check allowed list
         for allowed in &self.allowed_commands {
             if command_matches_pattern(command, allowed) {
                 return true;
             }
         }
-        
+
         // If AlwaysProceed, allow by default
         self.default_policy == ShellDefaultPolicy::AlwaysProceed
     }
-    
+
     /// Check if a command should be denied
     pub fn is_denied(&self, command: &str) -> bool {
         for denied in &self.denied_commands {
@@ -157,21 +167,21 @@ impl ShellConfig {
         }
         false
     }
-    
+
     /// Check if a command needs user confirmation
     pub fn needs_confirmation(&self, command: &str) -> bool {
         // Denied commands always need confirmation (or rejection)
         if self.is_denied(command) {
             return true;
         }
-        
+
         // Allowed commands don't need confirmation
         for allowed in &self.allowed_commands {
             if command_matches_pattern(command, allowed) {
                 return false;
             }
         }
-        
+
         // Default policy determines
         self.default_policy == ShellDefaultPolicy::RequestReview
     }
@@ -181,22 +191,22 @@ impl ShellConfig {
 fn command_matches_pattern(command: &str, pattern: &str) -> bool {
     let cmd_tokens: Vec<&str> = command.split_whitespace().collect();
     let pattern_tokens: Vec<&str> = pattern.split_whitespace().collect();
-    
+
     if pattern_tokens.is_empty() {
         return false;
     }
-    
+
     // Check if pattern tokens form a prefix of command tokens
     if cmd_tokens.len() < pattern_tokens.len() {
         return false;
     }
-    
+
     for (i, pt) in pattern_tokens.iter().enumerate() {
         if cmd_tokens[i] != *pt {
             return false;
         }
     }
-    
+
     true
 }
 
@@ -210,7 +220,8 @@ pub trait ShellPermissionHandler: Send + Sync {
 static SHELL_CONFIG: Lazy<RwLock<ShellConfig>> = Lazy::new(|| RwLock::new(ShellConfig::default()));
 
 /// Global permission handler
-static PERMISSION_HANDLER: Lazy<RwLock<Option<Arc<dyn ShellPermissionHandler>>>> = Lazy::new(|| RwLock::new(None));
+static PERMISSION_HANDLER: Lazy<RwLock<Option<Arc<dyn ShellPermissionHandler>>>> =
+    Lazy::new(|| RwLock::new(None));
 /// Per-execution shell cancellation tokens
 static SHELL_CANCELLATION_TOKENS: Lazy<RwLock<HashMap<String, CancellationToken>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
@@ -258,7 +269,10 @@ pub async fn set_shell_config(config: ShellConfig) {
 }
 
 /// Check command permission using current shell config
-pub async fn check_shell_permission(command: &str, execution_id: Option<&str>) -> Result<(), ShellError> {
+pub async fn check_shell_permission(
+    command: &str,
+    execution_id: Option<&str>,
+) -> Result<(), ShellError> {
     let config = SHELL_CONFIG.read().await;
     check_shell_permission_with_config(command, &config, execution_id).await
 }
@@ -330,18 +344,22 @@ impl ShellTool {
         let cmd = command.to_lowercase();
         let context_patterns = [
             "/workspace/context/",
-            "workspace/context/",  // relative path
+            "workspace/context/", // relative path
         ];
-        
+
         // Check if command contains context directory path
         let has_context_path = context_patterns.iter().any(|p| cmd.contains(p));
         if !has_context_path {
             return false;
         }
-        
+
         // Check if it's a read operation (cat, grep, tail, head, less, more, etc.)
-        let read_commands = ["cat ", "grep ", "tail ", "head ", "less ", "more ", "view ", "bat "];
-        read_commands.iter().any(|c| cmd.starts_with(c) || cmd.contains(&format!(" | {}", c)))
+        let read_commands = [
+            "cat ", "grep ", "tail ", "head ", "less ", "more ", "view ", "bat ",
+        ];
+        read_commands
+            .iter()
+            .any(|c| cmd.starts_with(c) || cmd.contains(&format!(" | {}", c)))
     }
 
     /// Execute command in Docker sandbox
@@ -354,15 +372,12 @@ impl ShellTool {
         // Check Docker availability first
         if !DockerSandbox::is_docker_available().await {
             return Err(ShellError::DockerError(
-                "Docker is not available on this system".to_string()
+                "Docker is not available on this system".to_string(),
             ));
         }
 
         let config = SHELL_CONFIG.read().await;
-        let docker_config = config
-            .docker_config
-            .clone()
-            .unwrap_or_default();
+        let docker_config = config.docker_config.clone().unwrap_or_default();
         drop(config);
 
         let sandbox = Arc::new(DockerSandbox::new(docker_config));
@@ -371,10 +386,12 @@ impl ShellTool {
             .await
             .map_err(|e| match e {
                 crate::docker_sandbox::DockerError::Timeout(secs) => ShellError::Timeout(secs),
-                crate::docker_sandbox::DockerError::ExecutionFailed(msg) if msg == "cancelled" => ShellError::Cancelled,
+                crate::docker_sandbox::DockerError::ExecutionFailed(msg) if msg == "cancelled" => {
+                    ShellError::Cancelled
+                }
                 _ => ShellError::DockerError(e.to_string()),
             })?;
-        
+
         Ok((stdout, stderr, exit_code, sandbox))
     }
 
@@ -383,7 +400,8 @@ impl ShellTool {
         #[cfg(target_os = "windows")]
         {
             // Convert Unix paths to Windows paths
-            let adapted = cmd.replace("/workspace", "C:\\workspace")
+            let adapted = cmd
+                .replace("/workspace", "C:\\workspace")
                 .replace('/', "\\");
             adapted
         }
@@ -409,14 +427,14 @@ impl ShellTool {
                 .arg("-Command")
                 .arg("$PSVersionTable.PSVersion.Major")
                 .output();
-            
+
             if ps_check.is_ok() {
                 ("powershell", "-Command")
             } else {
                 ("cmd", "/C")
             }
         };
-        
+
         #[cfg(target_os = "macos")]
         let (shell, shell_arg) = {
             // macOS: prefer zsh (default since Catalina), fallback to bash
@@ -426,7 +444,7 @@ impl ShellTool {
                 ("/bin/bash", "-c")
             }
         };
-        
+
         #[cfg(all(unix, not(target_os = "macos")))]
         let (shell, shell_arg) = {
             // Linux/Unix: check available shells
@@ -527,7 +545,11 @@ impl ShellTool {
     }
 
     /// Validate command permissions
-    async fn check_permission(&self, cmd: &str, execution_id: Option<&str>) -> Result<(), ShellError> {
+    async fn check_permission(
+        &self,
+        cmd: &str,
+        execution_id: Option<&str>,
+    ) -> Result<(), ShellError> {
         check_shell_permission(cmd, execution_id).await
     }
 }
@@ -541,7 +563,7 @@ impl Tool for ShellTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         let config = SHELL_CONFIG.read().await;
         let is_docker = config.default_execution_mode == ShellExecutionMode::Docker;
-        
+
         let mut desc = Self::DESCRIPTION.to_string();
         if is_docker {
             desc.push_str(" [ENVIRONMENT: This shell runs in a Kali Linux docker sandbox with pre-installed cybersecurity tools like nmap, sqlmap, msfconsole, masscan, dirb, etc. Do not hesitate to use these tools directly.]");
@@ -552,8 +574,7 @@ impl Tool for ShellTool {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
             description: desc,
-            parameters: serde_json::to_value(schemars::schema_for!(ShellArgs))
-                .unwrap_or_default(),
+            parameters: serde_json::to_value(schemars::schema_for!(ShellArgs)).unwrap_or_default(),
         }
     }
 
@@ -575,7 +596,17 @@ impl Tool for ShellTool {
         drop(config);
 
         // Execute command based on mode with fallback
-        let execution_result: Result<(String, String, i32, bool), ShellError> = (async {
+        let execution_result: Result<
+            (
+                String,
+                String,
+                i32,
+                bool,
+                ShellExecutionMode,
+                Option<String>,
+            ),
+            ShellError,
+        > = (async {
             match execution_mode {
             ShellExecutionMode::Docker => {
                 tracing::info!("Attempting to execute command in Docker sandbox: {}", args.command);
@@ -642,7 +673,14 @@ impl Tool for ShellTool {
                             }
                         }
                         
-                        Ok((final_stdout, final_stderr, exit_code, stored))
+                        Ok((
+                            final_stdout,
+                            final_stderr,
+                            exit_code,
+                            stored,
+                            ShellExecutionMode::Docker,
+                            None,
+                        ))
                     }
                     Err(e) => {
                         if matches!(e, ShellError::Timeout(_) | ShellError::Cancelled) {
@@ -706,7 +744,14 @@ impl Tool for ShellTool {
                                 }
                             }
                             
-                            Ok((final_stdout, final_stderr, exit_code, stored))
+                            Ok((
+                                final_stdout,
+                                final_stderr,
+                                exit_code,
+                                stored,
+                                ShellExecutionMode::Host,
+                                Some(e.to_string()),
+                            ))
                         }
                     }
                 }
@@ -767,16 +812,32 @@ impl Tool for ShellTool {
                     }
                 }
                 
-                Ok((final_stdout, final_stderr, exit_code, stored))
+                Ok((
+                    final_stdout,
+                    final_stderr,
+                    exit_code,
+                    stored,
+                    ShellExecutionMode::Host,
+                    None,
+                ))
             }
             }
         }).await;
         if let Some(exec_id) = execution_id.as_deref() {
             clear_shell_execution_cancellation(exec_id).await;
         }
-        let (stdout, stderr, exit_code, output_stored) = execution_result?;
+        let (stdout, stderr, exit_code, output_stored, actual_mode, fallback_reason) = execution_result?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
+        let execution_mode = match actual_mode {
+            ShellExecutionMode::Docker => "docker".to_string(),
+            ShellExecutionMode::Host => "host".to_string(),
+        };
+        let fallback_from = if fallback_reason.is_some() {
+            Some("docker".to_string())
+        } else {
+            None
+        };
 
         Ok(ShellOutput {
             command: args.command,
@@ -786,6 +847,9 @@ impl Tool for ShellTool {
             completed: true,
             execution_time_ms,
             output_stored,
+            execution_mode,
+            fallback_from,
+            fallback_reason,
         })
     }
 }
@@ -797,7 +861,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_rules() {
         let tool = ShellTool::new();
-        
+
         // Denied by default rule
         assert!(matches!(
             tool.check_permission("rm -rf /", None).await,

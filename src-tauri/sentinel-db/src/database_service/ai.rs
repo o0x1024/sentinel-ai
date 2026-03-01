@@ -1,9 +1,9 @@
-use anyhow::Result;
-use chrono::{DateTime, Utc};
 use crate::core::models::ai::AiRole;
 use crate::core::models::database::{AiConversation, AiMessage, SubagentMessage, SubagentRun};
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use sqlx::Row;
 
 fn ts_from_row<R>(row: &R, column: &str) -> chrono::DateTime<chrono::Utc>
@@ -100,7 +100,12 @@ where
         metadata: row.get("metadata"),
         token_count: row
             .try_get::<Option<i32>, _>("token_count")
-            .unwrap_or_else(|_| row.try_get::<Option<i64>, _>("token_count").ok().flatten().map(|v| v as i32)),
+            .unwrap_or_else(|_| {
+                row.try_get::<Option<i64>, _>("token_count")
+                    .ok()
+                    .flatten()
+                    .map(|v| v as i32)
+            }),
         cost: row.get("cost"),
         tool_calls: row.get("tool_calls"),
         attachments: row.get("attachments"),
@@ -154,33 +159,39 @@ where
         let input_tokens: i64 = row.get("input_tokens");
         let output_tokens: i64 = row.get("output_tokens");
         let total_tokens: i64 = row.get("total_tokens");
-        stats.insert(provider.clone(), crate::core::models::database::AiUsageStats {
-            provider,
-            model: "aggregated".to_string(),
-            input_tokens: input_tokens as i32,
-            output_tokens: output_tokens as i32,
-            total_tokens: total_tokens as i32,
-            cost: row.get("cost"),
-            last_used: row
-                .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_used")
-                .unwrap_or_else(|_| {
-                    row.try_get::<Option<String>, _>("last_used")
-                        .ok()
-                        .flatten()
-                        .and_then(|s| {
-                            chrono::DateTime::parse_from_rfc3339(&s)
-                                .map(|dt| dt.with_timezone(&chrono::Utc))
-                                .ok()
-                        })
-                }),
-        });
+        stats.insert(
+            provider.clone(),
+            crate::core::models::database::AiUsageStats {
+                provider,
+                model: "aggregated".to_string(),
+                input_tokens: input_tokens as i32,
+                output_tokens: output_tokens as i32,
+                total_tokens: total_tokens as i32,
+                cost: row.get("cost"),
+                last_used: row
+                    .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_used")
+                    .unwrap_or_else(|_| {
+                        row.try_get::<Option<String>, _>("last_used")
+                            .ok()
+                            .flatten()
+                            .and_then(|s| {
+                                chrono::DateTime::parse_from_rfc3339(&s)
+                                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                                    .ok()
+                            })
+                    }),
+            },
+        );
     }
     stats
 }
 
 impl DatabaseService {
     pub async fn create_subagent_message_internal(&self, message: &SubagentMessage) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -258,7 +269,10 @@ impl DatabaseService {
         &self,
         subagent_run_id: &str,
     ) -> Result<Vec<SubagentMessage>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -334,7 +348,10 @@ impl DatabaseService {
     }
 
     pub async fn create_subagent_run_internal(&self, run: &SubagentRun) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -425,7 +442,10 @@ impl DatabaseService {
         error: Option<&str>,
         completed_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -488,7 +508,10 @@ impl DatabaseService {
         &self,
         parent_execution_id: &str,
     ) -> Result<Vec<SubagentRun>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -578,7 +601,10 @@ impl DatabaseService {
         parent_execution_id: &str,
         after_timestamp: DateTime<Utc>,
     ) -> Result<u64> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let run_ids: Vec<String> = sqlx::query_scalar(
@@ -666,7 +692,10 @@ impl DatabaseService {
         &self,
         parent_execution_id: &str,
     ) -> Result<u64> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let run_ids: Vec<String> = sqlx::query_scalar(
@@ -684,10 +713,11 @@ impl DatabaseService {
                         .execute(pool)
                         .await?;
                 }
-                let result = sqlx::query("DELETE FROM ai_subagent_runs WHERE parent_execution_id = $1")
-                    .bind(parent_execution_id)
-                    .execute(pool)
-                    .await?;
+                let result =
+                    sqlx::query("DELETE FROM ai_subagent_runs WHERE parent_execution_id = $1")
+                        .bind(parent_execution_id)
+                        .execute(pool)
+                        .await?;
                 Ok(result.rows_affected())
             }
             DatabasePool::SQLite(pool) => {
@@ -706,10 +736,11 @@ impl DatabaseService {
                         .execute(pool)
                         .await?;
                 }
-                let result = sqlx::query("DELETE FROM ai_subagent_runs WHERE parent_execution_id = ?")
-                    .bind(parent_execution_id)
-                    .execute(pool)
-                    .await?;
+                let result =
+                    sqlx::query("DELETE FROM ai_subagent_runs WHERE parent_execution_id = ?")
+                        .bind(parent_execution_id)
+                        .execute(pool)
+                        .await?;
                 Ok(result.rows_affected())
             }
             DatabasePool::MySQL(pool) => {
@@ -728,39 +759,64 @@ impl DatabaseService {
                         .execute(pool)
                         .await?;
                 }
-                let result = sqlx::query("DELETE FROM ai_subagent_runs WHERE parent_execution_id = ?")
-                    .bind(parent_execution_id)
-                    .execute(pool)
-                    .await?;
+                let result =
+                    sqlx::query("DELETE FROM ai_subagent_runs WHERE parent_execution_id = ?")
+                        .bind(parent_execution_id)
+                        .execute(pool)
+                        .await?;
                 Ok(result.rows_affected())
             }
         }
     }
 
-    pub async fn create_ai_conversation_internal(&self, conversation: &AiConversation) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn create_ai_conversation_internal(
+        &self,
+        conversation: &AiConversation,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
                     if !vuln_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = $1")
-                            .bind(vuln_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(vuln_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = $1")
+                                .bind(vuln_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(vuln_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
                     if !task_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM scan_tasks WHERE id = $1")
-                            .bind(task_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(task_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM scan_tasks WHERE id = $1")
+                                .bind(task_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(task_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 sqlx::query(
                     r#"
@@ -796,23 +852,41 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
                     if !vuln_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
-                            .bind(vuln_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(vuln_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
+                                .bind(vuln_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(vuln_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
                     if !task_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
-                            .bind(task_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(task_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
+                                .bind(task_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(task_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 sqlx::query(
                     r#"
@@ -848,23 +922,41 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
                     if !vuln_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
-                            .bind(vuln_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(vuln_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
+                                .bind(vuln_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(vuln_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
                     if !task_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
-                            .bind(task_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(task_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
+                                .bind(task_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(task_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 sqlx::query(
                     r#"
@@ -903,7 +995,10 @@ impl DatabaseService {
     }
 
     pub async fn get_ai_conversations_internal(&self) -> Result<Vec<AiConversation>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
@@ -911,7 +1006,10 @@ impl DatabaseService {
                 )
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|row| ai_conversation_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_conversation_from_row(&row))
+                    .collect())
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
@@ -919,7 +1017,10 @@ impl DatabaseService {
                 )
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|row| ai_conversation_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_conversation_from_row(&row))
+                    .collect())
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
@@ -927,7 +1028,10 @@ impl DatabaseService {
                 )
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|row| ai_conversation_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_conversation_from_row(&row))
+                    .collect())
             }
         }
     }
@@ -937,7 +1041,10 @@ impl DatabaseService {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<AiConversation>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
@@ -947,7 +1054,10 @@ impl DatabaseService {
                 .bind(offset)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|row| ai_conversation_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_conversation_from_row(&row))
+                    .collect())
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
@@ -957,7 +1067,10 @@ impl DatabaseService {
                 .bind(offset)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|row| ai_conversation_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_conversation_from_row(&row))
+                    .collect())
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
@@ -967,13 +1080,19 @@ impl DatabaseService {
                 .bind(offset)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|row| ai_conversation_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_conversation_from_row(&row))
+                    .collect())
             }
         }
     }
 
     pub async fn get_ai_conversations_count_internal(&self) -> Result<i64> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let count: i64 = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_scalar(
@@ -1001,7 +1120,10 @@ impl DatabaseService {
     }
 
     pub async fn get_ai_conversation_internal(&self, id: &str) -> Result<Option<AiConversation>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let row = sqlx::query("SELECT * FROM ai_conversations WHERE id = $1")
@@ -1027,29 +1149,53 @@ impl DatabaseService {
         }
     }
 
-    pub async fn update_ai_conversation_internal(&self, conversation: &AiConversation) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn update_ai_conversation_internal(
+        &self,
+        conversation: &AiConversation,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
                     if !vuln_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = $1")
-                            .bind(vuln_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(vuln_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = $1")
+                                .bind(vuln_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(vuln_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
                     if !task_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM scan_tasks WHERE id = $1")
-                            .bind(task_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(task_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM scan_tasks WHERE id = $1")
+                                .bind(task_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(task_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 sqlx::query(
                     r#"
@@ -1085,23 +1231,41 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
                     if !vuln_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
-                            .bind(vuln_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(vuln_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
+                                .bind(vuln_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(vuln_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
                     if !task_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
-                            .bind(task_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(task_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
+                                .bind(task_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(task_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 sqlx::query(
                     r#"
@@ -1137,23 +1301,41 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let vulnerability_id = if let Some(ref vuln_id) = conversation.vulnerability_id {
                     if !vuln_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
-                            .bind(vuln_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(vuln_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM vulnerabilities WHERE id = ?")
+                                .bind(vuln_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(vuln_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 let scan_task_id = if let Some(ref task_id) = conversation.scan_task_id {
                     if !task_id.is_empty() {
-                        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
-                            .bind(task_id)
-                            .fetch_optional(pool)
-                            .await?;
-                        if exists.is_some() { Some(task_id.clone()) } else { None }
-                    } else { None }
-                } else { None };
+                        let exists: Option<(String,)> =
+                            sqlx::query_as("SELECT id FROM scan_tasks WHERE id = ?")
+                                .bind(task_id)
+                                .fetch_optional(pool)
+                                .await?;
+                        if exists.is_some() {
+                            Some(task_id.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
                 sqlx::query(
                     r#"
@@ -1192,7 +1374,10 @@ impl DatabaseService {
     }
 
     pub async fn delete_ai_conversation_internal(&self, id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM ai_messages WHERE conversation_id = $1")
@@ -1230,15 +1415,20 @@ impl DatabaseService {
     }
 
     pub async fn update_ai_conversation_title_internal(&self, id: &str, title: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("UPDATE ai_conversations SET title = $1, updated_at = $2 WHERE id = $3")
-                    .bind(title)
-                    .bind(Utc::now())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE ai_conversations SET title = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(title)
+                .bind(Utc::now())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query("UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?")
@@ -1262,28 +1452,37 @@ impl DatabaseService {
     }
 
     pub async fn archive_ai_conversation_internal(&self, id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("UPDATE ai_conversations SET is_archived = TRUE, updated_at = $1 WHERE id = $2")
-                    .bind(Utc::now())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE ai_conversations SET is_archived = TRUE, updated_at = $1 WHERE id = $2",
+                )
+                .bind(Utc::now())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("UPDATE ai_conversations SET is_archived = TRUE, updated_at = ? WHERE id = ?")
-                    .bind(Utc::now())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE ai_conversations SET is_archived = TRUE, updated_at = ? WHERE id = ?",
+                )
+                .bind(Utc::now())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("UPDATE ai_conversations SET is_archived = TRUE, updated_at = ? WHERE id = ?")
-                    .bind(Utc::now())
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE ai_conversations SET is_archived = TRUE, updated_at = ? WHERE id = ?",
+                )
+                .bind(Utc::now())
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
         }
         Ok(())
@@ -1291,10 +1490,16 @@ impl DatabaseService {
 
     pub async fn create_ai_message_internal(&self, message: &AiMessage) -> Result<()> {
         // Acquire write lock to serialize database writes
-        let _permit = self.write_semaphore.acquire().await
+        let _permit = self
+            .write_semaphore
+            .acquire()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {}", e))?;
-        
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
@@ -1399,10 +1604,16 @@ impl DatabaseService {
 
     pub async fn upsert_ai_message_append_internal(&self, message: &AiMessage) -> Result<()> {
         // Acquire write lock to serialize database writes
-        let _permit = self.write_semaphore.acquire().await
+        let _permit = self
+            .write_semaphore
+            .acquire()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {}", e))?;
-        
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let msg = message.clone();
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -1511,35 +1722,53 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_ai_messages_by_conversation_internal(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_ai_messages_by_conversation_internal(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<AiMessage>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query("SELECT * FROM ai_messages WHERE conversation_id = $1 ORDER BY timestamp ASC, id ASC")
                     .bind(conversation_id)
                     .fetch_all(pool)
                     .await?;
-                Ok(rows.into_iter().map(|row| ai_message_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_message_from_row(&row))
+                    .collect())
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query("SELECT * FROM ai_messages WHERE conversation_id = ? ORDER BY timestamp ASC, id ASC")
                     .bind(conversation_id)
                     .fetch_all(pool)
                     .await?;
-                Ok(rows.into_iter().map(|row| ai_message_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_message_from_row(&row))
+                    .collect())
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query("SELECT * FROM ai_messages WHERE conversation_id = ? ORDER BY timestamp ASC, id ASC")
                     .bind(conversation_id)
                     .fetch_all(pool)
                     .await?;
-                Ok(rows.into_iter().map(|row| ai_message_from_row(&row)).collect())
+                Ok(rows
+                    .into_iter()
+                    .map(|row| ai_message_from_row(&row))
+                    .collect())
             }
         }
     }
 
     pub async fn get_ai_roles_internal(&self) -> Result<Vec<AiRole>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles ORDER BY created_at DESC")
@@ -1563,8 +1792,12 @@ impl DatabaseService {
     }
 
     pub async fn create_ai_role_internal(&self, role: &AiRole) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let capabilities_json = serde_json::to_string(&role.capabilities).unwrap_or_else(|_| "[]".to_string());
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let capabilities_json =
+            serde_json::to_string(&role.capabilities).unwrap_or_else(|_| "[]".to_string());
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("INSERT INTO ai_roles (id, title, description, prompt, capabilities_json, is_system, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
@@ -1610,8 +1843,12 @@ impl DatabaseService {
     }
 
     pub async fn update_ai_role_internal(&self, role: &AiRole) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let capabilities_json = serde_json::to_string(&role.capabilities).unwrap_or_else(|_| "[]".to_string());
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let capabilities_json =
+            serde_json::to_string(&role.capabilities).unwrap_or_else(|_| "[]".to_string());
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("UPDATE ai_roles SET title = $1, description = $2, prompt = $3, capabilities_json = $4, updated_at = $5 WHERE id = $6")
@@ -1651,7 +1888,10 @@ impl DatabaseService {
     }
 
     pub async fn delete_ai_role_internal(&self, role_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM ai_roles WHERE id = $1")
@@ -1676,25 +1916,35 @@ impl DatabaseService {
     }
 
     pub async fn set_current_ai_role_internal(&self, role_id: Option<&str>) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         if let Some(rid) = role_id {
-            self.set_config_internal("ai", "current_role", rid, Some("当前使用的AI角色")).await?;
+            self.set_config_internal("ai", "current_role", rid, Some("当前使用的AI角色"))
+                .await?;
         } else {
             match runtime {
                 DatabasePool::PostgreSQL(pool) => {
-                    sqlx::query("DELETE FROM configurations WHERE category = 'ai' AND key = 'current_role'")
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "DELETE FROM configurations WHERE category = 'ai' AND key = 'current_role'",
+                    )
+                    .execute(pool)
+                    .await?;
                 }
                 DatabasePool::SQLite(pool) => {
-                    sqlx::query("DELETE FROM configurations WHERE category = 'ai' AND key = 'current_role'")
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "DELETE FROM configurations WHERE category = 'ai' AND key = 'current_role'",
+                    )
+                    .execute(pool)
+                    .await?;
                 }
                 DatabasePool::MySQL(pool) => {
-                    sqlx::query("DELETE FROM configurations WHERE category = 'ai' AND key = 'current_role'")
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "DELETE FROM configurations WHERE category = 'ai' AND key = 'current_role'",
+                    )
+                    .execute(pool)
+                    .await?;
                 }
             }
         }
@@ -1704,7 +1954,10 @@ impl DatabaseService {
     pub async fn get_current_ai_role_internal(&self) -> Result<Option<AiRole>> {
         let role_id = self.get_config_internal("ai", "current_role").await?;
         if let Some(rid) = role_id {
-            let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+            let runtime = self
+                .runtime_pool
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
             match runtime {
                 DatabasePool::PostgreSQL(pool) => {
                     let row = sqlx::query("SELECT id, title, description, prompt, capabilities_json, is_system, created_at, updated_at FROM ai_roles WHERE id = $1")
@@ -1734,7 +1987,10 @@ impl DatabaseService {
     }
 
     pub async fn delete_ai_message_internal(&self, message_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM ai_messages WHERE id = $1")
@@ -1758,8 +2014,14 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn delete_ai_messages_by_conversation_internal(&self, conversation_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn delete_ai_messages_by_conversation_internal(
+        &self,
+        conversation_id: &str,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM ai_messages WHERE conversation_id = $1")
@@ -1784,8 +2046,15 @@ impl DatabaseService {
     }
 
     /// Delete all messages after a specific message (by timestamp)
-    pub async fn delete_ai_messages_after_internal(&self, conversation_id: &str, message_id: &str) -> Result<u64> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn delete_ai_messages_after_internal(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+    ) -> Result<u64> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let timestamp: Option<DateTime<Utc>> = sqlx::query_scalar(
@@ -1799,12 +2068,14 @@ impl DatabaseService {
                     Some(ts) => ts,
                     None => return Err(anyhow::anyhow!("Message not found: {}", message_id)),
                 };
-                let deleted_count = sqlx::query("DELETE FROM ai_messages WHERE conversation_id = $1 AND timestamp > $2")
-                    .bind(conversation_id)
-                    .bind(timestamp)
-                    .execute(pool)
-                    .await?
-                    .rows_affected();
+                let deleted_count = sqlx::query(
+                    "DELETE FROM ai_messages WHERE conversation_id = $1 AND timestamp > $2",
+                )
+                .bind(conversation_id)
+                .bind(timestamp)
+                .execute(pool)
+                .await?
+                .rows_affected();
                 if deleted_count > 0 {
                     sqlx::query("UPDATE ai_conversations SET total_messages = total_messages - $1, updated_at = $2 WHERE id = $3")
                         .bind(deleted_count as i64)
@@ -1827,12 +2098,14 @@ impl DatabaseService {
                     Some(ts) => ts,
                     None => return Err(anyhow::anyhow!("Message not found: {}", message_id)),
                 };
-                let deleted_count = sqlx::query("DELETE FROM ai_messages WHERE conversation_id = ? AND timestamp > ?")
-                    .bind(conversation_id)
-                    .bind(timestamp)
-                    .execute(pool)
-                    .await?
-                    .rows_affected();
+                let deleted_count = sqlx::query(
+                    "DELETE FROM ai_messages WHERE conversation_id = ? AND timestamp > ?",
+                )
+                .bind(conversation_id)
+                .bind(timestamp)
+                .execute(pool)
+                .await?
+                .rows_affected();
                 if deleted_count > 0 {
                     sqlx::query("UPDATE ai_conversations SET total_messages = total_messages - ?, updated_at = ? WHERE id = ?")
                         .bind(deleted_count as i64)
@@ -1855,12 +2128,14 @@ impl DatabaseService {
                     Some(ts) => ts,
                     None => return Err(anyhow::anyhow!("Message not found: {}", message_id)),
                 };
-                let deleted_count = sqlx::query("DELETE FROM ai_messages WHERE conversation_id = ? AND timestamp > ?")
-                    .bind(conversation_id)
-                    .bind(timestamp)
-                    .execute(pool)
-                    .await?
-                    .rows_affected();
+                let deleted_count = sqlx::query(
+                    "DELETE FROM ai_messages WHERE conversation_id = ? AND timestamp > ?",
+                )
+                .bind(conversation_id)
+                .bind(timestamp)
+                .execute(pool)
+                .await?
+                .rows_affected();
                 if deleted_count > 0 {
                     sqlx::query("UPDATE ai_conversations SET total_messages = total_messages - ?, updated_at = ? WHERE id = ?")
                         .bind(deleted_count as i64)
@@ -1882,7 +2157,10 @@ impl DatabaseService {
         output_tokens: i32,
         cost: f64,
     ) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let total_tokens = input_tokens + output_tokens;
         let now = Utc::now();
         match runtime {
@@ -1960,8 +2238,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_ai_usage_stats_internal(&self) -> Result<Vec<crate::core::models::database::AiUsageStats>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_ai_usage_stats_internal(
+        &self,
+    ) -> Result<Vec<crate::core::models::database::AiUsageStats>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
@@ -1975,15 +2258,28 @@ impl DatabaseService {
                     results.push(crate::core::models::database::AiUsageStats {
                         provider: row.get("provider"),
                         model: row.get("model"),
-                        input_tokens: row.try_get::<i32, _>("input_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("input_tokens").unwrap_or(0) as i32),
-                        output_tokens: row.try_get::<i32, _>("output_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("output_tokens").unwrap_or(0) as i32),
-                        total_tokens: row.try_get::<i32, _>("total_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("total_tokens").unwrap_or(0) as i32),
-                        cost: row.get("cost"),
-                        last_used: row.try_get::<Option<DateTime<Utc>>, _>("last_used").unwrap_or_else(|_| {
-                            row.try_get::<Option<String>, _>("last_used").ok().flatten().and_then(|s| {
-                                DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok()
-                            })
+                        input_tokens: row.try_get::<i32, _>("input_tokens").unwrap_or_else(|_| {
+                            row.try_get::<i64, _>("input_tokens").unwrap_or(0) as i32
                         }),
+                        output_tokens: row.try_get::<i32, _>("output_tokens").unwrap_or_else(
+                            |_| row.try_get::<i64, _>("output_tokens").unwrap_or(0) as i32,
+                        ),
+                        total_tokens: row.try_get::<i32, _>("total_tokens").unwrap_or_else(|_| {
+                            row.try_get::<i64, _>("total_tokens").unwrap_or(0) as i32
+                        }),
+                        cost: row.get("cost"),
+                        last_used: row
+                            .try_get::<Option<DateTime<Utc>>, _>("last_used")
+                            .unwrap_or_else(|_| {
+                                row.try_get::<Option<String>, _>("last_used")
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|s| {
+                                        DateTime::parse_from_rfc3339(&s)
+                                            .map(|dt| dt.with_timezone(&Utc))
+                                            .ok()
+                                    })
+                            }),
                     });
                 }
                 Ok(results)
@@ -2000,15 +2296,28 @@ impl DatabaseService {
                     results.push(crate::core::models::database::AiUsageStats {
                         provider: row.get("provider"),
                         model: row.get("model"),
-                        input_tokens: row.try_get::<i32, _>("input_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("input_tokens").unwrap_or(0) as i32),
-                        output_tokens: row.try_get::<i32, _>("output_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("output_tokens").unwrap_or(0) as i32),
-                        total_tokens: row.try_get::<i32, _>("total_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("total_tokens").unwrap_or(0) as i32),
-                        cost: row.get("cost"),
-                        last_used: row.try_get::<Option<DateTime<Utc>>, _>("last_used").unwrap_or_else(|_| {
-                            row.try_get::<Option<String>, _>("last_used").ok().flatten().and_then(|s| {
-                                DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok()
-                            })
+                        input_tokens: row.try_get::<i32, _>("input_tokens").unwrap_or_else(|_| {
+                            row.try_get::<i64, _>("input_tokens").unwrap_or(0) as i32
                         }),
+                        output_tokens: row.try_get::<i32, _>("output_tokens").unwrap_or_else(
+                            |_| row.try_get::<i64, _>("output_tokens").unwrap_or(0) as i32,
+                        ),
+                        total_tokens: row.try_get::<i32, _>("total_tokens").unwrap_or_else(|_| {
+                            row.try_get::<i64, _>("total_tokens").unwrap_or(0) as i32
+                        }),
+                        cost: row.get("cost"),
+                        last_used: row
+                            .try_get::<Option<DateTime<Utc>>, _>("last_used")
+                            .unwrap_or_else(|_| {
+                                row.try_get::<Option<String>, _>("last_used")
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|s| {
+                                        DateTime::parse_from_rfc3339(&s)
+                                            .map(|dt| dt.with_timezone(&Utc))
+                                            .ok()
+                                    })
+                            }),
                     });
                 }
                 Ok(results)
@@ -2025,15 +2334,28 @@ impl DatabaseService {
                     results.push(crate::core::models::database::AiUsageStats {
                         provider: row.get("provider"),
                         model: row.get("model"),
-                        input_tokens: row.try_get::<i32, _>("input_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("input_tokens").unwrap_or(0) as i32),
-                        output_tokens: row.try_get::<i32, _>("output_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("output_tokens").unwrap_or(0) as i32),
-                        total_tokens: row.try_get::<i32, _>("total_tokens").unwrap_or_else(|_| row.try_get::<i64, _>("total_tokens").unwrap_or(0) as i32),
-                        cost: row.get("cost"),
-                        last_used: row.try_get::<Option<DateTime<Utc>>, _>("last_used").unwrap_or_else(|_| {
-                            row.try_get::<Option<String>, _>("last_used").ok().flatten().and_then(|s| {
-                                DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok()
-                            })
+                        input_tokens: row.try_get::<i32, _>("input_tokens").unwrap_or_else(|_| {
+                            row.try_get::<i64, _>("input_tokens").unwrap_or(0) as i32
                         }),
+                        output_tokens: row.try_get::<i32, _>("output_tokens").unwrap_or_else(
+                            |_| row.try_get::<i64, _>("output_tokens").unwrap_or(0) as i32,
+                        ),
+                        total_tokens: row.try_get::<i32, _>("total_tokens").unwrap_or_else(|_| {
+                            row.try_get::<i64, _>("total_tokens").unwrap_or(0) as i32
+                        }),
+                        cost: row.get("cost"),
+                        last_used: row
+                            .try_get::<Option<DateTime<Utc>>, _>("last_used")
+                            .unwrap_or_else(|_| {
+                                row.try_get::<Option<String>, _>("last_used")
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|s| {
+                                        DateTime::parse_from_rfc3339(&s)
+                                            .map(|dt| dt.with_timezone(&Utc))
+                                            .ok()
+                                    })
+                            }),
                     });
                 }
                 Ok(results)
@@ -2042,7 +2364,10 @@ impl DatabaseService {
     }
 
     pub async fn clear_ai_usage_stats_internal(&self) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM ai_usage_stats")
@@ -2063,8 +2388,14 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_aggregated_ai_usage_internal(&self) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_aggregated_ai_usage_internal(
+        &self,
+    ) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>>
+    {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let rows = sqlx::query(
@@ -2126,8 +2457,15 @@ impl DatabaseService {
         }
     }
 
-    pub async fn save_agent_run_state_internal(&self, execution_id: &str, state_json: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn save_agent_run_state_internal(
+        &self,
+        execution_id: &str,
+        state_json: &str,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
@@ -2197,7 +2535,10 @@ impl DatabaseService {
     }
 
     pub async fn get_agent_run_state_internal(&self, execution_id: &str) -> Result<Option<String>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let state: Option<(String,)> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as("SELECT state_json FROM agent_run_states WHERE execution_id = $1")
@@ -2221,7 +2562,10 @@ impl DatabaseService {
         Ok(state.map(|s| s.0))
     }
     pub async fn delete_agent_run_state_internal(&self, execution_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM agent_run_states WHERE execution_id = $1")

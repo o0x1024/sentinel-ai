@@ -8,10 +8,10 @@ use std::io::{BufRead, BufReader, Write};
 use tracing::debug;
 use uuid::Uuid;
 
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 #[cfg(windows)]
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 /// Client for communicating with agent-browser daemon
 pub struct BrowserClient {
@@ -87,8 +87,9 @@ impl BrowserClient {
             .context("Invalid port")?;
         let mut stream = TcpStream::connect_timeout(
             &format!("127.0.0.1:{}", port).parse().unwrap(),
-            std::time::Duration::from_secs(3)
-        ).context("Failed to connect to daemon")?;
+            std::time::Duration::from_secs(3),
+        )
+        .context("Failed to connect to daemon")?;
 
         // Use short timeouts to avoid blocking the UI
         stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
@@ -113,7 +114,9 @@ impl BrowserClient {
         if response.success {
             Ok(response.data)
         } else {
-            let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
+            let error_msg = response
+                .error
+                .unwrap_or_else(|| "Unknown error".to_string());
             anyhow::bail!("{}", error_msg)
         }
     }

@@ -402,12 +402,20 @@ impl RerankingProvider for LmStudioRerankingProvider {
         Ok(documents
             .iter()
             .enumerate()
-            .map(|(i, d)| RerankResult { index: i, score: 0.5, document: d.clone() })
+            .map(|(i, d)| RerankResult {
+                index: i,
+                score: 0.5,
+                document: d.clone(),
+            })
             .collect())
     }
 
-    fn provider_name(&self) -> &str { "LM Studio" }
-    fn model_name(&self) -> &str { &self.model_name }
+    fn provider_name(&self) -> &str {
+        "LM Studio"
+    }
+    fn model_name(&self) -> &str {
+        &self.model_name
+    }
 }
 
 pub struct RerankingManager {
@@ -451,37 +459,33 @@ impl RerankingManager {
     pub fn is_enabled(&self) -> bool {
         self.provider.is_some()
     }
-
 }
 
-    pub fn create_reranking_provider(
-        provider: &str,
-        model: &str,
-        base_url: Option<String>,
-        api_key: Option<String>,
-    ) -> Result<Box<dyn RerankingProvider>> {
-        match provider.to_lowercase().as_str() {
-            "lm studio" | "lmstudio" | "lm_studio" => Ok(Box::new(LmStudioRerankingProvider::new(
-                model, base_url, api_key,
-            ))),
-            _ => Err(anyhow!("不支持的重排序提供商: {}", provider)),
+pub fn create_reranking_provider(
+    provider: &str,
+    model: &str,
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> Result<Box<dyn RerankingProvider>> {
+    match provider.to_lowercase().as_str() {
+        "lm studio" | "lmstudio" | "lm_studio" => Ok(Box::new(LmStudioRerankingProvider::new(
+            model, base_url, api_key,
+        ))),
+        _ => Err(anyhow!("不支持的重排序提供商: {}", provider)),
+    }
+}
+pub fn create_embedding_provider(config: &EmbeddingConfig) -> Result<Box<dyn EmbeddingProvider>> {
+    match config.provider.to_lowercase().as_str() {
+        "lm studio" | "lmstudio" | "lm_studio" => {
+            Ok(Box::new(LmStudioEmbeddingProvider::new(config)?))
+        }
+        "ollama" => Ok(Box::new(OllamaEmbeddingProvider::new(config)?)),
+        "rig" | "rig-ollama" | "rig_ollama" | "rig/ollama" => {
+            Ok(Box::new(OllamaEmbeddingProvider::new(config)?))
+        }
+        _ => {
+            warn!("未知的嵌入提供商: {}，使用基础提供商", config.provider);
+            Ok(Box::new(BasicEmbeddingProvider::new(config)?))
         }
     }
-    pub fn create_embedding_provider(
-        config: &EmbeddingConfig,
-    ) -> Result<Box<dyn EmbeddingProvider>> {
-        match config.provider.to_lowercase().as_str() {
-            "lm studio" | "lmstudio" | "lm_studio" => {
-                Ok(Box::new(LmStudioEmbeddingProvider::new(config)?))
-            }
-            "ollama" => Ok(Box::new(OllamaEmbeddingProvider::new(config)?)),
-            "rig" | "rig-ollama" | "rig_ollama" | "rig/ollama" => {
-                Ok(Box::new(OllamaEmbeddingProvider::new(config)?))
-            }
-            _ => {
-                warn!("未知的嵌入提供商: {}，使用基础提供商", config.provider);
-                Ok(Box::new(BasicEmbeddingProvider::new(config)?))
-            }
-        }
-    }
-
+}

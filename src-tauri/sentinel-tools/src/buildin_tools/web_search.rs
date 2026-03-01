@@ -18,8 +18,12 @@ pub struct WebSearchArgs {
     pub search_depth: String,
 }
 
-fn default_max_results() -> u32 { 5 }
-fn default_search_depth() -> String { "basic".to_string() }
+fn default_max_results() -> u32 {
+    5
+}
+fn default_search_depth() -> String {
+    "basic".to_string()
+}
 
 /// Web search result item
 #[derive(Debug, Clone, Serialize)]
@@ -67,16 +71,22 @@ impl WebSearchTool {
     }
 
     pub fn with_api_key(api_key: String) -> Self {
-        Self { api_key: Some(api_key) }
+        Self {
+            api_key: Some(api_key),
+        }
     }
 
     /// Get API key from environment or stored value
     fn get_api_key(&self) -> Result<String, WebSearchError> {
-        self.api_key.clone()
+        self.api_key
+            .clone()
             .or_else(|| std::env::var("TAVILY_API_KEY").ok())
-            .ok_or_else(|| WebSearchError::ApiKeyNotConfigured(
-                "TAVILY_API_KEY not configured. Set it in environment or AI settings.".to_string()
-            ))
+            .ok_or_else(|| {
+                WebSearchError::ApiKeyNotConfigured(
+                    "TAVILY_API_KEY not configured. Set it in environment or AI settings."
+                        .to_string(),
+                )
+            })
     }
 
     pub const NAME: &'static str = "web_search";
@@ -103,11 +113,11 @@ impl Tool for WebSearchTool {
 
         // Build HTTP client with proxy support
         let client = {
-            let builder = reqwest::Client::builder()
-                .timeout(Duration::from_secs(30));
+            let builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
             let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
-            builder.build()
-                .map_err(|e| WebSearchError::RequestFailed(format!("Failed to build HTTP client: {}", e)))?
+            builder.build().map_err(|e| {
+                WebSearchError::RequestFailed(format!("Failed to build HTTP client: {}", e))
+            })?
         };
 
         // Prepare request payload
@@ -126,33 +136,40 @@ impl Tool for WebSearchTool {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| WebSearchError::RequestFailed(format!("Failed to call Tavily API: {}", e)))?;
+            .map_err(|e| {
+                WebSearchError::RequestFailed(format!("Failed to call Tavily API: {}", e))
+            })?;
 
         // Check response status
         if !resp.status().is_success() {
             let err_txt = resp.text().await.unwrap_or_default();
-            return Err(WebSearchError::RequestFailed(format!("Tavily API error: {}", err_txt)));
+            return Err(WebSearchError::RequestFailed(format!(
+                "Tavily API error: {}",
+                err_txt
+            )));
         }
 
         // Parse response
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| WebSearchError::ParseError(format!("Failed to parse Tavily response: {}", e)))?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| {
+            WebSearchError::ParseError(format!("Failed to parse Tavily response: {}", e))
+        })?;
 
         // Extract results
         let mut results = Vec::new();
         if let Some(results_array) = json.get("results").and_then(|r| r.as_array()) {
             for item in results_array {
-                let title = item.get("title")
+                let title = item
+                    .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let url = item.get("url")
+                let url = item
+                    .get("url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let content = item.get("content")
+                let content = item
+                    .get("content")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

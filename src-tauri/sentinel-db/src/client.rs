@@ -2,10 +2,10 @@ use anyhow::Result;
 use sqlx::postgres::PgPool;
 
 use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::traits::Database;
 use crate::database_service::service::DatabaseService;
-use sentinel_core::models::database::MemoryExecution;
+use crate::database_service::traits::Database;
 use chrono::{DateTime, Utc};
+use sentinel_core::models::database::MemoryExecution;
 
 #[derive(Clone, Debug)]
 pub struct DatabaseClient {
@@ -35,7 +35,9 @@ impl DatabaseClient {
         value: &str,
         description: Option<&str>,
     ) -> Result<()> {
-        self.service.set_config(category, key, value, description).await
+        self.service
+            .set_config(category, key, value, description)
+            .await
     }
     pub async fn get_configs_by_category(
         &self,
@@ -52,7 +54,9 @@ impl DatabaseClient {
         command: &str,
         args: &[String],
     ) -> Result<String> {
-        self.service.create_mcp_server_config(name, description, command, args).await
+        self.service
+            .create_mcp_server_config(name, description, command, args)
+            .await
     }
     pub async fn get_all_mcp_server_configs(
         &self,
@@ -60,12 +64,18 @@ impl DatabaseClient {
         self.service.get_all_mcp_server_configs().await
     }
     pub async fn update_mcp_server_config_enabled(&self, id: &str, enabled: bool) -> Result<()> {
-        self.service.update_mcp_server_config_enabled(id, enabled).await
+        self.service
+            .update_mcp_server_config_enabled(id, enabled)
+            .await
     }
     pub async fn update_mcp_server_auto_connect(&self, id: &str, auto_connect: bool) -> Result<()> {
-        self.service.update_mcp_server_auto_connect(id, auto_connect).await
+        self.service
+            .update_mcp_server_auto_connect(id, auto_connect)
+            .await
     }
-    pub async fn get_auto_connect_mcp_servers(&self) -> Result<Vec<sentinel_core::models::database::McpServerConfig>> {
+    pub async fn get_auto_connect_mcp_servers(
+        &self,
+    ) -> Result<Vec<sentinel_core::models::database::McpServerConfig>> {
         self.service.get_auto_connect_mcp_servers().await
     }
     pub async fn delete_mcp_server_config(&self, id: &str) -> Result<()> {
@@ -86,7 +96,9 @@ impl DatabaseClient {
         args: &[String],
         enabled: bool,
     ) -> Result<()> {
-        self.service.update_mcp_server_config(id, name, description, command, args, enabled).await
+        self.service
+            .update_mcp_server_config(id, name, description, command, args, enabled)
+            .await
     }
 
     // Conversations & Messages
@@ -106,7 +118,9 @@ impl DatabaseClient {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<sentinel_core::models::database::AiConversation>> {
-        self.service.get_ai_conversations_paginated(limit, offset).await
+        self.service
+            .get_ai_conversations_paginated(limit, offset)
+            .await
     }
     pub async fn get_ai_conversations_count(&self) -> Result<i64> {
         self.service.get_ai_conversations_count().await
@@ -139,7 +153,9 @@ impl DatabaseClient {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<sentinel_core::models::database::AiMessage>> {
-        self.service.get_ai_messages_by_conversation(conversation_id).await
+        self.service
+            .get_ai_messages_by_conversation(conversation_id)
+            .await
     }
 
     // Memory
@@ -179,7 +195,9 @@ impl DatabaseClient {
         status: &str,
         progress: Option<f64>,
     ) -> Result<()> {
-        self.service.update_scan_task_status(id, status, progress).await
+        self.service
+            .update_scan_task_status(id, status, progress)
+            .await
     }
 
     // Vulnerabilities
@@ -213,7 +231,9 @@ impl DatabaseClient {
     ) -> Result<String> {
         self.service.create_rag_collection(name, description).await
     }
-    pub async fn get_rag_collections(&self) -> Result<Vec<crate::database_service::rag::RagCollectionRow>> {
+    pub async fn get_rag_collections(
+        &self,
+    ) -> Result<Vec<crate::database_service::rag::RagCollectionRow>> {
         self.service.get_rag_collections().await
     }
     pub async fn get_rag_collection_by_id(
@@ -231,8 +251,15 @@ impl DatabaseClient {
     pub async fn delete_rag_collection(&self, id: &str) -> Result<()> {
         self.service.delete_rag_collection(id).await
     }
-    pub async fn update_rag_collection(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
-        self.service.update_rag_collection(id, name, description).await
+    pub async fn update_rag_collection(
+        &self,
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<()> {
+        self.service
+            .update_rag_collection(id, name, description)
+            .await
     }
     pub async fn set_rag_collection_active(&self, id: &str, active: bool) -> Result<()> {
         self.service.set_rag_collection_active(id, active).await
@@ -246,13 +273,17 @@ impl DatabaseClient {
         &self,
         collection_name: &str,
     ) -> Result<Vec<crate::database_service::rag::RagDocumentSourceRow>> {
-        self.service.get_documents_by_collection_name(collection_name).await
+        self.service
+            .get_documents_by_collection_name(collection_name)
+            .await
     }
     pub async fn get_documents_by_collection_id(
         &self,
         collection_id: &str,
     ) -> Result<Vec<crate::database_service::rag::RagDocumentSourceRow>> {
-        self.service.get_documents_by_collection_id(collection_id).await
+        self.service
+            .get_documents_by_collection_id(collection_id)
+            .await
     }
     pub async fn insert_document_source(
         &self,
@@ -269,21 +300,22 @@ impl DatabaseClient {
         created_at: &str,
         updated_at: &str,
     ) -> Result<()> {
-        self.service.insert_document_source(
-            id,
-            collection_id,
-            file_path,
-            file_name,
-            file_type,
-            file_size,
-            file_hash,
-            content_hash,
-            status,
-            metadata,
-            created_at,
-            updated_at,
-        )
-        .await
+        self.service
+            .insert_document_source(
+                id,
+                collection_id,
+                file_path,
+                file_name,
+                file_type,
+                file_size,
+                file_hash,
+                content_hash,
+                status,
+                metadata,
+                created_at,
+                updated_at,
+            )
+            .await
     }
     pub async fn delete_document_cascade(&self, document_id: &str) -> Result<()> {
         self.service.delete_document_cascade(document_id).await
@@ -292,7 +324,9 @@ impl DatabaseClient {
         &self,
         document_id: &str,
     ) -> Result<Option<String>> {
-        self.service.get_collection_id_by_document_id(document_id).await
+        self.service
+            .get_collection_id_by_document_id(document_id)
+            .await
     }
     pub async fn insert_chunk(
         &self,
@@ -308,20 +342,21 @@ impl DatabaseClient {
         created_at_ts: i64,
         updated_at_ts: i64,
     ) -> Result<()> {
-        self.service.insert_chunk(
-            id,
-            document_id,
-            collection_id,
-            content,
-            content_hash,
-            chunk_index,
-            char_count,
-            embedding_bytes,
-            metadata_json,
-            created_at_ts,
-            updated_at_ts,
-        )
-        .await
+        self.service
+            .insert_chunk(
+                id,
+                document_id,
+                collection_id,
+                content,
+                content_hash,
+                chunk_index,
+                char_count,
+                embedding_bytes,
+                metadata_json,
+                created_at_ts,
+                updated_at_ts,
+            )
+            .await
     }
     pub async fn get_chunks_by_document_id(
         &self,
@@ -346,14 +381,9 @@ impl DatabaseClient {
         end_time: Option<chrono::DateTime<chrono::Utc>>,
         execution_time: Option<i32>,
     ) -> Result<()> {
-        self.service.update_tool_execution_status(
-            id,
-            status,
-            progress,
-            end_time,
-            execution_time,
-        )
-        .await
+        self.service
+            .update_tool_execution_status(id, status, progress, end_time, execution_time)
+            .await
     }
     pub async fn get_tool_executions_by_tool(
         &self,

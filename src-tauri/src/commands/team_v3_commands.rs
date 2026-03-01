@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::agents::ContextPolicy;
 use crate::agents::executor::{execute_agent as execute_team_agent, AgentExecuteParams};
 use crate::agents::tool_router::{ToolConfig, ToolSelectionStrategy};
+use crate::agents::ContextPolicy;
 use crate::services::ai::AiServiceManager;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -730,18 +730,16 @@ fn parse_state_data_text(raw: &str) -> Value {
 }
 
 fn default_team_members() -> Vec<Value> {
-    vec![
-        json!({
-            "id": "agent-1",
-            "name": "Team Agent",
-            "responsibility": "负责执行分配任务并输出可复用结论",
-            "sort_order": 0,
-            "weight": 1.0,
-            "token_usage": 0,
-            "tool_calls_count": 0,
-            "is_active": false
-        }),
-    ]
+    vec![json!({
+        "id": "agent-1",
+        "name": "Team Agent",
+        "responsibility": "负责执行分配任务并输出可复用结论",
+        "sort_order": 0,
+        "weight": 1.0,
+        "token_usage": 0,
+        "tool_calls_count": 0,
+        "is_active": false
+    })]
 }
 
 fn normalize_team_member_values(mut members: Vec<Value>) -> Vec<Value> {
@@ -1541,7 +1539,7 @@ async fn apply_team_v3_execution_outcome(
     runtime_pool: &DatabasePool,
     session_id: &str,
     success: bool,
-    summary: Option<&str>,
+    _summary: Option<&str>,
 ) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     match runtime_pool {
@@ -1630,78 +1628,7 @@ async fn apply_team_v3_execution_outcome(
         &now,
     )
     .await?;
-
-    let status_text = if success {
-        let prefix = "Team 执行完成。";
-        if let Some(s) = summary.map(str::trim).filter(|s| !s.is_empty()) {
-            format!("{} {}", prefix, s)
-        } else {
-            prefix.to_string()
-        }
-    } else {
-        let prefix = "Team 执行失败。";
-        if let Some(s) = summary.map(str::trim).filter(|s| !s.is_empty()) {
-            format!("{} {}", prefix, s)
-        } else {
-            prefix.to_string()
-        }
-    };
-    append_team_v3_status_message(runtime_pool, session_id, &status_text).await?;
     Ok(())
-}
-
-async fn get_team_v3_latest_human_message_preview(
-    runtime_pool: &DatabasePool,
-    session_id: &str,
-) -> Result<Option<String>> {
-    let payload_opt: Option<String> = match runtime_pool {
-        DatabasePool::SQLite(pool) => {
-            let row = sqlx::query(
-                r#"SELECT payload FROM team_v3_messages
-                   WHERE session_id = ?
-                   ORDER BY created_at DESC
-                   LIMIT 1"#,
-            )
-            .bind(session_id)
-            .fetch_optional(pool)
-            .await?;
-            row.map(|r| r.get("payload"))
-        }
-        DatabasePool::PostgreSQL(pool) => {
-            let row = sqlx::query(
-                r#"SELECT payload::text as payload FROM team_v3_messages
-                   WHERE session_id = $1
-                   ORDER BY created_at DESC
-                   LIMIT 1"#,
-            )
-            .bind(session_id)
-            .fetch_optional(pool)
-            .await?;
-            row.map(|r| r.get("payload"))
-        }
-        DatabasePool::MySQL(_) => return Err(anyhow!("Team V3 does not support MySQL")),
-    };
-
-    let preview = payload_opt
-        .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
-        .and_then(|value| {
-            value
-                .get("content")
-                .and_then(|c| c.as_str())
-                .map(|s| s.trim().to_string())
-        })
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            let mut chars = s.chars();
-            let short: String = chars.by_ref().take(140).collect();
-            if chars.next().is_some() {
-                format!("{}...", short)
-            } else {
-                short
-            }
-        });
-
-    Ok(preview)
 }
 
 async fn get_team_v3_latest_human_message_content(
@@ -1873,7 +1800,10 @@ async fn set_team_v3_session_conversation_id(
     Ok(())
 }
 
-async fn clear_team_v3_blackboard_entries(runtime_pool: &DatabasePool, session_id: &str) -> Result<()> {
+async fn clear_team_v3_blackboard_entries(
+    runtime_pool: &DatabasePool,
+    session_id: &str,
+) -> Result<()> {
     match runtime_pool {
         DatabasePool::SQLite(pool) => {
             sqlx::query(
@@ -2025,32 +1955,301 @@ async fn list_team_v3_blackboard_entries(
 }
 
 fn build_blackboard_context(entries: &[TeamV3BlackboardEntry]) -> String {
-    let mut lines = entries
-        .iter()
+    build_blackboard_context_with_mode(entries, TeamV3BlackboardContextMode::Standard)
+}
+
+fn build_blackboard_checkpoint_context(entries: &[TeamV3BlackboardEntry]) -> String {
+    build_blackboard_context_with_mode(entries, TeamV3BlackboardContextMode::CheckpointOnly)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TeamV3BlackboardContextMode {
+    Standard,
+    CheckpointOnly,
+}
+
+#[derive(Default)]
+struct TeamV3BlackboardLayers<'a> {
+    raw_log: Vec<&'a TeamV3BlackboardEntry>,
+    working_memory: Vec<&'a TeamV3BlackboardEntry>,
+    checkpoints: Vec<&'a TeamV3BlackboardEntry>,
+}
+
+fn split_blackboard_layers<'a>(entries: &'a [TeamV3BlackboardEntry]) -> TeamV3BlackboardLayers<'a> {
+    let mut layers = TeamV3BlackboardLayers::default();
+    for entry in entries.iter().rev() {
+        match entry.entry_type.as_str() {
+            "working_memory" => layers.working_memory.push(entry),
+            "checkpoint" => layers.checkpoints.push(entry),
+            _ => layers.raw_log.push(entry),
+        }
+    }
+    layers
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let total = input.chars().count();
+    if total <= max_chars {
+        return input.to_string();
+    }
+    if max_chars <= 8 {
+        return input.chars().take(max_chars).collect::<String>();
+    }
+    let head = max_chars.saturating_mul(3) / 4;
+    let tail = max_chars.saturating_sub(head + 5);
+    let prefix = input.chars().take(head).collect::<String>();
+    let suffix = input
+        .chars()
         .rev()
-        .map(|entry| {
-            let agent = entry
-                .agent_id
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("unknown-agent");
-            let task = entry
-                .task_id
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("-");
-            format!(
-                "[{}][agent={}][task={}] {}",
-                entry.entry_type, agent, task, entry.content
-            )
-        })
+        .take(tail)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    format!("{} ... {}", prefix.trim_end(), suffix.trim_start())
+}
+
+fn collapse_whitespace(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn format_blackboard_entry(entry: &TeamV3BlackboardEntry, max_chars: usize) -> String {
+    let agent = entry
+        .agent_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("unknown-agent");
+    let task = entry
+        .task_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("-");
+    let content = truncate_chars(
+        collapse_whitespace(entry.content.as_str()).as_str(),
+        max_chars,
+    );
+    format!(
+        "- [{}][agent={}][task={}] {}",
+        entry.entry_type, agent, task, content
+    )
+}
+
+fn build_blackboard_section(
+    title: &str,
+    entries: &[&TeamV3BlackboardEntry],
+    limit: usize,
+    max_chars: usize,
+) -> Option<String> {
+    if entries.is_empty() || limit == 0 {
+        return None;
+    }
+    let start = entries.len().saturating_sub(limit);
+    let rows = entries[start..]
+        .iter()
+        .map(|entry| format_blackboard_entry(entry, max_chars))
         .collect::<Vec<_>>();
-    if lines.is_empty() {
+    Some(format!("{}\n{}", title, rows.join("\n")))
+}
+
+fn build_blackboard_context_with_mode(
+    entries: &[TeamV3BlackboardEntry],
+    mode: TeamV3BlackboardContextMode,
+) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let layers = split_blackboard_layers(entries);
+    let mut sections: Vec<String> = Vec::new();
+    if mode == TeamV3BlackboardContextMode::Standard {
+        if let Some(raw) =
+            build_blackboard_section("Raw Log（全量事件节选）:", &layers.raw_log, 10, 220)
+        {
+            sections.push(raw);
+        }
+        if let Some(working) = build_blackboard_section(
+            "Working Memory（当前工作记忆）:",
+            &layers.working_memory,
+            12,
+            240,
+        ) {
+            sections.push(working);
+        }
+    }
+    if let Some(checkpoints) =
+        build_blackboard_section("Checkpoint（阶段总结）:", &layers.checkpoints, 12, 280)
+    {
+        sections.push(checkpoints);
+    } else if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+        sections.push(
+            "Checkpoint（阶段总结）:\n- 暂无 checkpoint，可基于已知依赖先产出汇总草稿。"
+                .to_string(),
+        );
+    }
+
+    if sections.is_empty() {
         String::new()
     } else {
-        lines.insert(0, "Team 白板（最新共享信息）:".to_string());
-        lines.join("\n")
+        format!("Team 白板（分层共享）:\n{}", sections.join("\n\n"))
     }
+}
+
+fn normalize_checkpoint_line(line: &str) -> Option<String> {
+    let trimmed = line
+        .trim()
+        .trim_start_matches(|ch: char| {
+            matches!(
+                ch,
+                '-' | '*' | '#' | '>' | '•' | '·' | '1'..='9' | '0' | '.' | '、' | ')' | '('
+            )
+        })
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let collapsed = collapse_whitespace(trimmed);
+    if collapsed.is_empty() {
+        None
+    } else {
+        Some(collapsed)
+    }
+}
+
+fn collect_checkpoint_points(
+    output: &str,
+    max_points: usize,
+    max_chars_per_point: usize,
+) -> Vec<String> {
+    let priority_terms = [
+        "结论",
+        "依据",
+        "风险",
+        "下一步",
+        "建议",
+        "行动",
+        "结论:",
+        "Conclusion",
+        "Evidence",
+        "Risk",
+        "Next",
+        "Recommendation",
+    ];
+    let mut seen = HashSet::new();
+    let mut prioritized = Vec::new();
+    let mut fallback = Vec::new();
+    for raw_line in output.lines() {
+        let Some(line) = normalize_checkpoint_line(raw_line) else {
+            continue;
+        };
+        if !seen.insert(line.clone()) {
+            continue;
+        }
+        let clipped = truncate_chars(line.as_str(), max_chars_per_point);
+        let lower = clipped.to_lowercase();
+        let has_priority = priority_terms.iter().any(|term| {
+            if term.chars().all(|ch| ch.is_ascii()) {
+                lower.contains(&term.to_lowercase())
+            } else {
+                clipped.contains(term)
+            }
+        });
+        if has_priority {
+            prioritized.push(clipped);
+        } else {
+            fallback.push(clipped);
+        }
+    }
+    let mut points = Vec::new();
+    points.extend(prioritized.into_iter().take(max_points));
+    if points.len() < max_points {
+        points.extend(fallback.into_iter().take(max_points - points.len()));
+    }
+    if points.is_empty() {
+        points.push(truncate_chars(
+            collapse_whitespace(output).as_str(),
+            max_chars_per_point,
+        ));
+    }
+    points
+}
+
+fn build_task_working_memory_content(task_key: &str, output: &str) -> String {
+    let first_point = collect_checkpoint_points(output, 1, 220)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "任务完成，待进一步提炼。".to_string());
+    format!("task_key={}: {}", task_key, first_point)
+}
+
+fn build_task_checkpoint_content(task_key: &str, task_title: &str, output: &str) -> String {
+    let points = collect_checkpoint_points(output, 6, 220);
+    let mut lines = vec![
+        format!("task_key={}", task_key),
+        format!("title={}", collapse_whitespace(task_title)),
+        "key_points:".to_string(),
+    ];
+    lines.extend(points.into_iter().map(|point| format!("- {}", point)));
+    lines.join("\n")
+}
+
+async fn append_team_v3_task_memory_layers(
+    runtime_pool: &DatabasePool,
+    session_id: &str,
+    task_id: &str,
+    member_id: &str,
+    task_key: &str,
+    task_title: &str,
+    output: &str,
+) -> Result<()> {
+    let working_memory = build_task_working_memory_content(task_key, output);
+    let working_meta = json!({
+        "task_key": task_key,
+        "source_type": "task_output",
+    });
+    append_team_v3_blackboard_entry(
+        runtime_pool,
+        session_id,
+        Some(task_id),
+        Some(member_id),
+        "working_memory",
+        working_memory.as_str(),
+        Some(&working_meta),
+    )
+    .await?;
+
+    let checkpoint = build_task_checkpoint_content(task_key, task_title, output);
+    let checkpoint_meta = json!({
+        "task_key": task_key,
+        "task_title": task_title,
+        "source_type": "task_output",
+    });
+    append_team_v3_blackboard_entry(
+        runtime_pool,
+        session_id,
+        Some(task_id),
+        Some(member_id),
+        "checkpoint",
+        checkpoint.as_str(),
+        Some(&checkpoint_meta),
+    )
+    .await?;
+    Ok(())
+}
+
+fn is_team_v3_summary_task(task: &TeamV3Task) -> bool {
+    let key = task.task_key.to_lowercase();
+    let title = task.title.to_lowercase();
+    let instruction = task.instruction.to_lowercase();
+    key.contains("summary")
+        || key.contains("final")
+        || title.contains("总结")
+        || title.contains("汇总")
+        || title.contains("summary")
+        || instruction.contains("总结")
+        || instruction.contains("汇总")
+        || instruction.contains("synthes")
 }
 
 async fn replace_team_v3_tasks_with_plan(
@@ -2092,10 +2291,7 @@ async fn replace_team_v3_tasks_with_plan(
         seen_task_keys.insert(task_key.clone());
         normalized_keys.push(task_key);
     }
-    let normalized_key_set = normalized_keys
-        .iter()
-        .cloned()
-        .collect::<HashSet<String>>();
+    let normalized_key_set = normalized_keys.iter().cloned().collect::<HashSet<String>>();
 
     for (index, raw_task) in plan.tasks.iter().enumerate() {
         let task_key = normalized_keys
@@ -2446,6 +2642,7 @@ fn build_team_v3_task_prompt(
     task: &TeamV3Task,
     dependency_context: &str,
     blackboard_context: &str,
+    checkpoint_only: bool,
 ) -> String {
     if dependency_context.trim().is_empty() && blackboard_context.trim().is_empty() {
         format!(
@@ -2463,14 +2660,25 @@ fn build_team_v3_task_prompt(
         if !blackboard_context.trim().is_empty() {
             context_sections.push(blackboard_context.to_string());
         }
-        format!(
-            "Team 总目标：{}\n用户输入：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n请基于共享信息继续执行，并输出结构化结论（结论、依据、风险、下一步）。",
-            goal,
-            user_input,
-            task.title,
-            task.instruction,
-            context_sections.join("\n\n")
-        )
+        if checkpoint_only {
+            format!(
+                "Team 总目标：{}\n用户输入：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n你必须只基于 Checkpoint（阶段总结）完成收敛，不要重新展开全量分析日志。输出结构化结论（最终结论、关键证据、风险、下一步行动）。",
+                goal,
+                user_input,
+                task.title,
+                task.instruction,
+                context_sections.join("\n\n")
+            )
+        } else {
+            format!(
+                "Team 总目标：{}\n用户输入：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n请基于共享信息继续执行，并输出结构化结论（结论、依据、风险、下一步）。",
+                goal,
+                user_input,
+                task.title,
+                task.instruction,
+                context_sections.join("\n\n")
+            )
+        }
     }
 }
 
@@ -2632,12 +2840,8 @@ async fn generate_team_v3_execution_plan_with_main_agent(
     blackboard_context: &str,
     cancellation_token: &CancellationToken,
 ) -> Result<Option<TeamV3ExecutionPlan>> {
-    let planner_prompt = build_team_v3_planner_prompt(
-        goal_text,
-        user_input,
-        member_catalog,
-        blackboard_context,
-    );
+    let planner_prompt =
+        build_team_v3_planner_prompt(goal_text, user_input, member_catalog, blackboard_context);
     let execution_id = format!("team-v3-planner:{}:{}", session_id, Uuid::new_v4());
     let planner_params = AgentExecuteParams {
         execution_id,
@@ -2752,8 +2956,6 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("主 agent 已完成任务拆解。");
-        let planner_status = format!("主 agent 已拆解任务，共 {} 项。{}", plan.tasks.len(), summary);
-        append_team_v3_status_message(runtime_pool, session_id, planner_status.as_str()).await?;
         let plan_meta = json!({
             "task_count": plan.tasks.len(),
             "tasks": plan.tasks.iter().map(|task| task.task_key.clone()).collect::<Vec<_>>()
@@ -2925,24 +3127,40 @@ async fn run_team_v3_execution_orchestrator(
             )
             .await?;
 
-            let dependency_context = dependencies
-                .iter()
-                .filter_map(|dependency_id| {
-                    output_by_task_id
-                        .get(dependency_id)
-                        .map(|output| format!("依赖任务 {} 输出：\n{}", dependency_id, output))
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let blackboard_entries =
-                list_team_v3_blackboard_entries(&runtime_pool, &session_id, 32).await?;
-            let blackboard_context = build_blackboard_context(&blackboard_entries);
+            let is_summary_task = is_team_v3_summary_task(&task);
+            let dependency_context = if is_summary_task {
+                String::new()
+            } else {
+                dependencies
+                    .iter()
+                    .filter_map(|dependency_id| {
+                        output_by_task_id.get(dependency_id).map(|output| {
+                            let compact_output =
+                                truncate_chars(collapse_whitespace(output.as_str()).as_str(), 900);
+                            format!("依赖任务 {} 输出：\n{}", dependency_id, compact_output)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            };
+            let blackboard_entries = list_team_v3_blackboard_entries(
+                &runtime_pool,
+                &session_id,
+                if is_summary_task { 96 } else { 48 },
+            )
+            .await?;
+            let blackboard_context = if is_summary_task {
+                build_blackboard_checkpoint_context(&blackboard_entries)
+            } else {
+                build_blackboard_context(&blackboard_entries)
+            };
             let prompt = build_team_v3_task_prompt(
                 goal_text.as_str(),
                 user_input.as_str(),
                 &task,
                 dependency_context.as_str(),
                 blackboard_context.as_str(),
+                is_summary_task,
             );
 
             let app_handle = app_handle.clone();
@@ -2955,13 +3173,16 @@ async fn run_team_v3_execution_orchestrator(
             let member_id_for_task = member_id.clone();
             let task_id = task.id.clone();
             let task_key = task.task_key.clone();
+            let task_title = task.title.clone();
             let task_key_for_timeout = task.task_key.clone();
+            let is_summary_task_for_task = is_summary_task;
             let rag_enabled_for_task = rag_enabled;
             join_set.spawn(async move {
                 let execution_id = format!(
-                    "team-v3:{}:{}:{}",
+                    "team-v3:{}:{}:{}:{}",
                     session_id_for_task,
                     task_id,
+                    member_id_for_task,
                     Uuid::new_v4()
                 );
                 let executor_params = AgentExecuteParams {
@@ -3010,21 +3231,29 @@ async fn run_team_v3_execution_orchestrator(
                         )),
                     },
                 };
-                (task_id, task_key, member_id_for_task, execution_result)
+                (
+                    task_id,
+                    task_key,
+                    task_title,
+                    member_id_for_task,
+                    is_summary_task_for_task,
+                    execution_result,
+                )
             });
         }
 
         let mut wave_error: Option<String> = None;
         while let Some(joined) = join_set.join_next().await {
-            let (task_id, task_key, member_id, execution_result) = match joined {
-                Ok(result) => result,
-                Err(e) => {
-                    if wave_error.is_none() {
-                        wave_error = Some(format!("Team 并行执行任务失败: {}", e));
+            let (task_id, task_key, task_title, member_id, is_summary_task, execution_result) =
+                match joined {
+                    Ok(result) => result,
+                    Err(e) => {
+                        if wave_error.is_none() {
+                            wave_error = Some(format!("Team 并行执行任务失败: {}", e));
+                        }
+                        continue;
                     }
-                    continue;
-                }
-            };
+                };
 
             match execution_result {
                 Ok(output) => {
@@ -3064,7 +3293,17 @@ async fn run_team_v3_execution_orchestrator(
                         Some(&output_meta),
                     )
                     .await?;
-                    if task_key == "deliver-summary" || summary.is_none() {
+                    append_team_v3_task_memory_layers(
+                        &runtime_pool,
+                        &session_id,
+                        task_id.as_str(),
+                        member_id.as_str(),
+                        task_key.as_str(),
+                        task_title.as_str(),
+                        normalized_content.as_str(),
+                    )
+                    .await?;
+                    if is_summary_task || summary.is_none() {
                         summary = Some(normalized_content.chars().take(300).collect());
                     }
                 }
@@ -3490,21 +3729,6 @@ pub async fn team_v3_start_execution(
         .map_err(|e| e.to_string())?
         .or_else(|| goal_opt.clone().filter(|g| !g.trim().is_empty()))
         .unwrap_or_else(|| "请继续当前 Team 任务并输出最新进展与结论。".to_string());
-
-    let preview = get_team_v3_latest_human_message_preview(&runtime_pool, &session_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let status_text = match preview.clone() {
-        Some(text) => format!("已触发 Team 执行：{}", text),
-        None => "已触发 Team 执行。".to_string(),
-    };
-    if let Err(e) = append_team_v3_status_message(&runtime_pool, &session_id, &status_text).await {
-        tracing::warn!(
-            "team_v3_start_execution: failed to append start message for session {}: {}",
-            session_id,
-            e
-        );
-    }
 
     let (generation, cancellation_token) = create_team_execution_cancellation(&session_id);
     let ai_manager = ai_manager.inner().clone();

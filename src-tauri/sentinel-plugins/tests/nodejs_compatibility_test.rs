@@ -278,6 +278,9 @@ async fn test_nodejs_crypto() {
     assert!(result.is_some());
     let result = result.unwrap();
     assert_eq!(result["random_length"], 16);
-    assert_eq!(result["digest"], "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    assert_eq!(
+        result["digest"],
+        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+    );
     assert_eq!(result["uuid_length"], 36);
 }

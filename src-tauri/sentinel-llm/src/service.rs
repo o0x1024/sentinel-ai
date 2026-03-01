@@ -7,9 +7,7 @@ use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::{message::Image, Message};
-use rig::message::{
-    AssistantContent, DocumentSourceKind, ImageDetail, UserContent,
-};
+use rig::message::{AssistantContent, DocumentSourceKind, ImageDetail, UserContent};
 use rig::one_or_many::OneOrMany;
 use rig::providers::gemini::completion::gemini_api_types::{
     AdditionalParameters, GenerationConfig,
@@ -83,21 +81,27 @@ impl AiService {
         F: FnMut(StreamChunk) -> bool,
     {
         let mut usage = TokenUsage::default();
-        let content = self.send_message_stream_internal(
-            user_prompt,
-            system_prompt,
-            history,
-            image_attachment,
-            execution_id,
-            conversation_id,
-            &mut |chunk| {
-                if let StreamChunk::Usage { input_tokens, output_tokens } = chunk {
-                    usage = TokenUsage::new(input_tokens, output_tokens);
-                    usage.estimate_cost(&self.config.provider, &self.config.model);
-                }
-                on_chunk(chunk)
-            },
-        ).await?;
+        let content = self
+            .send_message_stream_internal(
+                user_prompt,
+                system_prompt,
+                history,
+                image_attachment,
+                execution_id,
+                conversation_id,
+                &mut |chunk| {
+                    if let StreamChunk::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } = chunk
+                    {
+                        usage = TokenUsage::new(input_tokens, output_tokens);
+                        usage.estimate_cost(&self.config.provider, &self.config.model);
+                    }
+                    on_chunk(chunk)
+                },
+            )
+            .await?;
 
         Ok(CompletionResponse { content, usage })
     }
@@ -126,7 +130,8 @@ impl AiService {
             execution_id,
             conversation_id,
             on_chunk,
-        ).await
+        )
+        .await
     }
 
     /// 内部流式发送消息实现
@@ -208,11 +213,16 @@ impl AiService {
         let chat_history = Self::convert_history(history);
         debug!("Chat history: {} messages converted", chat_history.len());
 
-        let mut system_prompt_with_hack = system_prompt.unwrap_or("You are a helpful AI assistant.").to_string();
-        
+        let mut system_prompt_with_hack = system_prompt
+            .unwrap_or("You are a helpful AI assistant.")
+            .to_string();
+
         // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
         let provider_lower = provider_for_agent.to_lowercase();
-        if provider_lower.contains("moonshot") || provider_lower.contains("deepseek") || provider_lower.contains("kimi") {
+        if provider_lower.contains("moonshot")
+            || provider_lower.contains("deepseek")
+            || provider_lower.contains("kimi")
+        {
             if !system_prompt_with_hack.contains("text response") {
                 system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
             }
@@ -729,10 +739,9 @@ impl AiService {
                     StreamedAssistantContent::Reasoning(r),
                 )) => {
                     let piece = r.reasoning.join("");
-                    if !piece.is_empty()
-                        && !on_chunk(StreamChunk::Reasoning(piece)) {
-                            break;
-                        }
+                    if !piece.is_empty() && !on_chunk(StreamChunk::Reasoning(piece)) {
+                        break;
+                    }
                 }
                 Ok(MultiTurnStreamItem::StreamAssistantItem(
                     StreamedAssistantContent::ToolCall { .. },

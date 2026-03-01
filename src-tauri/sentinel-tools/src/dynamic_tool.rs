@@ -144,8 +144,7 @@ impl Tool for DynamicTool {
 
         if let Some(schema) = &self.def.output_schema {
             if should_validate_schema(schema) {
-                validate_schema(schema, &result)
-                    .map_err(DynamicToolError::InvalidOutput)?;
+                validate_schema(schema, &result).map_err(DynamicToolError::InvalidOutput)?;
             }
         }
 
@@ -438,5 +437,4 @@ mod tests {
 
         assert!(result.get("result").is_some());
     }
-
 }

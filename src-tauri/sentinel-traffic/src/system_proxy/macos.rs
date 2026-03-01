@@ -4,9 +4,9 @@
 //! - 设置/清除系统 HTTP/HTTPS/SOCKS 代理
 //! - 获取系统网络服务列表
 
+use super::{ProxyType, SystemProxyConfig, SystemProxyStatus};
 use std::process::Command;
 use tracing::{info, warn};
-use super::{SystemProxyConfig, ProxyType, SystemProxyStatus};
 
 /// 获取所有网络服务名称
 pub fn get_network_services() -> Result<Vec<String>, String> {
@@ -214,7 +214,7 @@ pub fn clear_socks_proxy(service: &str) -> Result<(), String> {
 /// 为所有活动网络服务设置代理
 pub fn set_system_proxy(config: &SystemProxyConfig) -> Result<(), String> {
     let services = get_active_network_services()?;
-    
+
     if services.is_empty() {
         return Err("No active network services found".to_string());
     }
@@ -241,7 +241,7 @@ pub fn set_system_proxy(config: &SystemProxyConfig) -> Result<(), String> {
 /// 为所有活动网络服务设置 HTTP 和 HTTPS 代理
 pub fn set_system_http_https_proxy(host: &str, port: u16) -> Result<(), String> {
     let services = get_active_network_services()?;
-    
+
     if services.is_empty() {
         return Err("No active network services found".to_string());
     }
@@ -259,7 +259,7 @@ pub fn set_system_http_https_proxy(host: &str, port: u16) -> Result<(), String> 
 /// 清除所有活动网络服务的代理
 pub fn clear_system_proxy() -> Result<(), String> {
     let services = get_active_network_services()?;
-    
+
     info!("Clearing system proxy for services: {:?}", services);
 
     for service in &services {
@@ -278,7 +278,7 @@ pub fn get_proxy_status(service: &str) -> Result<SystemProxyStatus, String> {
         .args(["-getwebproxy", service])
         .output()
         .map_err(|e| format!("Failed to get web proxy: {}", e))?;
-    
+
     let http_info = String::from_utf8_lossy(&http_output.stdout);
     let http_enabled = http_info.contains("Enabled: Yes");
     let http_host = parse_proxy_field(&http_info, "Server:");
@@ -289,7 +289,7 @@ pub fn get_proxy_status(service: &str) -> Result<SystemProxyStatus, String> {
         .args(["-getsecurewebproxy", service])
         .output()
         .map_err(|e| format!("Failed to get secure web proxy: {}", e))?;
-    
+
     let https_info = String::from_utf8_lossy(&https_output.stdout);
     let https_enabled = https_info.contains("Enabled: Yes");
     let https_host = parse_proxy_field(&https_info, "Server:");
@@ -300,7 +300,7 @@ pub fn get_proxy_status(service: &str) -> Result<SystemProxyStatus, String> {
         .args(["-getsocksfirewallproxy", service])
         .output()
         .map_err(|e| format!("Failed to get SOCKS proxy: {}", e))?;
-    
+
     let socks_info = String::from_utf8_lossy(&socks_output.stdout);
     let socks_enabled = socks_info.contains("Enabled: Yes");
     let socks_host = parse_proxy_field(&socks_info, "Server:");
@@ -349,7 +349,7 @@ fn parse_proxy_port(info: &str, field: &str) -> Option<u16> {
 /// 设置代理绕过列表
 pub fn set_proxy_bypass(service: &str, bypass_domains: &[&str]) -> Result<(), String> {
     let domains = bypass_domains.join(" ");
-    
+
     let output = Command::new("networksetup")
         .args(["-setproxybypassdomains", service, &domains])
         .output()
@@ -367,11 +367,8 @@ pub fn set_proxy_bypass(service: &str, bypass_domains: &[&str]) -> Result<(), St
 
 /// 设置默认的代理绕过列表（本地地址）
 pub fn set_default_proxy_bypass(service: &str) -> Result<(), String> {
-    let default_bypass = [
-        "*.local",
-        "169.254/16",
-    ];
-    
+    let default_bypass = ["*.local", "169.254/16"];
+
     set_proxy_bypass(service, &default_bypass)
 }
 
@@ -403,4 +400,3 @@ mod tests {
         }
     }
 }
-

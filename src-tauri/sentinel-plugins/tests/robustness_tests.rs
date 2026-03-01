@@ -15,57 +15,62 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 fn metadata(id: &str, name: &str) -> PluginMetadata {
-  PluginMetadata {
-    id: id.to_string(),
-    name: name.to_string(),
-    version: "1.0.0".to_string(),
-    author: None,
-    main_category: "traffic".to_string(),
-    category: "test".to_string(),
-    default_severity: Severity::Info,
-    tags: vec!["robustness".to_string()],
-    description: Some("Robustness test plugin".to_string()),
-  }
+    PluginMetadata {
+        id: id.to_string(),
+        name: name.to_string(),
+        version: "1.0.0".to_string(),
+        author: None,
+        main_category: "traffic".to_string(),
+        category: "test".to_string(),
+        default_severity: Severity::Info,
+        tags: vec!["robustness".to_string()],
+        description: Some("Robustness test plugin".to_string()),
+    }
 }
 
-fn tx(url: String, method: String, headers: HashMap<String, String>, body: Vec<u8>) -> HttpTransaction {
-  use chrono::Utc;
+fn tx(
+    url: String,
+    method: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+) -> HttpTransaction {
+    use chrono::Utc;
 
-  HttpTransaction {
-    request: sentinel_plugins::RequestContext {
-      id: uuid::Uuid::new_v4().to_string(),
-      method,
-      url,
-      headers,
-      body,
-      content_type: None,
-      query_params: HashMap::new(),
-      is_https: true,
-      timestamp: Utc::now(),
-      was_edited: false,
-      edited_method: None,
-      edited_url: None,
-      edited_headers: None,
-      edited_body: None,
-    },
-    response: None,
-  }
+    HttpTransaction {
+        request: sentinel_plugins::RequestContext {
+            id: uuid::Uuid::new_v4().to_string(),
+            method,
+            url,
+            headers,
+            body,
+            content_type: None,
+            query_params: HashMap::new(),
+            is_https: true,
+            timestamp: Utc::now(),
+            was_edited: false,
+            edited_method: None,
+            edited_url: None,
+            edited_headers: None,
+            edited_body: None,
+        },
+        response: None,
+    }
 }
 
 fn simple_tx() -> HttpTransaction {
-  tx(
-    "https://example.com/test?a=1".to_string(),
-    "GET".to_string(),
-    HashMap::new(),
-    vec![],
-  )
+    tx(
+        "https://example.com/test?a=1".to_string(),
+        "GET".to_string(),
+        HashMap::new(),
+        vec![],
+    )
 }
 
 /// 1) Invalid / edge inputs (bounded fuzz-like cases)
 #[tokio::test]
 #[ignore]
 async fn test_edge_inputs_smoke() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(transaction) {
   const url = String(transaction.request.url || "");
   const method = String(transaction.request.method || "");
@@ -87,72 +92,88 @@ export function scan_transaction(transaction) {
 }
 "#;
 
-  let exec =
-    PluginExecutor::new(metadata("rb-edge-inputs", "Edge Inputs"), code.to_string(), 1000)
-      .expect("executor");
+    let exec = PluginExecutor::new(
+        metadata("rb-edge-inputs", "Edge Inputs"),
+        code.to_string(),
+        1000,
+    )
+    .expect("executor");
 
-  let mut cases = vec![];
+    let mut cases = vec![];
 
-  // Empty / odd URL
-  cases.push(tx("".to_string(), "GET".to_string(), HashMap::new(), vec![]));
-  cases.push(tx(
-    "not a url".to_string(),
-    "GET".to_string(),
-    HashMap::new(),
-    vec![],
-  ));
-  cases.push(tx(
-    format!("https://example.com/{}", "a".repeat(8192)),
-    "GET".to_string(),
-    HashMap::new(),
-    vec![],
-  ));
+    // Empty / odd URL
+    cases.push(tx(
+        "".to_string(),
+        "GET".to_string(),
+        HashMap::new(),
+        vec![],
+    ));
+    cases.push(tx(
+        "not a url".to_string(),
+        "GET".to_string(),
+        HashMap::new(),
+        vec![],
+    ));
+    cases.push(tx(
+        format!("https://example.com/{}", "a".repeat(8192)),
+        "GET".to_string(),
+        HashMap::new(),
+        vec![],
+    ));
 
-  // Many headers + large values
-  let mut headers = HashMap::new();
-  for i in 0..200 {
-    headers.insert(format!("x-test-{}", i), "v".repeat(256));
-  }
-  cases.push(tx(
-    "https://example.com/h".to_string(),
-    "POST".to_string(),
-    headers,
-    vec![0u8; 1024 * 128],
-  ));
+    // Many headers + large values
+    let mut headers = HashMap::new();
+    for i in 0..200 {
+        headers.insert(format!("x-test-{}", i), "v".repeat(256));
+    }
+    cases.push(tx(
+        "https://example.com/h".to_string(),
+        "POST".to_string(),
+        headers,
+        vec![0u8; 1024 * 128],
+    ));
 
-  for t in cases {
-    let res = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(t)).await;
-    assert!(res.is_ok(), "scan timed out");
-    let findings = res.unwrap().expect("scan should not fail");
-    assert!(!findings.is_empty(), "expected at least one finding");
-  }
+    for t in cases {
+        let res = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(t)).await;
+        assert!(res.is_ok(), "scan timed out");
+        let findings = res.unwrap().expect("scan should not fail");
+        assert!(!findings.is_empty(), "expected at least one finding");
+    }
 }
 
 /// 2) Error propagation: plugin throws -> host returns Err (no panic / no hang)
 #[tokio::test]
 #[ignore]
 async fn test_plugin_error_propagation() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(_transaction) {
   throw new Error("intentional failure");
 }
 "#;
 
-  let exec = PluginExecutor::new(metadata("rb-error-prop", "Error Propagation"), code.to_string(), 1000)
+    let exec = PluginExecutor::new(
+        metadata("rb-error-prop", "Error Propagation"),
+        code.to_string(),
+        1000,
+    )
     .expect("executor");
 
-  let res = tokio::time::timeout(Duration::from_secs(2), exec.scan_transaction(simple_tx())).await;
-  assert!(res.is_ok(), "scan timed out");
-  // Plugin errors may be caught and returned as empty findings or Err
-  let scan_result = res.unwrap();
-  assert!(scan_result.is_err() || scan_result.unwrap().is_empty(), "expected plugin error or empty findings");
+    let res =
+        tokio::time::timeout(Duration::from_secs(2), exec.scan_transaction(simple_tx())).await;
+    assert!(res.is_ok(), "scan timed out");
+    // Plugin errors may be caught and returned as empty findings or Err
+    let scan_result = res.unwrap();
+    assert!(
+        scan_result.is_err() || scan_result.unwrap().is_empty(),
+        "expected plugin error or empty findings"
+    );
 }
 
 /// 3) Slow plugin: timeout does not interrupt V8 execution, but system should recover once it finishes
 #[tokio::test]
 #[ignore]
 async fn test_slow_plugin_timeout_recovery() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(_transaction) {
   const start = Date.now();
   while (Date.now() - start < 200) {
@@ -170,45 +191,49 @@ export function scan_transaction(_transaction) {
 }
 "#;
 
-  let exec = Arc::new(
-    PluginExecutor::new(metadata("rb-slow-recovery", "Slow Recovery"), code.to_string(), 1000)
-      .expect("executor"),
-  );
+    let exec = Arc::new(
+        PluginExecutor::new(
+            metadata("rb-slow-recovery", "Slow Recovery"),
+            code.to_string(),
+            1000,
+        )
+        .expect("executor"),
+    );
 
-  let total = 100usize;
-  let success = Arc::new(AtomicUsize::new(0));
-  let sem = Arc::new(Semaphore::new(20));
+    let total = 100usize;
+    let success = Arc::new(AtomicUsize::new(0));
+    let sem = Arc::new(Semaphore::new(20));
 
-  let mut handles = vec![];
-  for _ in 0..total {
-    let exec = exec.clone();
-    let success = success.clone();
-    let sem = sem.clone();
-    let handle = tokio::spawn(async move {
-      let _permit = sem.acquire().await.expect("permit");
-      if exec.scan_transaction(simple_tx()).await.is_ok() {
-        success.fetch_add(1, Ordering::Relaxed);
-      }
-    });
-    handles.push(handle);
-  }
-
-  let joined = tokio::time::timeout(Duration::from_secs(30), async {
-    for h in handles {
-      let _ = h.await;
+    let mut handles = vec![];
+    for _ in 0..total {
+        let exec = exec.clone();
+        let success = success.clone();
+        let sem = sem.clone();
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("permit");
+            if exec.scan_transaction(simple_tx()).await.is_ok() {
+                success.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        handles.push(handle);
     }
-  })
-  .await;
 
-  assert!(joined.is_ok(), "join timed out");
-  assert_eq!(success.load(Ordering::Relaxed), total);
+    let joined = tokio::time::timeout(Duration::from_secs(30), async {
+        for h in handles {
+            let _ = h.await;
+        }
+    })
+    .await;
+
+    assert!(joined.is_ok(), "join timed out");
+    assert_eq!(success.load(Ordering::Relaxed), total);
 }
 
 /// 4) Concurrency / backpressure: submit more jobs than channel capacity and ensure completion
 #[tokio::test]
 #[ignore]
 async fn test_executor_backpressure_under_load() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(transaction) {
   const len = (transaction.request.body || []).length;
   return [{
@@ -223,53 +248,57 @@ export function scan_transaction(transaction) {
 }
 "#;
 
-  let exec = Arc::new(
-    PluginExecutor::new(metadata("rb-backpressure", "Backpressure"), code.to_string(), 10_000)
-      .expect("executor"),
-  );
+    let exec = Arc::new(
+        PluginExecutor::new(
+            metadata("rb-backpressure", "Backpressure"),
+            code.to_string(),
+            10_000,
+        )
+        .expect("executor"),
+    );
 
-  let total = 500usize;
-  let success = Arc::new(AtomicUsize::new(0));
-  let sem = Arc::new(Semaphore::new(100));
+    let total = 500usize;
+    let success = Arc::new(AtomicUsize::new(0));
+    let sem = Arc::new(Semaphore::new(100));
 
-  let mut handles = vec![];
-  for _ in 0..total {
-    let exec = exec.clone();
-    let success = success.clone();
-    let sem = sem.clone();
-    let handle = tokio::spawn(async move {
-      let _permit = sem.acquire().await.expect("permit");
-      let mut h = HashMap::new();
-      h.insert("x".to_string(), "y".to_string());
-      let t = tx(
-        "https://example.com/q".to_string(),
-        "POST".to_string(),
-        h,
-        vec![1u8; 1024],
-      );
-      if exec.scan_transaction(t).await.is_ok() {
-        success.fetch_add(1, Ordering::Relaxed);
-      }
-    });
-    handles.push(handle);
-  }
-
-  let joined = tokio::time::timeout(Duration::from_secs(10), async {
-    for h in handles {
-      let _ = h.await;
+    let mut handles = vec![];
+    for _ in 0..total {
+        let exec = exec.clone();
+        let success = success.clone();
+        let sem = sem.clone();
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("permit");
+            let mut h = HashMap::new();
+            h.insert("x".to_string(), "y".to_string());
+            let t = tx(
+                "https://example.com/q".to_string(),
+                "POST".to_string(),
+                h,
+                vec![1u8; 1024],
+            );
+            if exec.scan_transaction(t).await.is_ok() {
+                success.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        handles.push(handle);
     }
-  })
-  .await;
 
-  assert!(joined.is_ok(), "join timed out (possible queue stall)");
-  assert_eq!(success.load(Ordering::Relaxed), total);
+    let joined = tokio::time::timeout(Duration::from_secs(10), async {
+        for h in handles {
+            let _ = h.await;
+        }
+    })
+    .await;
+
+    assert!(joined.is_ok(), "join timed out (possible queue stall)");
+    assert_eq!(success.load(Ordering::Relaxed), total);
 }
 
 /// 5) Restart / stats: verify restart resets instance counters and increments restart count
 #[tokio::test]
 #[ignore]
 async fn test_executor_restart_and_stats() {
-  let code = r#"
+    let code = r#"
 if (typeof globalCounter === 'undefined') {
   globalThis.globalCounter = 0;
 }
@@ -287,40 +316,40 @@ export function scan_transaction(_transaction) {
 }
 "#;
 
-  let exec = PluginExecutor::new(metadata("rb-restart", "Restart Stats"), code.to_string(), 3)
-    .expect("executor");
+    let exec = PluginExecutor::new(metadata("rb-restart", "Restart Stats"), code.to_string(), 3)
+        .expect("executor");
 
-  for _ in 0..5 {
-    let _ = exec.scan_transaction(simple_tx()).await;
-  }
+    for _ in 0..5 {
+        let _ = exec.scan_transaction(simple_tx()).await;
+    }
 
-  let s1 = exec.get_stats().await.expect("stats");
-  assert!(s1.current_instance_executions >= 5);
+    let s1 = exec.get_stats().await.expect("stats");
+    assert!(s1.current_instance_executions >= 5);
 
-  exec.restart().await.expect("restart");
+    exec.restart().await.expect("restart");
 
-  let s2 = exec.get_stats().await.expect("stats");
-  assert_eq!(s2.current_instance_executions, 0);
-  assert!(s2.restart_count >= 1);
+    let s2 = exec.get_stats().await.expect("stats");
+    assert_eq!(s2.current_instance_executions, 0);
+    assert!(s2.restart_count >= 1);
 }
 
 /// 6) Hot update consistency via PluginManager (code replacement should take effect)
 #[tokio::test]
 #[ignore]
 async fn test_plugin_manager_hot_update() {
-  let manager = PluginManager::new();
-  let plugin_id = "rb-hot-update";
+    let manager = PluginManager::new();
+    let plugin_id = "rb-hot-update";
 
-  manager
-    .register_plugin(
-      plugin_id.to_string(),
-      metadata(plugin_id, "Hot Update"),
-      true,
-    )
-    .await
-    .expect("register");
+    manager
+        .register_plugin(
+            plugin_id.to_string(),
+            metadata(plugin_id, "Hot Update"),
+            true,
+        )
+        .await
+        .expect("register");
 
-  let code_v1 = r#"
+    let code_v1 = r#"
 export function scan_transaction(_transaction) {
   return [{
     vuln_type: "robust_hot_update",
@@ -333,18 +362,18 @@ export function scan_transaction(_transaction) {
   }];
 }
 "#;
-  manager
-    .set_plugin_code(plugin_id.to_string(), code_v1.to_string())
-    .await
-    .expect("set code v1");
+    manager
+        .set_plugin_code(plugin_id.to_string(), code_v1.to_string())
+        .await
+        .expect("set code v1");
 
-  let f1 = manager
-    .scan_transaction(plugin_id, &simple_tx())
-    .await
-    .expect("scan v1");
-  assert!(f1.iter().any(|f| f.evidence == "v1"));
+    let f1 = manager
+        .scan_transaction(plugin_id, &simple_tx())
+        .await
+        .expect("scan v1");
+    assert!(f1.iter().any(|f| f.evidence == "v1"));
 
-  let code_v2 = r#"
+    let code_v2 = r#"
 export function scan_transaction(_transaction) {
   return [{
     vuln_type: "robust_hot_update",
@@ -357,23 +386,23 @@ export function scan_transaction(_transaction) {
   }];
 }
 "#;
-  manager
-    .set_plugin_code(plugin_id.to_string(), code_v2.to_string())
-    .await
-    .expect("set code v2");
+    manager
+        .set_plugin_code(plugin_id.to_string(), code_v2.to_string())
+        .await
+        .expect("set code v2");
 
-  let f2 = manager
-    .scan_transaction(plugin_id, &simple_tx())
-    .await
-    .expect("scan v2");
-  assert!(f2.iter().any(|f| f.evidence == "v2"));
+    let f2 = manager
+        .scan_transaction(plugin_id, &simple_tx())
+        .await
+        .expect("scan v2");
+    assert!(f2.iter().any(|f| f.evidence == "v2"));
 }
 
 /// 7) Cross-platform strings: Windows-like paths, CRLF headers, odd casing
 #[tokio::test]
 #[ignore]
 async fn test_cross_platform_string_inputs() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(transaction) {
   const url = String(transaction.request.url || "");
   const method = String(transaction.request.method || "");
@@ -391,31 +420,31 @@ export function scan_transaction(transaction) {
 }
 "#;
 
-  let exec = PluginExecutor::new(
-    metadata("rb-cross-platform", "Cross Platform Inputs"),
-    code.to_string(),
-    1000,
-  )
-  .expect("executor");
+    let exec = PluginExecutor::new(
+        metadata("rb-cross-platform", "Cross Platform Inputs"),
+        code.to_string(),
+        1000,
+    )
+    .expect("executor");
 
-  let mut headers = HashMap::new();
-  headers.insert("X-Test".to_string(), "line1\r\nline2".to_string());
-  let t = tx(
-    r#"C:\Users\name\file.txt"#.to_string(),
-    "pOsT".to_string(),
-    headers,
-    vec![0u8; 16],
-  );
+    let mut headers = HashMap::new();
+    headers.insert("X-Test".to_string(), "line1\r\nline2".to_string());
+    let t = tx(
+        r#"C:\Users\name\file.txt"#.to_string(),
+        "pOsT".to_string(),
+        headers,
+        vec![0u8; 16],
+    );
 
-  let findings = exec.scan_transaction(t).await.expect("scan ok");
-  assert!(!findings.is_empty());
+    let findings = exec.scan_transaction(t).await.expect("scan ok");
+    assert!(!findings.is_empty());
 }
 
 /// 8) "Sandbox negative" attempts: try to access typical privileged globals and handle errors
 #[tokio::test]
 #[ignore]
 async fn test_sandbox_negative_attempts_smoke() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(_transaction) {
   const checks = [];
   // Common Node globals should not exist
@@ -443,22 +472,25 @@ export function scan_transaction(_transaction) {
 }
 "#;
 
-  let exec =
-    PluginExecutor::new(metadata("rb-sandbox", "Sandbox Negative Attempts"), code.to_string(), 1000)
-      .expect("executor");
+    let exec = PluginExecutor::new(
+        metadata("rb-sandbox", "Sandbox Negative Attempts"),
+        code.to_string(),
+        1000,
+    )
+    .expect("executor");
 
-  let findings = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(simple_tx()))
-    .await
-    .expect("timeout")
-    .expect("scan ok");
-  assert!(!findings.is_empty());
+    let findings = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(simple_tx()))
+        .await
+        .expect("timeout")
+        .expect("scan ok");
+    assert!(!findings.is_empty());
 }
 
 /// 9) Log flood (bounded): ensure large console output does not crash the host
 #[tokio::test]
 #[ignore]
 async fn test_log_flood_bounded() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(_transaction) {
   for (let i = 0; i < 200; i++) {
     console.log("log_flood_line=" + i);
@@ -475,14 +507,17 @@ export function scan_transaction(_transaction) {
 }
 "#;
 
-  let exec =
-    PluginExecutor::new(metadata("rb-log-flood", "Log Flood"), code.to_string(), 1000)
-      .expect("executor");
+    let exec = PluginExecutor::new(
+        metadata("rb-log-flood", "Log Flood"),
+        code.to_string(),
+        1000,
+    )
+    .expect("executor");
 
-  let t = tokio::time::timeout(Duration::from_secs(5), exec.scan_transaction(simple_tx())).await;
-  assert!(t.is_ok(), "timed out");
-  let findings = t.unwrap().expect("scan ok");
-  assert!(!findings.is_empty());
+    let t = tokio::time::timeout(Duration::from_secs(5), exec.scan_transaction(simple_tx())).await;
+    assert!(t.is_ok(), "timed out");
+    let findings = t.unwrap().expect("scan ok");
+    assert!(!findings.is_empty());
 }
 
 /// 11) V8 terminate execution: stop a synchronous infinite loop and keep executor usable
@@ -493,7 +528,7 @@ export function scan_transaction(_transaction) {
 #[tokio::test]
 #[ignore]
 async fn test_terminate_execution_stops_infinite_loop() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(transaction) {
   const url = String(transaction.request.url || "");
   if (url.includes("loop")) {
@@ -512,55 +547,58 @@ export function scan_transaction(transaction) {
 }
 "#;
 
-  let exec = Arc::new(
-    PluginExecutor::new(
-      metadata("rb-terminate-exec", "TerminateExecution"),
-      code.to_string(),
-      1000,
-    )
-    .expect("executor"),
-  );
+    let exec = Arc::new(
+        PluginExecutor::new(
+            metadata("rb-terminate-exec", "TerminateExecution"),
+            code.to_string(),
+            1000,
+        )
+        .expect("executor"),
+    );
 
-  // Trigger the infinite-loop path
-  let mut headers = HashMap::new();
-  headers.insert("x-mode".to_string(), "loop".to_string());
-  let loop_txn = tx(
-    "https://example.com/loop".to_string(),
-    "GET".to_string(),
-    headers,
-    vec![],
-  );
+    // Trigger the infinite-loop path
+    let mut headers = HashMap::new();
+    headers.insert("x-mode".to_string(), "loop".to_string());
+    let loop_txn = tx(
+        "https://example.com/loop".to_string(),
+        "GET".to_string(),
+        headers,
+        vec![],
+    );
 
-  let exec_for_task = exec.clone();
-  let task = tokio::spawn(async move { exec_for_task.scan_transaction(loop_txn).await });
+    let exec_for_task = exec.clone();
+    let task = tokio::spawn(async move { exec_for_task.scan_transaction(loop_txn).await });
 
-  // Give JS a moment to enter the loop, then terminate
-  tokio::time::sleep(Duration::from_millis(100)).await;
-  assert!(!task.is_finished(), "loop task finished unexpectedly before terminate");
-  exec.terminate_execution().await;
+    // Give JS a moment to enter the loop, then terminate
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !task.is_finished(),
+        "loop task finished unexpectedly before terminate"
+    );
+    exec.terminate_execution().await;
 
-  // Must return quickly; scan_transaction currently swallows JS errors and returns Ok(findings)
-  let terminated = tokio::time::timeout(Duration::from_secs(3), task).await;
-  assert!(terminated.is_ok(), "terminate did not unblock within 3s");
-  let res = terminated.unwrap().expect("join ok").expect("scan ok");
-  assert!(
-    res.is_empty(),
-    "expected no findings from terminated infinite loop path"
-  );
+    // Must return quickly; scan_transaction currently swallows JS errors and returns Ok(findings)
+    let terminated = tokio::time::timeout(Duration::from_secs(3), task).await;
+    assert!(terminated.is_ok(), "terminate did not unblock within 3s");
+    let res = terminated.unwrap().expect("join ok").expect("scan ok");
+    assert!(
+        res.is_empty(),
+        "expected no findings from terminated infinite loop path"
+    );
 
-  // Ensure executor is still usable (non-loop path)
-  let ok_txn = simple_tx();
-  let ok_res = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(ok_txn)).await;
-  assert!(ok_res.is_ok(), "normal call timed out after termination");
-  let findings = ok_res.unwrap().expect("normal call should succeed");
-  assert!(!findings.is_empty(), "expected findings on normal path");
+    // Ensure executor is still usable (non-loop path)
+    let ok_txn = simple_tx();
+    let ok_res = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(ok_txn)).await;
+    assert!(ok_res.is_ok(), "normal call timed out after termination");
+    let findings = ok_res.unwrap().expect("normal call should succeed");
+    assert!(!findings.is_empty(), "expected findings on normal path");
 }
 
 /// 10) Slow execution timeout (client-side)
 #[tokio::test]
 #[ignore]
 async fn test_slow_execution_timeout() {
-  let code = r#"
+    let code = r#"
 export function scan_transaction(_transaction) {
   let sum = 0;
   for (let i = 0; i < 1e8; i++) {
@@ -578,17 +616,20 @@ export function scan_transaction(_transaction) {
 }
 "#;
 
-  let exec = PluginExecutor::new(metadata("rb-slow", "Slow Plugin"), code.to_string(), 1000)
-    .expect("executor");
+    let exec = PluginExecutor::new(metadata("rb-slow", "Slow Plugin"), code.to_string(), 1000)
+        .expect("executor");
 
-  // First call: we expect our *wait* to time out (but the executor thread keeps running)
-  let t1 = tokio::time::timeout(Duration::from_millis(300), exec.scan_transaction(simple_tx())).await;
-  assert!(t1.is_err(), "expected client-side timeout");
+    // First call: we expect our *wait* to time out (but the executor thread keeps running)
+    let t1 = tokio::time::timeout(
+        Duration::from_millis(300),
+        exec.scan_transaction(simple_tx()),
+    )
+    .await;
+    assert!(t1.is_err(), "expected client-side timeout");
 
-  // Second call: should succeed once the slow execution drains (bounded < 3s)
-  let t2 = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(simple_tx())).await;
-  assert!(t2.is_ok(), "second call timed out");
-  let findings = t2.unwrap().expect("second call should succeed");
-  assert!(!findings.is_empty());
+    // Second call: should succeed once the slow execution drains (bounded < 3s)
+    let t2 = tokio::time::timeout(Duration::from_secs(3), exec.scan_transaction(simple_tx())).await;
+    assert!(t2.is_ok(), "second call timed out");
+    let findings = t2.unwrap().expect("second call should succeed");
+    assert!(!findings.is_empty());
 }
-

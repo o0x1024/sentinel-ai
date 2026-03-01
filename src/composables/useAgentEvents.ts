@@ -324,6 +324,66 @@ export function useAgentEvents(
     return visit(raw)
   }
 
+  const tryParseJsonObject = (raw: unknown): Record<string, any> | null => {
+    if (!raw) return null
+    if (typeof raw === 'object' && !Array.isArray(raw)) {
+      return raw as Record<string, any>
+    }
+    if (typeof raw !== 'string') return null
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, any>
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  const buildShellFallbackNotice = (resultRaw: unknown): string | null => {
+    const parsed = tryParseJsonObject(resultRaw)
+    if (!parsed) return null
+    const fallbackFrom = String(parsed.fallback_from || '').trim().toLowerCase()
+    const executionMode = String(parsed.execution_mode || '').trim().toLowerCase()
+    if (fallbackFrom !== 'docker' || executionMode !== 'host') return null
+    const reason = String(parsed.fallback_reason || '').trim()
+    if (reason) {
+      return `系统提示: shell 工具在 Docker 中执行失败，已自动回退到宿主机。原因: ${reason}`
+    }
+    return '系统提示: shell 工具在 Docker 中执行失败，已自动回退到宿主机。'
+  }
+
+  const pushShellFallbackNotice = (
+    toolName: string | undefined,
+    resultRaw: unknown,
+    executionIdForMsg: string,
+    toolCallId?: string,
+  ) => {
+    if ((toolName || '').toLowerCase() !== 'shell') return
+    const notice = buildShellFallbackNotice(resultRaw)
+    if (!notice) return
+    const normalizedToolCallId = String(toolCallId || '').trim()
+    if (normalizedToolCallId) {
+      const existed = messages.value.some((item) => {
+        if (item.metadata?.kind !== 'shell_fallback_notice') return false
+        return String(item.metadata?.tool_call_id || '').trim() === normalizedToolCallId
+      })
+      if (existed) return
+    }
+    messages.value.push({
+      id: crypto.randomUUID(),
+      type: 'system',
+      content: notice,
+      timestamp: Date.now(),
+      metadata: {
+        kind: 'shell_fallback_notice',
+        execution_id: executionIdForMsg,
+        tool_call_id: normalizedToolCallId || undefined,
+      },
+    })
+  }
+
   const hasMessages = computed(() => messages.value.length > 0)
   const lastMessage = computed(() => messages.value[messages.value.length - 1])
 
@@ -767,6 +827,12 @@ export function useAgentEvents(
             existingMsg.metadata.tool_result = resultContent
             existingMsg.metadata.success = success
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
+            pushShellFallbackNotice(
+              callInfo.tool_name,
+              newPayload.result,
+              payload.execution_id,
+              newPayload.tool_call_id,
+            )
             
             // 如果是 interactive_shell 工具，自动打开终端面板，关闭 todos 面板
             if (callInfo.tool_name === 'interactive_shell') {
@@ -842,6 +908,12 @@ export function useAgentEvents(
           matchingToolCall.metadata.tool_result = payload.tool_result
           matchingToolCall.metadata.success = success
           matchingToolCall.content = `工具调用完成: ${payload.tool_name}`
+          pushShellFallbackNotice(
+            payload.tool_name,
+            payload.tool_result,
+            payload.execution_id,
+            String(matchingToolCall.metadata?.tool_call_id || ''),
+          )
           
           // 旧格式路径：如果是 interactive_shell 工具，也自动打开终端面板，关闭 todos 面板
           if (payload.tool_name === 'interactive_shell') {

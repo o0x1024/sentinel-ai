@@ -1,7 +1,7 @@
-use anyhow::Result;
+use crate::core::models::database::{ConversationSegment, GlobalSummary};
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
-use crate::core::models::database::{ConversationSegment, GlobalSummary};
+use anyhow::Result;
 
 impl DatabaseService {
     pub async fn ensure_sliding_window_tables_exist_internal(&self) -> Result<()> {
@@ -21,8 +21,10 @@ impl DatabaseService {
                         summary TEXT NOT NULL,
                         summary_tokens INTEGER NOT NULL,
                         created_at BIGINT NOT NULL
-                    )"#
-                ).execute(pool).await?;
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
 
                 sqlx::query(
                     r#"CREATE INDEX IF NOT EXISTS idx_segments_conv ON conversation_segments(conversation_id, segment_index)"#
@@ -36,8 +38,10 @@ impl DatabaseService {
                         summary_tokens INTEGER NOT NULL,
                         covers_up_to_index INTEGER NOT NULL,
                         updated_at BIGINT NOT NULL
-                    )"#
-                ).execute(pool).await?;
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
@@ -50,8 +54,10 @@ impl DatabaseService {
                         summary TEXT NOT NULL,
                         summary_tokens INTEGER NOT NULL,
                         created_at BIGINT NOT NULL
-                    )"#
-                ).execute(pool).await?;
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
 
                 sqlx::query(
                     r#"CREATE INDEX IF NOT EXISTS idx_segments_conv ON conversation_segments(conversation_id, segment_index)"#
@@ -65,8 +71,10 @@ impl DatabaseService {
                         summary_tokens INTEGER NOT NULL,
                         covers_up_to_index INTEGER NOT NULL,
                         updated_at BIGINT NOT NULL
-                    )"#
-                ).execute(pool).await?;
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
@@ -79,8 +87,10 @@ impl DatabaseService {
                         summary TEXT NOT NULL,
                         summary_tokens INTEGER NOT NULL,
                         created_at BIGINT NOT NULL
-                    )"#
-                ).execute(pool).await?;
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
 
                 sqlx::query(
                     r#"CREATE INDEX IF NOT EXISTS idx_segments_conv ON conversation_segments(conversation_id, segment_index)"#
@@ -94,8 +104,10 @@ impl DatabaseService {
                         summary_tokens INTEGER NOT NULL,
                         covers_up_to_index INTEGER NOT NULL,
                         updated_at BIGINT NOT NULL
-                    )"#
-                ).execute(pool).await?;
+                    )"#,
+                )
+                .execute(pool)
+                .await?;
             }
         }
 
@@ -113,7 +125,7 @@ impl DatabaseService {
         let (global_summary, segments) = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let global_summary = sqlx::query_as::<_, GlobalSummary>(
-                    "SELECT * FROM conversation_global_summaries WHERE conversation_id = $1"
+                    "SELECT * FROM conversation_global_summaries WHERE conversation_id = $1",
                 )
                 .bind(conversation_id)
                 .fetch_optional(pool)
@@ -129,7 +141,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 let global_summary = sqlx::query_as::<_, GlobalSummary>(
-                    "SELECT * FROM conversation_global_summaries WHERE conversation_id = ?"
+                    "SELECT * FROM conversation_global_summaries WHERE conversation_id = ?",
                 )
                 .bind(conversation_id)
                 .fetch_optional(pool)
@@ -145,7 +157,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 let global_summary = sqlx::query_as::<_, GlobalSummary>(
-                    "SELECT * FROM conversation_global_summaries WHERE conversation_id = ?"
+                    "SELECT * FROM conversation_global_summaries WHERE conversation_id = ?",
                 )
                 .bind(conversation_id)
                 .fetch_optional(pool)
@@ -164,7 +176,10 @@ impl DatabaseService {
         Ok((global_summary, segments))
     }
 
-    pub async fn save_conversation_segment_internal(&self, segment: &ConversationSegment) -> Result<()> {
+    pub async fn save_conversation_segment_internal(
+        &self,
+        segment: &ConversationSegment,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -294,7 +309,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn delete_conversation_segments_internal(&self, segment_ids: &[String]) -> Result<()> {
+    pub async fn delete_conversation_segments_internal(
+        &self,
+        segment_ids: &[String],
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -325,7 +343,7 @@ impl DatabaseService {
                 }
             }
         }
-        
+
         Ok(())
     }
 

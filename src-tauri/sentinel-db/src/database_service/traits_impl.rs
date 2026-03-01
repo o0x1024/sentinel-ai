@@ -1,26 +1,25 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::core::models::agent::{AgentExecutionResult, AgentSessionData, AgentTask, SessionLog};
 use crate::core::models::ai::AiRole;
+use crate::core::models::asset::*;
 use crate::core::models::database::{
-    AiConversation, AiMessage, Configuration, NotificationRule, ScanTask, Vulnerability, ToolExecution, DatabaseStats, ExecutionStatistics, McpServerConfig, MemoryExecution
+    AiConversation, AiMessage, Configuration, DatabaseStats, ExecutionStatistics, McpServerConfig,
+    MemoryExecution, NotificationRule, ScanTask, ToolExecution, Vulnerability,
 };
-use crate::core::models::agent::{
-    AgentTask, AgentSessionData, AgentExecutionResult, SessionLog,
+use crate::core::models::rag_config::RagConfig;
+use crate::core::models::scan_session::{
+    CreateScanSessionRequest, ScanProgress, ScanSession, ScanSessionStatus, ScanStage,
+    UpdateScanSessionRequest,
 };
 use crate::core::models::workflow::WorkflowStepDetail;
-use sentinel_plugins::PluginRecord;
-use crate::core::models::rag_config::RagConfig;
-use crate::core::models::asset::*;
-use crate::database_service::rag::{RagCollectionRow, RagDocumentSourceRow, RagChunkRow};
 use crate::database_service::proxifier::{ProxifierProxyRecord, ProxifierRuleRecord};
-use crate::database_service::skills::{Skill, SkillDetail, SkillSummary, CreateSkill, UpdateSkill};
-use crate::core::models::scan_session::{
-    ScanSession, ScanStage, ScanProgress, CreateScanSessionRequest, UpdateScanSessionRequest,
-    ScanSessionStatus,
-};
+use crate::database_service::rag::{RagChunkRow, RagCollectionRow, RagDocumentSourceRow};
+use crate::database_service::skills::{CreateSkill, Skill, SkillDetail, SkillSummary, UpdateSkill};
 use chrono::DateTime;
 use chrono::Utc;
+use sentinel_plugins::PluginRecord;
 
 use crate::database_service::service::DatabaseService;
 use crate::database_service::traits::Database;
@@ -35,7 +34,11 @@ impl Database for DatabaseService {
     async fn get_ai_conversations(&self) -> Result<Vec<AiConversation>> {
         Self::get_ai_conversations_internal(self).await
     }
-    async fn get_ai_conversations_paginated(&self, limit: i64, offset: i64) -> Result<Vec<AiConversation>> {
+    async fn get_ai_conversations_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<AiConversation>> {
         Self::get_ai_conversations_paginated_internal(self, limit, offset).await
     }
     async fn get_ai_conversations_count(&self) -> Result<i64> {
@@ -62,7 +65,10 @@ impl Database for DatabaseService {
     async fn upsert_ai_message_append(&self, message: &AiMessage) -> Result<()> {
         Self::upsert_ai_message_append_internal(self, message).await
     }
-    async fn get_ai_messages_by_conversation(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
+    async fn get_ai_messages_by_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<AiMessage>> {
         Self::get_ai_messages_by_conversation_internal(self, conversation_id).await
     }
     async fn delete_ai_message(&self, message_id: &str) -> Result<()> {
@@ -71,11 +77,23 @@ impl Database for DatabaseService {
     async fn delete_ai_messages_by_conversation(&self, conversation_id: &str) -> Result<()> {
         Self::delete_ai_messages_by_conversation_internal(self, conversation_id).await
     }
-    async fn delete_ai_messages_after(&self, conversation_id: &str, message_id: &str) -> Result<u64> {
+    async fn delete_ai_messages_after(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+    ) -> Result<u64> {
         Self::delete_ai_messages_after_internal(self, conversation_id, message_id).await
     }
-    async fn update_ai_usage(&self, provider: &str, model: &str, input_tokens: i32, output_tokens: i32, cost: f64) -> Result<()> {
-        Self::update_ai_usage_internal(self, provider, model, input_tokens, output_tokens, cost).await
+    async fn update_ai_usage(
+        &self,
+        provider: &str,
+        model: &str,
+        input_tokens: i32,
+        output_tokens: i32,
+        cost: f64,
+    ) -> Result<()> {
+        Self::update_ai_usage_internal(self, provider, model, input_tokens, output_tokens, cost)
+            .await
     }
     async fn get_ai_usage_stats(&self) -> Result<Vec<crate::core::models::database::AiUsageStats>> {
         self.get_ai_usage_stats_internal().await
@@ -85,7 +103,10 @@ impl Database for DatabaseService {
         self.clear_ai_usage_stats_internal().await
     }
 
-    async fn get_aggregated_ai_usage(&self) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>> {
+    async fn get_aggregated_ai_usage(
+        &self,
+    ) -> Result<std::collections::HashMap<String, crate::core::models::database::AiUsageStats>>
+    {
         Self::get_aggregated_ai_usage_internal(self).await
     }
     async fn get_ai_roles(&self) -> Result<Vec<AiRole>> {
@@ -108,7 +129,8 @@ impl Database for DatabaseService {
     }
 
     async fn save_agent_run_state(&self, execution_id: &str, state_json: &str) -> Result<()> {
-        self.save_agent_run_state_internal(execution_id, state_json).await
+        self.save_agent_run_state_internal(execution_id, state_json)
+            .await
     }
 
     async fn get_agent_run_state(&self, execution_id: &str) -> Result<Option<String>> {
@@ -126,10 +148,19 @@ impl Database for DatabaseService {
     async fn get_scan_session(&self, session_id: uuid::Uuid) -> Result<Option<ScanSession>> {
         Self::get_scan_session_internal(self, session_id).await
     }
-    async fn update_scan_session(&self, session_id: uuid::Uuid, request: UpdateScanSessionRequest) -> Result<()> {
+    async fn update_scan_session(
+        &self,
+        session_id: uuid::Uuid,
+        request: UpdateScanSessionRequest,
+    ) -> Result<()> {
         Self::update_scan_session_internal(self, session_id, request).await
     }
-    async fn list_scan_sessions(&self, limit: Option<i64>, offset: Option<i64>, status_filter: Option<ScanSessionStatus>) -> Result<Vec<ScanSession>> {
+    async fn list_scan_sessions(
+        &self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        status_filter: Option<ScanSessionStatus>,
+    ) -> Result<Vec<ScanSession>> {
         Self::list_scan_sessions_internal(self, limit, offset, status_filter).await
     }
     async fn delete_scan_session(&self, session_id: uuid::Uuid) -> Result<()> {
@@ -161,7 +192,12 @@ impl Database for DatabaseService {
     async fn get_scan_tasks_by_target(&self, target: &str) -> Result<Vec<ScanTask>> {
         Self::get_scan_tasks_by_target_internal(self, target).await
     }
-    async fn update_scan_task_status(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
+    async fn update_scan_task_status(
+        &self,
+        id: &str,
+        status: &str,
+        progress: Option<f64>,
+    ) -> Result<()> {
         Self::update_scan_task_status_internal(self, id, status, progress).await
     }
     async fn delete_scan_task(&self, id: &str) -> Result<()> {
@@ -189,8 +225,23 @@ impl Database for DatabaseService {
     async fn create_tool_execution(&self, exec: &ToolExecution) -> Result<()> {
         Self::create_tool_execution_internal(self, exec).await
     }
-    async fn update_tool_execution_status(&self, id: &str, status: &str, progress: Option<f64>, end_time: Option<chrono::DateTime<chrono::Utc>>, execution_time: Option<i32>) -> Result<()> {
-        Self::update_tool_execution_status_internal(self, id, status, progress, end_time, execution_time).await
+    async fn update_tool_execution_status(
+        &self,
+        id: &str,
+        status: &str,
+        progress: Option<f64>,
+        end_time: Option<chrono::DateTime<chrono::Utc>>,
+        execution_time: Option<i32>,
+    ) -> Result<()> {
+        Self::update_tool_execution_status_internal(
+            self,
+            id,
+            status,
+            progress,
+            end_time,
+            execution_time,
+        )
+        .await
     }
     async fn get_tool_executions_by_tool(&self, tool_id: &str) -> Result<Vec<ToolExecution>> {
         Self::get_tool_executions_by_tool_internal(self, tool_id).await
@@ -206,18 +257,42 @@ impl Database for DatabaseService {
     async fn get_agent_tasks(&self, user_id: Option<&str>) -> Result<Vec<AgentTask>> {
         Self::get_agent_tasks_internal(self, user_id).await
     }
-    async fn update_agent_task_status(&self, id: &str, status: &str, agent_name: Option<&str>, architecture: Option<&str>) -> Result<()> {
+    async fn update_agent_task_status(
+        &self,
+        id: &str,
+        status: &str,
+        agent_name: Option<&str>,
+        architecture: Option<&str>,
+    ) -> Result<()> {
         Self::update_agent_task_status_internal(self, id, status, agent_name, architecture).await
     }
-    async fn update_agent_task_timing(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()> {
-        Self::update_agent_task_timing_internal(self, id, started_at, completed_at, execution_time_ms).await
+    async fn update_agent_task_timing(
+        &self,
+        id: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        execution_time_ms: Option<u64>,
+    ) -> Result<()> {
+        Self::update_agent_task_timing_internal(
+            self,
+            id,
+            started_at,
+            completed_at,
+            execution_time_ms,
+        )
+        .await
     }
     async fn update_agent_task_error(&self, id: &str, error_message: &str) -> Result<()> {
         Self::update_agent_task_error_internal(self, id, error_message).await
     }
 
     // Agent Session
-    async fn create_agent_session(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()> {
+    async fn create_agent_session(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        agent_name: &str,
+    ) -> Result<()> {
         Self::create_agent_session_internal(self, session_id, task_id, agent_name).await
     }
     async fn update_agent_session_status(&self, session_id: &str, status: &str) -> Result<()> {
@@ -237,7 +312,13 @@ impl Database for DatabaseService {
     }
 
     // Agent Session Log
-    async fn add_agent_session_log(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()> {
+    async fn add_agent_session_log(
+        &self,
+        session_id: &str,
+        level: &str,
+        message: &str,
+        source: &str,
+    ) -> Result<()> {
         Self::add_agent_session_log_internal(self, session_id, level, message, source).await
     }
     async fn get_agent_session_logs(&self, session_id: &str) -> Result<Vec<SessionLog>> {
@@ -245,53 +326,152 @@ impl Database for DatabaseService {
     }
 
     // Agent Execution Result
-    async fn save_agent_execution_result(&self, session_id: &str, result: &AgentExecutionResult) -> Result<()> {
+    async fn save_agent_execution_result(
+        &self,
+        session_id: &str,
+        result: &AgentExecutionResult,
+    ) -> Result<()> {
         Self::save_agent_execution_result_internal(self, session_id, result).await
     }
-    async fn get_agent_execution_result(&self, session_id: &str) -> Result<Option<AgentExecutionResult>> {
+    async fn get_agent_execution_result(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AgentExecutionResult>> {
         Self::get_agent_execution_result_internal(self, session_id).await
     }
 
     // Agent Execution Step
-    async fn save_agent_execution_step(&self, session_id: &str, step: &WorkflowStepDetail) -> Result<()> {
+    async fn save_agent_execution_step(
+        &self,
+        session_id: &str,
+        step: &WorkflowStepDetail,
+    ) -> Result<()> {
         Self::save_agent_execution_step_internal(self, session_id, step).await
     }
     async fn get_agent_execution_steps(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>> {
         Self::get_agent_execution_steps_internal(self, session_id).await
     }
-    async fn update_agent_execution_step_status(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()> {
-        Self::update_agent_execution_step_status_internal(self, step_id, status, started_at, completed_at, duration_ms, error_message).await
+    async fn update_agent_execution_step_status(
+        &self,
+        step_id: &str,
+        status: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        duration_ms: Option<u64>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        Self::update_agent_execution_step_status_internal(
+            self,
+            step_id,
+            status,
+            started_at,
+            completed_at,
+            duration_ms,
+            error_message,
+        )
+        .await
     }
 
     // Memory
     async fn create_memory_execution(&self, record: &MemoryExecution) -> Result<()> {
         Self::create_memory_execution_internal(self, record).await
     }
-    async fn get_memory_executions_since(&self, since: Option<DateTime<Utc>>, limit: i64) -> Result<Vec<MemoryExecution>> {
+    async fn get_memory_executions_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> Result<Vec<MemoryExecution>> {
         Self::get_memory_executions_since_internal(self, since, limit).await
     }
 
     // Workflow Run
-    async fn create_workflow_run(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
-        Self::create_workflow_run_internal(self, id, workflow_id, workflow_name, version, status, started_at).await
+    async fn create_workflow_run(
+        &self,
+        id: &str,
+        workflow_id: &str,
+        workflow_name: &str,
+        version: &str,
+        status: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        Self::create_workflow_run_internal(
+            self,
+            id,
+            workflow_id,
+            workflow_name,
+            version,
+            status,
+            started_at,
+        )
+        .await
     }
-    async fn update_workflow_run_status(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()> {
-        Self::update_workflow_run_status_internal(self, id, status, completed_at, error_message).await
+    async fn update_workflow_run_status(
+        &self,
+        id: &str,
+        status: &str,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        Self::update_workflow_run_status_internal(self, id, status, completed_at, error_message)
+            .await
     }
-    async fn update_workflow_run_progress(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()> {
-        Self::update_workflow_run_progress_internal(self, id, progress, completed_steps, total_steps).await
+    async fn update_workflow_run_progress(
+        &self,
+        id: &str,
+        progress: u32,
+        completed_steps: u32,
+        total_steps: u32,
+    ) -> Result<()> {
+        Self::update_workflow_run_progress_internal(
+            self,
+            id,
+            progress,
+            completed_steps,
+            total_steps,
+        )
+        .await
     }
-    async fn save_workflow_run_step(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    async fn save_workflow_run_step(
+        &self,
+        run_id: &str,
+        step_id: &str,
+        status: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
         Self::save_workflow_run_step_internal(self, run_id, step_id, status, started_at).await
     }
-    async fn update_workflow_run_step_status(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>, result_json: Option<String>, error_message: Option<&str>) -> Result<()> {
-        Self::update_workflow_run_step_status_internal(self, run_id, step_id, status, completed_at, result_json, error_message).await
+    async fn update_workflow_run_step_status(
+        &self,
+        run_id: &str,
+        step_id: &str,
+        status: &str,
+        completed_at: chrono::DateTime<chrono::Utc>,
+        result_json: Option<String>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
+        Self::update_workflow_run_step_status_internal(
+            self,
+            run_id,
+            step_id,
+            status,
+            completed_at,
+            result_json,
+            error_message,
+        )
+        .await
     }
     async fn list_workflow_runs(&self) -> Result<Vec<serde_json::Value>> {
         Self::list_workflow_runs_internal(self).await
     }
-    async fn list_workflow_runs_paginated(&self, page: i64, page_size: i64, search: Option<&str>, workflow_id: Option<&str>) -> Result<(Vec<serde_json::Value>, i64)> {
-        Self::list_workflow_runs_paginated_internal(self, page, page_size, search, workflow_id).await
+    async fn list_workflow_runs_paginated(
+        &self,
+        page: i64,
+        page_size: i64,
+        search: Option<&str>,
+        workflow_id: Option<&str>,
+    ) -> Result<(Vec<serde_json::Value>, i64)> {
+        Self::list_workflow_runs_paginated_internal(self, page, page_size, search, workflow_id)
+            .await
     }
     async fn get_workflow_run_detail(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
         Self::get_workflow_run_detail_internal(self, run_id).await
@@ -314,7 +494,20 @@ impl Database for DatabaseService {
         version: &str,
         created_by: &str,
     ) -> Result<()> {
-        Self::save_workflow_definition_internal(self, id, name, description, graph_data, is_template, is_tool, category, tags, version, created_by).await
+        Self::save_workflow_definition_internal(
+            self,
+            id,
+            name,
+            description,
+            graph_data,
+            is_template,
+            is_tool,
+            category,
+            tags,
+            version,
+            created_by,
+        )
+        .await
     }
     async fn get_workflow_definition(&self, id: &str) -> Result<Option<serde_json::Value>> {
         Self::get_workflow_definition_internal(self, id).await
@@ -360,7 +553,15 @@ impl Database for DatabaseService {
         search_text: Option<&str>,
         user_id: Option<&str>,
     ) -> Result<serde_json::Value> {
-        Self::get_plugins_paginated_internal(self, page, page_size, status_filter, search_text, user_id).await
+        Self::get_plugins_paginated_internal(
+            self,
+            page,
+            page_size,
+            status_filter,
+            search_text,
+            user_id,
+        )
+        .await
     }
     async fn toggle_plugin_favorite(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool> {
         Self::toggle_plugin_favorite_internal(self, plugin_id, user_id).await
@@ -372,7 +573,8 @@ impl Database for DatabaseService {
         self.get_plugin_review_stats_internal().await
     }
     async fn update_plugin_enabled(&self, plugin_id: &str, enabled: bool) -> Result<()> {
-        self.update_plugin_enabled_internal(plugin_id, enabled).await
+        self.update_plugin_enabled_internal(plugin_id, enabled)
+            .await
     }
     async fn get_plugin_name(&self, plugin_id: &str) -> Result<Option<String>> {
         self.get_plugin_name_internal(plugin_id).await
@@ -439,10 +641,7 @@ impl Database for DatabaseService {
     async fn delete_mcp_server_config(&self, id: &str) -> Result<()> {
         Self::delete_mcp_server_config_internal(self, id).await
     }
-    async fn get_mcp_server_config_by_name(
-        &self,
-        name: &str,
-    ) -> Result<Option<McpServerConfig>> {
+    async fn get_mcp_server_config_by_name(&self, name: &str) -> Result<Option<McpServerConfig>> {
         Self::get_mcp_server_config_by_name_internal(self, name).await
     }
     async fn update_mcp_server_config(
@@ -454,7 +653,8 @@ impl Database for DatabaseService {
         args: &[String],
         enabled: bool,
     ) -> Result<()> {
-        Self::update_mcp_server_config_internal(self, id, name, description, command, args, enabled).await
+        Self::update_mcp_server_config_internal(self, id, name, description, command, args, enabled)
+            .await
     }
     async fn get_rag_config(&self) -> Result<Option<RagConfig>> {
         Self::get_rag_config_internal(self).await
@@ -479,8 +679,15 @@ impl Database for DatabaseService {
         self.get_cache_internal(key).await
     }
 
-    async fn set_cache(&self, key: &str, value: &str, cache_type: &str, expires_at: Option<chrono::DateTime<chrono::Utc>>) -> Result<()> {
-        self.set_cache_internal(key, value, cache_type, expires_at).await
+    async fn set_cache(
+        &self,
+        key: &str,
+        value: &str,
+        cache_type: &str,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<()> {
+        self.set_cache_internal(key, value, cache_type, expires_at)
+            .await
     }
 
     async fn delete_cache(&self, key: &str) -> Result<()> {
@@ -499,24 +706,39 @@ impl Database for DatabaseService {
         self.ensure_sliding_window_tables_exist_internal().await
     }
 
-    async fn get_sliding_window_summaries(&self, conversation_id: &str) -> Result<(Option<crate::core::models::database::GlobalSummary>, Vec<crate::core::models::database::ConversationSegment>)> {
-        self.get_sliding_window_summaries_internal(conversation_id).await
+    async fn get_sliding_window_summaries(
+        &self,
+        conversation_id: &str,
+    ) -> Result<(
+        Option<crate::core::models::database::GlobalSummary>,
+        Vec<crate::core::models::database::ConversationSegment>,
+    )> {
+        self.get_sliding_window_summaries_internal(conversation_id)
+            .await
     }
 
-    async fn save_conversation_segment(&self, segment: &crate::core::models::database::ConversationSegment) -> Result<()> {
+    async fn save_conversation_segment(
+        &self,
+        segment: &crate::core::models::database::ConversationSegment,
+    ) -> Result<()> {
         self.save_conversation_segment_internal(segment).await
     }
 
-    async fn upsert_global_summary(&self, summary: &crate::core::models::database::GlobalSummary) -> Result<()> {
+    async fn upsert_global_summary(
+        &self,
+        summary: &crate::core::models::database::GlobalSummary,
+    ) -> Result<()> {
         self.upsert_global_summary_internal(summary).await
     }
 
     async fn delete_conversation_segments(&self, segment_ids: &[String]) -> Result<()> {
-        self.delete_conversation_segments_internal(segment_ids).await
+        self.delete_conversation_segments_internal(segment_ids)
+            .await
     }
 
     async fn delete_sliding_window_summaries(&self, conversation_id: &str) -> Result<()> {
-        self.delete_sliding_window_summaries_internal(conversation_id).await
+        self.delete_sliding_window_summaries_internal(conversation_id)
+            .await
     }
 
     // RAG
@@ -532,7 +754,12 @@ impl Database for DatabaseService {
     async fn get_rag_collection_by_name(&self, name: &str) -> Result<Option<RagCollectionRow>> {
         Self::get_rag_collection_by_name_internal(self, name).await
     }
-    async fn update_rag_collection(&self, id: &str, name: &str, description: Option<&str>) -> Result<()> {
+    async fn update_rag_collection(
+        &self,
+        id: &str,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<()> {
         Self::update_rag_collection_internal(self, id, name, description).await
     }
     async fn delete_rag_collection(&self, id: &str) -> Result<()> {
@@ -544,14 +771,46 @@ impl Database for DatabaseService {
     async fn update_collection_stats(&self, id: &str) -> Result<()> {
         Self::update_collection_stats_internal(self, id).await
     }
-    async fn get_documents_by_collection_name(&self, name: &str) -> Result<Vec<RagDocumentSourceRow>> {
+    async fn get_documents_by_collection_name(
+        &self,
+        name: &str,
+    ) -> Result<Vec<RagDocumentSourceRow>> {
         Self::get_documents_by_collection_name_internal(self, name).await
     }
     async fn get_documents_by_collection_id(&self, id: &str) -> Result<Vec<RagDocumentSourceRow>> {
         Self::get_documents_by_collection_id_internal(self, id).await
     }
-    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, status: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()> {
-        Self::insert_document_source_internal(self, id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, status, metadata, created_at, updated_at).await
+    async fn insert_document_source(
+        &self,
+        id: &str,
+        collection_id: &str,
+        file_path: &str,
+        file_name: &str,
+        file_type: &str,
+        file_size: i64,
+        file_hash: &str,
+        content_hash: &str,
+        status: &str,
+        metadata: &str,
+        created_at: &str,
+        updated_at: &str,
+    ) -> Result<()> {
+        Self::insert_document_source_internal(
+            self,
+            id,
+            collection_id,
+            file_path,
+            file_name,
+            file_type,
+            file_size,
+            file_hash,
+            content_hash,
+            status,
+            metadata,
+            created_at,
+            updated_at,
+        )
+        .await
     }
     async fn delete_document_cascade(&self, id: &str) -> Result<()> {
         Self::delete_document_cascade_internal(self, id).await
@@ -562,16 +821,49 @@ impl Database for DatabaseService {
     async fn get_collection_id_by_document_id(&self, id: &str) -> Result<Option<String>> {
         Self::get_collection_id_by_document_id_internal(self, id).await
     }
-    async fn insert_chunk(&self, id: &str, document_id: &str, collection_id: &str, content: &str, content_hash: &str, chunk_index: i32, char_count: i32, embedding_bytes: Option<Vec<u8>>, metadata_json: &str, created_at_ts: i64, updated_at_ts: i64) -> Result<()> {
-        Self::insert_chunk_internal(self, id, document_id, collection_id, content, content_hash, chunk_index, char_count, embedding_bytes, metadata_json, created_at_ts, updated_at_ts).await
+    async fn insert_chunk(
+        &self,
+        id: &str,
+        document_id: &str,
+        collection_id: &str,
+        content: &str,
+        content_hash: &str,
+        chunk_index: i32,
+        char_count: i32,
+        embedding_bytes: Option<Vec<u8>>,
+        metadata_json: &str,
+        created_at_ts: i64,
+        updated_at_ts: i64,
+    ) -> Result<()> {
+        Self::insert_chunk_internal(
+            self,
+            id,
+            document_id,
+            collection_id,
+            content,
+            content_hash,
+            chunk_index,
+            char_count,
+            embedding_bytes,
+            metadata_json,
+            created_at_ts,
+            updated_at_ts,
+        )
+        .await
     }
     async fn get_chunks_by_document_id(&self, id: &str) -> Result<Vec<RagChunkRow>> {
         Self::get_chunks_by_document_id_internal(self, id).await
     }
-    async fn get_rag_documents(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
+    async fn get_rag_documents(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
         Self::get_rag_documents_internal(self, collection_id).await
     }
-    async fn get_rag_chunks(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
+    async fn get_rag_chunks(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
         Self::get_rag_chunks_internal(self, document_id).await
     }
 
@@ -582,7 +874,11 @@ impl Database for DatabaseService {
     async fn get_asset_by_id(&self, id: &str) -> Result<Option<Asset>> {
         Self::get_asset_by_id_internal(self, id).await
     }
-    async fn find_asset_by_type_and_value(&self, asset_type: &AssetType, value: &str) -> Result<Option<Asset>> {
+    async fn find_asset_by_type_and_value(
+        &self,
+        asset_type: &AssetType,
+        value: &str,
+    ) -> Result<Option<Asset>> {
         Self::find_asset_by_type_and_value_internal(self, asset_type, value).await
     }
     async fn update_asset(&self, id: &str, request: UpdateAssetRequest) -> Result<bool> {
@@ -591,19 +887,44 @@ impl Database for DatabaseService {
     async fn delete_asset(&self, id: &str) -> Result<bool> {
         Self::delete_asset_internal(self, id).await
     }
-    async fn list_assets(&self, filter: Option<AssetFilter>, limit: Option<u32>, offset: Option<u32>) -> Result<Vec<Asset>> {
+    async fn list_assets(
+        &self,
+        filter: Option<AssetFilter>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<Asset>> {
         Self::list_assets_internal(self, filter, limit, offset).await
     }
     async fn get_asset_stats(&self) -> Result<AssetStats> {
         Self::get_asset_stats_internal(self).await
     }
-    async fn create_relationship(&self, source_asset_id: String, target_asset_id: String, relationship_type: RelationshipType, created_by: String) -> Result<AssetRelationship> {
-        Self::create_relationship_internal(self, source_asset_id, target_asset_id, relationship_type, created_by).await
+    async fn create_relationship(
+        &self,
+        source_asset_id: String,
+        target_asset_id: String,
+        relationship_type: RelationshipType,
+        created_by: String,
+    ) -> Result<AssetRelationship> {
+        Self::create_relationship_internal(
+            self,
+            source_asset_id,
+            target_asset_id,
+            relationship_type,
+            created_by,
+        )
+        .await
     }
-    async fn get_asset_relationships(&self, asset_id: &str) -> Result<(Vec<AssetRelationship>, Vec<AssetRelationship>)> {
+    async fn get_asset_relationships(
+        &self,
+        asset_id: &str,
+    ) -> Result<(Vec<AssetRelationship>, Vec<AssetRelationship>)> {
         Self::get_asset_relationships_internal(self, asset_id).await
     }
-    async fn import_assets(&self, request: ImportAssetsRequest, created_by: String) -> Result<ImportResult> {
+    async fn import_assets(
+        &self,
+        request: ImportAssetsRequest,
+        created_by: String,
+    ) -> Result<ImportResult> {
         Self::import_assets_internal(self, request, created_by).await
     }
 
@@ -643,11 +964,37 @@ impl Database for DatabaseService {
     async fn get_proxy_by_id(&self, id: &str) -> Result<Option<ProxifierProxyRecord>> {
         Self::get_proxy_by_id_internal(self, id).await
     }
-    async fn create_proxy(&self, id: &str, name: &str, host: &str, port: u16, proxy_type: &str, username: Option<&str>, password: Option<&str>, enabled: bool) -> Result<()> {
-        Self::create_proxy_internal(self, id, name, host, port, proxy_type, username, password, enabled).await
+    async fn create_proxy(
+        &self,
+        id: &str,
+        name: &str,
+        host: &str,
+        port: u16,
+        proxy_type: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        enabled: bool,
+    ) -> Result<()> {
+        Self::create_proxy_internal(
+            self, id, name, host, port, proxy_type, username, password, enabled,
+        )
+        .await
     }
-    async fn update_proxy(&self, id: &str, name: &str, host: &str, port: u16, proxy_type: &str, username: Option<&str>, password: Option<&str>, enabled: bool) -> Result<()> {
-        Self::update_proxy_internal(self, id, name, host, port, proxy_type, username, password, enabled).await
+    async fn update_proxy(
+        &self,
+        id: &str,
+        name: &str,
+        host: &str,
+        port: u16,
+        proxy_type: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        enabled: bool,
+    ) -> Result<()> {
+        Self::update_proxy_internal(
+            self, id, name, host, port, proxy_type, username, password, enabled,
+        )
+        .await
     }
     async fn delete_proxy(&self, id: &str) -> Result<()> {
         Self::delete_proxy_internal(self, id).await
@@ -661,11 +1008,53 @@ impl Database for DatabaseService {
     async fn get_rule_by_id(&self, id: &str) -> Result<Option<ProxifierRuleRecord>> {
         Self::get_rule_by_id_internal(self, id).await
     }
-    async fn create_rule(&self, id: &str, name: &str, enabled: bool, applications: &str, target_hosts: &str, target_ports: &str, action: &str, proxy_id: Option<&str>) -> Result<()> {
-        Self::create_rule_internal(self, id, name, enabled, applications, target_hosts, target_ports, action, proxy_id).await
+    async fn create_rule(
+        &self,
+        id: &str,
+        name: &str,
+        enabled: bool,
+        applications: &str,
+        target_hosts: &str,
+        target_ports: &str,
+        action: &str,
+        proxy_id: Option<&str>,
+    ) -> Result<()> {
+        Self::create_rule_internal(
+            self,
+            id,
+            name,
+            enabled,
+            applications,
+            target_hosts,
+            target_ports,
+            action,
+            proxy_id,
+        )
+        .await
     }
-    async fn update_rule(&self, id: &str, name: &str, enabled: bool, applications: &str, target_hosts: &str, target_ports: &str, action: &str, proxy_id: Option<&str>) -> Result<()> {
-        Self::update_rule_internal(self, id, name, enabled, applications, target_hosts, target_ports, action, proxy_id).await
+    async fn update_rule(
+        &self,
+        id: &str,
+        name: &str,
+        enabled: bool,
+        applications: &str,
+        target_hosts: &str,
+        target_ports: &str,
+        action: &str,
+        proxy_id: Option<&str>,
+    ) -> Result<()> {
+        Self::update_rule_internal(
+            self,
+            id,
+            name,
+            enabled,
+            applications,
+            target_hosts,
+            target_ports,
+            action,
+            proxy_id,
+        )
+        .await
     }
     async fn delete_rule(&self, id: &str) -> Result<()> {
         Self::delete_rule_internal(self, id).await
@@ -683,14 +1072,52 @@ impl Database for DatabaseService {
     }
 
     // Plan-and-Execute
-    async fn save_execution_plan(&self, id: &str, name: &str, description: &str, estimated_duration: u64, metadata: &serde_json::Value) -> Result<()> {
-        Self::save_execution_plan_internal(self, id, name, description, estimated_duration, metadata).await
+    async fn save_execution_plan(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+        estimated_duration: u64,
+        metadata: &serde_json::Value,
+    ) -> Result<()> {
+        Self::save_execution_plan_internal(
+            self,
+            id,
+            name,
+            description,
+            estimated_duration,
+            metadata,
+        )
+        .await
     }
     async fn get_execution_plan(&self, id: &str) -> Result<Option<serde_json::Value>> {
         Self::get_execution_plan_internal(self, id).await
     }
-    async fn save_execution_session(&self, id: &str, plan_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>, completed_at: Option<chrono::DateTime<chrono::Utc>>, current_step: Option<i32>, progress: f64, context: &serde_json::Value, metadata: &serde_json::Value) -> Result<()> {
-        Self::save_execution_session_internal(self, id, plan_id, status, started_at, completed_at, current_step, progress, context, metadata).await
+    async fn save_execution_session(
+        &self,
+        id: &str,
+        plan_id: &str,
+        status: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        current_step: Option<i32>,
+        progress: f64,
+        context: &serde_json::Value,
+        metadata: &serde_json::Value,
+    ) -> Result<()> {
+        Self::save_execution_session_internal(
+            self,
+            id,
+            plan_id,
+            status,
+            started_at,
+            completed_at,
+            current_step,
+            progress,
+            context,
+            metadata,
+        )
+        .await
     }
     async fn get_execution_session(&self, id: &str) -> Result<Option<serde_json::Value>> {
         Self::get_execution_session_internal(self, id).await
@@ -719,13 +1146,20 @@ impl RagDatabase for DatabaseService {
                 is_active: r.is_active,
                 document_count: r.document_count as usize,
                 chunk_count: r.chunk_count as usize,
-                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap_or_default().with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at).unwrap_or_default().with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Utc),
+                updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Utc),
             });
         }
         Ok(out)
     }
-    async fn get_rag_collection_by_id(&self, id: &str) -> Result<Option<sentinel_rag::models::CollectionInfo>> {
+    async fn get_rag_collection_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<sentinel_rag::models::CollectionInfo>> {
         let r = Self::get_rag_collection_by_id_internal(self, id).await?;
         Ok(r.map(|r| sentinel_rag::models::CollectionInfo {
             id: r.id,
@@ -734,11 +1168,18 @@ impl RagDatabase for DatabaseService {
             is_active: r.is_active,
             document_count: r.document_count as usize,
             chunk_count: r.chunk_count as usize,
-            created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap_or_default().with_timezone(&chrono::Utc),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at).unwrap_or_default().with_timezone(&chrono::Utc),
+            created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc),
+            updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc),
         }))
     }
-    async fn get_rag_collection_by_name(&self, name: &str) -> Result<Option<sentinel_rag::models::CollectionInfo>> {
+    async fn get_rag_collection_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<sentinel_rag::models::CollectionInfo>> {
         let r = Self::get_rag_collection_by_name_internal(self, name).await?;
         Ok(r.map(|r| sentinel_rag::models::CollectionInfo {
             id: r.id,
@@ -747,41 +1188,138 @@ impl RagDatabase for DatabaseService {
             is_active: r.is_active,
             document_count: r.document_count as usize,
             chunk_count: r.chunk_count as usize,
-            created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap_or_default().with_timezone(&chrono::Utc),
-            updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at).unwrap_or_default().with_timezone(&chrono::Utc),
+            created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc),
+            updated_at: chrono::DateTime::parse_from_rfc3339(&r.updated_at)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc),
         }))
     }
     async fn delete_rag_collection(&self, id: &str) -> Result<()> {
         Self::delete_rag_collection_internal(self, id).await
     }
-    async fn create_rag_document(&self, collection_id: &str, file_path: &str, file_name: &str, content: &str, metadata: &str) -> Result<String> {
-        Self::create_rag_document_internal(self, collection_id, file_path, file_name, content, metadata).await
+    async fn create_rag_document(
+        &self,
+        collection_id: &str,
+        file_path: &str,
+        file_name: &str,
+        content: &str,
+        metadata: &str,
+    ) -> Result<String> {
+        Self::create_rag_document_internal(
+            self,
+            collection_id,
+            file_path,
+            file_name,
+            content,
+            metadata,
+        )
+        .await
     }
-    async fn insert_document_source(&self, id: &str, collection_id: &str, file_path: &str, file_name: &str, file_type: &str, file_size: i64, file_hash: &str, content_hash: &str, status: &str, metadata: &str, created_at: &str, updated_at: &str) -> Result<()> {
-        Self::insert_document_source_internal(self, id, collection_id, file_path, file_name, file_type, file_size, file_hash, content_hash, status, metadata, created_at, updated_at).await
+    async fn insert_document_source(
+        &self,
+        id: &str,
+        collection_id: &str,
+        file_path: &str,
+        file_name: &str,
+        file_type: &str,
+        file_size: i64,
+        file_hash: &str,
+        content_hash: &str,
+        status: &str,
+        metadata: &str,
+        created_at: &str,
+        updated_at: &str,
+    ) -> Result<()> {
+        Self::insert_document_source_internal(
+            self,
+            id,
+            collection_id,
+            file_path,
+            file_name,
+            file_type,
+            file_size,
+            file_hash,
+            content_hash,
+            status,
+            metadata,
+            created_at,
+            updated_at,
+        )
+        .await
     }
-    async fn create_rag_chunk(&self, document_id: &str, collection_id: &str, content: &str, chunk_index: i32, embedding: Option<&[f32]>, metadata_json: &str) -> Result<String> {
-        Self::create_rag_chunk_internal(self, document_id, collection_id, content, chunk_index, embedding, metadata_json).await
+    async fn create_rag_chunk(
+        &self,
+        document_id: &str,
+        collection_id: &str,
+        content: &str,
+        chunk_index: i32,
+        embedding: Option<&[f32]>,
+        metadata_json: &str,
+    ) -> Result<String> {
+        Self::create_rag_chunk_internal(
+            self,
+            document_id,
+            collection_id,
+            content,
+            chunk_index,
+            embedding,
+            metadata_json,
+        )
+        .await
     }
     async fn update_collection_stats(&self, collection_id: &str) -> Result<()> {
         Self::update_collection_stats_internal(self, collection_id).await
     }
-    async fn get_rag_documents(&self, collection_id: &str) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
+    async fn get_rag_documents(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<sentinel_rag::models::DocumentSource>> {
         Self::get_rag_documents_internal(self, collection_id).await
     }
-    async fn get_rag_documents_paginated(&self, collection_id: &str, limit: i64, offset: i64, search_query: Option<&str>) -> Result<(Vec<sentinel_rag::models::DocumentSource>, i64)> {
-        Self::get_rag_documents_paginated_internal(self, collection_id, limit, offset, search_query).await
+    async fn get_rag_documents_paginated(
+        &self,
+        collection_id: &str,
+        limit: i64,
+        offset: i64,
+        search_query: Option<&str>,
+    ) -> Result<(Vec<sentinel_rag::models::DocumentSource>, i64)> {
+        Self::get_rag_documents_paginated_internal(self, collection_id, limit, offset, search_query)
+            .await
     }
-    async fn get_rag_chunks(&self, document_id: &str) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
+    async fn get_rag_chunks(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<sentinel_rag::models::DocumentChunk>> {
         Self::get_rag_chunks_internal(self, document_id).await
     }
     async fn delete_rag_document(&self, document_id: &str) -> Result<()> {
         Self::delete_rag_document_internal(self, document_id).await
     }
-    async fn save_rag_query(&self, collection_id: Option<&str>, conversation_id: Option<&str>, query: &str, response: &str, processing_time_ms: u64) -> Result<()> {
-        Self::save_rag_query_internal(self, collection_id, conversation_id, query, response, processing_time_ms).await
+    async fn save_rag_query(
+        &self,
+        collection_id: Option<&str>,
+        conversation_id: Option<&str>,
+        query: &str,
+        response: &str,
+        processing_time_ms: u64,
+    ) -> Result<()> {
+        Self::save_rag_query_internal(
+            self,
+            collection_id,
+            conversation_id,
+            query,
+            response,
+            processing_time_ms,
+        )
+        .await
     }
-    async fn get_rag_query_history(&self, collection_id: Option<&str>, limit: Option<i32>) -> Result<Vec<sentinel_rag::models::QueryResult>> {
+    async fn get_rag_query_history(
+        &self,
+        collection_id: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<sentinel_rag::models::QueryResult>> {
         Self::get_rag_query_history_internal(self, collection_id, limit).await
     }
 }

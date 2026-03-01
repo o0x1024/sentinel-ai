@@ -1,5 +1,5 @@
 //! 全局代理配置模块
-//! 
+//!
 //! 提供统一的全局代理配置，供所有 sentinel crates 使用
 //!
 //! 支持的代理协议：
@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 /// 全局代理配置
-/// 
+///
 /// 支持多种代理协议：HTTP、HTTPS、SOCKS5、SOCKS5H
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalProxyConfig {
@@ -48,7 +48,10 @@ impl GlobalProxyConfig {
         let scheme = self.scheme.as_deref().unwrap_or("http");
 
         if let (Some(username), Some(password)) = (&self.username, &self.password) {
-            Some(format!("{}://{}:{}@{}:{}", scheme, username, password, host, port))
+            Some(format!(
+                "{}://{}:{}@{}:{}",
+                scheme, username, password, host, port
+            ))
         } else {
             Some(format!("{}://{}:{}", scheme, host, port))
         }
@@ -56,7 +59,7 @@ impl GlobalProxyConfig {
 }
 
 /// 全局代理状态
-static GLOBAL_PROXY: Lazy<Arc<RwLock<GlobalProxyConfig>>> = 
+static GLOBAL_PROXY: Lazy<Arc<RwLock<GlobalProxyConfig>>> =
     Lazy::new(|| Arc::new(RwLock::new(GlobalProxyConfig::default())));
 
 /// 设置全局代理配置
@@ -84,26 +87,26 @@ pub async fn create_client_with_proxy() -> Result<reqwest::Client, reqwest::Erro
 }
 
 /// 为 reqwest ClientBuilder 应用全局代理配置
-/// 
+///
 /// 支持的代理协议：
 /// - http: 标准HTTP代理
 /// - https: HTTPS代理  
 /// - socks5: SOCKS5代理（本地DNS解析）
 /// - socks5h: SOCKS5代理（远程DNS解析，更安全）
-/// 
+///
 /// 自动为所有请求添加 X-Sentinel-Internal header，用于在代理中识别本应用流量
 pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let config = get_global_proxy().await;
-    
+
     // 添加标识 Header，用于在代理中识别本应用的流量
     let mut default_headers = reqwest::header::HeaderMap::new();
     default_headers.insert(
         reqwest::header::HeaderName::from_static("x-sentinel-internal"),
         reqwest::header::HeaderValue::from_static("true"),
     );
-    
+
     let builder = builder.default_headers(default_headers);
-    
+
     if !config.enabled {
         debug!("Global proxy not enabled, returning client builder with sentinel headers");
         return builder;
@@ -111,17 +114,22 @@ pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::
 
     if let Some(proxy_url) = config.build_proxy_url() {
         let scheme = config.scheme.as_deref().unwrap_or("http");
-        
+
         match Proxy::all(&proxy_url) {
             Ok(proxy) => {
-                debug!("Applying {} proxy to reqwest client: {}:{}", 
+                debug!(
+                    "Applying {} proxy to reqwest client: {}:{}",
                     scheme,
                     config.host.as_deref().unwrap_or("unknown"),
-                    config.port.unwrap_or(0));
+                    config.port.unwrap_or(0)
+                );
                 builder.proxy(proxy)
             }
             Err(e) => {
-                warn!("Failed to create {} proxy for reqwest client: {}, using direct connection", scheme, e);
+                warn!(
+                    "Failed to create {} proxy for reqwest client: {}, using direct connection",
+                    scheme, e
+                );
                 builder
             }
         }
@@ -130,4 +138,3 @@ pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::
         builder
     }
 }
-

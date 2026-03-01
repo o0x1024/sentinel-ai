@@ -263,6 +263,44 @@ fn infer_tool_result_success(raw: &str) -> bool {
     }
 }
 
+#[derive(Debug, Clone)]
+struct TeamStreamContext {
+    session_id: String,
+    stream_id: String,
+    member_id: Option<String>,
+    phase: String,
+}
+
+fn parse_team_stream_context(execution_id: &str) -> Option<TeamStreamContext> {
+    if !execution_id.starts_with("team-v3:") {
+        return None;
+    }
+    let parts = execution_id.split(':').collect::<Vec<_>>();
+    if parts.len() < 4 {
+        return None;
+    }
+    let session_id = parts.get(1)?.trim().to_string();
+    if session_id.is_empty() {
+        return None;
+    }
+    // New format: team-v3:{session_id}:{task_id}:{member_id}:{uuid}
+    // Legacy format: team-v3:{session_id}:{task_id}:{uuid}
+    let member_id = if parts.len() >= 5 {
+        parts
+            .get(3)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    } else {
+        None
+    };
+    Some(TeamStreamContext {
+        session_id,
+        stream_id: execution_id.to_string(),
+        member_id,
+        phase: "task_execution".to_string(),
+    })
+}
+
 async fn persist_ai_message_with_retry(
     db: Arc<sentinel_db::DatabaseService>,
     msg: sentinel_core::models::database::AiMessage,
@@ -441,6 +479,7 @@ pub async fn execute_agent_with_tools(
     // rig 的 multi_turn() 会自动处理工具调用循环
     let client = StreamingLlmClient::new(llm_config);
     let execution_id = params.execution_id.clone();
+    let team_stream_context = parse_team_stream_context(&execution_id);
     let app = app_handle.clone();
     let db_for_stream: Option<std::sync::Arc<sentinel_db::DatabaseService>> = app_handle
         .try_state::<std::sync::Arc<sentinel_db::DatabaseService>>()
@@ -555,6 +594,8 @@ pub async fn execute_agent_with_tools(
 
     let skill_reload_requested = Arc::new(AtomicBool::new(false));
     let loaded_skill_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let team_stream_started = Arc::new(AtomicBool::new(false));
+    let team_stream_had_delta = Arc::new(AtomicBool::new(false));
 
     let mut force_history_with_tools = false;
     while retries <= max_retries {
@@ -794,6 +835,32 @@ pub async fn execute_agent_with_tools(
                     }
                     match content {
                         StreamContent::Text(text) => {
+                            if let Some(ctx) = team_stream_context.as_ref() {
+                                if !team_stream_started.swap(true, Ordering::SeqCst) {
+                                    let _ = app.emit(
+                                        "agent_team:message_stream_start",
+                                        &json!({
+                                            "session_id": ctx.session_id.clone(),
+                                            "stream_id": ctx.stream_id.clone(),
+                                            "member_id": ctx.member_id.clone(),
+                                            "member_name": ctx.member_id.clone(),
+                                            "phase": ctx.phase.clone(),
+                                        }),
+                                    );
+                                }
+                                team_stream_had_delta.store(true, Ordering::SeqCst);
+                                let _ = app.emit(
+                                    "agent_team:message_stream_delta",
+                                    &json!({
+                                        "session_id": ctx.session_id.clone(),
+                                        "stream_id": ctx.stream_id.clone(),
+                                        "member_id": ctx.member_id.clone(),
+                                        "member_name": ctx.member_id.clone(),
+                                        "phase": ctx.phase.clone(),
+                                        "delta": text.clone(),
+                                    }),
+                                );
+                            }
                             // Accumulate assistant text into a segment buffer.
                             let _ = segment_buf.lock().map(|mut buf| buf.push_str(&text));
 
@@ -1029,6 +1096,9 @@ pub async fn execute_agent_with_tools(
                                 });
                             }
 
+                            let team_tool_call_id = id.clone();
+                            let team_tool_name = name.clone();
+                            let team_tool_arguments = arguments.clone();
                             let _ = app.emit(
                                 "agent:tool_call_complete",
                                 &json!({
@@ -1038,6 +1108,22 @@ pub async fn execute_agent_with_tools(
                                     "arguments": arguments,
                                 }),
                             );
+                            if let Some(ctx) = team_stream_context.as_ref() {
+                                let _ = app.emit(
+                                    "agent_team:tool_call",
+                                    &json!({
+                                        "session_id": ctx.session_id.clone(),
+                                        "stream_id": ctx.stream_id.clone(),
+                                        "member_id": ctx.member_id.clone(),
+                                        "member_name": ctx.member_id.clone(),
+                                        "phase": ctx.phase.clone(),
+                                        "tool_call_id": team_tool_call_id,
+                                        "name": team_tool_name,
+                                        "arguments": team_tool_arguments,
+                                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                                    }),
+                                );
+                            }
                         }
                         StreamContent::ToolResult { id, result } => {
                             // tracing::info!(
@@ -1165,15 +1251,34 @@ pub async fn execute_agent_with_tools(
                                 }
                             }
 
+                            let team_tool_call_id = id.clone();
+                            let team_result = result.clone();
+                            let team_success = infer_tool_result_success(&result);
                             let _ = app.emit(
                                 "agent:tool_result",
                                 &json!({
                                     "execution_id": execution_id,
                                     "tool_call_id": id,
                                     "result": result,
-                                    "success": infer_tool_result_success(&result),
+                                    "success": team_success,
                                 }),
                             );
+                            if let Some(ctx) = team_stream_context.as_ref() {
+                                let _ = app.emit(
+                                    "agent_team:tool_result",
+                                    &json!({
+                                        "session_id": ctx.session_id.clone(),
+                                        "stream_id": ctx.stream_id.clone(),
+                                        "member_id": ctx.member_id.clone(),
+                                        "member_name": ctx.member_id.clone(),
+                                        "phase": ctx.phase.clone(),
+                                        "tool_call_id": team_tool_call_id,
+                                        "result": team_result,
+                                        "success": team_success,
+                                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                                    }),
+                                );
+                            }
                         }
                 StreamContent::Usage {
                     input_tokens,
@@ -1635,6 +1740,21 @@ pub async fn execute_agent_with_tools(
                 // Cleanup container context files (keep history.txt)
                 cleanup_container_context_async(&app, &params.execution_id).await;
 
+                if let Some(ctx) = team_stream_context.as_ref() {
+                    let _ = app.emit(
+                        "agent_team:message_stream_done",
+                        &json!({
+                            "session_id": ctx.session_id.clone(),
+                            "stream_id": ctx.stream_id.clone(),
+                            "member_id": ctx.member_id.clone(),
+                            "member_name": ctx.member_id.clone(),
+                            "phase": ctx.phase.clone(),
+                            "content": final_response.clone(),
+                            "had_delta": team_stream_had_delta.load(Ordering::SeqCst),
+                        }),
+                    );
+                }
+
                 return Ok(final_response);
             }
             Err(e) => {
@@ -1755,13 +1875,43 @@ pub async fn execute_agent_with_tools(
                     )
                     .await;
 
+                    if let Some(ctx) = team_stream_context.as_ref() {
+                        let _ = app.emit(
+                            "agent_team:message_stream_done",
+                            &json!({
+                                "session_id": ctx.session_id.clone(),
+                                "stream_id": ctx.stream_id.clone(),
+                                "member_id": ctx.member_id.clone(),
+                                "member_name": ctx.member_id.clone(),
+                                "phase": ctx.phase.clone(),
+                                "error": friendly_err.to_string(),
+                                "had_delta": team_stream_had_delta.load(Ordering::SeqCst),
+                            }),
+                        );
+                    }
+
                     return Err(friendly_err);
                 }
             }
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries reached")))
+    let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries reached"));
+    if let Some(ctx) = team_stream_context.as_ref() {
+        let _ = app.emit(
+            "agent_team:message_stream_done",
+            &json!({
+                "session_id": ctx.session_id.clone(),
+                "stream_id": ctx.stream_id.clone(),
+                "member_id": ctx.member_id.clone(),
+                "member_name": ctx.member_id.clone(),
+                "phase": ctx.phase.clone(),
+                "error": final_error.to_string(),
+                "had_delta": team_stream_had_delta.load(Ordering::SeqCst),
+            }),
+        );
+    }
+    Err(final_error)
 }
 
 fn is_retryable_error(err_msg: &str) -> bool {

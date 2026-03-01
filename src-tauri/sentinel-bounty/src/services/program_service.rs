@@ -3,10 +3,10 @@
 use crate::error::{BountyError, Result};
 use crate::models::*;
 use async_trait::async_trait;
+use chrono::Utc;
+use sentinel_db::{BountyProgramRow, DatabaseService};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use sentinel_db::{BountyProgramRow, DatabaseService};
-use chrono::Utc;
 use uuid::Uuid;
 
 #[async_trait]
@@ -17,7 +17,7 @@ pub trait ProgramServiceTrait: Send + Sync {
     async fn delete_program(&self, id: &str) -> Result<bool>;
     async fn list_programs(&self, filter: Option<ProgramFilter>) -> Result<Vec<BountyProgram>>;
     async fn get_program_stats(&self) -> Result<ProgramStats>;
-    
+
     async fn create_scope(&self, request: CreateScopeRequest) -> Result<ProgramScope>;
     async fn get_scope(&self, id: &str) -> Result<Option<ProgramScope>>;
     async fn update_scope(&self, id: &str, request: UpdateScopeRequest) -> Result<bool>;
@@ -51,7 +51,7 @@ impl Default for ProgramService {
 impl ProgramServiceTrait for ProgramService {
     async fn create_program(&self, request: CreateProgramRequest) -> Result<BountyProgram> {
         let mut program = BountyProgram::new(request.name, request.organization);
-        
+
         if let Some(platform) = request.platform {
             program.platform = platform;
         }
@@ -73,7 +73,7 @@ impl ProgramServiceTrait for ProgramService {
 
         let mut programs = self.programs.write().await;
         programs.push(program.clone());
-        
+
         Ok(program)
     }
 
@@ -84,7 +84,7 @@ impl ProgramServiceTrait for ProgramService {
 
     async fn update_program(&self, id: &str, request: UpdateProgramRequest) -> Result<bool> {
         let mut programs = self.programs.write().await;
-        
+
         if let Some(program) = programs.iter_mut().find(|p| p.id == id) {
             if let Some(name) = request.name {
                 program.name = name;
@@ -108,7 +108,8 @@ impl ProgramServiceTrait for ProgramService {
                 program.rewards = rewards;
             }
             program.response_sla_days = request.response_sla_days.or(program.response_sla_days);
-            program.resolution_sla_days = request.resolution_sla_days.or(program.resolution_sla_days);
+            program.resolution_sla_days =
+                request.resolution_sla_days.or(program.resolution_sla_days);
             if let Some(rules) = request.rules {
                 program.rules = rules;
             }
@@ -118,7 +119,7 @@ impl ProgramServiceTrait for ProgramService {
             if let Some(priority_score) = request.priority_score {
                 program.priority_score = priority_score;
             }
-            
+
             program.updated_at = chrono::Utc::now();
             Ok(true)
         } else {
@@ -167,10 +168,13 @@ impl ProgramServiceTrait for ProgramService {
 
     async fn get_program_stats(&self) -> Result<ProgramStats> {
         let programs = self.programs.read().await;
-        
+
         let total_programs = programs.len() as i32;
-        let active_programs = programs.iter().filter(|p| p.status == ProgramStatus::Active).count() as i32;
-        
+        let active_programs = programs
+            .iter()
+            .filter(|p| p.status == ProgramStatus::Active)
+            .count() as i32;
+
         let mut by_platform = std::collections::HashMap::new();
         let mut by_type = std::collections::HashMap::new();
         let mut total_submissions = 0;
@@ -178,8 +182,12 @@ impl ProgramServiceTrait for ProgramService {
         let mut total_earnings = 0.0;
 
         for program in programs.iter() {
-            *by_platform.entry(format!("{:?}", program.platform)).or_insert(0) += 1;
-            *by_type.entry(format!("{:?}", program.program_type)).or_insert(0) += 1;
+            *by_platform
+                .entry(format!("{:?}", program.platform))
+                .or_insert(0) += 1;
+            *by_type
+                .entry(format!("{:?}", program.program_type))
+                .or_insert(0) += 1;
             total_submissions += program.total_submissions;
             total_accepted += program.accepted_submissions;
             total_earnings += program.total_earnings;
@@ -197,12 +205,8 @@ impl ProgramServiceTrait for ProgramService {
     }
 
     async fn create_scope(&self, request: CreateScopeRequest) -> Result<ProgramScope> {
-        let mut scope = ProgramScope::new(
-            request.program_id,
-            request.target,
-            request.target_type,
-        );
-        
+        let mut scope = ProgramScope::new(request.program_id, request.target, request.target_type);
+
         scope.scope_type = request.scope_type;
         scope.description = request.description;
         if let Some(allowed_tests) = request.allowed_tests {
@@ -222,11 +226,13 @@ impl ProgramServiceTrait for ProgramService {
         }
 
         // Compile pattern
-        scope.compile_pattern().map_err(|e| BountyError::InvalidScopePattern(e))?;
+        scope
+            .compile_pattern()
+            .map_err(|e| BountyError::InvalidScopePattern(e))?;
 
         let mut scopes = self.scopes.write().await;
         scopes.push(scope.clone());
-        
+
         Ok(scope)
     }
 
@@ -237,7 +243,7 @@ impl ProgramServiceTrait for ProgramService {
 
     async fn update_scope(&self, id: &str, request: UpdateScopeRequest) -> Result<bool> {
         let mut scopes = self.scopes.write().await;
-        
+
         if let Some(scope) = scopes.iter_mut().find(|s| s.id == id) {
             if let Some(scope_type) = request.scope_type {
                 scope.scope_type = scope_type;
@@ -247,7 +253,9 @@ impl ProgramServiceTrait for ProgramService {
             }
             if let Some(target) = request.target {
                 scope.target = target;
-                scope.compile_pattern().map_err(|e| BountyError::InvalidScopePattern(e))?;
+                scope
+                    .compile_pattern()
+                    .map_err(|e| BountyError::InvalidScopePattern(e))?;
             }
             scope.description = request.description.or(scope.description.clone());
             if let Some(allowed_tests) = request.allowed_tests {
@@ -265,7 +273,7 @@ impl ProgramServiceTrait for ProgramService {
             if let Some(priority) = request.priority {
                 scope.priority = priority;
             }
-            
+
             scope.updated_at = chrono::Utc::now();
             Ok(true)
         } else {
@@ -301,7 +309,9 @@ impl ProgramServiceTrait for ProgramService {
                 let search_lower = search.to_lowercase();
                 result.retain(|s| {
                     s.target.to_lowercase().contains(&search_lower)
-                        || s.description.as_ref().map_or(false, |d| d.to_lowercase().contains(&search_lower))
+                        || s.description
+                            .as_ref()
+                            .map_or(false, |d| d.to_lowercase().contains(&search_lower))
                 });
             }
         }
@@ -311,13 +321,13 @@ impl ProgramServiceTrait for ProgramService {
 
     async fn validate_scope(&self, program_id: &str, target: &str) -> Result<ScopeValidation> {
         let scopes = self.scopes.read().await;
-        
+
         // Check in-scope items
         let in_scope_items: Vec<&ProgramScope> = scopes
             .iter()
             .filter(|s| s.program_id == program_id && s.scope_type == ScopeType::InScope)
             .collect();
-        
+
         let mut matched_in_scope: Option<&ProgramScope> = None;
         for scope in &in_scope_items {
             if scope.matches(target) {
@@ -331,13 +341,16 @@ impl ProgramServiceTrait for ProgramService {
             .iter()
             .filter(|s| s.program_id == program_id && s.scope_type == ScopeType::OutOfScope)
             .collect();
-        
+
         for scope in &out_of_scope_items {
             if scope.matches(target) {
                 return Ok(ScopeValidation {
                     in_scope: false,
                     matched_scope: None,
-                    reason: Some(format!("Target matches out-of-scope rule: {}", scope.target)),
+                    reason: Some(format!(
+                        "Target matches out-of-scope rule: {}",
+                        scope.target
+                    )),
                     warnings: vec![],
                 });
             }
@@ -419,11 +432,17 @@ impl ProgramDbService {
             program_type: input.program_type.unwrap_or_else(|| "public".to_string()),
             status: "active".to_string(),
             description: input.description,
-            rewards_json: input.rewards.map(|r| serde_json::to_string(&r).unwrap_or_default()),
+            rewards_json: input
+                .rewards
+                .map(|r| serde_json::to_string(&r).unwrap_or_default()),
             response_sla_days: None,
             resolution_sla_days: None,
-            rules_json: input.rules.map(|r| serde_json::to_string(&r).unwrap_or_default()),
-            tags_json: input.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
+            rules_json: input
+                .rules
+                .map(|r| serde_json::to_string(&r).unwrap_or_default()),
+            tags_json: input
+                .tags
+                .map(|t| serde_json::to_string(&t).unwrap_or_default()),
             metadata_json: None,
             priority_score: 0.0,
             total_submissions: 0,
@@ -434,8 +453,7 @@ impl ProgramDbService {
             last_activity_at: None,
         };
 
-        db.create_bounty_program(&program)
-            .await?;
+        db.create_bounty_program(&program).await?;
         Ok(program)
     }
 
@@ -444,9 +462,7 @@ impl ProgramDbService {
         id: &str,
         input: UpdateProgramInput,
     ) -> Result<bool> {
-        let existing = db
-            .get_bounty_program(id)
-            .await?;
+        let existing = db.get_bounty_program(id).await?;
 
         let Some(mut program) = existing else {
             return Ok(false);
@@ -505,9 +521,7 @@ impl ProgramDbService {
     }
 
     pub async fn delete_program(db: &DatabaseService, id: &str) -> Result<bool> {
-        db.delete_bounty_program(id)
-            .await
-            .map_err(|e| e.into())
+        db.delete_bounty_program(id).await.map_err(|e| e.into())
     }
 }
 

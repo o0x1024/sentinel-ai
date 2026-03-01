@@ -19,24 +19,11 @@ pub use macos::*;
 
 #[cfg(target_os = "macos")]
 pub use pf_firewall::{
-    PfConfig, 
-    TransparentProxyManager, 
-    AppProxyFilter,
-    is_pf_enabled,
-    enable_pf,
-    disable_pf,
-    load_pf_rules,
-    load_anchor_rules,
-    flush_anchor_rules,
-    get_pf_rules,
-    get_anchor_rules,
+    disable_pf, enable_pf, flush_anchor_rules, get_anchor_rules, get_pf_rules, is_pf_enabled,
+    load_anchor_rules, load_pf_rules, AppProxyFilter, PfConfig, TransparentProxyManager,
 };
 
-pub use network_extension::{
-    NetworkExtensionManager,
-    ExtensionStatus,
-    VPNStatus,
-};
+pub use network_extension::{ExtensionStatus, NetworkExtensionManager, VPNStatus};
 
 /// 系统代理配置
 #[derive(Debug, Clone)]
@@ -70,4 +57,3 @@ pub struct SystemProxyStatus {
     pub socks_port: Option<u16>,
     pub network_services: Vec<String>,
 }
-

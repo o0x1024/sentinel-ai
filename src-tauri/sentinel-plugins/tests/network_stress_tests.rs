@@ -23,9 +23,10 @@ fn create_test_transaction() -> HttpTransaction {
             id: uuid::Uuid::new_v4().to_string(),
             method: "GET".to_string(),
             url: "https://httpbin.org/get".to_string(),
-            headers: HashMap::from([
-                ("User-Agent".to_string(), "Sentinel-AI-Test/1.0".to_string()),
-            ]),
+            headers: HashMap::from([(
+                "User-Agent".to_string(),
+                "Sentinel-AI-Test/1.0".to_string(),
+            )]),
             body: vec![],
             content_type: None,
             query_params: HashMap::new(),
@@ -89,7 +90,8 @@ export async function scan_transaction(transaction) {
         }];
     }
 }
-"#.to_string();
+"#
+    .to_string();
 
     (metadata, code)
 }
@@ -147,7 +149,8 @@ export async function scan_transaction(transaction) {
         }];
     }
 }
-"#.to_string();
+"#
+    .to_string();
 
     (metadata, code)
 }
@@ -200,7 +203,8 @@ export async function scan_transaction(transaction) {
         }];
     }
 }
-"#.to_string();
+"#
+    .to_string();
 
     (metadata, code)
 }
@@ -214,7 +218,7 @@ async fn test_10k_concurrent_requests() {
     println!("{}", "=".repeat(80));
 
     let (metadata, code) = create_network_plugin();
-    
+
     let iterations = 10000;
     let concurrency = 500; // 限制同时进行的请求数
     let start = Instant::now();
@@ -225,7 +229,10 @@ async fn test_10k_concurrent_requests() {
 
     let mut handles = vec![];
 
-    println!("Starting {} requests with max {} concurrent...", iterations, concurrency);
+    println!(
+        "Starting {} requests with max {} concurrent...",
+        iterations, concurrency
+    );
 
     for i in 0..iterations {
         let sem = semaphore.clone();
@@ -246,12 +253,16 @@ async fn test_10k_concurrent_requests() {
 
                 rt.block_on(async move {
                     let mut engine = PluginEngine::new().ok()?;
-                    engine.load_plugin_with_metadata(&code, metadata).await.ok()?;
-                    
+                    engine
+                        .load_plugin_with_metadata(&code, metadata)
+                        .await
+                        .ok()?;
+
                     let transaction = create_test_transaction();
                     engine.scan_transaction(&transaction).await.ok()
                 })
-            }).await;
+            })
+            .await;
 
             match result {
                 Ok(Some(_)) => success.fetch_add(1, Ordering::Relaxed),
@@ -285,7 +296,10 @@ async fn test_10k_concurrent_requests() {
     println!("  Duration: {:?}", duration);
     println!("  Throughput: {:.2} requests/sec", throughput);
     println!("  Error Rate: {:.2}%", error_rate);
-    println!("  Avg Latency: {:.2}ms", duration.as_millis() as f64 / iterations as f64);
+    println!(
+        "  Avg Latency: {:.2}ms",
+        duration.as_millis() as f64 / iterations as f64
+    );
     println!("{}", "=".repeat(80));
 
     // 断言：错误率应该在合理范围内
@@ -306,7 +320,7 @@ async fn test_find_network_concurrency_limit() {
 
     for concurrency in concurrency_levels {
         println!("\nTesting concurrency: {}", concurrency);
-        
+
         let start = Instant::now();
         let success = Arc::new(AtomicUsize::new(0));
         let errors = Arc::new(AtomicUsize::new(0));
@@ -332,12 +346,16 @@ async fn test_find_network_concurrency_limit() {
 
                     rt.block_on(async move {
                         let mut engine = PluginEngine::new().ok()?;
-                        engine.load_plugin_with_metadata(&code, metadata).await.ok()?;
-                        
+                        engine
+                            .load_plugin_with_metadata(&code, metadata)
+                            .await
+                            .ok()?;
+
                         let transaction = create_test_transaction();
                         engine.scan_transaction(&transaction).await.ok()
                     })
-                }).await;
+                })
+                .await;
 
                 match result {
                     Ok(Some(_)) => success.fetch_add(1, Ordering::Relaxed),
@@ -383,7 +401,7 @@ async fn test_concurrent_http_per_plugin() {
     println!("{}", "=".repeat(80));
 
     let (metadata, code) = create_concurrent_http_plugin();
-    
+
     let iterations = 1000;
     let concurrency = 100;
     let start = Instant::now();
@@ -412,12 +430,16 @@ async fn test_concurrent_http_per_plugin() {
 
                 rt.block_on(async move {
                     let mut engine = PluginEngine::new().ok()?;
-                    engine.load_plugin_with_metadata(&code, metadata).await.ok()?;
-                    
+                    engine
+                        .load_plugin_with_metadata(&code, metadata)
+                        .await
+                        .ok()?;
+
                     let transaction = create_test_transaction();
                     engine.scan_transaction(&transaction).await.ok()
                 })
-            }).await;
+            })
+            .await;
 
             match result {
                 Ok(Some(_)) => success.fetch_add(1, Ordering::Relaxed),
@@ -462,7 +484,7 @@ async fn test_network_timeout_handling() {
     println!("{}", "=".repeat(80));
 
     let (metadata, code) = create_timeout_plugin();
-    
+
     let iterations = 100;
     let concurrency = 20;
     let start = Instant::now();
@@ -496,13 +518,17 @@ async fn test_network_timeout_handling() {
 
                     rt.block_on(async move {
                         let mut engine = PluginEngine::new().ok()?;
-                        engine.load_plugin_with_metadata(&code, metadata).await.ok()?;
-                        
+                        engine
+                            .load_plugin_with_metadata(&code, metadata)
+                            .await
+                            .ok()?;
+
                         let transaction = create_test_transaction();
                         engine.scan_transaction(&transaction).await.ok()
                     })
-                })
-            ).await;
+                }),
+            )
+            .await;
 
             match result {
                 Ok(Ok(Some(_))) => success.fetch_add(1, Ordering::Relaxed),
@@ -530,7 +556,10 @@ async fn test_network_timeout_handling() {
     println!("  Errors: {}", error_count);
     println!("  Timeouts: {}", timeout_count);
     println!("  Duration: {:?}", duration);
-    println!("  Timeout Rate: {:.2}%", timeout_count as f64 / iterations as f64 * 100.0);
+    println!(
+        "  Timeout Rate: {:.2}%",
+        timeout_count as f64 / iterations as f64 * 100.0
+    );
     println!("{}", "=".repeat(80));
 }
 
@@ -543,7 +572,7 @@ async fn test_sustained_network_pressure() {
     println!("{}", "=".repeat(80));
 
     let (metadata, code) = create_network_plugin();
-    
+
     let test_duration = Duration::from_secs(60);
     let concurrency = 200;
     let start = Instant::now();
@@ -606,12 +635,16 @@ async fn test_sustained_network_pressure() {
 
                     rt.block_on(async move {
                         let mut engine = PluginEngine::new().ok()?;
-                        engine.load_plugin_with_metadata(&code, metadata).await.ok()?;
-                        
+                        engine
+                            .load_plugin_with_metadata(&code, metadata)
+                            .await
+                            .ok()?;
+
                         let transaction = create_test_transaction();
                         engine.scan_transaction(&transaction).await.ok()
                     })
-                }).await;
+                })
+                .await;
 
                 match result {
                     Ok(Some(_)) => success.fetch_add(1, Ordering::Relaxed),
@@ -648,8 +681,14 @@ async fn test_sustained_network_pressure() {
     println!("  Total Requests: {}", total_requests);
     println!("  Success: {}", total_success);
     println!("  Errors: {}", total_errors);
-    println!("  Average Throughput: {:.2} req/s", total_requests as f64 / total_duration.as_secs_f64());
-    println!("  Error Rate: {:.2}%", total_errors as f64 / total_requests as f64 * 100.0);
+    println!(
+        "  Average Throughput: {:.2} req/s",
+        total_requests as f64 / total_duration.as_secs_f64()
+    );
+    println!(
+        "  Error Rate: {:.2}%",
+        total_errors as f64 / total_requests as f64 * 100.0
+    );
     println!("{}", "=".repeat(80));
 }
 
@@ -685,7 +724,8 @@ async fn test_various_network_conditions() {
             description: None,
         };
 
-        let code = format!(r#"
+        let code = format!(
+            r#"
 export async function scan_transaction(transaction) {{
     try {{
         const response = await fetch('{}');
@@ -712,7 +752,9 @@ export async function scan_transaction(transaction) {{
         }});
     }}
 }}
-"#, url);
+"#,
+            url
+        );
 
         let start = Instant::now();
         let success = Arc::new(AtomicUsize::new(0));
@@ -739,12 +781,16 @@ export async function scan_transaction(transaction) {{
 
                     rt.block_on(async move {
                         let mut engine = PluginEngine::new().ok()?;
-                        engine.load_plugin_with_metadata(&code, metadata).await.ok()?;
-                        
+                        engine
+                            .load_plugin_with_metadata(&code, metadata)
+                            .await
+                            .ok()?;
+
                         let transaction = create_test_transaction();
                         engine.scan_transaction(&transaction).await.ok()
                     })
-                }).await;
+                })
+                .await;
 
                 match result {
                     Ok(Some(_)) => success.fetch_add(1, Ordering::Relaxed),
@@ -765,10 +811,15 @@ export async function scan_transaction(transaction) {{
 
         println!("  Duration: {:?}", duration);
         println!("  Success: {} | Errors: {}", success_count, error_count);
-        println!("  Avg Latency: {:.2}ms", duration.as_millis() as f64 / iterations as f64);
-        println!("  Throughput: {:.2} req/s", iterations as f64 / duration.as_secs_f64());
+        println!(
+            "  Avg Latency: {:.2}ms",
+            duration.as_millis() as f64 / iterations as f64
+        );
+        println!(
+            "  Throughput: {:.2} req/s",
+            iterations as f64 / duration.as_secs_f64()
+        );
     }
 
     println!("{}", "=".repeat(80));
 }
-

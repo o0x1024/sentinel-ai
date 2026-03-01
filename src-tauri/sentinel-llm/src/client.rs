@@ -5,9 +5,11 @@ use futures::StreamExt;
 use rig::agent::MultiTurnStreamItem;
 use rig::client::{CompletionClient, ProviderClient};
 use rig::completion::Message;
-use serde_json::json;
-use rig::providers::gemini::completion::gemini_api_types::{AdditionalParameters, GenerationConfig};
+use rig::providers::gemini::completion::gemini_api_types::{
+    AdditionalParameters, GenerationConfig,
+};
 use rig::streaming::{StreamedAssistantContent, StreamingChat, StreamingPrompt};
+use serde_json::json;
 use tracing::{debug, error, info};
 
 use crate::config::LlmConfig;
@@ -33,8 +35,6 @@ impl LlmClient {
         &self.config
     }
 
-
-
     fn moonshot_thinking_params(&self, model: &str) -> Option<serde_json::Value> {
         let model_lower = model.to_lowercase();
         if !model_lower.contains("kimi-k2.5") {
@@ -47,7 +47,10 @@ impl LlmClient {
             .as_ref()
             .map(|u| u.to_lowercase())
             .unwrap_or_default();
-        if provider.contains("moonshot") || provider.contains("moonshut") || base.contains("moonshot") {
+        if provider.contains("moonshot")
+            || provider.contains("moonshut")
+            || base.contains("moonshot")
+        {
             Some(json!({ "thinking": { "type": "disabled" } }))
         } else {
             None
@@ -137,11 +140,16 @@ impl LlmClient {
             image.is_some()
         );
 
-        let mut system_prompt_with_hack = system_prompt.unwrap_or("You are a helpful AI assistant.").to_string();
-        
+        let mut system_prompt_with_hack = system_prompt
+            .unwrap_or("You are a helpful AI assistant.")
+            .to_string();
+
         // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
         let provider_lower = provider_for_agent.to_lowercase();
-        if provider_lower.contains("moonshot") || provider_lower.contains("deepseek") || provider_lower.contains("kimi") {
+        if provider_lower.contains("moonshot")
+            || provider_lower.contains("deepseek")
+            || provider_lower.contains("kimi")
+        {
             if !system_prompt_with_hack.contains("text response") {
                 system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
             }
@@ -173,36 +181,49 @@ impl LlmClient {
         // 根据 rig_provider 创建 agent 并执行
         let content = match provider_for_agent.as_str() {
             "openai" | "lm studio" | "lmstudio" | "lm_studio" => {
-                self.chat_with_openai(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_openai(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "moonshot" => {
-                self.chat_with_moonshot(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_moonshot(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "anthropic" => {
-                self.chat_with_anthropic(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_anthropic(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "gemini" | "google" => {
-                self.chat_with_gemini(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_gemini(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "ollama" => {
-                self.chat_with_ollama(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_ollama(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "deepseek" => {
-                self.chat_with_deepseek(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_deepseek(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "openrouter" => {
-                self.chat_with_openrouter(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_openrouter(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "xai" => {
-                self.chat_with_xai(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_xai(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             "groq" => {
-                self.chat_with_groq(model, preamble, user_message, chat_history, timeout).await?
+                self.chat_with_groq(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
             _ => {
                 // 未知 provider 尝试使用 openai 兼容方式
-                info!("Unknown rig_provider '{}', trying OpenAI compatible mode (via Generic Client)", provider_for_agent);
-                self.chat_with_generic_openai(model, preamble, user_message, chat_history, timeout).await?
+                info!(
+                    "Unknown rig_provider '{}', trying OpenAI compatible mode (via Generic Client)",
+                    provider_for_agent
+                );
+                self.chat_with_generic_openai(model, preamble, user_message, chat_history, timeout)
+                    .await?
             }
         };
 
@@ -230,36 +251,38 @@ impl LlmClient {
         // Use DeepSeek client as a generic OpenAI compatible client
         // because rig's OpenAI client forces the new /v1/responses API
         use rig::providers::deepseek;
-        
+
         let api_key = self.config.api_key.clone().unwrap_or_default();
-        
+
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
-        
+
         // Apply global proxy configuration
         let builder = reqwest::Client::builder().default_headers(headers);
         let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
         let http_client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        
+
         let mut builder = deepseek::Client::<reqwest::Client>::builder()
             .api_key(api_key)
             .http_client(http_client);
 
         if let Some(base_url) = &self.config.base_url {
-             builder = builder.base_url(base_url);
+            builder = builder.base_url(base_url);
         }
-        
-        let client = builder.build()
+
+        let client = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to build generic client: {}", e))?;
-        
+
         let builder = client.agent(model).preamble(preamble);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_openai(
@@ -271,34 +294,39 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::openai;
-        
+
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?;
-        
+
         // If custom base_url is set, use Chat Completions API (for third-party providers)
         // Otherwise use Responses API (for official OpenAI)
         if let Some(base_url) = &self.config.base_url {
-            info!("Using Chat Completions API with custom base URL: {}", base_url);
+            info!(
+                "Using Chat Completions API with custom base URL: {}",
+                base_url
+            );
             let client: openai::CompletionsClient = openai::Client::builder()
                 .api_key(api_key)
                 .base_url(base_url)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
-            
+
             let builder = client.agent(model).preamble(preamble);
             let agent = self.apply_generation_settings(builder).build();
-            self.execute_chat(agent, user_message, chat_history, timeout).await
+            self.execute_chat(agent, user_message, chat_history, timeout)
+                .await
         } else {
             info!("Using Responses API for official OpenAI");
             let client: openai::Client = openai::Client::builder()
                 .api_key(api_key)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
-            
+
             let builder = client.agent(model).preamble(preamble);
             let agent = self.apply_generation_settings(builder).build();
-            self.execute_chat(agent, user_message, chat_history, timeout).await
+            self.execute_chat(agent, user_message, chat_history, timeout)
+                .await
         }
     }
 
@@ -348,7 +376,8 @@ impl LlmClient {
             builder = builder.additional_params(params);
         }
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_anthropic(
@@ -360,28 +389,28 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::anthropic;
-        
+
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
-        
+
         // 创建带有正确 Content-Type 的 HTTP 客户端
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
-        
+
         // Apply global proxy configuration
         let builder = reqwest::Client::builder().default_headers(headers);
         let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
         let http_client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        
+
         let mut builder = anthropic::Client::<reqwest::Client>::builder()
             .api_key(api_key)
             .http_client(http_client);
-        
+
         // 检查是否设置了自定义 base_url
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
             if !base_url.is_empty() {
@@ -389,16 +418,18 @@ impl LlmClient {
                 builder = builder.base_url(&base_url);
             }
         }
-        
-        let client = builder.build()
+
+        let client = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
-        
+
         let builder = client
             .agent(model)
             .preamble(preamble)
             .max_tokens(self.config.get_max_tokens() as u64);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_gemini(
@@ -413,11 +444,13 @@ impl LlmClient {
         let client = gemini::Client::from_env();
         let gen_cfg = GenerationConfig::default();
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
-        let builder = client.agent(model)
+        let builder = client
+            .agent(model)
             .preamble(preamble)
             .additional_params(serde_json::to_value(cfg).unwrap());
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_ollama(
@@ -432,7 +465,8 @@ impl LlmClient {
         let client = ollama::Client::from_env();
         let builder = client.agent(model).preamble(preamble);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_deepseek(
@@ -444,40 +478,42 @@ impl LlmClient {
         timeout: std::time::Duration,
     ) -> Result<String> {
         use rig::providers::deepseek;
-        
+
         let api_key = std::env::var("DEEPSEEK_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-        
+
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
-        
+
         // Apply global proxy configuration
         let builder = reqwest::Client::builder().default_headers(headers);
         let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
         let http_client = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
-        
+
         let mut builder = deepseek::Client::<reqwest::Client>::builder()
             .api_key(api_key)
             .http_client(http_client);
-        
+
         // Use custom base_url if configured
         if let Some(base_url) = &self.config.base_url {
             info!("Using custom DeepSeek base URL: {}", base_url);
             builder = builder.base_url(base_url);
         }
-        
-        let client = builder.build()
+
+        let client = builder
+            .build()
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
-        
+
         let builder = client.agent(model).preamble(preamble);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_openrouter(
@@ -492,7 +528,8 @@ impl LlmClient {
         let client = openrouter::Client::from_env();
         let builder = client.agent(model).preamble(preamble);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_xai(
@@ -507,7 +544,8 @@ impl LlmClient {
         let client = xai::Client::from_env();
         let builder = client.agent(model).preamble(preamble);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn chat_with_groq(
@@ -522,7 +560,8 @@ impl LlmClient {
         let client = groq::Client::from_env();
         let builder = client.agent(model).preamble(preamble);
         let agent = self.apply_generation_settings(builder).build();
-        self.execute_chat(agent, user_message, chat_history, timeout).await
+        self.execute_chat(agent, user_message, chat_history, timeout)
+            .await
     }
 
     async fn execute_chat<M>(
@@ -551,7 +590,9 @@ impl LlmClient {
         } else {
             tokio::time::timeout(
                 timeout,
-                agent.stream_chat(user_message, chat_history).multi_turn(max_turns),
+                agent
+                    .stream_chat(user_message, chat_history)
+                    .multi_turn(max_turns),
             )
             .await
         };

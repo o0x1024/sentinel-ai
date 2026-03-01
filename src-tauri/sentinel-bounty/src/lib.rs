@@ -7,9 +7,9 @@
 //! - Asset Surface Management (ASM) integration
 //! - Change monitoring and workflow triggers
 
+pub mod error;
 pub mod models;
 pub mod services;
-pub mod error;
 
 pub use error::{BountyError, Result};
 pub use models::*;

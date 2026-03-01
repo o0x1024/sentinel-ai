@@ -1,8 +1,8 @@
-use anyhow::Result;
-use crate::core::models::database::{Configuration, NotificationRule, McpServerConfig};
+use crate::core::models::database::{Configuration, McpServerConfig, NotificationRule};
 use crate::core::models::rag_config::RagConfig;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
 
 impl DatabaseService {
     pub async fn get_rag_config_internal(&self) -> Result<Option<RagConfig>> {
@@ -16,7 +16,8 @@ impl DatabaseService {
 
     pub async fn save_rag_config_internal(&self, config: &RagConfig) -> Result<()> {
         let value = serde_json::to_string(config)?;
-        self.set_config_internal("rag", "config", &value, Some("RAG配置")).await?;
+        self.set_config_internal("rag", "config", &value, Some("RAG配置"))
+            .await?;
         Ok(())
     }
 
@@ -27,25 +28,31 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let value: Option<String> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_scalar("SELECT value FROM configurations WHERE category = $1 AND key = $2")
-                    .bind(category)
-                    .bind(key)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_scalar(
+                    "SELECT value FROM configurations WHERE category = $1 AND key = $2",
+                )
+                .bind(category)
+                .bind(key)
+                .fetch_optional(pool)
+                .await?
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
-                    .bind(category)
-                    .bind(key)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_scalar(
+                    "SELECT value FROM configurations WHERE category = ? AND key = ?",
+                )
+                .bind(category)
+                .bind(key)
+                .fetch_optional(pool)
+                .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_scalar("SELECT value FROM configurations WHERE category = ? AND key = ?")
-                    .bind(category)
-                    .bind(key)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_scalar(
+                    "SELECT value FROM configurations WHERE category = ? AND key = ?",
+                )
+                .bind(category)
+                .bind(key)
+                .fetch_optional(pool)
+                .await?
             }
         };
 
@@ -109,7 +116,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_configs_by_category_internal(&self, category: &str) -> Result<Vec<Configuration>> {
+    pub async fn get_configs_by_category_internal(
+        &self,
+        category: &str,
+    ) -> Result<Vec<Configuration>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -236,29 +246,38 @@ impl DatabaseService {
         Ok(rows)
     }
 
-    pub async fn get_notification_rule_internal(&self, id: &str) -> Result<Option<NotificationRule>> {
+    pub async fn get_notification_rule_internal(
+        &self,
+        id: &str,
+    ) -> Result<Option<NotificationRule>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let row = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as::<_, NotificationRule>("SELECT * FROM notification_rules WHERE id = $1")
-                    .bind(id)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_as::<_, NotificationRule>(
+                    "SELECT * FROM notification_rules WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as::<_, NotificationRule>("SELECT * FROM notification_rules WHERE id = ?")
-                    .bind(id)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_as::<_, NotificationRule>(
+                    "SELECT * FROM notification_rules WHERE id = ?",
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as::<_, NotificationRule>("SELECT * FROM notification_rules WHERE id = ?")
-                    .bind(id)
-                    .fetch_optional(pool)
-                    .await?
+                sqlx::query_as::<_, NotificationRule>(
+                    "SELECT * FROM notification_rules WHERE id = ?",
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?
             }
         };
         Ok(row)
@@ -456,7 +475,7 @@ impl DatabaseService {
         };
         Ok(configs)
     }
-    
+
     pub async fn get_auto_connect_mcp_servers_internal(&self) -> Result<Vec<McpServerConfig>> {
         let runtime = self
             .runtime_pool
@@ -487,8 +506,12 @@ impl DatabaseService {
         };
         Ok(configs)
     }
-    
-    pub async fn update_mcp_server_auto_connect_internal(&self, id: &str, auto_connect: bool) -> Result<()> {
+
+    pub async fn update_mcp_server_auto_connect_internal(
+        &self,
+        id: &str,
+        auto_connect: bool,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -519,7 +542,11 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_mcp_server_config_enabled_internal(&self, id: &str, enabled: bool) -> Result<()> {
+    pub async fn update_mcp_server_config_enabled_internal(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -703,39 +730,33 @@ impl DatabaseService {
             .filter(|s| !s.is_empty())
         {
             let words: Vec<String> = match runtime {
-                DatabasePool::PostgreSQL(pool) => {
-                    sqlx::query_scalar(
-                        r#"SELECT word FROM dictionary_words 
+                DatabasePool::PostgreSQL(pool) => sqlx::query_scalar(
+                    r#"SELECT word FROM dictionary_words 
                            WHERE dictionary_id = $1 
                            ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-                    )
-                    .bind(&default_dict_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default()
-                }
-                DatabasePool::SQLite(pool) => {
-                    sqlx::query_scalar(
-                        r#"SELECT word FROM dictionary_words 
+                )
+                .bind(&default_dict_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
+                DatabasePool::SQLite(pool) => sqlx::query_scalar(
+                    r#"SELECT word FROM dictionary_words 
                            WHERE dictionary_id = ? 
                            ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-                    )
-                    .bind(&default_dict_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default()
-                }
-                DatabasePool::MySQL(pool) => {
-                    sqlx::query_scalar(
-                        r#"SELECT word FROM dictionary_words 
+                )
+                .bind(&default_dict_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
+                DatabasePool::MySQL(pool) => sqlx::query_scalar(
+                    r#"SELECT word FROM dictionary_words 
                            WHERE dictionary_id = ? 
                            ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-                    )
-                    .bind(&default_dict_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default()
-                }
+                )
+                .bind(&default_dict_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
             };
 
             if !words.is_empty() {
@@ -777,39 +798,33 @@ impl DatabaseService {
         };
         if let Ok(Some(candidate_id)) = candidate_id {
             let words: Vec<String> = match runtime {
-                DatabasePool::PostgreSQL(pool) => {
-                    sqlx::query_scalar(
-                        r#"SELECT word FROM dictionary_words 
+                DatabasePool::PostgreSQL(pool) => sqlx::query_scalar(
+                    r#"SELECT word FROM dictionary_words 
                            WHERE dictionary_id = $1 
                            ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-                    )
-                    .bind(&candidate_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default()
-                }
-                DatabasePool::SQLite(pool) => {
-                    sqlx::query_scalar(
-                        r#"SELECT word FROM dictionary_words 
+                )
+                .bind(&candidate_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
+                DatabasePool::SQLite(pool) => sqlx::query_scalar(
+                    r#"SELECT word FROM dictionary_words 
                            WHERE dictionary_id = ? 
                            ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-                    )
-                    .bind(&candidate_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default()
-                }
-                DatabasePool::MySQL(pool) => {
-                    sqlx::query_scalar(
-                        r#"SELECT word FROM dictionary_words 
+                )
+                .bind(&candidate_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
+                DatabasePool::MySQL(pool) => sqlx::query_scalar(
+                    r#"SELECT word FROM dictionary_words 
                            WHERE dictionary_id = ? 
                            ORDER BY COALESCE(weight, 0) DESC, word ASC"#,
-                    )
-                    .bind(&candidate_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default()
-                }
+                )
+                .bind(&candidate_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default(),
             };
 
             if !words.is_empty() {
@@ -842,7 +857,8 @@ impl DatabaseService {
         }
 
         current_dict.sort();
-        self.set_subdomain_dictionary_internal(&current_dict).await?;
+        self.set_subdomain_dictionary_internal(&current_dict)
+            .await?;
         Ok(())
     }
 
@@ -851,32 +867,93 @@ impl DatabaseService {
 
         current_dict.retain(|word| !words.contains(word));
 
-        self.set_subdomain_dictionary_internal(&current_dict).await?;
+        self.set_subdomain_dictionary_internal(&current_dict)
+            .await?;
         Ok(())
     }
 
     fn get_default_subdomain_dictionary(&self) -> Vec<String> {
         vec![
-            "www".to_string(), "mail".to_string(), "ftp".to_string(), "localhost".to_string(),
-            "webmail".to_string(), "smtp".to_string(), "pop".to_string(), "ns1".to_string(),
-            "webdisk".to_string(), "ns2".to_string(), "cpanel".to_string(), "whm".to_string(),
-            "autodiscover".to_string(), "autoconfig".to_string(), "m".to_string(), "imap".to_string(),
-            "test".to_string(), "ns".to_string(), "blog".to_string(), "pop3".to_string(),
-            "dev".to_string(), "www2".to_string(), "admin".to_string(), "forum".to_string(),
-            "news".to_string(), "vpn".to_string(), "ns3".to_string(), "mail2".to_string(),
-            "new".to_string(), "mysql".to_string(), "old".to_string(), "lists".to_string(),
-            "support".to_string(), "mobile".to_string(), "static".to_string(), "docs".to_string(),
-            "beta".to_string(), "shop".to_string(), "sql".to_string(), "secure".to_string(),
-            "demo".to_string(), "cp".to_string(), "calendar".to_string(), "wiki".to_string(),
-            "web".to_string(), "media".to_string(), "email".to_string(), "images".to_string(),
-            "img".to_string(), "www1".to_string(), "intranet".to_string(), "portal".to_string(),
-            "video".to_string(), "sip".to_string(), "dns2".to_string(), "api".to_string(),
-            "cdn".to_string(), "stats".to_string(), "dns1".to_string(), "ns4".to_string(),
-            "www3".to_string(), "dns".to_string(), "search".to_string(), "staging".to_string(),
-            "server".to_string(), "mx".to_string(), "chat".to_string(), "en".to_string(),
-            "wap".to_string(), "redmine".to_string(), "ftp2".to_string(), "db".to_string(),
-            "erp".to_string(), "explore".to_string(), "download".to_string(), "ww1".to_string(),
-            "catalog".to_string(), "ssh".to_string(), "management".to_string(), "www4".to_string(),
+            "www".to_string(),
+            "mail".to_string(),
+            "ftp".to_string(),
+            "localhost".to_string(),
+            "webmail".to_string(),
+            "smtp".to_string(),
+            "pop".to_string(),
+            "ns1".to_string(),
+            "webdisk".to_string(),
+            "ns2".to_string(),
+            "cpanel".to_string(),
+            "whm".to_string(),
+            "autodiscover".to_string(),
+            "autoconfig".to_string(),
+            "m".to_string(),
+            "imap".to_string(),
+            "test".to_string(),
+            "ns".to_string(),
+            "blog".to_string(),
+            "pop3".to_string(),
+            "dev".to_string(),
+            "www2".to_string(),
+            "admin".to_string(),
+            "forum".to_string(),
+            "news".to_string(),
+            "vpn".to_string(),
+            "ns3".to_string(),
+            "mail2".to_string(),
+            "new".to_string(),
+            "mysql".to_string(),
+            "old".to_string(),
+            "lists".to_string(),
+            "support".to_string(),
+            "mobile".to_string(),
+            "static".to_string(),
+            "docs".to_string(),
+            "beta".to_string(),
+            "shop".to_string(),
+            "sql".to_string(),
+            "secure".to_string(),
+            "demo".to_string(),
+            "cp".to_string(),
+            "calendar".to_string(),
+            "wiki".to_string(),
+            "web".to_string(),
+            "media".to_string(),
+            "email".to_string(),
+            "images".to_string(),
+            "img".to_string(),
+            "www1".to_string(),
+            "intranet".to_string(),
+            "portal".to_string(),
+            "video".to_string(),
+            "sip".to_string(),
+            "dns2".to_string(),
+            "api".to_string(),
+            "cdn".to_string(),
+            "stats".to_string(),
+            "dns1".to_string(),
+            "ns4".to_string(),
+            "www3".to_string(),
+            "dns".to_string(),
+            "search".to_string(),
+            "staging".to_string(),
+            "server".to_string(),
+            "mx".to_string(),
+            "chat".to_string(),
+            "en".to_string(),
+            "wap".to_string(),
+            "redmine".to_string(),
+            "ftp2".to_string(),
+            "db".to_string(),
+            "erp".to_string(),
+            "explore".to_string(),
+            "download".to_string(),
+            "ww1".to_string(),
+            "catalog".to_string(),
+            "ssh".to_string(),
+            "management".to_string(),
+            "www4".to_string(),
         ]
     }
 }

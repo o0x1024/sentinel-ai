@@ -6,7 +6,7 @@
 //! - macOS Keychain 信任助手（可选）
 
 use crate::certificate_authority::ChainedCertificateAuthority;
-use crate::{TrafficError, Result};
+use crate::{Result, TrafficError};
 use hudsucker::certificate_authority::RcgenAuthority;
 use hudsucker::rcgen::{CertificateParams, Issuer, KeyPair, SerialNumber};
 use rand::RngCore;
@@ -96,14 +96,12 @@ impl CertificateService {
         ];
 
         // 添加更多 Distinguished Name 属性（提高兼容性）
-        params.distinguished_name.push(
-            hudsucker::rcgen::DnType::OrganizationName,
-            "Sentinel AI",
-        );
-        params.distinguished_name.push(
-            hudsucker::rcgen::DnType::CountryName,
-            "CN",
-        );
+        params
+            .distinguished_name
+            .push(hudsucker::rcgen::DnType::OrganizationName, "Sentinel AI");
+        params
+            .distinguished_name
+            .push(hudsucker::rcgen::DnType::CountryName, "CN");
 
         // 随机序列号（避免所有环境都为固定值 1 导致某些客户端缓存冲突）
         let mut rng = rand::rngs::OsRng;
@@ -319,20 +317,20 @@ impl CertificateService {
     pub fn export_cert_der(&self) -> Result<PathBuf> {
         let cert_path = self.ca_dir.join("root-ca.pem");
         let der_path = self.ca_dir.join("root-ca.der");
-        
+
         if !cert_path.exists() {
             return Err(TrafficError::Certificate("Root CA not found".to_string()));
         }
 
         let cert_pem = fs::read(&cert_path)
             .map_err(|e| TrafficError::Certificate(format!("Failed to read certificate: {}", e)))?;
-        
+
         let pem = pem::parse(&cert_pem)
             .map_err(|e| TrafficError::Certificate(format!("Failed to parse PEM: {}", e)))?;
-        
+
         fs::write(&der_path, pem.contents())
             .map_err(|e| TrafficError::Certificate(format!("Failed to write DER: {}", e)))?;
-        
+
         tracing::info!("Exported certificate in DER format: {}", der_path.display());
         Ok(der_path)
     }
@@ -341,24 +339,25 @@ impl CertificateService {
     pub fn export_key_der(&self) -> Result<PathBuf> {
         let key_path = self.ca_dir.join("root-ca.key");
         let der_path = self.ca_dir.join("root-ca-key.der");
-        
+
         if !key_path.exists() {
-            return Err(TrafficError::Certificate("Root CA key not found".to_string()));
+            return Err(TrafficError::Certificate(
+                "Root CA key not found".to_string(),
+            ));
         }
 
         let key_pem = fs::read(&key_path)
             .map_err(|e| TrafficError::Certificate(format!("Failed to read key: {}", e)))?;
-        
+
         let pem = pem::parse(&key_pem)
             .map_err(|e| TrafficError::Certificate(format!("Failed to parse PEM: {}", e)))?;
-        
+
         fs::write(&der_path, pem.contents())
             .map_err(|e| TrafficError::Certificate(format!("Failed to write DER: {}", e)))?;
-        
+
         tracing::info!("Exported private key in DER format: {}", der_path.display());
         Ok(der_path)
     }
-
 
     /// 获取 CA 目录路径
     pub fn get_ca_dir(&self) -> &PathBuf {
@@ -418,9 +417,7 @@ impl CertificateService {
             .args(["-addstore", "-user", "Root", cert_path_str])
             .output()
             .await
-            .map_err(|e| {
-                TrafficError::Certificate(format!("Failed to execute certutil: {}", e))
-            })?;
+            .map_err(|e| TrafficError::Certificate(format!("Failed to execute certutil: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -445,9 +442,7 @@ impl CertificateService {
             .args(["-store", "-user", "Root"])
             .output()
             .await
-            .map_err(|e| {
-                TrafficError::Certificate(format!("Failed to execute certutil: {}", e))
-            })?;
+            .map_err(|e| TrafficError::Certificate(format!("Failed to execute certutil: {}", e)))?;
 
         if !output.status.success() {
             return Ok(false);
@@ -455,7 +450,7 @@ impl CertificateService {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let trusted = stdout.contains(subject_cn);
-        
+
         tracing::debug!("Windows trust check for root CA: trusted={}", trusted);
         Ok(trusted)
     }
@@ -470,9 +465,7 @@ impl CertificateService {
             .args(["-delstore", "-user", "Root", subject_cn])
             .output()
             .await
-            .map_err(|e| {
-                TrafficError::Certificate(format!("Failed to execute certutil: {}", e))
-            })?;
+            .map_err(|e| TrafficError::Certificate(format!("Failed to execute certutil: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

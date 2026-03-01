@@ -1,5 +1,5 @@
 //! Prompt A/B测试管理器
-//! 
+//!
 //! 实现prompt效果的对比测试和优化功能，支持：
 //! - A/B测试设计和执行
 //! - 效果评估和统计分析
@@ -7,13 +7,13 @@
 //! - 测试结果持久化
 
 use super::*;
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
-use uuid::Uuid;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// A/B测试管理器
 #[derive(Debug)]
@@ -509,7 +509,7 @@ impl PromptABTestManager {
     /// 创建新的A/B测试
     pub async fn create_test(&self, test_config: CreateTestRequest) -> Result<ABTest> {
         let test_id = Uuid::new_v4().to_string();
-        
+
         let test = ABTest {
             test_id: test_id.clone(),
             name: test_config.name,
@@ -538,15 +538,15 @@ impl PromptABTestManager {
     /// 开始测试
     pub async fn start_test(&self, test_id: &str) -> Result<()> {
         let mut active_tests = self.active_tests.write().await;
-        
+
         if let Some(test) = active_tests.get_mut(test_id) {
             if test.status != TestStatus::Draft {
                 return Err(anyhow!("Test is not in draft status"));
             }
-            
+
             test.status = TestStatus::Running;
             test.started_at = Some(Utc::now());
-            
+
             Ok(())
         } else {
             Err(anyhow!("Test not found: {}", test_id))
@@ -556,12 +556,12 @@ impl PromptABTestManager {
     /// 暂停测试
     pub async fn pause_test(&self, test_id: &str) -> Result<()> {
         let mut active_tests = self.active_tests.write().await;
-        
+
         if let Some(test) = active_tests.get_mut(test_id) {
             if test.status != TestStatus::Running {
                 return Err(anyhow!("Test is not running"));
             }
-            
+
             test.status = TestStatus::Paused;
             Ok(())
         } else {
@@ -572,7 +572,7 @@ impl PromptABTestManager {
     /// 停止测试
     pub async fn stop_test(&self, test_id: &str) -> Result<()> {
         let mut active_tests = self.active_tests.write().await;
-        
+
         if let Some(test) = active_tests.get_mut(test_id) {
             test.status = TestStatus::Completed;
             test.ended_at = Some(Utc::now());
@@ -583,14 +583,18 @@ impl PromptABTestManager {
     }
 
     /// 分配用户到变体
-    pub async fn assign_variant(&self, test_id: &str, user_context: &UserContext) -> Result<String> {
+    pub async fn assign_variant(
+        &self,
+        test_id: &str,
+        user_context: &UserContext,
+    ) -> Result<String> {
         let active_tests = self.active_tests.read().await;
-        
+
         if let Some(test) = active_tests.get(test_id) {
             if test.status != TestStatus::Running {
                 return Err(anyhow!("Test is not running"));
             }
-            
+
             self.allocate_variant(test, user_context)
         } else {
             Err(anyhow!("Test not found: {}", test_id))
@@ -605,7 +609,7 @@ impl PromptABTestManager {
     /// 分析测试结果
     pub async fn analyze_test(&self, test_id: &str) -> Result<TestAnalysis> {
         let active_tests = self.active_tests.read().await;
-        
+
         if let Some(test) = active_tests.get(test_id) {
             let executions = self.results_storage.get_executions(test_id).await?;
             self.analyzer.analyze_test_results(test, &executions).await
@@ -623,7 +627,8 @@ impl PromptABTestManager {
     /// 获取活跃测试列表
     pub async fn list_active_tests(&self) -> Result<Vec<ABTest>> {
         let active_tests = self.active_tests.read().await;
-        Ok(active_tests.values()
+        Ok(active_tests
+            .values()
             .filter(|test| test.status == TestStatus::Running)
             .cloned()
             .collect())
@@ -632,8 +637,9 @@ impl PromptABTestManager {
     /// 获取测试详情
     pub async fn get_test(&self, test_id: &str) -> Result<ABTest> {
         let active_tests = self.active_tests.read().await;
-        
-        active_tests.get(test_id)
+
+        active_tests
+            .get(test_id)
             .cloned()
             .ok_or_else(|| anyhow!("Test not found: {}", test_id))
     }
@@ -642,20 +648,24 @@ impl PromptABTestManager {
     pub async fn get_test_results(&self, test_id: &str) -> Result<ABTestResults> {
         let test = self.get_test(test_id).await?;
         let analysis = self.analyze_test(test_id).await?;
-        
+
         // 找到获胜变体
-        let winning_variant = analysis.variant_results.iter()
+        let winning_variant = analysis
+            .variant_results
+            .iter()
             .max_by(|a, b| a.1.overall_score.partial_cmp(&b.1.overall_score).unwrap())
             .map(|(variant_id, _)| variant_id.clone());
-        
+
         // 计算总样本数
-        let total_samples = analysis.variant_results.values()
+        let total_samples = analysis
+            .variant_results
+            .values()
             .map(|r| r.sample_size)
             .sum();
-        
+
         // 生成摘要
         let summary = self.generate_test_summary(&test, &analysis);
-        
+
         Ok(ABTestResults {
             test_id: test.test_id,
             test_name: test.name,
@@ -675,14 +685,18 @@ impl PromptABTestManager {
 
     /// 生成测试摘要
     fn generate_test_summary(&self, test: &ABTest, analysis: &TestAnalysis) -> String {
-        let total_samples: usize = analysis.variant_results.values()
+        let total_samples: usize = analysis
+            .variant_results
+            .values()
             .map(|r| r.sample_size)
             .sum();
-        
-        let best_variant = analysis.variant_results.iter()
+
+        let best_variant = analysis
+            .variant_results
+            .iter()
             .max_by(|a, b| a.1.overall_score.partial_cmp(&b.1.overall_score).unwrap())
             .map(|(variant_id, result)| (variant_id, result.overall_score));
-        
+
         match best_variant {
             Some((variant_id, score)) => {
                 format!(
@@ -697,8 +711,8 @@ impl PromptABTestManager {
                         "结果尚未达到统计显著性。"
                     }
                 )
-            },
-            None => format!("测试 '{}' 尚无足够数据进行分析。", test.name)
+            }
+            None => format!("测试 '{}' 尚无足够数据进行分析。", test.name),
         }
     }
 
@@ -737,23 +751,21 @@ impl PromptABTestManager {
     /// 分配变体
     fn allocate_variant(&self, test: &ABTest, user_context: &UserContext) -> Result<String> {
         match test.traffic_allocation.strategy {
-            AllocationStrategy::Random => {
-                self.random_allocation(&test.variants)
-            },
+            AllocationStrategy::Random => self.random_allocation(&test.variants),
             AllocationStrategy::UserIdHash => {
                 if let Some(user_id) = &user_context.user_id {
                     self.hash_based_allocation(&test.variants, user_id)
                 } else {
                     self.random_allocation(&test.variants)
                 }
-            },
+            }
             AllocationStrategy::SessionId => {
                 self.hash_based_allocation(&test.variants, &user_context.session_id)
-            },
+            }
             AllocationStrategy::Custom(_) => {
                 // 实现自定义分配逻辑
                 self.random_allocation(&test.variants)
-            },
+            }
         }
     }
 
@@ -761,7 +773,7 @@ impl PromptABTestManager {
     fn random_allocation(&self, variants: &[TestVariant]) -> Result<String> {
         let _rng = rand::thread_rng();
         let random_value: f32 = rand::random();
-        
+
         let mut cumulative_weight = 0.0;
         for variant in variants {
             cumulative_weight += variant.traffic_weight;
@@ -769,7 +781,7 @@ impl PromptABTestManager {
                 return Ok(variant.variant_id.clone());
             }
         }
-        
+
         // 默认返回第一个变体
         Ok(variants[0].variant_id.clone())
     }
@@ -778,13 +790,13 @@ impl PromptABTestManager {
     fn hash_based_allocation(&self, variants: &[TestVariant], key: &str) -> Result<String> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let hash_value = hasher.finish();
-        
+
         let normalized_hash = (hash_value as f64) / f64::MAX;
-        
+
         let mut cumulative_weight = 0.0;
         for variant in variants {
             cumulative_weight += variant.traffic_weight as f64;
@@ -792,7 +804,7 @@ impl PromptABTestManager {
                 return Ok(variant.variant_id.clone());
             }
         }
-        
+
         Ok(variants[0].variant_id.clone())
     }
 }
@@ -840,12 +852,15 @@ impl TestResultsStorage {
     pub async fn store_execution(&self, execution: TestExecution) -> Result<()> {
         // 更新缓存
         let mut cache = self.cache.write().await;
-        cache.entry(execution.test_id.clone())
+        cache
+            .entry(execution.test_id.clone())
             .or_insert_with(Vec::new)
             .push(execution.clone());
 
         // 持久化到文件
-        let file_path = self.storage_path.join(format!("{}.json", execution.test_id));
+        let file_path = self
+            .storage_path
+            .join(format!("{}.json", execution.test_id));
         let executions = cache.get(&execution.test_id).unwrap();
         let content = serde_json::to_string_pretty(executions)?;
         tokio::fs::write(file_path, content).await?;
@@ -856,7 +871,7 @@ impl TestResultsStorage {
     /// 获取执行结果
     pub async fn get_executions(&self, test_id: &str) -> Result<Vec<TestExecution>> {
         let cache = self.cache.read().await;
-        
+
         if let Some(executions) = cache.get(test_id) {
             Ok(executions.clone())
         } else {
@@ -868,18 +883,18 @@ impl TestResultsStorage {
     /// 从文件加载执行结果
     async fn load_executions_from_file(&self, test_id: &str) -> Result<Vec<TestExecution>> {
         let file_path = self.storage_path.join(format!("{}.json", test_id));
-        
+
         if !file_path.exists() {
             return Ok(Vec::new());
         }
 
         let content = tokio::fs::read_to_string(file_path).await?;
         let executions: Vec<TestExecution> = serde_json::from_str(&content)?;
-        
+
         // 更新缓存
         let mut cache = self.cache.write().await;
         cache.insert(test_id.to_string(), executions.clone());
-        
+
         Ok(executions)
     }
 }
@@ -897,18 +912,20 @@ impl StatisticalAnalyzer {
         executions: &[TestExecution],
     ) -> Result<TestAnalysis> {
         let mut variant_results = HashMap::new();
-        
+
         // 按变体分组执行结果
         let mut variant_executions: HashMap<String, Vec<&TestExecution>> = HashMap::new();
         for execution in executions {
-            variant_executions.entry(execution.variant_id.clone())
+            variant_executions
+                .entry(execution.variant_id.clone())
                 .or_default()
                 .push(execution);
         }
 
         // 计算每个变体的结果
         for (variant_id, variant_executions) in &variant_executions {
-            let result = self.calculate_variant_result(variant_id, variant_executions, &test.metrics)?;
+            let result =
+                self.calculate_variant_result(variant_id, variant_executions, &test.metrics)?;
             variant_results.insert(variant_id.clone(), result);
         }
 
@@ -916,7 +933,8 @@ impl StatisticalAnalyzer {
         let statistical_significance = self.calculate_statistical_significance(&variant_results)?;
 
         // 生成推荐
-        let recommendations = self.generate_recommendations(test, &variant_results, &statistical_significance)?;
+        let recommendations =
+            self.generate_recommendations(test, &variant_results, &statistical_significance)?;
 
         // 计算置信区间
         let confidence_intervals = self.calculate_confidence_intervals(&variant_results)?;
@@ -943,13 +961,14 @@ impl StatisticalAnalyzer {
         metrics: &[EvaluationMetric],
     ) -> Result<VariantResult> {
         let mut metric_results = HashMap::new();
-        
+
         for metric in metrics {
-            let values: Vec<f64> = executions.iter()
+            let values: Vec<f64> = executions
+                .iter()
                 .filter_map(|e| e.metric_values.get(&metric.name))
                 .copied()
                 .collect();
-            
+
             if !values.is_empty() {
                 let result = self.calculate_metric_statistics(&values);
                 metric_results.insert(metric.name.clone(), result);
@@ -957,9 +976,8 @@ impl StatisticalAnalyzer {
         }
 
         // 计算总体评分（简化实现）
-        let overall_score = metric_results.values()
-            .map(|r| r.mean)
-            .sum::<f64>() / metric_results.len() as f64;
+        let overall_score =
+            metric_results.values().map(|r| r.mean).sum::<f64>() / metric_results.len() as f64;
 
         Ok(VariantResult {
             variant_id: variant_id.to_string(),
@@ -974,28 +992,27 @@ impl StatisticalAnalyzer {
     fn calculate_metric_statistics(&self, values: &[f64]) -> MetricResult {
         let mut sorted_values = values.to_vec();
         sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance = values.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / values.len() as f64;
+        let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();
-        
+
         let median = if sorted_values.len().is_multiple_of(2) {
-            (sorted_values[sorted_values.len() / 2 - 1] + sorted_values[sorted_values.len() / 2]) / 2.0
+            (sorted_values[sorted_values.len() / 2 - 1] + sorted_values[sorted_values.len() / 2])
+                / 2.0
         } else {
             sorted_values[sorted_values.len() / 2]
         };
-        
+
         let min = sorted_values[0];
         let max = sorted_values[sorted_values.len() - 1];
-        
+
         let mut percentiles = HashMap::new();
         percentiles.insert("p25".to_string(), self.percentile(&sorted_values, 0.25));
         percentiles.insert("p75".to_string(), self.percentile(&sorted_values, 0.75));
         percentiles.insert("p90".to_string(), self.percentile(&sorted_values, 0.90));
         percentiles.insert("p95".to_string(), self.percentile(&sorted_values, 0.95));
-        
+
         MetricResult {
             metric_name: "unknown".to_string(), // 将在调用处设置
             mean,
@@ -1035,11 +1052,12 @@ impl StatisticalAnalyzer {
         _statistical_significance: &StatisticalSignificance,
     ) -> Result<Vec<Recommendation>> {
         let mut recommendations = Vec::new();
-        
+
         // 找到最佳变体
-        if let Some((best_variant, _)) = variant_results.iter()
-            .max_by(|a, b| a.1.overall_score.partial_cmp(&b.1.overall_score).unwrap()) {
-            
+        if let Some((best_variant, _)) = variant_results
+            .iter()
+            .max_by(|a, b| a.1.overall_score.partial_cmp(&b.1.overall_score).unwrap())
+        {
             recommendations.push(Recommendation {
                 recommendation_type: RecommendationType::SelectWinner,
                 description: format!("建议选择变体 {} 作为获胜者", best_variant),
@@ -1048,7 +1066,7 @@ impl StatisticalAnalyzer {
                 priority: Priority::High,
             });
         }
-        
+
         Ok(recommendations)
     }
 
@@ -1079,7 +1097,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = ABTestConfig::default();
         let manager = PromptABTestManager::new(temp_dir.path().to_path_buf(), config);
-        
+
         let request = CreateTestRequest {
             name: "Test Prompt".to_string(),
             description: "Testing prompt effectiveness".to_string(),
@@ -1106,23 +1124,20 @@ mod tests {
             traffic_allocation: TrafficAllocation {
                 strategy: AllocationStrategy::Random,
                 total_traffic_percent: 100.0,
-                variant_weights: [
-                    ("control".to_string(), 0.5),
-                    ("treatment".to_string(), 0.5),
-                ].into_iter().collect(),
+                variant_weights: [("control".to_string(), 0.5), ("treatment".to_string(), 0.5)]
+                    .into_iter()
+                    .collect(),
                 user_segmentation: None,
             },
-            metrics: vec![
-                EvaluationMetric {
-                    name: "success_rate".to_string(),
-                    metric_type: MetricType::SuccessRate,
-                    description: "Task success rate".to_string(),
-                    target_value: Some(0.8),
-                    weight: 1.0,
-                    is_primary: true,
-                    calculation_method: CalculationMethod::Average,
-                },
-            ],
+            metrics: vec![EvaluationMetric {
+                name: "success_rate".to_string(),
+                metric_type: MetricType::SuccessRate,
+                description: "Task success rate".to_string(),
+                target_value: Some(0.8),
+                weight: 1.0,
+                is_primary: true,
+                calculation_method: CalculationMethod::Average,
+            }],
             conditions: TestConditions {
                 min_sample_size: 100,
                 max_duration_hours: Some(168), // 1 week
@@ -1132,7 +1147,7 @@ mod tests {
             },
             metadata: HashMap::new(),
         };
-        
+
         let test = manager.create_test(request).await.unwrap();
         assert_eq!(test.variants.len(), 2);
         assert_eq!(test.status, TestStatus::Draft);
@@ -1143,7 +1158,7 @@ mod tests {
         let analyzer = StatisticalAnalyzer::new(AnalysisConfig::default());
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let result = analyzer.calculate_metric_statistics(&values);
-        
+
         assert_eq!(result.mean, 3.0);
         assert_eq!(result.median, 3.0);
         assert_eq!(result.min, 1.0);

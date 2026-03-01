@@ -318,10 +318,7 @@ impl DatabaseService {
     }
 
     /// Count rules with optional filters
-    pub async fn count_cpg_security_rules(
-        &self,
-        filters: CpgSecurityRuleFilters,
-    ) -> Result<i64> {
+    pub async fn count_cpg_security_rules(&self, filters: CpgSecurityRuleFilters) -> Result<i64> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -470,28 +467,34 @@ impl DatabaseService {
         let now = Utc::now();
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("UPDATE cpg_security_rules SET enabled = $1, updated_at = $2 WHERE id = $3")
-                    .bind(enabled)
-                    .bind(now)
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE cpg_security_rules SET enabled = $1, updated_at = $2 WHERE id = $3",
+                )
+                .bind(enabled)
+                .bind(now)
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query("UPDATE cpg_security_rules SET enabled = ?, updated_at = ? WHERE id = ?")
-                    .bind(enabled)
-                    .bind(now)
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE cpg_security_rules SET enabled = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(enabled)
+                .bind(now)
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query("UPDATE cpg_security_rules SET enabled = ?, updated_at = ? WHERE id = ?")
-                    .bind(enabled)
-                    .bind(now)
-                    .bind(id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE cpg_security_rules SET enabled = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(enabled)
+                .bind(now)
+                .bind(id)
+                .execute(pool)
+                .await?;
             }
         }
 

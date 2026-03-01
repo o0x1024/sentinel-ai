@@ -1,9 +1,9 @@
 //! Workflow Artifact Protocol (P0-1)
-//! 
+//!
 //! Unified output contract for workflow steps, enabling automatic data sinking.
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Standard artifact types produced by workflow steps
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -46,7 +46,7 @@ impl ArtifactType {
             ArtifactType::RawData => "raw_data",
         }
     }
-    
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "finding" | "findings" | "vulnerability" => Some(ArtifactType::Finding),
@@ -251,18 +251,26 @@ impl ArtifactExtractor {
                 return at;
             }
         }
-        
+
         // Heuristic detection
-        if data.get("vulnerability").is_some() || data.get("finding").is_some() || data.get("findings").is_some() {
+        if data.get("vulnerability").is_some()
+            || data.get("finding").is_some()
+            || data.get("findings").is_some()
+        {
             return ArtifactType::Finding;
         }
         if data.get("subdomains").is_some() {
             return ArtifactType::Subdomains;
         }
-        if data.get("hosts").is_some() || data.get("liveHosts").is_some() || data.get("results").is_some() {
+        if data.get("hosts").is_some()
+            || data.get("liveHosts").is_some()
+            || data.get("results").is_some()
+        {
             // Check if results contain status_code
             if let Some(arr) = data.get("results").and_then(|v| v.as_array()) {
-                if arr.iter().any(|item| item.get("statusCode").is_some() || item.get("status_code").is_some()) {
+                if arr.iter().any(|item| {
+                    item.get("statusCode").is_some() || item.get("status_code").is_some()
+                }) {
                     return ArtifactType::LiveHosts;
                 }
             }
@@ -282,254 +290,389 @@ impl ArtifactExtractor {
         if data.get("directories").is_some() || data.get("paths").is_some() {
             return ArtifactType::Directories;
         }
-        
+
         ArtifactType::RawData
     }
-    
+
     /// Extract finding from raw output
     pub fn extract_finding(data: &serde_json::Value) -> Option<FindingArtifact> {
         // Check nested structures
-        let finding_data = data.get("finding")
+        let finding_data = data
+            .get("finding")
             .or_else(|| data.get("vulnerability"))
             .unwrap_or(data);
-        
+
         // Title is required
-        let title = finding_data.get("title")
+        let title = finding_data
+            .get("title")
             .or_else(|| finding_data.get("name"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())?;
-        
+
         Some(FindingArtifact {
             title,
-            description: finding_data.get("description")
+            description: finding_data
+                .get("description")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            finding_type: finding_data.get("finding_type")
+            finding_type: finding_data
+                .get("finding_type")
                 .or_else(|| finding_data.get("type"))
                 .or_else(|| finding_data.get("vulnerabilityType"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            severity: finding_data.get("severity")
+            severity: finding_data
+                .get("severity")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            confidence: finding_data.get("confidence")
+            confidence: finding_data
+                .get("confidence")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            affected_url: finding_data.get("affected_url")
+            affected_url: finding_data
+                .get("affected_url")
                 .or_else(|| finding_data.get("url"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            affected_parameter: finding_data.get("affected_parameter")
+            affected_parameter: finding_data
+                .get("affected_parameter")
                 .or_else(|| finding_data.get("parameter"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            cwe_id: finding_data.get("cwe_id")
+            cwe_id: finding_data
+                .get("cwe_id")
                 .or_else(|| finding_data.get("cwe"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            impact: finding_data.get("impact")
+            impact: finding_data
+                .get("impact")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            remediation: finding_data.get("remediation")
+            remediation: finding_data
+                .get("remediation")
                 .or_else(|| finding_data.get("recommendation"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            reproduction_steps: finding_data.get("reproduction_steps")
+            reproduction_steps: finding_data
+                .get("reproduction_steps")
                 .or_else(|| finding_data.get("steps"))
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()),
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                }),
             raw_output: Some(data.clone()),
         })
     }
-    
+
     /// Extract subdomains from raw output
     pub fn extract_subdomains(data: &serde_json::Value) -> Option<SubdomainsArtifact> {
         let subdomains_arr = data.get("subdomains").and_then(|v| v.as_array())?;
-        
-        let domain = data.get("domain")
+
+        let domain = data
+            .get("domain")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        
-        let subdomains: Vec<SubdomainEntry> = subdomains_arr.iter().filter_map(|item| {
-            if let Some(s) = item.as_str() {
-                Some(SubdomainEntry { subdomain: s.to_string(), source: None })
-            } else if let Some(obj) = item.as_object() {
-                Some(SubdomainEntry {
-                    subdomain: obj.get("subdomain").or_else(|| obj.get("host")).and_then(|v| v.as_str())?.to_string(),
-                    source: obj.get("source").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                })
-            } else {
-                None
-            }
-        }).collect();
-        
-        if subdomains.is_empty() { return None; }
-        
+
+        let subdomains: Vec<SubdomainEntry> = subdomains_arr
+            .iter()
+            .filter_map(|item| {
+                if let Some(s) = item.as_str() {
+                    Some(SubdomainEntry {
+                        subdomain: s.to_string(),
+                        source: None,
+                    })
+                } else if let Some(obj) = item.as_object() {
+                    Some(SubdomainEntry {
+                        subdomain: obj
+                            .get("subdomain")
+                            .or_else(|| obj.get("host"))
+                            .and_then(|v| v.as_str())?
+                            .to_string(),
+                        source: obj
+                            .get("source")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if subdomains.is_empty() {
+            return None;
+        }
+
         Some(SubdomainsArtifact { domain, subdomains })
     }
-    
+
     /// Extract live hosts from raw output
     pub fn extract_live_hosts(data: &serde_json::Value) -> Option<LiveHostsArtifact> {
-        let hosts_arr = data.get("hosts")
+        let hosts_arr = data
+            .get("hosts")
             .or_else(|| data.get("liveHosts"))
             .or_else(|| data.get("results"))
             .and_then(|v| v.as_array())?;
-        
-        let hosts: Vec<LiveHostEntry> = hosts_arr.iter().filter_map(|item| {
-            let url = item.get("url").and_then(|v| v.as_str())?.to_string();
-            let status_code = item.get("statusCode")
-                .or_else(|| item.get("status_code"))
-                .or_else(|| item.get("status"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u16;
-            
-            Some(LiveHostEntry {
-                url,
-                status_code,
-                title: item.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                content_length: item.get("contentLength")
-                    .or_else(|| item.get("content_length"))
-                    .and_then(|v| v.as_u64()),
-                technologies: item.get("technologies")
-                    .or_else(|| item.get("tech"))
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                    .unwrap_or_default(),
-                headers: item.get("headers")
-                    .and_then(|v| v.as_object())
-                    .cloned(),
+
+        let hosts: Vec<LiveHostEntry> = hosts_arr
+            .iter()
+            .filter_map(|item| {
+                let url = item.get("url").and_then(|v| v.as_str())?.to_string();
+                let status_code = item
+                    .get("statusCode")
+                    .or_else(|| item.get("status_code"))
+                    .or_else(|| item.get("status"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u16;
+
+                Some(LiveHostEntry {
+                    url,
+                    status_code,
+                    title: item
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    content_length: item
+                        .get("contentLength")
+                        .or_else(|| item.get("content_length"))
+                        .and_then(|v| v.as_u64()),
+                    technologies: item
+                        .get("technologies")
+                        .or_else(|| item.get("tech"))
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    headers: item.get("headers").and_then(|v| v.as_object()).cloned(),
+                })
             })
-        }).collect();
-        
-        if hosts.is_empty() { return None; }
-        
+            .collect();
+
+        if hosts.is_empty() {
+            return None;
+        }
+
         Some(LiveHostsArtifact { hosts })
     }
-    
+
     /// Extract technologies from raw output
     pub fn extract_technologies(data: &serde_json::Value) -> Option<TechnologiesArtifact> {
-        let tech_arr = data.get("technologies")
+        let tech_arr = data
+            .get("technologies")
             .or_else(|| data.get("techStack"))
             .and_then(|v| v.as_array())?;
-        
-        let url = data.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        
-        let technologies: Vec<TechEntry> = tech_arr.iter().filter_map(|item| {
-            if let Some(name) = item.as_str() {
-                Some(TechEntry { name: name.to_string(), version: None, category: None, confidence: None })
-            } else if let Some(obj) = item.as_object() {
-                let name = obj.get("name").and_then(|v| v.as_str())?.to_string();
-                Some(TechEntry {
-                    name,
-                    version: obj.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    category: obj.get("category").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    confidence: obj.get("confidence").and_then(|v| v.as_f64()),
-                })
-            } else {
-                None
-            }
-        }).collect();
-        
+
+        let url = data
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let technologies: Vec<TechEntry> = tech_arr
+            .iter()
+            .filter_map(|item| {
+                if let Some(name) = item.as_str() {
+                    Some(TechEntry {
+                        name: name.to_string(),
+                        version: None,
+                        category: None,
+                        confidence: None,
+                    })
+                } else if let Some(obj) = item.as_object() {
+                    let name = obj.get("name").and_then(|v| v.as_str())?.to_string();
+                    Some(TechEntry {
+                        name,
+                        version: obj
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        category: obj
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        confidence: obj.get("confidence").and_then(|v| v.as_f64()),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         Some(TechnologiesArtifact { url, technologies })
     }
-    
+
     /// Extract endpoints from raw output
     pub fn extract_endpoints(data: &serde_json::Value) -> Option<EndpointsArtifact> {
-        let endpoints_arr = data.get("endpoints")
-            .and_then(|v| v.as_array())?;
-        
-        let base_url = data.get("base_url")
+        let endpoints_arr = data.get("endpoints").and_then(|v| v.as_array())?;
+
+        let base_url = data
+            .get("base_url")
             .or_else(|| data.get("url"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        
-        let endpoints: Vec<EndpointEntry> = endpoints_arr.iter().filter_map(|item| {
-            if let Some(path) = item.as_str() {
-                Some(EndpointEntry { path: path.to_string(), method: None, source: None, params: vec![] })
-            } else if let Some(obj) = item.as_object() {
-                Some(EndpointEntry {
-                    path: obj.get("path").or_else(|| obj.get("url")).and_then(|v| v.as_str())?.to_string(),
-                    method: obj.get("method").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    source: obj.get("source").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    params: obj.get("params")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                        .unwrap_or_default(),
-                })
-            } else {
-                None
-            }
-        }).collect();
-        
-        if endpoints.is_empty() { return None; }
-        
-        Some(EndpointsArtifact { base_url, endpoints })
+
+        let endpoints: Vec<EndpointEntry> = endpoints_arr
+            .iter()
+            .filter_map(|item| {
+                if let Some(path) = item.as_str() {
+                    Some(EndpointEntry {
+                        path: path.to_string(),
+                        method: None,
+                        source: None,
+                        params: vec![],
+                    })
+                } else if let Some(obj) = item.as_object() {
+                    Some(EndpointEntry {
+                        path: obj
+                            .get("path")
+                            .or_else(|| obj.get("url"))
+                            .and_then(|v| v.as_str())?
+                            .to_string(),
+                        method: obj
+                            .get("method")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        source: obj
+                            .get("source")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        params: obj
+                            .get("params")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if endpoints.is_empty() {
+            return None;
+        }
+
+        Some(EndpointsArtifact {
+            base_url,
+            endpoints,
+        })
     }
-    
+
     /// Extract secrets from raw output
     pub fn extract_secrets(data: &serde_json::Value) -> Option<SecretsArtifact> {
         let secrets_arr = data.get("secrets").and_then(|v| v.as_array())?;
-        
-        let secrets: Vec<SecretEntry> = secrets_arr.iter().filter_map(|item| {
-            let obj = item.as_object()?;
-            Some(SecretEntry {
-                secret_type: obj.get("type").or_else(|| obj.get("secret_type")).and_then(|v| v.as_str())?.to_string(),
-                value: obj.get("value").or_else(|| obj.get("secret")).and_then(|v| v.as_str())?.to_string(),
-                source_url: obj.get("source_url").or_else(|| obj.get("url")).and_then(|v| v.as_str()).map(|s| s.to_string()),
-                line: obj.get("line").and_then(|v| v.as_u64()).map(|n| n as u32),
-                context: obj.get("context").and_then(|v| v.as_str()).map(|s| s.to_string()),
+
+        let secrets: Vec<SecretEntry> = secrets_arr
+            .iter()
+            .filter_map(|item| {
+                let obj = item.as_object()?;
+                Some(SecretEntry {
+                    secret_type: obj
+                        .get("type")
+                        .or_else(|| obj.get("secret_type"))
+                        .and_then(|v| v.as_str())?
+                        .to_string(),
+                    value: obj
+                        .get("value")
+                        .or_else(|| obj.get("secret"))
+                        .and_then(|v| v.as_str())?
+                        .to_string(),
+                    source_url: obj
+                        .get("source_url")
+                        .or_else(|| obj.get("url"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    line: obj.get("line").and_then(|v| v.as_u64()).map(|n| n as u32),
+                    context: obj
+                        .get("context")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                })
             })
-        }).collect();
-        
-        if secrets.is_empty() { return None; }
-        
+            .collect();
+
+        if secrets.is_empty() {
+            return None;
+        }
+
         Some(SecretsArtifact { secrets })
     }
-    
+
     /// Extract directories from raw output
     pub fn extract_directories(data: &serde_json::Value) -> Option<DirectoriesArtifact> {
-        let dirs_arr = data.get("directories")
+        let dirs_arr = data
+            .get("directories")
             .or_else(|| data.get("paths"))
             .or_else(|| data.get("results"))
             .and_then(|v| v.as_array())?;
-        
-        let base_url = data.get("base_url")
+
+        let base_url = data
+            .get("base_url")
             .or_else(|| data.get("url"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        
-        let directories: Vec<DirectoryEntry> = dirs_arr.iter().filter_map(|item| {
-            if let Some(path) = item.as_str() {
-                Some(DirectoryEntry { path: path.to_string(), status_code: 200, content_length: None, redirect_url: None })
-            } else if let Some(obj) = item.as_object() {
-                Some(DirectoryEntry {
-                    path: obj.get("path").or_else(|| obj.get("url")).and_then(|v| v.as_str())?.to_string(),
-                    status_code: obj.get("status_code")
-                        .or_else(|| obj.get("statusCode"))
-                        .or_else(|| obj.get("status"))
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(200) as u16,
-                    content_length: obj.get("content_length")
-                        .or_else(|| obj.get("contentLength"))
-                        .and_then(|v| v.as_u64()),
-                    redirect_url: obj.get("redirect_url")
-                        .or_else(|| obj.get("location"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                })
-            } else {
-                None
-            }
-        }).collect();
-        
-        if directories.is_empty() { return None; }
-        
-        Some(DirectoriesArtifact { base_url, directories })
+
+        let directories: Vec<DirectoryEntry> = dirs_arr
+            .iter()
+            .filter_map(|item| {
+                if let Some(path) = item.as_str() {
+                    Some(DirectoryEntry {
+                        path: path.to_string(),
+                        status_code: 200,
+                        content_length: None,
+                        redirect_url: None,
+                    })
+                } else if let Some(obj) = item.as_object() {
+                    Some(DirectoryEntry {
+                        path: obj
+                            .get("path")
+                            .or_else(|| obj.get("url"))
+                            .and_then(|v| v.as_str())?
+                            .to_string(),
+                        status_code: obj
+                            .get("status_code")
+                            .or_else(|| obj.get("statusCode"))
+                            .or_else(|| obj.get("status"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(200) as u16,
+                        content_length: obj
+                            .get("content_length")
+                            .or_else(|| obj.get("contentLength"))
+                            .and_then(|v| v.as_u64()),
+                        redirect_url: obj
+                            .get("redirect_url")
+                            .or_else(|| obj.get("location"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if directories.is_empty() {
+            return None;
+        }
+
+        Some(DirectoriesArtifact {
+            base_url,
+            directories,
+        })
     }
 }
 
@@ -537,14 +680,23 @@ impl ArtifactExtractor {
 mod tests {
     use super::*;
     use serde_json::json;
-    
+
     #[test]
     fn test_detect_type() {
-        assert_eq!(ArtifactExtractor::detect_type(&json!({"subdomains": ["a.com"]})), ArtifactType::Subdomains);
-        assert_eq!(ArtifactExtractor::detect_type(&json!({"findings": []})), ArtifactType::Finding);
-        assert_eq!(ArtifactExtractor::detect_type(&json!({"technologies": []})), ArtifactType::Technologies);
+        assert_eq!(
+            ArtifactExtractor::detect_type(&json!({"subdomains": ["a.com"]})),
+            ArtifactType::Subdomains
+        );
+        assert_eq!(
+            ArtifactExtractor::detect_type(&json!({"findings": []})),
+            ArtifactType::Finding
+        );
+        assert_eq!(
+            ArtifactExtractor::detect_type(&json!({"technologies": []})),
+            ArtifactType::Technologies
+        );
     }
-    
+
     #[test]
     fn test_extract_subdomains() {
         let data = json!({

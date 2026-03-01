@@ -154,10 +154,10 @@ impl Finding {
     pub fn new(title: String, vuln_type: String, description: String) -> Self {
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
-        
+
         // Generate fingerprint from key fields
         let fingerprint = Self::generate_fingerprint(&title, &vuln_type, None, None);
-        
+
         Self {
             id,
             program_id: None,
@@ -203,7 +203,7 @@ impl Finding {
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        
+
         // Normalize URL for fingerprinting
         let normalized_url = url.map(|u| {
             // Remove query parameters for URL normalization

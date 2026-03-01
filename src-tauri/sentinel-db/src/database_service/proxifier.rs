@@ -1,8 +1,8 @@
+use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::service::DatabaseService;
 
 /// 代理服务器记录
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -50,21 +50,21 @@ impl DatabaseService {
         let proxies = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, ProxifierProxyRecord>(
-                    "SELECT * FROM proxifier_proxies ORDER BY sort_order, created_at"
+                    "SELECT * FROM proxifier_proxies ORDER BY sort_order, created_at",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, ProxifierProxyRecord>(
-                    "SELECT * FROM proxifier_proxies ORDER BY sort_order, created_at"
+                    "SELECT * FROM proxifier_proxies ORDER BY sort_order, created_at",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, ProxifierProxyRecord>(
-                    "SELECT * FROM proxifier_proxies ORDER BY sort_order, created_at"
+                    "SELECT * FROM proxifier_proxies ORDER BY sort_order, created_at",
                 )
                 .fetch_all(pool)
                 .await?
@@ -82,7 +82,7 @@ impl DatabaseService {
         let proxy = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, ProxifierProxyRecord>(
-                    "SELECT * FROM proxifier_proxies WHERE id = $1"
+                    "SELECT * FROM proxifier_proxies WHERE id = $1",
                 )
                 .bind(id)
                 .fetch_optional(pool)
@@ -90,7 +90,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, ProxifierProxyRecord>(
-                    "SELECT * FROM proxifier_proxies WHERE id = ?"
+                    "SELECT * FROM proxifier_proxies WHERE id = ?",
                 )
                 .bind(id)
                 .fetch_optional(pool)
@@ -98,7 +98,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, ProxifierProxyRecord>(
-                    "SELECT * FROM proxifier_proxies WHERE id = ?"
+                    "SELECT * FROM proxifier_proxies WHERE id = ?",
                 )
                 .bind(id)
                 .fetch_optional(pool)
@@ -389,21 +389,21 @@ impl DatabaseService {
         let rules = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, ProxifierRuleRecord>(
-                    "SELECT * FROM proxifier_rules ORDER BY sort_order, created_at"
+                    "SELECT * FROM proxifier_rules ORDER BY sort_order, created_at",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, ProxifierRuleRecord>(
-                    "SELECT * FROM proxifier_rules ORDER BY sort_order, created_at"
+                    "SELECT * FROM proxifier_rules ORDER BY sort_order, created_at",
                 )
                 .fetch_all(pool)
                 .await?
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, ProxifierRuleRecord>(
-                    "SELECT * FROM proxifier_rules ORDER BY sort_order, created_at"
+                    "SELECT * FROM proxifier_rules ORDER BY sort_order, created_at",
                 )
                 .fetch_all(pool)
                 .await?
@@ -421,7 +421,7 @@ impl DatabaseService {
         let rule = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, ProxifierRuleRecord>(
-                    "SELECT * FROM proxifier_rules WHERE id = $1"
+                    "SELECT * FROM proxifier_rules WHERE id = $1",
                 )
                 .bind(id)
                 .fetch_optional(pool)
@@ -429,7 +429,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, ProxifierRuleRecord>(
-                    "SELECT * FROM proxifier_rules WHERE id = ?"
+                    "SELECT * FROM proxifier_rules WHERE id = ?",
                 )
                 .bind(id)
                 .fetch_optional(pool)
@@ -437,7 +437,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, ProxifierRuleRecord>(
-                    "SELECT * FROM proxifier_rules WHERE id = ?"
+                    "SELECT * FROM proxifier_rules WHERE id = ?",
                 )
                 .bind(id)
                 .fetch_optional(pool)

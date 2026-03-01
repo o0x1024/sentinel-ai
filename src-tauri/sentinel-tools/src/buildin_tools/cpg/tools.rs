@@ -32,7 +32,10 @@ fn next_access_order() -> u64 {
     ACCESS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-pub async fn get_or_build_cpg(root: &str, max_files: usize) -> Result<Arc<CodePropertyGraph>, String> {
+pub async fn get_or_build_cpg(
+    root: &str,
+    max_files: usize,
+) -> Result<Arc<CodePropertyGraph>, String> {
     // Check cache (use original path as key for consistency)
     {
         let mut cache = CPG_CACHE.write().await;
@@ -311,13 +314,9 @@ pub enum CpgQuery {
         limit: usize,
     },
     /// Find all callers of a specific function
-    CallersOf {
-        function_name: String,
-    },
+    CallersOf { function_name: String },
     /// Find all functions that a specific function calls
-    CalleesOf {
-        function_name: String,
-    },
+    CalleesOf { function_name: String },
     /// List all files with summaries (function count, class count, etc.)
     Files {
         #[serde(default = "default_limit")]
@@ -402,16 +401,20 @@ impl Tool for QueryCpgTool {
         }
 
         // Get CPG from cache (auto-build if not present)
-        let cpg = get_or_build_cpg(path, 5000)
-            .await
-            .map_err(|e| QueryCpgError::CpgNotFound(format!(
-                "CPG not found for '{}'. Call `build_cpg` first. Error: {}", path, e
-            )))?;
+        let cpg = get_or_build_cpg(path, 5000).await.map_err(|e| {
+            QueryCpgError::CpgNotFound(format!(
+                "CPG not found for '{}'. Call `build_cpg` first. Error: {}",
+                path, e
+            ))
+        })?;
 
         let (query_type, result) = match args.query {
             CpgQuery::Summary => {
                 let s = cpg.summary();
-                ("summary".to_string(), serde_json::to_value(s).unwrap_or_default())
+                (
+                    "summary".to_string(),
+                    serde_json::to_value(s).unwrap_or_default(),
+                )
             }
             CpgQuery::Functions { file, limit } => {
                 let limit = limit.clamp(1, 500);
@@ -420,35 +423,59 @@ impl Tool for QueryCpgTool {
                 } else {
                     cpg.list_functions(limit)
                 };
-                ("functions".to_string(), serde_json::to_value(&funcs).unwrap_or_default())
+                (
+                    "functions".to_string(),
+                    serde_json::to_value(&funcs).unwrap_or_default(),
+                )
             }
             CpgQuery::Classes { limit } => {
                 let classes = cpg.list_classes(limit.clamp(1, 500));
-                ("classes".to_string(), serde_json::to_value(&classes).unwrap_or_default())
+                (
+                    "classes".to_string(),
+                    serde_json::to_value(&classes).unwrap_or_default(),
+                )
             }
             CpgQuery::Imports { limit } => {
                 let imports = cpg.list_imports(limit.clamp(1, 500));
-                ("imports".to_string(), serde_json::to_value(&imports).unwrap_or_default())
+                (
+                    "imports".to_string(),
+                    serde_json::to_value(&imports).unwrap_or_default(),
+                )
             }
             CpgQuery::CallEdges { limit } => {
                 let edges = cpg.list_call_edges(limit.clamp(1, 500));
-                ("call_edges".to_string(), serde_json::to_value(&edges).unwrap_or_default())
+                (
+                    "call_edges".to_string(),
+                    serde_json::to_value(&edges).unwrap_or_default(),
+                )
             }
             CpgQuery::CallersOf { function_name } => {
                 let callers = cpg.callers_of(&function_name);
-                ("callers_of".to_string(), serde_json::to_value(&callers).unwrap_or_default())
+                (
+                    "callers_of".to_string(),
+                    serde_json::to_value(&callers).unwrap_or_default(),
+                )
             }
             CpgQuery::CalleesOf { function_name } => {
                 let callees = cpg.callees_of(&function_name);
-                ("callees_of".to_string(), serde_json::to_value(&callees).unwrap_or_default())
+                (
+                    "callees_of".to_string(),
+                    serde_json::to_value(&callees).unwrap_or_default(),
+                )
             }
             CpgQuery::Files { limit } => {
                 let files = cpg.list_file_summaries(limit.clamp(1, 500));
-                ("files".to_string(), serde_json::to_value(&files).unwrap_or_default())
+                (
+                    "files".to_string(),
+                    serde_json::to_value(&files).unwrap_or_default(),
+                )
             }
             CpgQuery::Search { query, limit } => {
                 let results = cpg.search_symbols(&query, limit.clamp(1, 200));
-                ("search".to_string(), serde_json::to_value(&results).unwrap_or_default())
+                (
+                    "search".to_string(),
+                    serde_json::to_value(&results).unwrap_or_default(),
+                )
             }
         };
 
@@ -545,7 +572,9 @@ impl Tool for CpgTaintAnalysisTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let path = args.path.trim();
         if path.is_empty() {
-            return Err(CpgTaintAnalysisError::InvalidArgs("path is required".to_string()));
+            return Err(CpgTaintAnalysisError::InvalidArgs(
+                "path is required".to_string(),
+            ));
         }
 
         let cpg = get_or_build_cpg(path, 5000)
@@ -557,7 +586,8 @@ impl Tool for CpgTaintAnalysisTool {
             return Err(CpgTaintAnalysisError::InvalidArgs(
                 "No matching rules found. Available: sql_injection, xss, command_injection, \
                  path_traversal, ssrf, deserialization, ldap_injection, xxe, open_redirect, \
-                 log_injection".to_string(),
+                 log_injection"
+                    .to_string(),
             ));
         }
 
@@ -664,7 +694,9 @@ impl Tool for CpgSecurityScanTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let path = args.path.trim();
         if path.is_empty() {
-            return Err(CpgSecurityScanError::InvalidArgs("path is required".to_string()));
+            return Err(CpgSecurityScanError::InvalidArgs(
+                "path is required".to_string(),
+            ));
         }
 
         let cpg = get_or_build_cpg(path, 5000)
@@ -777,11 +809,15 @@ async fn resolve_host_path(path: &str) -> String {
     }
 
     // Fallback: no matching volume mount found.
-    // Try common default: /workspace -> /tmp/workspace  
+    // Try common default: /workspace -> /tmp/workspace
     if path.starts_with("/workspace") {
         let host_fallback = format!("/tmp{}", path);
         if std::path::Path::new(&host_fallback).is_dir() {
-            tracing::info!("CPG path remapped (fallback): {} -> {}", path, host_fallback);
+            tracing::info!(
+                "CPG path remapped (fallback): {} -> {}",
+                path,
+                host_fallback
+            );
             return host_fallback;
         }
     }

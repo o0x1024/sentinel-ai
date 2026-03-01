@@ -165,4 +165,3 @@ pub struct ToolCallResultMessage {
     pub result: Value,
     pub is_error: bool,
 }
-

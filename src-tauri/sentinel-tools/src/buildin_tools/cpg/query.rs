@@ -1,7 +1,7 @@
 //! CPG query operations — extract structured information from the graph.
 
-use petgraph::Direction;
 use petgraph::visit::EdgeRef;
+use petgraph::Direction;
 use serde::Serialize;
 
 use super::types::*;
@@ -114,7 +114,10 @@ impl CodePropertyGraph {
             let node = &self.graph[idx];
             match &node.kind {
                 CpgNodeKind::Function {
-                    name, visibility, is_async, ..
+                    name,
+                    visibility,
+                    is_async,
+                    ..
                 } => {
                     let params = self.get_parameter_names(idx);
                     results.push(FunctionInfo {
@@ -129,7 +132,11 @@ impl CodePropertyGraph {
                     });
                 }
                 CpgNodeKind::Method {
-                    name, class_name, is_async, visibility, ..
+                    name,
+                    class_name,
+                    is_async,
+                    visibility,
+                    ..
                 } => {
                     let params = self.get_parameter_names(idx);
                     results.push(FunctionInfo {
@@ -187,9 +194,7 @@ impl CodePropertyGraph {
         for idx in self.graph.node_indices() {
             let node = &self.graph[idx];
             if let CpgNodeKind::Import {
-                module,
-                symbols,
-                ..
+                module, symbols, ..
             } = &node.kind
             {
                 results.push(ImportInfo {
@@ -249,7 +254,10 @@ impl CodePropertyGraph {
 
         for target_idx in target_indices {
             let tgt = &self.graph[target_idx];
-            for caller_idx in self.graph.neighbors_directed(target_idx, Direction::Incoming) {
+            for caller_idx in self
+                .graph
+                .neighbors_directed(target_idx, Direction::Incoming)
+            {
                 if let Some(edge) = self.graph.find_edge(caller_idx, target_idx) {
                     if matches!(self.graph[edge].kind, CpgEdgeKind::Calls) {
                         let src = &self.graph[caller_idx];
@@ -454,12 +462,14 @@ impl CodePropertyGraph {
 
     fn get_child_method_names(&self, class_idx: petgraph::graph::NodeIndex) -> Vec<String> {
         let mut names = Vec::new();
-        for child in self.graph.neighbors_directed(class_idx, Direction::Outgoing) {
+        for child in self
+            .graph
+            .neighbors_directed(class_idx, Direction::Outgoing)
+        {
             if let Some(edge) = self.graph.find_edge(class_idx, child) {
                 if matches!(self.graph[edge].kind, CpgEdgeKind::Contains) {
                     match &self.graph[child].kind {
-                        CpgNodeKind::Function { name, .. }
-                        | CpgNodeKind::Method { name, .. } => {
+                        CpgNodeKind::Function { name, .. } | CpgNodeKind::Method { name, .. } => {
                             names.push(name.clone());
                         }
                         _ => {}

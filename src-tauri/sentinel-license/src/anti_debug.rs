@@ -19,13 +19,13 @@ pub fn is_debugger_present() -> bool {
         if DEBUG_DETECTED.load(Ordering::Relaxed) {
             return true;
         }
-        
+
         let detected = platform_check_debugger();
-        
+
         if detected {
             DEBUG_DETECTED.store(true, Ordering::Relaxed);
         }
-        
+
         detected
     }
 }
@@ -39,17 +39,17 @@ pub fn timing_check() -> bool {
     #[cfg(not(debug_assertions))]
     {
         use std::time::Instant;
-        
+
         let start = Instant::now();
-        
+
         // Perform some operations
         let mut sum: u64 = 0;
         for i in 0..10000 {
             sum = sum.wrapping_add(i);
         }
-        
+
         let elapsed = start.elapsed();
-        
+
         // If debugging with breakpoints, this would take much longer
         // Normal execution: < 1ms, Debugging: could be seconds
         elapsed.as_millis() > 100
@@ -60,23 +60,18 @@ pub fn timing_check() -> bool {
 #[allow(dead_code)]
 fn platform_check_debugger() -> bool {
     use std::process::Command;
-    
+
     // Method 1: Check sysctl for P_TRACED flag
-    let _output = Command::new("sysctl")
-        .args(["hw.optional.arm64"])
-        .output();
-    
+    let _output = Command::new("sysctl").args(["hw.optional.arm64"]).output();
+
     // Method 2: Check for lldb/gdb processes (basic check)
-    if let Ok(output) = Command::new("pgrep")
-        .args(["-x", "lldb"])
-        .output()
-    {
+    if let Ok(output) = Command::new("pgrep").args(["-x", "lldb"]).output() {
         if output.status.success() && !output.stdout.is_empty() {
             // lldb is running, could be attached
             // This is a weak check, as lldb might be debugging other processes
         }
     }
-    
+
     // Method 3: Use ptrace
     check_ptrace()
 }
@@ -84,16 +79,18 @@ fn platform_check_debugger() -> bool {
 #[cfg(target_os = "windows")]
 #[allow(dead_code)]
 fn platform_check_debugger() -> bool {
-    use windows::Win32::System::Diagnostics::Debug::{IsDebuggerPresent, CheckRemoteDebuggerPresent};
     use windows::Win32::Foundation::BOOL;
+    use windows::Win32::System::Diagnostics::Debug::{
+        CheckRemoteDebuggerPresent, IsDebuggerPresent,
+    };
     use windows::Win32::System::Threading::GetCurrentProcess;
-    
+
     unsafe {
         // Check local debugger
         if IsDebuggerPresent().as_bool() {
             return true;
         }
-        
+
         // Check remote debugger
         let mut is_remote_debugger = BOOL::default();
         let process = GetCurrentProcess();
@@ -103,7 +100,7 @@ fn platform_check_debugger() -> bool {
             }
         }
     }
-    
+
     false
 }
 
@@ -123,7 +120,7 @@ fn platform_check_debugger() -> bool {
             }
         }
     }
-    
+
     check_ptrace()
 }
 
@@ -134,14 +131,14 @@ fn check_ptrace() -> bool {
     #[cfg(target_os = "macos")]
     {
         use std::os::raw::c_int;
-        
+
         const PT_DENY_ATTACH: c_int = 31;
-        
+
         #[allow(dead_code)]
         extern "C" {
             fn ptrace(request: c_int, pid: c_int, addr: *mut u8, data: c_int) -> c_int;
         }
-        
+
         unsafe {
             // If already being traced, this will fail
             let result = ptrace(PT_DENY_ATTACH, 0, std::ptr::null_mut(), 0);
@@ -149,20 +146,25 @@ fn check_ptrace() -> bool {
             result == -1
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         use std::os::raw::c_long;
-        
+
         const PTRACE_TRACEME: c_long = 0;
-        
+
         extern "C" {
             fn ptrace(request: c_long, pid: i32, addr: *mut u8, data: *mut u8) -> c_long;
         }
-        
+
         unsafe {
             // Try to trace ourselves
-            let result = ptrace(PTRACE_TRACEME, 0, std::ptr::null_mut(), std::ptr::null_mut());
+            let result = ptrace(
+                PTRACE_TRACEME,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
             // If already being traced, this returns -1
             result == -1
         }
@@ -177,7 +179,7 @@ fn platform_check_debugger() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_debugger_check() {
         // In debug builds, should return false

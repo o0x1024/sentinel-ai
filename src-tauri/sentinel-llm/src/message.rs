@@ -1,7 +1,7 @@
 //! 消息类型模块
 
-use rig::completion::{message::Image, Message, AssistantContent};
-use rig::message::{DocumentSourceKind, ImageDetail, ImageMediaType, UserContent, ToolCall};
+use rig::completion::{message::Image, AssistantContent, Message};
+use rig::message::{DocumentSourceKind, ImageDetail, ImageMediaType, ToolCall, UserContent};
 use rig::one_or_many::OneOrMany;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -75,23 +75,23 @@ impl ChatMessage {
 }
 
 /// 将 ChatMessage 列表转换为 rig Message 列表
-/// 
+///
 /// Note: Anthropic API requires each tool_use to have exactly one tool_result,
 /// and consecutive tool_result messages should be merged into a single User message.
 pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
+    use rig::message::{Text, ToolResult, ToolResultContent};
     use std::collections::HashSet;
-    use rig::message::{ToolResult, ToolResultContent, Text};
-    
+
     let mut result = Vec::new();
     let mut seen_tool_call_ids: HashSet<String> = HashSet::new();
     let mut valid_tool_call_ids: HashSet<String> = HashSet::new();
     let mut i = 0;
-    
+
     while i < history.len() {
         let msg = &history[i];
         let content = msg.content.trim();
         let role = msg.role.to_lowercase();
-        
+
         match role.as_str() {
             "user" => {
                 if !content.is_empty() {
@@ -120,7 +120,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                 if has_content || has_tool_calls || has_reasoning {
                     let mut contents = Vec::new();
                     let mut has_non_empty_text = false;
-                    
+
                     // Add reasoning content if present (required for DeepSeek)
                     // CRITICAL: Only add reasoning if it's not empty!
                     if let Some(ref reasoning) = msg.reasoning_content {
@@ -129,7 +129,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                             contents.push(AssistantContent::reasoning(trimmed.to_string()));
                         }
                     }
-                    
+
                     // Add tool calls and track valid tool_call_ids
                     if has_tool_calls {
                         if let Some(tool_calls) = parsed_tool_calls {
@@ -142,7 +142,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                                 };
                                 // Track this tool_call_id as valid
                                 valid_tool_call_ids.insert(tc.id.clone());
-                                
+
                                 contents.push(AssistantContent::tool_call(
                                     tc.id.clone(),
                                     tc.function.name.clone(),
@@ -151,14 +151,16 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                             }
                         }
                     }
-                    
+
                     // Add text content - CRITICAL: Only add if actually non-empty after trim!
                     if has_content {
                         let text = content.to_string();
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
                             has_non_empty_text = true;
-                            contents.push(AssistantContent::Text(rig::message::Text::from(trimmed.to_string())));
+                            contents.push(AssistantContent::Text(rig::message::Text::from(
+                                trimmed.to_string(),
+                            )));
                         }
                     }
 
@@ -178,7 +180,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                         );
                         contents.push(AssistantContent::Text(rig::message::Text::from(".")));
                     }
-                    
+
                     // Debug: Log the contents we're about to add
                     tracing::info!(
                         "convert_chat_history: creating assistant message with {} content items",
@@ -202,29 +204,40 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                             }
                         }
                     }
-                    
+
                     // Check if the last message in result is also an Assistant message
                     // If so, merge this content into it to avoid consecutive assistant messages
-                    let should_merge = result.last().map(|m| matches!(m, Message::Assistant { .. })).unwrap_or(false);
+                    let should_merge = result
+                        .last()
+                        .map(|m| matches!(m, Message::Assistant { .. }))
+                        .unwrap_or(false);
 
                     if should_merge {
-                        tracing::warn!("convert_chat_history: merging with previous assistant message");
-                        if let Some(Message::Assistant { content: prev_content, .. }) = result.last_mut() {
+                        tracing::warn!(
+                            "convert_chat_history: merging with previous assistant message"
+                        );
+                        if let Some(Message::Assistant {
+                            content: prev_content,
+                            ..
+                        }) = result.last_mut()
+                        {
                             // Extend the previous content with new contents
                             let mut prev_items = Vec::new();
                             prev_items.push(prev_content.first_ref().clone());
                             prev_items.extend(prev_content.rest());
-                            
+
                             tracing::info!(
                                 "convert_chat_history: prev message had {} items, adding {} new items",
                                 prev_items.len(),
                                 contents.len()
                             );
-                            
+
                             prev_items.extend(contents);
-                            
+
                             *prev_content = OneOrMany::many(prev_items).unwrap();
-                            tracing::warn!("convert_chat_history: merged consecutive assistant messages");
+                            tracing::warn!(
+                                "convert_chat_history: merged consecutive assistant messages"
+                            );
                         }
                     } else {
                         let assistant_msg = Message::Assistant {
@@ -255,11 +268,11 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                 // IMPORTANT: Only include tool messages that have corresponding tool_calls from previous assistant message
                 let mut tool_results: Vec<UserContent> = Vec::new();
                 let mut orphaned_tools = 0;
-                
+
                 while i < history.len() && history[i].role.to_lowercase() == "tool" {
                     let tool_msg = &history[i];
                     let tool_content = tool_msg.content.trim();
-                    
+
                     if !tool_content.is_empty() {
                         if let Some(ref tool_call_id) = tool_msg.tool_call_id {
                             // Only process if this tool_call_id was present in a previous assistant message
@@ -287,14 +300,14 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                     }
                     i += 1;
                 }
-                
+
                 if orphaned_tools > 0 {
                     tracing::info!(
                         "Filtered out {} orphaned tool message(s) to prevent API errors",
                         orphaned_tools
                     );
                 }
-                
+
                 // Create merged User message with all tool results
                 if !tool_results.is_empty() {
                     let user_msg = if tool_results.len() == 1 {
@@ -315,7 +328,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
             }
         }
     }
-    
+
     result
 }
 
@@ -376,7 +389,11 @@ impl ImageAttachment {
 pub fn build_user_message(user_prompt: &str, image: Option<&ImageAttachment>) -> Message {
     // Some OpenAI-compatible providers reject empty text content.
     let safe_prompt = user_prompt.trim();
-    let text = if safe_prompt.is_empty() { "." } else { safe_prompt };
+    let text = if safe_prompt.is_empty() {
+        "."
+    } else {
+        safe_prompt
+    };
 
     if let Some(img) = image {
         Message::User {

@@ -2,17 +2,17 @@
 //!
 //! Integrates artifact protocol, data flow, retry, and auto-sinking into workflow execution.
 
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use chrono::Utc;
 use uuid::Uuid;
 
+use crate::services::data_flow::{ArtifactSinkConfig, ArtifactSinkResult, DataFlowResolver};
+use crate::services::retry_executor::{RateLimiter, RetryConfig, RetryExecutor};
 use crate::services::workflow_artifact::{
-    ArtifactType, ArtifactExtractor, WorkflowArtifact, ArtifactMetadata,
+    ArtifactExtractor, ArtifactMetadata, ArtifactType, WorkflowArtifact,
 };
-use crate::services::data_flow::{DataFlowResolver, ArtifactSinkConfig, ArtifactSinkResult};
-use crate::services::retry_executor::{RetryConfig, RateLimiter, RetryExecutor};
 use sentinel_db::database_service::service::DatabaseService;
 
 #[async_trait::async_trait]
@@ -69,7 +69,7 @@ impl WorkflowOrchestrator {
             default_retry_config: RetryConfig::for_network(),
         }
     }
-    
+
     pub fn with_rate_limits(global: usize, per_host: usize, delay_ms: u64) -> Self {
         Self {
             data_flow_resolver: DataFlowResolver::new(),
@@ -77,7 +77,7 @@ impl WorkflowOrchestrator {
             default_retry_config: RetryConfig::for_network(),
         }
     }
-    
+
     /// Resolve step inputs from upstream outputs
     pub fn resolve_step_inputs(
         &self,
@@ -85,20 +85,28 @@ impl WorkflowOrchestrator {
         upstream_results: &HashMap<String, serde_json::Value>,
         initial_inputs: &serde_json::Value,
     ) -> serde_json::Value {
-        let plugin_id = step.plugin_id.as_deref()
+        let plugin_id = step
+            .plugin_id
+            .as_deref()
             .or(step.tool_name.as_deref())
             .unwrap_or("");
-        
+
         // Collect relevant upstream outputs based on dependencies
-        let upstream_outputs: Vec<(&str, serde_json::Value)> = step.depends_on.iter()
+        let upstream_outputs: Vec<(&str, serde_json::Value)> = step
+            .depends_on
+            .iter()
             .filter_map(|dep_id| {
-                upstream_results.get(dep_id).map(|v| (dep_id.as_str(), v.clone()))
+                upstream_results
+                    .get(dep_id)
+                    .map(|v| (dep_id.as_str(), v.clone()))
             })
             .collect();
-        
+
         // Merge initial inputs into step config
         let mut merged_config = step.config.clone();
-        if let (Some(config_obj), Some(initial_obj)) = (merged_config.as_object_mut(), initial_inputs.as_object()) {
+        if let (Some(config_obj), Some(initial_obj)) =
+            (merged_config.as_object_mut(), initial_inputs.as_object())
+        {
             for (key, value) in initial_obj {
                 // Only set if not already set in config
                 if !config_obj.contains_key(key) || is_empty_value(config_obj.get(key).unwrap()) {
@@ -106,11 +114,12 @@ impl WorkflowOrchestrator {
                 }
             }
         }
-        
+
         // Resolve from upstream outputs
-        self.data_flow_resolver.resolve_inputs(plugin_id, &merged_config, &upstream_outputs)
+        self.data_flow_resolver
+            .resolve_inputs(plugin_id, &merged_config, &upstream_outputs)
     }
-    
+
     /// Process step output into typed artifacts
     pub fn process_step_output(
         &self,
@@ -119,15 +128,16 @@ impl WorkflowOrchestrator {
         raw_output: &serde_json::Value,
     ) -> Vec<WorkflowArtifact> {
         let mut artifacts = Vec::new();
-        
+
         // Detect artifact type
         let artifact_type = ArtifactExtractor::detect_type(raw_output);
-        
+
         // Extract output data (handle wrapped results)
-        let output_data = raw_output.get("output")
+        let output_data = raw_output
+            .get("output")
             .or_else(|| raw_output.get("result"))
             .unwrap_or(raw_output);
-        
+
         let base_metadata = ArtifactMetadata {
             source: step.plugin_id.clone().or_else(|| step.tool_name.clone()),
             confidence: None,
@@ -136,7 +146,7 @@ impl WorkflowOrchestrator {
             tags: vec![],
             extra: serde_json::Map::new(),
         };
-        
+
         match artifact_type {
             ArtifactType::Finding => {
                 // Handle multiple findings
@@ -269,29 +279,33 @@ impl WorkflowOrchestrator {
                 });
             }
         }
-        
+
         artifacts
     }
-    
+
     /// Create retry executor for a step
     pub fn create_retry_executor(&self, step: &StepContext) -> RetryExecutor {
-        let config = step.retry_config.clone().unwrap_or_else(|| self.default_retry_config.clone());
+        let config = step
+            .retry_config
+            .clone()
+            .unwrap_or_else(|| self.default_retry_config.clone());
         RetryExecutor::new(config).with_rate_limiter(self.rate_limiter.clone())
     }
-    
+
     /// Get rate limiter reference
     pub fn rate_limiter(&self) -> Arc<RateLimiter> {
         self.rate_limiter.clone()
     }
-    
+
     /// Prepare artifact sink request from workflow artifacts
     pub fn prepare_sink_request(
         &self,
         context: &WorkflowContext,
         artifacts: &[WorkflowArtifact],
     ) -> Vec<SinkableArtifact> {
-        artifacts.iter().map(|artifact| {
-            SinkableArtifact {
+        artifacts
+            .iter()
+            .map(|artifact| SinkableArtifact {
                 artifact_id: artifact.id.clone(),
                 step_id: artifact.step_id.clone(),
                 execution_id: artifact.execution_id.clone(),
@@ -299,10 +313,10 @@ impl WorkflowOrchestrator {
                 data: artifact.data.clone(),
                 program_id: context.program_id.clone(),
                 scope_id: context.scope_id.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
-    
+
     /// Run an entire workflow
     pub async fn run_workflow(
         &self,
@@ -319,7 +333,8 @@ impl WorkflowOrchestrator {
         let mut step_errors: Vec<StepError> = Vec::new();
 
         for step in &steps {
-            let resolved_inputs = self.resolve_step_inputs(step, &upstream_results, &context.initial_inputs);
+            let resolved_inputs =
+                self.resolve_step_inputs(step, &upstream_results, &context.initial_inputs);
             let plugin_id = step.plugin_id.as_deref().unwrap_or("");
             if plugin_id.is_empty() {
                 failed_steps += 1;
@@ -335,15 +350,18 @@ impl WorkflowOrchestrator {
 
             let retry_executor = self.create_retry_executor(step);
             let target_host = step.target_host.as_deref();
-            
-            let result = retry_executor.execute(target_host, || async {
-                executor.execute_plugin(plugin_id, &resolved_inputs).await
-            }).await;
+
+            let result = retry_executor
+                .execute(target_host, || async {
+                    executor.execute_plugin(plugin_id, &resolved_inputs).await
+                })
+                .await;
 
             match result {
                 Ok(output) => {
                     upstream_results.insert(step.step_id.clone(), output.clone());
-                    let mut step_artifacts = self.process_step_output(step, &context.execution_id, &output);
+                    let mut step_artifacts =
+                        self.process_step_output(step, &context.execution_id, &output);
                     all_artifacts.append(&mut step_artifacts);
                     completed_steps += 1;
                 }
@@ -353,7 +371,7 @@ impl WorkflowOrchestrator {
                         step_id: step.step_id.clone(),
                         step_name: step.step_name.clone(),
                         error: e.to_string(),
-                        retries: 0, // In practice, get from retry executor
+                        retries: 0,        // In practice, get from retry executor
                         is_critical: true, // simplified
                     });
                     tracing::error!("Workflow step {} failed: {}", step.step_id, e);
@@ -365,7 +383,10 @@ impl WorkflowOrchestrator {
         let mut sink_result = None;
         if let Some(config) = &context.sink_config {
             if config.auto_create_findings || config.auto_create_evidence {
-                tracing::info!("Auto-sinking artifacts for execution {}", context.execution_id);
+                tracing::info!(
+                    "Auto-sinking artifacts for execution {}",
+                    context.execution_id
+                );
                 // Real DB sink logic here
                 sink_result = Some(ArtifactSinkResult {
                     findings_created: vec![],
@@ -381,7 +402,11 @@ impl WorkflowOrchestrator {
         }
 
         let duration_ms = (Utc::now() - start_time).num_milliseconds() as u64;
-        let status = if failed_steps == 0 { "completed" } else { "partial" };
+        let status = if failed_steps == 0 {
+            "completed"
+        } else {
+            "partial"
+        };
 
         Ok(WorkflowExecutionSummary {
             execution_id: context.execution_id,
@@ -458,12 +483,22 @@ impl ArtifactSummary {
                 ArtifactType::Finding => summary.findings += artifact.metadata.count.unwrap_or(1),
                 ArtifactType::Evidence => summary.evidence += artifact.metadata.count.unwrap_or(1),
                 ArtifactType::Asset => summary.assets += artifact.metadata.count.unwrap_or(1),
-                ArtifactType::Subdomains => summary.subdomains += artifact.metadata.count.unwrap_or(0),
-                ArtifactType::LiveHosts => summary.live_hosts += artifact.metadata.count.unwrap_or(0),
-                ArtifactType::Technologies => summary.technologies += artifact.metadata.count.unwrap_or(0),
-                ArtifactType::Endpoints => summary.endpoints += artifact.metadata.count.unwrap_or(0),
+                ArtifactType::Subdomains => {
+                    summary.subdomains += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::LiveHosts => {
+                    summary.live_hosts += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::Technologies => {
+                    summary.technologies += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::Endpoints => {
+                    summary.endpoints += artifact.metadata.count.unwrap_or(0)
+                }
                 ArtifactType::Secrets => summary.secrets += artifact.metadata.count.unwrap_or(0),
-                ArtifactType::Directories => summary.directories += artifact.metadata.count.unwrap_or(0),
+                ArtifactType::Directories => {
+                    summary.directories += artifact.metadata.count.unwrap_or(0)
+                }
                 ArtifactType::RawData => summary.raw_data += 1,
             }
         }
@@ -485,11 +520,11 @@ pub struct StepError {
 mod tests {
     use super::*;
     use serde_json::json;
-    
+
     #[test]
     fn test_resolve_step_inputs() {
         let orchestrator = WorkflowOrchestrator::new();
-        
+
         let step = StepContext {
             step_id: "step-2".to_string(),
             step_name: "HTTP Prober".to_string(),
@@ -503,29 +538,32 @@ mod tests {
             retry_config: None,
             target_host: None,
         };
-        
+
         let mut upstream_results = HashMap::new();
-        upstream_results.insert("step-1".to_string(), json!({
-            "domain": "example.com",
-            "subdomains": [
-                {"subdomain": "a.example.com"},
-                {"subdomain": "b.example.com"}
-            ]
-        }));
-        
+        upstream_results.insert(
+            "step-1".to_string(),
+            json!({
+                "domain": "example.com",
+                "subdomains": [
+                    {"subdomain": "a.example.com"},
+                    {"subdomain": "b.example.com"}
+                ]
+            }),
+        );
+
         let initial_inputs = json!({});
-        
+
         let resolved = orchestrator.resolve_step_inputs(&step, &upstream_results, &initial_inputs);
-        
+
         // Should have resolved targets
         assert!(resolved.get("targets").is_some());
         assert!(resolved.get("ports").is_some());
     }
-    
+
     #[test]
     fn test_process_step_output() {
         let orchestrator = WorkflowOrchestrator::new();
-        
+
         let step = StepContext {
             step_id: "step-1".to_string(),
             step_name: "Subdomain Enum".to_string(),
@@ -536,7 +574,7 @@ mod tests {
             retry_config: None,
             target_host: None,
         };
-        
+
         let raw_output = json!({
             "success": true,
             "output": {
@@ -547,9 +585,9 @@ mod tests {
                 ]
             }
         });
-        
+
         let artifacts = orchestrator.process_step_output(&step, "exec-1", &raw_output);
-        
+
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].artifact_type, ArtifactType::Subdomains);
         assert_eq!(artifacts[0].metadata.count, Some(2));

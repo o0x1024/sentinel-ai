@@ -249,7 +249,6 @@ extension!(
 // Operations
 // ============================================================
 
-
 /// Op: 插件日志输出
 #[op2(fast)]
 fn op_plugin_log(#[string] level: String, #[string] message: String) {
@@ -297,10 +296,7 @@ pub struct FetchResponse {
 /// Op: HTTP fetch (网络请求)
 #[op2(async)]
 #[serde]
-async fn op_fetch(
-    #[string] url: String,
-    #[serde] options: Option<FetchOptions>,
-) -> FetchResponse {
+async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>) -> FetchResponse {
     // info!("[Plugin] Fetching URL: {}", url);
 
     let opts = options.unwrap_or_else(|| FetchOptions {
@@ -315,7 +311,8 @@ async fn op_fetch(
 
     // Build reqwest client with proxy support
     let builder = reqwest::Client::builder().timeout(std::time::Duration::from_millis(timeout_ms));
-    let builder: reqwest::ClientBuilder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+    let builder: reqwest::ClientBuilder =
+        sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
     let client = match builder.build() {
         Ok(c) => c,
         Err(e) => {
@@ -408,10 +405,7 @@ async fn op_fetch(
 /// Returns null as we don't support peer certificate retrieval
 #[op2]
 #[serde]
-fn op_tls_peer_certificate(
-    #[smi] _rid: u32,
-    _detailed: bool,
-) -> Option<serde_json::Value> {
+fn op_tls_peer_certificate(#[smi] _rid: u32, _detailed: bool) -> Option<serde_json::Value> {
     // Stub: return null for peer certificate
     None
 }
@@ -454,10 +448,7 @@ async fn op_write_file(
 
 /// Create directory
 #[op2(async)]
-async fn op_mkdir(
-    #[string] path: String,
-    recursive: bool,
-) -> Result<(), std::io::Error> {
+async fn op_mkdir(#[string] path: String, recursive: bool) -> Result<(), std::io::Error> {
     if recursive {
         tokio::fs::create_dir_all(&path).await
     } else {
@@ -480,7 +471,7 @@ struct DirEntry {
 async fn op_read_dir(#[string] path: String) -> Result<Vec<DirEntry>, std::io::Error> {
     let mut entries = Vec::new();
     let mut read_dir = tokio::fs::read_dir(&path).await?;
-    
+
     while let Some(entry) = read_dir.next_entry().await? {
         let metadata = entry.metadata().await?;
         entries.push(DirEntry {
@@ -490,7 +481,7 @@ async fn op_read_dir(#[string] path: String) -> Result<Vec<DirEntry>, std::io::E
             is_symlink: metadata.is_symlink(),
         });
     }
-    
+
     Ok(entries)
 }
 
@@ -510,12 +501,13 @@ struct FileInfo {
 #[serde]
 async fn op_stat(#[string] path: String) -> Result<FileInfo, std::io::Error> {
     let metadata = tokio::fs::metadata(&path).await?;
-    
-    let mtime = metadata.modified()
+
+    let mtime = metadata
+        .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    
+
     Ok(FileInfo {
         size: metadata.len(),
         is_file: metadata.is_file(),
@@ -527,21 +519,15 @@ async fn op_stat(#[string] path: String) -> Result<FileInfo, std::io::Error> {
 
 /// Copy file
 #[op2(async)]
-async fn op_copy_file(
-    #[string] from: String,
-    #[string] to: String,
-) -> Result<(), std::io::Error> {
+async fn op_copy_file(#[string] from: String, #[string] to: String) -> Result<(), std::io::Error> {
     tokio::fs::copy(&from, &to).await.map(|_| ())
 }
 
 /// Remove file or directory
 #[op2(async)]
-async fn op_remove(
-    #[string] path: String,
-    recursive: bool,
-) -> Result<(), std::io::Error> {
+async fn op_remove(#[string] path: String, recursive: bool) -> Result<(), std::io::Error> {
     let metadata = tokio::fs::metadata(&path).await?;
-    
+
     if metadata.is_dir() {
         if recursive {
             tokio::fs::remove_dir_all(&path).await
@@ -563,10 +549,10 @@ async fn op_make_temp_file(
     let temp_dir = std::env::temp_dir();
     let file_name = format!("{}{}{}", prefix, uuid::Uuid::new_v4(), suffix);
     let temp_path = temp_dir.join(file_name);
-    
+
     // Create the file
     std::fs::File::create(&temp_path)?;
-    
+
     Ok(temp_path.to_string_lossy().to_string())
 }
 
@@ -602,22 +588,22 @@ struct JsParseResult {
 #[serde]
 fn op_parse_js(#[string] code: String, #[string] filename: Option<String>) -> JsParseResult {
     let allocator = Allocator::default();
-    let source_type = SourceType::from_path(filename.as_deref().unwrap_or("script.js"))
-        .unwrap_or_default();
-    
+    let source_type =
+        SourceType::from_path(filename.as_deref().unwrap_or("script.js")).unwrap_or_default();
+
     let parser_ret = Parser::new(&allocator, &code, source_type).parse();
-    
+
     let mut literals = Vec::new();
     let mut errors = Vec::new();
-    
+
     // Collect parse errors
     for error in parser_ret.errors.iter() {
         errors.push(format!("{}", error));
     }
-    
+
     // Extract literals from AST
     extract_literals_from_program(&parser_ret.program, &code, &mut literals);
-    
+
     JsParseResult {
         success: parser_ret.errors.is_empty(),
         literals,
@@ -739,21 +725,19 @@ fn extract_literals_from_statement(
         Statement::ClassDeclaration(class) => {
             extract_literals_from_class(&class.body, source, literals);
         }
-        Statement::ExportDefaultDeclaration(export) => {
-            match &export.declaration {
-                ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
-                    if let Some(body) = &func.body {
-                        for s in &body.statements {
-                            extract_literals_from_statement(s, source, literals);
-                        }
+        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+            ExportDefaultDeclarationKind::FunctionDeclaration(func) => {
+                if let Some(body) = &func.body {
+                    for s in &body.statements {
+                        extract_literals_from_statement(s, source, literals);
                     }
                 }
-                ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                    extract_literals_from_class(&class.body, source, literals);
-                }
-                _ => {}
             }
-        }
+            ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                extract_literals_from_class(&class.body, source, literals);
+            }
+            _ => {}
+        },
         Statement::ExportNamedDeclaration(export) => {
             if let Some(decl) = &export.declaration {
                 extract_literals_from_declaration(decl, source, literals);
@@ -857,7 +841,12 @@ fn extract_literals_from_expression(
         }
         Expression::TemplateLiteral(template) => {
             for quasi in &template.quasis {
-                let value = quasi.value.cooked.as_ref().map(|s| s.as_str()).unwrap_or("");
+                let value = quasi
+                    .value
+                    .cooked
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 if value.len() >= 3 {
                     let (line, col) = get_line_col(source, quasi.span.start as usize);
                     literals.push(JsStringLiteral {
@@ -995,7 +984,12 @@ fn extract_literals_from_expression(
             extract_literals_from_expression(&tagged.tag, source, literals);
             // Template literals
             for quasi in &tagged.quasi.quasis {
-                let value = quasi.value.cooked.as_ref().map(|s| s.as_str()).unwrap_or("");
+                let value = quasi
+                    .value
+                    .cooked
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 if value.len() >= 3 {
                     let (line, col) = get_line_col(source, quasi.span.start as usize);
                     literals.push(JsStringLiteral {
@@ -1029,7 +1023,7 @@ fn extract_literals_from_expression(
 fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
     let mut line = 1u32;
     let mut col = 1u32;
-    
+
     for (i, ch) in source.char_indices() {
         if i >= offset {
             break;
@@ -1041,7 +1035,7 @@ fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
             col += 1;
         }
     }
-    
+
     (line, col)
 }
 
@@ -1049,8 +1043,8 @@ fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
 // Dictionary Operations
 // ============================================================
 
-use std::sync::OnceLock;
 use sqlx::PgPool;
+use std::sync::OnceLock;
 
 /// Global database pool for dictionary operations
 static DICTIONARY_POOL: OnceLock<PgPool> = OnceLock::new();
@@ -1086,7 +1080,7 @@ async fn op_get_dictionary(
 ) -> Result<Option<JsDictionary>, deno_error::JsErrorBox> {
     let pool = get_dictionary_pool()
         .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
-    
+
     // Try by ID first
     let dict: Option<(String, String, Option<String>, String, Option<String>, Option<String>, i64, Option<String>)> = 
         sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = $1 OR name = $2")
@@ -1095,19 +1089,21 @@ async fn op_get_dictionary(
             .fetch_optional(pool)
             .await
             .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-    
-    Ok(dict.map(|(id, name, description, dict_type, service_type, category, word_count, tags)| {
-        JsDictionary {
-            id,
-            name,
-            description,
-            dict_type,
-            service_type,
-            category,
-            word_count,
-            tags,
-        }
-    }))
+
+    Ok(dict.map(
+        |(id, name, description, dict_type, service_type, category, word_count, tags)| {
+            JsDictionary {
+                id,
+                name,
+                description,
+                dict_type,
+                service_type,
+                category,
+                word_count,
+                tags,
+            }
+        },
+    ))
 }
 
 /// Get words from a dictionary by ID or name
@@ -1119,22 +1115,21 @@ async fn op_get_dictionary_words(
 ) -> Result<Vec<String>, deno_error::JsErrorBox> {
     let pool = get_dictionary_pool()
         .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
-    
+
     // First get dictionary ID
-    let dict_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM dictionaries WHERE id = $1 OR name = $2"
-    )
-        .bind(&id_or_name)
-        .bind(&id_or_name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-    
+    let dict_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
+            .bind(&id_or_name)
+            .bind(&id_or_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
     let dict_id = match dict_id {
         Some(id) => id,
         None => return Ok(vec![]),
     };
-    
+
     // Get words
     let limit_val = limit.unwrap_or(10000) as i64;
     let words: Vec<String> = sqlx::query_scalar(
@@ -1145,7 +1140,7 @@ async fn op_get_dictionary_words(
         .fetch_all(pool)
         .await
         .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-    
+
     Ok(words)
 }
 
@@ -1158,9 +1153,9 @@ async fn op_list_dictionaries(
 ) -> Result<Vec<JsDictionary>, deno_error::JsErrorBox> {
     let pool = get_dictionary_pool()
         .ok_or_else(|| deno_error::JsErrorBox::generic("Dictionary database not initialized"))?;
-    
+
     let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
-    
+
     let mut params_count = 0;
     if let Some(_) = dict_type {
         params_count += 1;
@@ -1171,33 +1166,50 @@ async fn op_list_dictionaries(
         query.push_str(&format!(" AND category = ${}", params_count));
     }
     query.push_str(" ORDER BY name ASC");
-    
-    let mut sql_query = sqlx::query_as::<_, (String, String, Option<String>, String, Option<String>, Option<String>, i64, Option<String>)>(&query);
-    
+
+    let mut sql_query = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            i64,
+            Option<String>,
+        ),
+    >(&query);
+
     if let Some(ref dt) = dict_type {
         sql_query = sql_query.bind(dt);
     }
     if let Some(ref cat) = category {
         sql_query = sql_query.bind(cat);
     }
-    
+
     let rows = sql_query
         .fetch_all(pool)
         .await
         .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-    
-    Ok(rows.into_iter().map(|(id, name, description, dict_type, service_type, category, word_count, tags)| {
-        JsDictionary {
-            id,
-            name,
-            description,
-            dict_type,
-            service_type,
-            category,
-            word_count,
-            tags,
-        }
-    }).collect())
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, name, description, dict_type, service_type, category, word_count, tags)| {
+                JsDictionary {
+                    id,
+                    name,
+                    description,
+                    dict_type,
+                    service_type,
+                    category,
+                    word_count,
+                    tags,
+                }
+            },
+        )
+        .collect())
 }
 
 // ============================================================

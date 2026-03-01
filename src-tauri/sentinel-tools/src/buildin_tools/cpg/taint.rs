@@ -140,7 +140,10 @@ pub fn run_taint_analysis(
                 let sink_search_idx = sink_func.unwrap_or(sink_idx);
 
                 // Check if sink is reachable from source
-                if let Some(path) = reachable.iter().find(|p| p.last() == Some(&sink_search_idx)) {
+                if let Some(path) = reachable
+                    .iter()
+                    .find(|p| p.last() == Some(&sink_search_idx))
+                {
                     // Check for sanitizers on the path
                     let sanitized = check_sanitizers_on_path(cpg, path, &rule.sanitizers, language);
 
@@ -214,7 +217,11 @@ pub fn run_taint_analysis(
     all_findings.sort_by(|a, b| {
         severity_ord(&a.severity)
             .cmp(&severity_ord(&b.severity))
-            .then(b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
 
     let unsanitized = all_findings.iter().filter(|f| !f.sanitized).count();
@@ -416,10 +423,7 @@ fn same_function_taint(
 }
 
 /// Build a human-readable trace from a graph path.
-fn build_trace(
-    cpg: &CodePropertyGraph,
-    path: &[petgraph::graph::NodeIndex],
-) -> Vec<TraceHop> {
+fn build_trace(cpg: &CodePropertyGraph, path: &[petgraph::graph::NodeIndex]) -> Vec<TraceHop> {
     path.iter()
         .map(|&idx| {
             let node = &cpg.graph[idx];
@@ -460,10 +464,7 @@ fn calculate_confidence(distance: usize, sanitized: bool, max_depth: usize) -> f
 }
 
 /// Run pattern-match checks for non-taint rules (e.g., hardcoded secrets).
-fn run_pattern_checks(
-    cpg: &CodePropertyGraph,
-    rules: &[SecurityRule],
-) -> Vec<PatternFinding> {
+fn run_pattern_checks(cpg: &CodePropertyGraph, rules: &[SecurityRule]) -> Vec<PatternFinding> {
     let mut findings = Vec::new();
 
     for rule in rules {

@@ -533,7 +533,7 @@ watch(() => props.message.metadata?.tool_result, () => {
 // 复制消息内容
 const handleCopy = async () => {
   try {
-    await navigator.clipboard.writeText(props.message.content)
+    await navigator.clipboard.writeText(normalizedMessageContent.value)
     copySuccess.value = true
     setTimeout(() => {
       copySuccess.value = false
@@ -702,7 +702,7 @@ const isTenthManCritique = computed(() => {
 
 const isTeamMessage = computed(() => {
   const kind = props.message.metadata?.kind
-  return kind === 'team_member_output' || kind === 'team_bridge'
+  return kind === 'team_member_output' || kind === 'team_bridge' || kind === 'team_v3_mirror'
 })
 
 const readTeamMetaString = (key: string): string => {
@@ -711,16 +711,35 @@ const readTeamMetaString = (key: string): string => {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+const TEAM_PREFIX_RE = /^\[Team\/([^\]]+)\]\s*/u
+
+const teamPrefixLabel = computed(() => {
+  if (props.message.metadata?.kind !== 'team_v3_mirror') return ''
+  const content = props.message.content || ''
+  const match = content.match(TEAM_PREFIX_RE)
+  return match?.[1]?.trim() || ''
+})
+
+const normalizedMessageContent = computed(() => {
+  const content = props.message.content || ''
+  if (props.message.metadata?.kind !== 'team_v3_mirror') return content
+  return content.replace(TEAM_PREFIX_RE, '').trimStart()
+})
+
 const teamSpeakerName = computed(() => {
   return (
     readTeamMetaString('team_member_name') ||
     readTeamMetaString('member_name') ||
-    readTeamMetaString('assignee_agent_name')
+    readTeamMetaString('assignee_agent_name') ||
+    readTeamMetaString('team_member_id')
   )
 })
 
 const teamSpeakerRole = computed(() => {
-  const role = readTeamMetaString('team_member_role') || readTeamMetaString('role')
+  const role =
+    readTeamMetaString('team_member_role') ||
+    readTeamMetaString('team_role') ||
+    readTeamMetaString('role')
   const normalized = role.toLowerCase()
   if (normalized === 'assistant' || normalized === 'user' || normalized === 'system') {
     return ''
@@ -729,7 +748,7 @@ const teamSpeakerRole = computed(() => {
 })
 
 const teamSpeakerLabel = computed(() => {
-  return teamSpeakerName.value || teamSpeakerRole.value || 'Team'
+  return teamSpeakerName.value || teamSpeakerRole.value || teamPrefixLabel.value || 'Team'
 })
 
 // Format number with commas
@@ -1145,7 +1164,8 @@ const auditSummaryContent = computed(() => {
 
 // Format content based on message type
 const formattedContent = computed(() => {
-  const { type, content, metadata } = props.message
+  const { type, metadata } = props.message
+  const content = normalizedMessageContent.value
   const cursor = props.isExecuting ? ' ▍' : ''
 
   switch (type) {

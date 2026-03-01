@@ -175,12 +175,7 @@ pub struct Asset {
 }
 
 impl Asset {
-    pub fn new(
-        asset_type: AssetType,
-        name: String,
-        value: String,
-        created_by: String,
-    ) -> Self {
+    pub fn new(asset_type: AssetType, name: String, value: String, created_by: String) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4().to_string(),
@@ -437,4 +432,3 @@ pub struct ImportResult {
     pub skipped: usize,
     pub errors: Vec<String>,
 }
-

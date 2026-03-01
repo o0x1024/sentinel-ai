@@ -9,17 +9,20 @@
 use crate::error::{PluginError, Result};
 use crate::plugin_engine::PluginEngine;
 use crate::types::{Finding, HttpTransaction, PluginMetadata};
+use deno_core::v8;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, info};
-use deno_core::v8;
 
 /// Commands sent to the plugin executor thread
 enum PluginCommand {
     ScanTransaction(Box<HttpTransaction>, oneshot::Sender<Result<Vec<Finding>>>),
-    ExecuteAgent(serde_json::Value, oneshot::Sender<Result<(Vec<Finding>, Option<serde_json::Value>)>>),
+    ExecuteAgent(
+        serde_json::Value,
+        oneshot::Sender<Result<(Vec<Finding>, Option<serde_json::Value>)>>,
+    ),
     Restart(oneshot::Sender<Result<()>>),
     GetStats(oneshot::Sender<ExecutorStats>),
     Shutdown,
@@ -78,7 +81,7 @@ impl PluginExecutor {
         max_executions_before_restart: usize,
     ) -> Result<Self> {
         let plugin_id = metadata.id.clone();
-        
+
         let total_executions = Arc::new(AtomicUsize::new(0));
         let current_instance_executions = Arc::new(AtomicUsize::new(0));
         let restart_count = Arc::new(AtomicUsize::new(0));
@@ -128,9 +131,13 @@ impl PluginExecutor {
         restart_count: Arc<AtomicUsize>,
         last_restart_time: Arc<RwLock<Option<std::time::Instant>>>,
         should_shutdown: Arc<AtomicBool>,
-    ) -> Result<(mpsc::Sender<PluginCommand>, JoinHandle<()>, v8::IsolateHandle)> {
+    ) -> Result<(
+        mpsc::Sender<PluginCommand>,
+        JoinHandle<()>,
+        v8::IsolateHandle,
+    )> {
         let (tx, mut rx) = mpsc::channel::<PluginCommand>(100);
-        
+
         let metadata_clone = metadata.clone();
         let code_clone = code.to_string();
         let plugin_id_clone = metadata.id.clone();
@@ -283,7 +290,10 @@ impl PluginExecutor {
         let (reply_tx, reply_rx) = oneshot::channel();
 
         sender
-            .send(PluginCommand::ScanTransaction(Box::new(transaction), reply_tx))
+            .send(PluginCommand::ScanTransaction(
+                Box::new(transaction),
+                reply_tx,
+            ))
             .await
             .map_err(|e| PluginError::Execution(format!("Executor channel closed: {}", e)))?;
 
@@ -330,7 +340,7 @@ impl PluginExecutor {
 
         // Signal shutdown to old thread
         self.should_shutdown.store(true, Ordering::Relaxed);
-        
+
         // Send shutdown command
         {
             let sender = self.sender.read().await;
@@ -342,7 +352,10 @@ impl PluginExecutor {
         {
             let mut worker_thread = self.worker_thread.write().await;
             if let Some(handle) = worker_thread.take() {
-                info!("Waiting for old worker thread to exit for plugin {}", self.plugin_id);
+                info!(
+                    "Waiting for old worker thread to exit for plugin {}",
+                    self.plugin_id
+                );
                 // Give it some time to exit gracefully
                 tokio::task::spawn_blocking(move || {
                     handle.join().ok();
@@ -427,9 +440,9 @@ impl PluginExecutor {
     /// Shutdown executor
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down executor for plugin {}", self.plugin_id);
-        
+
         self.should_shutdown.store(true, Ordering::Relaxed);
-        
+
         {
             let sender = self.sender.read().await;
             let _ = sender.send(PluginCommand::Shutdown).await;
@@ -527,7 +540,7 @@ export function scan_transaction(transaction) {
         let executor = PluginExecutor::new(metadata, code, 100).unwrap();
         assert_eq!(executor.plugin_id(), "test-executor");
         assert_eq!(executor.max_executions_before_restart(), 100);
-        
+
         executor.shutdown().await.unwrap();
     }
 
@@ -540,7 +553,7 @@ export function scan_transaction(transaction) {
         let txn = create_test_transaction();
         let findings = executor.scan_transaction(txn).await.unwrap();
         assert!(!findings.is_empty());
-        
+
         executor.shutdown().await.unwrap();
     }
 
@@ -573,7 +586,7 @@ export function scan_transaction(transaction) {
         assert_eq!(stats_after.total_executions, 8);
         assert_eq!(stats_after.current_instance_executions, 3);
         assert_eq!(stats_after.restart_count, 1);
-        
+
         executor.shutdown().await.unwrap();
     }
 }

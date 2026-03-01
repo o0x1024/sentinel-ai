@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Semaphore, RwLock};
+use tokio::sync::{RwLock, Semaphore};
 use tokio::time::sleep;
 
 /// Retry configuration
@@ -84,7 +84,7 @@ impl RetryConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create a config for fast operations (fewer retries, shorter delays)
     pub fn for_fast() -> Self {
         Self {
@@ -96,7 +96,7 @@ impl RetryConfig {
             ..Default::default()
         }
     }
-    
+
     /// Calculate delay for given attempt number
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         let base_delay = match &self.backoff {
@@ -108,10 +108,10 @@ impl RetryConfig {
                 (self.initial_delay_ms as f64 * multiplier.powi(attempt as i32)) as u64
             }
         };
-        
+
         // Apply max delay cap
         let capped_delay = base_delay.min(self.max_delay_ms);
-        
+
         // Apply jitter
         let jitter_range = (capped_delay as f64 * self.jitter) as u64;
         let jitter_offset = if jitter_range > 0 {
@@ -119,28 +119,28 @@ impl RetryConfig {
         } else {
             0
         };
-        
+
         Duration::from_millis(capped_delay + jitter_offset)
     }
-    
+
     /// Check if an error is retryable
     pub fn is_retryable(&self, error: &str) -> bool {
         let error_lower = error.to_lowercase();
-        
+
         // Check non-retryable first
         for pattern in &self.non_retryable_errors {
             if error_lower.contains(&pattern.to_lowercase()) {
                 return false;
             }
         }
-        
+
         // Check retryable patterns
         for pattern in &self.retryable_errors {
             if error_lower.contains(&pattern.to_lowercase()) {
                 return true;
             }
         }
-        
+
         // Default: retry on unknown errors
         true
     }
@@ -179,28 +179,29 @@ impl RateLimiter {
             last_request_times: RwLock::new(HashMap::new()),
         }
     }
-    
+
     /// Create with default limits (20 global, 5 per host, 100ms delay)
     pub fn default_limits() -> Self {
         Self::new(20, 5, 100)
     }
-    
+
     /// Acquire permits for a request to given host
     pub async fn acquire(&self, host: &str) -> RateLimitGuard {
         // Acquire global permit
         let global_permit = self.global_semaphore.clone().acquire_owned().await.unwrap();
-        
+
         // Get or create host semaphore
         let host_semaphore = {
             let mut semaphores = self.host_semaphores.write().await;
-            semaphores.entry(host.to_string())
+            semaphores
+                .entry(host.to_string())
                 .or_insert_with(|| Arc::new(Semaphore::new(self.per_host_limit)))
                 .clone()
         };
-        
+
         // Acquire host permit
         let host_permit = host_semaphore.acquire_owned().await.unwrap();
-        
+
         // Apply per-host delay
         if self.per_host_delay_ms > 0 {
             let last_times = self.last_request_times.write().await;
@@ -213,19 +214,19 @@ impl RateLimiter {
                 }
             }
         }
-        
+
         // Update last request time
         {
             let mut last_times = self.last_request_times.write().await;
             last_times.insert(host.to_string(), std::time::Instant::now());
         }
-        
+
         RateLimitGuard {
             _global_permit: global_permit,
             _host_permit: host_permit,
         }
     }
-    
+
     /// Get current stats
     pub fn stats(&self) -> RateLimitStats {
         RateLimitStats {
@@ -265,21 +266,25 @@ impl RetryExecutor {
             rate_limiter: None,
         }
     }
-    
+
     pub fn with_rate_limiter(mut self, limiter: Arc<RateLimiter>) -> Self {
         self.rate_limiter = Some(limiter);
         self
     }
-    
+
     /// Execute an async operation with retry
-    pub async fn execute<F, Fut, T, E>(&self, host: Option<&str>, operation: F) -> Result<T, RetryError<E>>
+    pub async fn execute<F, Fut, T, E>(
+        &self,
+        host: Option<&str>,
+        operation: F,
+    ) -> Result<T, RetryError<E>>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T, E>>,
         E: std::fmt::Display,
     {
         let mut last_error = None;
-        
+
         for attempt in 0..self.config.max_attempts {
             // Acquire rate limit if configured
             let _guard = if let (Some(limiter), Some(h)) = (&self.rate_limiter, host) {
@@ -287,7 +292,7 @@ impl RetryExecutor {
             } else {
                 None
             };
-            
+
             match operation().await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
@@ -298,14 +303,14 @@ impl RetryExecutor {
                         self.config.max_attempts,
                         error_str
                     );
-                    
+
                     // Check if retryable
                     if !self.config.is_retryable(&error_str) {
                         return Err(RetryError::NonRetryable(e));
                     }
-                    
+
                     last_error = Some(e);
-                    
+
                     // Don't sleep on last attempt
                     if attempt + 1 < self.config.max_attempts {
                         let delay = self.config.calculate_delay(attempt);
@@ -315,13 +320,13 @@ impl RetryExecutor {
                 }
             }
         }
-        
+
         Err(RetryError::MaxRetriesExceeded {
             attempts: self.config.max_attempts,
             last_error: last_error.unwrap(),
         })
     }
-    
+
     /// Execute with a specific timeout per attempt
     pub async fn execute_with_timeout<F, Fut, T, E>(
         &self,
@@ -338,7 +343,8 @@ impl RetryExecutor {
             tokio::time::timeout(timeout, operation())
                 .await
                 .map_err(|_| E::from(TimeoutError))?
-        }).await
+        })
+        .await
     }
 }
 
@@ -354,7 +360,10 @@ pub enum RetryError<E> {
 impl<E: std::fmt::Display> std::fmt::Display for RetryError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RetryError::MaxRetriesExceeded { attempts, last_error } => {
+            RetryError::MaxRetriesExceeded {
+                attempts,
+                last_error,
+            } => {
                 write!(f, "Failed after {} attempts: {}", attempts, last_error)
             }
             RetryError::NonRetryable(e) => {
@@ -430,7 +439,7 @@ pub struct StepExecutionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_backoff_calculation() {
         let config = RetryConfig {
@@ -440,37 +449,37 @@ mod tests {
             jitter: 0.0, // No jitter for deterministic test
             ..Default::default()
         };
-        
+
         // First attempt: 1000ms
         let delay0 = config.calculate_delay(0);
         assert_eq!(delay0.as_millis(), 1000);
-        
+
         // Second attempt: 2000ms
         let delay1 = config.calculate_delay(1);
         assert_eq!(delay1.as_millis(), 2000);
-        
+
         // Third attempt: 4000ms
         let delay2 = config.calculate_delay(2);
         assert_eq!(delay2.as_millis(), 4000);
     }
-    
+
     #[test]
     fn test_is_retryable() {
         let config = RetryConfig::default();
-        
+
         assert!(config.is_retryable("Connection timeout"));
         assert!(config.is_retryable("Rate limit exceeded (429)"));
         assert!(!config.is_retryable("Not found (404)"));
         assert!(!config.is_retryable("Unauthorized"));
     }
-    
+
     #[tokio::test]
     async fn test_rate_limiter() {
         let limiter = RateLimiter::new(2, 1, 0);
-        
+
         let stats_before = limiter.stats();
         assert_eq!(stats_before.global_available, 2);
-        
+
         let _guard1 = limiter.acquire("host1").await;
         let stats_during = limiter.stats();
         assert_eq!(stats_during.global_available, 1);

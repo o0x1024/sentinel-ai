@@ -1,5 +1,5 @@
 //! Prompt配置管理系统
-//! 
+//!
 //! 实现分层架构的prompt模板系统，支持：
 //! - 固定核心框架 + 可配置领域模板 + 动态上下文注入
 //! - 用户自定义模板
@@ -7,11 +7,11 @@
 //! - A/B测试框架
 use super::*;
 
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
-use anyhow::{Result, anyhow};
 
 /// Prompt配置管理器
 #[derive(Debug, Clone)]
@@ -329,7 +329,7 @@ impl PromptConfigManager {
     pub async fn load_from_file<P: AsRef<Path>>(config_path: P) -> Result<Self> {
         let content = fs::read_to_string(config_path).await?;
         let config: PromptConfig = serde_yaml::from_str(&content)?;
-        
+
         Ok(Self {
             config,
             custom_templates: HashMap::new(),
@@ -345,9 +345,14 @@ impl PromptConfigManager {
     }
 
     /// 获取最优配置
-    pub async fn get_optimal_config(&self, context: &ConfigSelectionContext) -> Result<OptimalConfig> {
+    pub async fn get_optimal_config(
+        &self,
+        context: &ConfigSelectionContext,
+    ) -> Result<OptimalConfig> {
         // 1. 领域检测
-        let domain = self.detect_domain(&context.user_query).await?
+        let domain = self
+            .detect_domain(&context.user_query)
+            .await?
             .or(context.detected_domain.clone())
             .unwrap_or_else(|| "general".to_string());
 
@@ -355,7 +360,8 @@ impl PromptConfigManager {
         let complexity = self.assess_complexity(&context.user_query).await?;
 
         // 3. 选择最优配置
-        self.select_optimal_config(&domain, complexity, context).await
+        self.select_optimal_config(&domain, complexity, context)
+            .await
     }
 
     /// 检测领域
@@ -363,7 +369,7 @@ impl PromptConfigManager {
         // 多策略领域检测
         let keyword_score = self.keyword_matching(query);
         let intent_score = self.intent_classification(query).await?;
-        
+
         // 集成决策
         self.ensemble_domain_decision(keyword_score, intent_score)
     }
@@ -375,24 +381,60 @@ impl PromptConfigManager {
 
         // 安全测试关键词
         let security_keywords = vec![
-            "安全", "漏洞", "扫描", "渗透", "测试", "检测", "评估",
-            "security", "vulnerability", "scan", "penetration", "test"
+            "安全",
+            "漏洞",
+            "扫描",
+            "渗透",
+            "测试",
+            "检测",
+            "评估",
+            "security",
+            "vulnerability",
+            "scan",
+            "penetration",
+            "test",
         ];
-        
-        let security_score = security_keywords.iter()
-            .map(|&keyword| if query_lower.contains(keyword) { 1.0 } else { 0.0 })
-            .sum::<f32>() / security_keywords.len() as f32;
+
+        let security_score = security_keywords
+            .iter()
+            .map(|&keyword| {
+                if query_lower.contains(keyword) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f32>()
+            / security_keywords.len() as f32;
         scores.insert("security_testing".to_string(), security_score);
 
         // 数据分析关键词
         let data_keywords = vec![
-            "数据", "分析", "统计", "报告", "图表", "可视化",
-            "data", "analysis", "statistics", "report", "chart", "visualization"
+            "数据",
+            "分析",
+            "统计",
+            "报告",
+            "图表",
+            "可视化",
+            "data",
+            "analysis",
+            "statistics",
+            "report",
+            "chart",
+            "visualization",
         ];
-        
-        let data_score = data_keywords.iter()
-            .map(|&keyword| if query_lower.contains(keyword) { 1.0 } else { 0.0 })
-            .sum::<f32>() / data_keywords.len() as f32;
+
+        let data_score = data_keywords
+            .iter()
+            .map(|&keyword| {
+                if query_lower.contains(keyword) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f32>()
+            / data_keywords.len() as f32;
         scores.insert("data_analysis".to_string(), data_score);
 
         scores
@@ -430,14 +472,31 @@ impl PromptConfigManager {
 
         // 基于关键词复杂度
         let complex_keywords = vec![
-            "多步骤", "复杂", "深度", "全面", "详细", "综合",
-            "multi-step", "complex", "deep", "comprehensive", "detailed"
+            "多步骤",
+            "复杂",
+            "深度",
+            "全面",
+            "详细",
+            "综合",
+            "multi-step",
+            "complex",
+            "deep",
+            "comprehensive",
+            "detailed",
         ];
-        
-        let keyword_complexity = complex_keywords.iter()
-            .map(|&keyword| if query.to_lowercase().contains(keyword) { 1.0 } else { 0.0 })
-            .sum::<f32>() / complex_keywords.len() as f32;
-        
+
+        let keyword_complexity = complex_keywords
+            .iter()
+            .map(|&keyword| {
+                if query.to_lowercase().contains(keyword) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f32>()
+            / complex_keywords.len() as f32;
+
         complexity += keyword_complexity * 0.7;
 
         Ok(complexity.min(1.0))
@@ -451,7 +510,9 @@ impl PromptConfigManager {
         context: &ConfigSelectionContext,
     ) -> Result<OptimalConfig> {
         // 获取领域模板
-        let domain_template = self.config.domain_templates
+        let domain_template = self
+            .config
+            .domain_templates
             .get(domain)
             .cloned()
             .unwrap_or_else(|| self.create_default_domain_template());
@@ -466,7 +527,9 @@ impl PromptConfigManager {
             agent_profile,
             domain_template,
             core_templates: self.config.core_templates.clone(),
-            custom_constraints: self.config.custom_constraints
+            custom_constraints: self
+                .config
+                .custom_constraints
                 .get(domain)
                 .cloned()
                 .unwrap_or_default(),
@@ -483,7 +546,8 @@ impl PromptConfigManager {
             format!("{}_basic", domain)
         };
 
-        self.config.agent_profiles
+        self.config
+            .agent_profiles
             .get(&profile_key)
             .or_else(|| self.config.agent_profiles.get(domain))
             .or_else(|| self.config.agent_profiles.get("default"))
@@ -559,23 +623,24 @@ impl PromptConfigManager {
     }
 
     /// 获取特定类型的系统prompt
-    pub async fn get_system_prompt_by_type(&self, template_type: &TemplateType) -> Result<Option<String>> {
+    pub async fn get_system_prompt_by_type(
+        &self,
+        template_type: &TemplateType,
+    ) -> Result<Option<String>> {
         // 查找匹配的系统级模板
         for template in self.custom_templates.values() {
             if template.template_type == *template_type && template.is_system {
                 return Ok(Some(template.content.clone()));
             }
         }
-        
+
         // 如果没找到，返回默认的模板内容
         match template_type {
-            TemplateType::IntentClassifier => {
-                Ok(Some(self.get_default_intent_classifier_prompt()))
-            }
-            _ => Ok(None)
+            TemplateType::IntentClassifier => Ok(Some(self.get_default_intent_classifier_prompt())),
+            _ => Ok(None),
         }
     }
-    
+
     /// 获取默认的意图分析器prompt
     fn get_default_intent_classifier_prompt(&self) -> String {
         r#"作为一个AI意图分类器，请分析用户输入并判断意图类型。
@@ -597,7 +662,8 @@ impl PromptConfigManager {
     "reasoning": "分类理由",
     "requires_agent": true/false,
     "extracted_info": {"key": "value"}
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     /// 验证配置
@@ -628,82 +694,95 @@ impl PromptConfigManager {
         let mut custom_constraints = HashMap::new();
 
         // 默认代理配置
-        agent_profiles.insert("security_expert".to_string(), AgentProfile {
-            planner_domain: "security_testing".to_string(),
-            executor_specializations: vec![
-                "vulnerability_scan".to_string(),
-                "compliance_check".to_string(),
-            ],
-            replanner_triggers: vec![
-                "high_risk_found".to_string(),
-                "new_attack_surface".to_string(),
-            ],
-            report_template: "security_assessment".to_string(),
-            custom_config: None,
-        });
+        agent_profiles.insert(
+            "security_expert".to_string(),
+            AgentProfile {
+                planner_domain: "security_testing".to_string(),
+                executor_specializations: vec![
+                    "vulnerability_scan".to_string(),
+                    "compliance_check".to_string(),
+                ],
+                replanner_triggers: vec![
+                    "high_risk_found".to_string(),
+                    "new_attack_surface".to_string(),
+                ],
+                report_template: "security_assessment".to_string(),
+                custom_config: None,
+            },
+        );
 
-        agent_profiles.insert("data_scientist".to_string(), AgentProfile {
-            planner_domain: "data_analysis".to_string(),
-            executor_specializations: vec![
-                "data_processing".to_string(),
-                "statistical_analysis".to_string(),
-            ],
-            replanner_triggers: vec![
-                "data_quality_issue".to_string(),
-                "significant_finding".to_string(),
-            ],
-            report_template: "analytical_report".to_string(),
-            custom_config: None,
-        });
+        agent_profiles.insert(
+            "data_scientist".to_string(),
+            AgentProfile {
+                planner_domain: "data_analysis".to_string(),
+                executor_specializations: vec![
+                    "data_processing".to_string(),
+                    "statistical_analysis".to_string(),
+                ],
+                replanner_triggers: vec![
+                    "data_quality_issue".to_string(),
+                    "significant_finding".to_string(),
+                ],
+                report_template: "analytical_report".to_string(),
+                custom_config: None,
+            },
+        );
 
         // 默认领域模板
-        domain_templates.insert("security_testing".to_string(), DomainTemplate {
-            domain_instructions: r#"
+        domain_templates.insert(
+            "security_testing".to_string(),
+            DomainTemplate {
+                domain_instructions: r#"
 **安全检测专项要求：**
 - 所有检测必须是被动的、非侵入性的
 - 遵循负责任的安全研究原则
 - 不进行任何可能影响服务正常运行的测试
 - 覆盖OWASP Top 10安全风险
 - 考虑合规性要求（如GDPR、网络安全法）
-            "#.to_string(),
-            typical_steps: vec![
-                "信息收集".to_string(),
-                "漏洞扫描".to_string(),
-                "配置检查".to_string(),
-                "合规评估".to_string(),
-                "报告生成".to_string(),
-            ],
-            evaluation_criteria: vec![
-                "发现漏洞数量".to_string(),
-                "误报率".to_string(),
-                "覆盖范围".to_string(),
-                "合规性".to_string(),
-            ],
-            critical_triggers: vec![
-                "发现高危漏洞".to_string(),
-                "检测到活跃攻击".to_string(),
-                "发现合规性问题".to_string(),
-            ],
-            adjustment_patterns: vec![
-                AdjustmentPattern {
-                    trigger: "发现新子域名".to_string(),
-                    action: "增加子域名检测".to_string(),
-                    priority: 1,
-                },
-                AdjustmentPattern {
-                    trigger: "API泄露".to_string(),
-                    action: "增加API安全检查".to_string(),
-                    priority: 2,
-                },
-            ],
-        });
+            "#
+                .to_string(),
+                typical_steps: vec![
+                    "信息收集".to_string(),
+                    "漏洞扫描".to_string(),
+                    "配置检查".to_string(),
+                    "合规评估".to_string(),
+                    "报告生成".to_string(),
+                ],
+                evaluation_criteria: vec![
+                    "发现漏洞数量".to_string(),
+                    "误报率".to_string(),
+                    "覆盖范围".to_string(),
+                    "合规性".to_string(),
+                ],
+                critical_triggers: vec![
+                    "发现高危漏洞".to_string(),
+                    "检测到活跃攻击".to_string(),
+                    "发现合规性问题".to_string(),
+                ],
+                adjustment_patterns: vec![
+                    AdjustmentPattern {
+                        trigger: "发现新子域名".to_string(),
+                        action: "增加子域名检测".to_string(),
+                        priority: 1,
+                    },
+                    AdjustmentPattern {
+                        trigger: "API泄露".to_string(),
+                        action: "增加API安全检查".to_string(),
+                        priority: 2,
+                    },
+                ],
+            },
+        );
 
         // 默认约束
-        custom_constraints.insert("security_testing".to_string(), vec![
-            "遵循OWASP测试指南".to_string(),
-            "不进行破坏性测试".to_string(),
-            "记录所有测试活动".to_string(),
-        ]);
+        custom_constraints.insert(
+            "security_testing".to_string(),
+            vec![
+                "遵循OWASP测试指南".to_string(),
+                "不进行破坏性测试".to_string(),
+                "记录所有测试活动".to_string(),
+            ],
+        );
 
         PromptConfig {
             agent_profiles,
@@ -742,8 +821,9 @@ PLAN:
 {user_query}
 
 请制定详细的执行计划。
-            "#.to_string(),
-            
+            "#
+            .to_string(),
+
             executor_core: r#"
 你是一个任务执行专家。你需要专注执行分配给你的特定步骤。
 
@@ -768,8 +848,9 @@ EXECUTION_RESULT:
 {execution_context}
 
 请执行指定任务并按格式返回结果。
-            "#.to_string(),
-            
+            "#
+            .to_string(),
+
             replanner_core: r#"
 你是一个计划评估和调整专家。基于执行结果评估是否需要调整计划。
 
@@ -798,8 +879,9 @@ EXECUTION_RESULT:
 {original_plan}
 
 请评估并决定下一步行动。
-            "#.to_string(),
-            
+            "#
+            .to_string(),
+
             report_generator_core: r#"
 你是专业报告生成专家。基于所有执行结果生成结构化报告。
 
@@ -822,7 +904,8 @@ EXECUTION_RESULT:
 {target_audience}
 
 请生成专业报告。
-            "#.to_string(),
+            "#
+            .to_string(),
         }
     }
 }

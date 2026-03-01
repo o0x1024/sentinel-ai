@@ -1,10 +1,10 @@
 //! Skills tool for Claude-style progressive disclosure
 
+use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
+use crate::output_storage::{get_host_context_dir, CONTAINER_CONTEXT_DIR};
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
-use crate::output_storage::{get_host_context_dir, CONTAINER_CONTEXT_DIR};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -138,8 +138,8 @@ impl SkillsTool {
     fn resolve_skill_dir(skill_id: &str) -> Result<PathBuf, SkillsToolError> {
         let root = Self::skills_root();
         let skill_dir = root.join(skill_id);
-        let canonical = fs::canonicalize(&skill_dir)
-            .map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
+        let canonical =
+            fs::canonicalize(&skill_dir).map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
         Ok(canonical)
     }
 
@@ -241,8 +241,8 @@ impl Tool for SkillsTool {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
-                    let content =
-                        fs::read_to_string(entry.path()).map_err(|e| SkillsToolError::Io(e.to_string()))?;
+                    let content = fs::read_to_string(entry.path())
+                        .map_err(|e| SkillsToolError::Io(e.to_string()))?;
                     let doc = Self::parse_skill_markdown(&content)?;
                     skills.push(SkillSummary {
                         id,
@@ -264,13 +264,15 @@ impl Tool for SkillsTool {
                 })
             }
             SkillsAction::Load => {
-                let skill_id = args
-                    .skill_id
-                    .ok_or_else(|| SkillsToolError::InvalidArgs("skill_id is required".to_string()))?;
+                let skill_id = args.skill_id.ok_or_else(|| {
+                    SkillsToolError::InvalidArgs("skill_id is required".to_string())
+                })?;
                 let skill_dir = Self::resolve_skill_dir(&skill_id)?;
                 let skill_md = skill_dir.join("SKILL.md");
-                let bytes = fs::read(&skill_md).map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
-                let content = String::from_utf8(bytes.clone()).map_err(|_| SkillsToolError::InvalidUtf8)?;
+                let bytes =
+                    fs::read(&skill_md).map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
+                let content =
+                    String::from_utf8(bytes.clone()).map_err(|_| SkillsToolError::InvalidUtf8)?;
                 let doc = Self::parse_skill_markdown(&content)?;
                 let (host_path, container_path) =
                     Self::stage_runtime_file(&skill_id, "SKILL.md", &bytes).await?;
@@ -295,9 +297,9 @@ impl Tool for SkillsTool {
                 })
             }
             SkillsAction::ReadFile => {
-                let skill_id = args
-                    .skill_id
-                    .ok_or_else(|| SkillsToolError::InvalidArgs("skill_id is required".to_string()))?;
+                let skill_id = args.skill_id.ok_or_else(|| {
+                    SkillsToolError::InvalidArgs("skill_id is required".to_string())
+                })?;
                 let path = args
                     .path
                     .ok_or_else(|| SkillsToolError::InvalidArgs("path is required".to_string()))?;
@@ -308,18 +310,20 @@ impl Tool for SkillsTool {
 
                 let skill_dir = Self::resolve_skill_dir(&skill_id)?;
                 let candidate = skill_dir.join(&path);
-                let canonical_file =
-                    fs::canonicalize(&candidate).map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
+                let canonical_file = fs::canonicalize(&candidate)
+                    .map_err(|e| SkillsToolError::NotFound(e.to_string()))?;
                 if !canonical_file.starts_with(&skill_dir) {
                     return Err(SkillsToolError::PathEscape);
                 }
-                let metadata =
-                    fs::metadata(&canonical_file).map_err(|e| SkillsToolError::Io(e.to_string()))?;
+                let metadata = fs::metadata(&canonical_file)
+                    .map_err(|e| SkillsToolError::Io(e.to_string()))?;
                 if metadata.len() > 200 * 1024 {
                     return Err(SkillsToolError::FileTooLarge);
                 }
-                let bytes = fs::read(&canonical_file).map_err(|e| SkillsToolError::Io(e.to_string()))?;
-                let content = String::from_utf8(bytes.clone()).map_err(|_| SkillsToolError::InvalidUtf8)?;
+                let bytes =
+                    fs::read(&canonical_file).map_err(|e| SkillsToolError::Io(e.to_string()))?;
+                let content =
+                    String::from_utf8(bytes.clone()).map_err(|_| SkillsToolError::InvalidUtf8)?;
                 let rel_path = Self::normalize_rel_path(&path);
                 let (host_path, container_path) =
                     Self::stage_runtime_file(&skill_id, &rel_path, &bytes).await?;

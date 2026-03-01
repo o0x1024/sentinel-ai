@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::process::Command;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// pf 规则配置
 pub struct PfConfig {
@@ -38,12 +38,12 @@ impl PfConfig {
     }
 
     /// 生成 pf 重定向规则
-    /// 
+    ///
     /// 注意：pf 的 rdr 规则无法直接拦截本机发出的出站流量
     /// 这些规则主要用于拦截经过本机的转发流量（如作为网关时）
     pub fn generate_rules(&self) -> String {
         let mut rules = String::new();
-        
+
         rules.push_str("# Sentinel AI Transparent Proxy Rules\n");
         rules.push_str(&format!("# Anchor: {}\n", self.anchor_name));
         rules.push_str(&format!("# Proxy port: {}\n", self.proxy_port));
@@ -51,7 +51,7 @@ impl PfConfig {
 
         // 获取所有常见网络接口
         let interfaces = ["lo0", "en0", "en1", "en2", "bridge0", "utun0", "utun1"];
-        
+
         for iface in interfaces {
             for port in &self.redirect_ports {
                 rules.push_str(&format!(
@@ -62,7 +62,10 @@ impl PfConfig {
         }
 
         rules.push_str("\n# Pass all redirected traffic\n");
-        rules.push_str(&format!("pass out quick proto tcp to any port {}\n", self.proxy_port));
+        rules.push_str(&format!(
+            "pass out quick proto tcp to any port {}\n",
+            self.proxy_port
+        ));
         rules.push_str("pass in quick proto tcp to any port 80\n");
         rules.push_str("pass in quick proto tcp to any port 443\n");
 
@@ -72,9 +75,7 @@ impl PfConfig {
 
 /// 检查 pf 是否启用
 pub fn is_pf_enabled() -> bool {
-    let output = Command::new("pfctl")
-        .args(["-s", "info"])
-        .output();
+    let output = Command::new("pfctl").args(["-s", "info"]).output();
 
     match output {
         Ok(out) => {
@@ -203,23 +204,24 @@ fn get_active_network_service() -> Result<String, String> {
         .args(["-n", "get", "default"])
         .output()
         .map_err(|e| format!("Failed to get default route: {}", e))?;
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let interface = stdout.lines()
+    let interface = stdout
+        .lines()
         .find(|line| line.contains("interface:"))
         .and_then(|line| line.split(':').nth(1))
         .map(|s| s.trim().to_string())
         .ok_or_else(|| "Could not find default interface".to_string())?;
-    
+
     // 根据接口名获取网络服务名称
     let output = Command::new("networksetup")
         .args(["-listallhardwareports"])
         .output()
         .map_err(|e| format!("Failed to list hardware ports: {}", e))?;
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    
+
     for (i, line) in lines.iter().enumerate() {
         if line.contains(&format!("Device: {}", interface)) {
             // 前一行应该是 "Hardware Port: xxx"
@@ -230,7 +232,7 @@ fn get_active_network_service() -> Result<String, String> {
             }
         }
     }
-    
+
     // 如果找不到，默认使用 "Wi-Fi"
     Ok("Wi-Fi".to_string())
 }
@@ -238,58 +240,64 @@ fn get_active_network_service() -> Result<String, String> {
 /// 设置系统 HTTP 代理
 pub fn set_system_http_proxy(host: &str, port: u16) -> Result<(), String> {
     let service = get_active_network_service()?;
-    info!("Setting HTTP proxy on service '{}': {}:{}", service, host, port);
-    
+    info!(
+        "Setting HTTP proxy on service '{}': {}:{}",
+        service, host, port
+    );
+
     let output = Command::new("networksetup")
         .args(["-setwebproxy", &service, host, &port.to_string()])
         .output()
         .map_err(|e| format!("Failed to set HTTP proxy: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Failed to set HTTP proxy: {}", stderr));
     }
-    
+
     // 启用代理
     let output = Command::new("networksetup")
         .args(["-setwebproxystate", &service, "on"])
         .output()
         .map_err(|e| format!("Failed to enable HTTP proxy: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         warn!("Warning enabling HTTP proxy: {}", stderr);
     }
-    
+
     Ok(())
 }
 
 /// 设置系统 HTTPS 代理
 pub fn set_system_https_proxy(host: &str, port: u16) -> Result<(), String> {
     let service = get_active_network_service()?;
-    info!("Setting HTTPS proxy on service '{}': {}:{}", service, host, port);
-    
+    info!(
+        "Setting HTTPS proxy on service '{}': {}:{}",
+        service, host, port
+    );
+
     let output = Command::new("networksetup")
         .args(["-setsecurewebproxy", &service, host, &port.to_string()])
         .output()
         .map_err(|e| format!("Failed to set HTTPS proxy: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Failed to set HTTPS proxy: {}", stderr));
     }
-    
+
     // 启用代理
     let output = Command::new("networksetup")
         .args(["-setsecurewebproxystate", &service, "on"])
         .output()
         .map_err(|e| format!("Failed to enable HTTPS proxy: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         warn!("Warning enabling HTTPS proxy: {}", stderr);
     }
-    
+
     Ok(())
 }
 
@@ -297,17 +305,17 @@ pub fn set_system_https_proxy(host: &str, port: u16) -> Result<(), String> {
 pub fn clear_system_http_proxy() -> Result<(), String> {
     let service = get_active_network_service()?;
     info!("Clearing HTTP proxy on service '{}'", service);
-    
+
     let output = Command::new("networksetup")
         .args(["-setwebproxystate", &service, "off"])
         .output()
         .map_err(|e| format!("Failed to disable HTTP proxy: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         warn!("Warning disabling HTTP proxy: {}", stderr);
     }
-    
+
     Ok(())
 }
 
@@ -315,17 +323,17 @@ pub fn clear_system_http_proxy() -> Result<(), String> {
 pub fn clear_system_https_proxy() -> Result<(), String> {
     let service = get_active_network_service()?;
     info!("Clearing HTTPS proxy on service '{}'", service);
-    
+
     let output = Command::new("networksetup")
         .args(["-setsecurewebproxystate", &service, "off"])
         .output()
         .map_err(|e| format!("Failed to disable HTTPS proxy: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         warn!("Warning disabling HTTPS proxy: {}", stderr);
     }
-    
+
     Ok(())
 }
 
@@ -334,7 +342,7 @@ pub fn clear_system_https_proxy() -> Result<(), String> {
 // ============================================================================
 
 /// 透明代理管理器
-/// 
+///
 /// 使用两种方式实现透明代理：
 /// 1. 系统代理设置（主要方式）- 通过 networksetup 设置系统 HTTP/HTTPS 代理
 /// 2. pf 防火墙规则（辅助方式）- 用于拦截不走系统代理的流量
@@ -370,18 +378,21 @@ impl TransparentProxyManager {
             return Ok(());
         }
 
-        info!("Starting transparent proxy on port {}", self.config.proxy_port);
+        info!(
+            "Starting transparent proxy on port {}",
+            self.config.proxy_port
+        );
 
         // 1. 设置系统代理（这是主要的代理方式）
         let proxy_host = "127.0.0.1";
         let proxy_port = self.config.proxy_port;
-        
+
         if let Err(e) = set_system_http_proxy(proxy_host, proxy_port) {
             warn!("Failed to set system HTTP proxy: {}", e);
         } else {
             info!("System HTTP proxy set to {}:{}", proxy_host, proxy_port);
         }
-        
+
         if let Err(e) = set_system_https_proxy(proxy_host, proxy_port) {
             warn!("Failed to set system HTTPS proxy: {}", e);
         } else {
@@ -513,11 +524,11 @@ impl AppProxyFilter {
         if self.excluded_apps.iter().any(|e| app_name.contains(e)) {
             return false;
         }
-        
+
         if self.apps.is_empty() {
             return true;
         }
-        
+
         self.apps.iter().any(|a| app_name.contains(a))
     }
 }
@@ -545,11 +556,10 @@ mod tests {
         let mut filter = AppProxyFilter::new();
         filter.add_app("Safari");
         filter.add_app("Chrome");
-        
+
         assert!(filter.should_proxy("Safari"));
         assert!(filter.should_proxy("Google Chrome"));
         assert!(!filter.should_proxy("Firefox"));
         assert!(!filter.should_proxy("Finder"));
     }
 }
-

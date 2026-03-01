@@ -1,8 +1,8 @@
+use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
 use sentinel_plugins::PluginRecord;
 use sqlx::FromRow;
-use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::service::DatabaseService;
 
 #[derive(Debug, Clone, FromRow)]
 struct PluginRegistryRow {
@@ -112,9 +112,7 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
 }
 
 impl DatabaseService {
-    pub async fn list_enabled_traffic_plugins_for_scan(
-        &self,
-    ) -> Result<Vec<TrafficPluginScanRow>> {
+    pub async fn list_enabled_traffic_plugins_for_scan(&self) -> Result<Vec<TrafficPluginScanRow>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -190,7 +188,10 @@ impl DatabaseService {
     }
 
     pub async fn get_active_agent_plugins_internal(&self) -> Result<Vec<PluginRecord>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let query = r#"
             SELECT p.id, p.name, p.version, p.author, p.main_category, p.category, p.description,
                    p.default_severity, p.tags, p.enabled, p.metadata, p.status
@@ -213,8 +214,14 @@ impl DatabaseService {
             .collect())
     }
 
-    pub async fn get_plugins_from_registry_internal(&self, user_id: Option<&str>) -> Result<Vec<PluginRecord>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_plugins_from_registry_internal(
+        &self,
+        user_id: Option<&str>,
+    ) -> Result<Vec<PluginRecord>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let uid = user_id.unwrap_or("default");
         let rows: Vec<PluginRegistryFavoriteRow> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -291,7 +298,10 @@ impl DatabaseService {
     }
 
     pub async fn update_plugin_status_internal(&self, plugin_id: &str, status: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("UPDATE plugin_registry SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
@@ -318,9 +328,18 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_plugin_internal(&self, metadata: &serde_json::Value, code: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let plugin_id = metadata["id"].as_str().ok_or_else(|| anyhow::anyhow!("Plugin ID not found"))?;
+    pub async fn update_plugin_internal(
+        &self,
+        metadata: &serde_json::Value,
+        code: &str,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let plugin_id = metadata["id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Plugin ID not found"))?;
         let metadata_json = serde_json::to_string(metadata)?;
 
         match runtime {
@@ -361,8 +380,14 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_plugin_from_registry_internal(&self, plugin_id: &str) -> Result<Option<PluginRecord>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_plugin_from_registry_internal(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Option<PluginRecord>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let row: Option<PluginRegistryRow> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as(
@@ -371,7 +396,7 @@ impl DatabaseService {
                            default_severity, tags, enabled, metadata, status
                     FROM plugin_registry 
                     WHERE id = $1
-                    "#
+                    "#,
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -384,7 +409,7 @@ impl DatabaseService {
                            default_severity, tags, enabled, metadata, status
                     FROM plugin_registry 
                     WHERE id = ?
-                    "#
+                    "#,
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -397,7 +422,7 @@ impl DatabaseService {
                            default_severity, tags, enabled, metadata, status
                     FROM plugin_registry 
                     WHERE id = ?
-                    "#
+                    "#,
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -413,7 +438,10 @@ impl DatabaseService {
     }
 
     pub async fn get_plugin_code_internal(&self, plugin_id: &str) -> Result<Option<String>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let code: Option<String> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_scalar(
@@ -421,7 +449,7 @@ impl DatabaseService {
                     SELECT COALESCE(NULLIF(plugin_code, ''), NULLIF(code, '')) as effective_code 
                     FROM plugin_registry 
                     WHERE id = $1
-                    "#
+                    "#,
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -433,7 +461,7 @@ impl DatabaseService {
                     SELECT COALESCE(NULLIF(plugin_code, ''), NULLIF(code, '')) as effective_code 
                     FROM plugin_registry 
                     WHERE id = ?
-                    "#
+                    "#,
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -445,7 +473,7 @@ impl DatabaseService {
                     SELECT COALESCE(NULLIF(plugin_code, ''), NULLIF(code, '')) as effective_code 
                     FROM plugin_registry 
                     WHERE id = ?
-                    "#
+                    "#,
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -456,7 +484,10 @@ impl DatabaseService {
     }
 
     pub async fn delete_plugin_from_registry_internal(&self, plugin_id: &str) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("DELETE FROM plugin_registry WHERE id = $1")
@@ -488,7 +519,10 @@ impl DatabaseService {
         search_text: Option<&str>,
         _user_id: Option<&str>,
     ) -> Result<serde_json::Value> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let offset = (page - 1) * page_size;
         let plugins = match runtime {
             DatabasePool::PostgreSQL(pool) => {
@@ -506,7 +540,11 @@ impl DatabaseService {
                     param_idx += 1;
                     has_search = true;
                 }
-                query_str.push_str(&format!(" ORDER BY updated_at DESC LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
+                query_str.push_str(&format!(
+                    " ORDER BY updated_at DESC LIMIT ${} OFFSET ${}",
+                    param_idx,
+                    param_idx + 1
+                ));
                 let mut q = sqlx::query(&query_str);
                 if has_status {
                     q = q.bind(status_filter.unwrap());
@@ -519,7 +557,8 @@ impl DatabaseService {
                 let mut plugins = Vec::new();
                 for row in rows {
                     let metadata_json: String = sqlx::Row::get(&row, "metadata");
-                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json) {
+                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json)
+                    {
                         if metadata.is_object() && !metadata.as_object().unwrap().is_empty() {
                             plugins.push(metadata);
                             continue;
@@ -556,7 +595,9 @@ impl DatabaseService {
                     has_status = true;
                 }
                 if search_text.is_some() {
-                    query_str.push_str(" AND (id LIKE ? OR metadata LIKE ? OR name LIKE ? OR description LIKE ?)");
+                    query_str.push_str(
+                        " AND (id LIKE ? OR metadata LIKE ? OR name LIKE ? OR description LIKE ?)",
+                    );
                     has_search = true;
                 }
                 query_str.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
@@ -573,7 +614,8 @@ impl DatabaseService {
                 let mut plugins = Vec::new();
                 for row in rows {
                     let metadata_json: String = sqlx::Row::get(&row, "metadata");
-                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json) {
+                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json)
+                    {
                         if metadata.is_object() && !metadata.as_object().unwrap().is_empty() {
                             plugins.push(metadata);
                             continue;
@@ -610,7 +652,9 @@ impl DatabaseService {
                     has_status = true;
                 }
                 if search_text.is_some() {
-                    query_str.push_str(" AND (id LIKE ? OR metadata LIKE ? OR name LIKE ? OR description LIKE ?)");
+                    query_str.push_str(
+                        " AND (id LIKE ? OR metadata LIKE ? OR name LIKE ? OR description LIKE ?)",
+                    );
                     has_search = true;
                 }
                 query_str.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
@@ -627,7 +671,8 @@ impl DatabaseService {
                 let mut plugins = Vec::new();
                 for row in rows {
                     let metadata_json: String = sqlx::Row::get(&row, "metadata");
-                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json) {
+                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json)
+                    {
                         if metadata.is_object() && !metadata.as_object().unwrap().is_empty() {
                             plugins.push(metadata);
                             continue;
@@ -658,9 +703,21 @@ impl DatabaseService {
         };
 
         let total_count: i64 = match runtime {
-            DatabasePool::PostgreSQL(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?,
-            DatabasePool::SQLite(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?,
-            DatabasePool::MySQL(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?,
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry")
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry")
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry")
+                    .fetch_one(pool)
+                    .await?
+            }
         };
 
         Ok(serde_json::json!({
@@ -671,38 +728,53 @@ impl DatabaseService {
         }))
     }
 
-    pub async fn toggle_plugin_favorite_internal(&self, plugin_id: &str, user_id: Option<&str>) -> Result<bool> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn toggle_plugin_favorite_internal(
+        &self,
+        plugin_id: &str,
+        user_id: Option<&str>,
+    ) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let uid = user_id.unwrap_or("default_user");
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let exists = sqlx::query("SELECT 1 FROM plugin_favorites WHERE plugin_id = $1 AND user_id = $2")
+                let exists = sqlx::query(
+                    "SELECT 1 FROM plugin_favorites WHERE plugin_id = $1 AND user_id = $2",
+                )
+                .bind(plugin_id)
+                .bind(uid)
+                .fetch_optional(pool)
+                .await?;
+                if exists.is_some() {
+                    sqlx::query(
+                        "DELETE FROM plugin_favorites WHERE plugin_id = $1 AND user_id = $2",
+                    )
                     .bind(plugin_id)
                     .bind(uid)
-                    .fetch_optional(pool)
+                    .execute(pool)
                     .await?;
-                if exists.is_some() {
-                    sqlx::query("DELETE FROM plugin_favorites WHERE plugin_id = $1 AND user_id = $2")
-                        .bind(plugin_id)
-                        .bind(uid)
-                        .execute(pool)
-                        .await?;
                     Ok(false)
                 } else {
-                    sqlx::query("INSERT INTO plugin_favorites (plugin_id, user_id) VALUES ($1, $2)")
-                        .bind(plugin_id)
-                        .bind(uid)
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "INSERT INTO plugin_favorites (plugin_id, user_id) VALUES ($1, $2)",
+                    )
+                    .bind(plugin_id)
+                    .bind(uid)
+                    .execute(pool)
+                    .await?;
                     Ok(true)
                 }
             }
             DatabasePool::SQLite(pool) => {
-                let exists = sqlx::query("SELECT 1 FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?")
-                    .bind(plugin_id)
-                    .bind(uid)
-                    .fetch_optional(pool)
-                    .await?;
+                let exists = sqlx::query(
+                    "SELECT 1 FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?",
+                )
+                .bind(plugin_id)
+                .bind(uid)
+                .fetch_optional(pool)
+                .await?;
                 if exists.is_some() {
                     sqlx::query("DELETE FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?")
                         .bind(plugin_id)
@@ -720,11 +792,13 @@ impl DatabaseService {
                 }
             }
             DatabasePool::MySQL(pool) => {
-                let exists = sqlx::query("SELECT 1 FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?")
-                    .bind(plugin_id)
-                    .bind(uid)
-                    .fetch_optional(pool)
-                    .await?;
+                let exists = sqlx::query(
+                    "SELECT 1 FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?",
+                )
+                .bind(plugin_id)
+                .bind(uid)
+                .fetch_optional(pool)
+                .await?;
                 if exists.is_some() {
                     sqlx::query("DELETE FROM plugin_favorites WHERE plugin_id = ? AND user_id = ?")
                         .bind(plugin_id)
@@ -744,8 +818,14 @@ impl DatabaseService {
         }
     }
 
-    pub async fn get_favorited_plugins_internal(&self, user_id: Option<&str>) -> Result<Vec<String>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_favorited_plugins_internal(
+        &self,
+        user_id: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let uid = user_id.unwrap_or("default_user");
 
         let plugin_ids = match runtime {
@@ -754,21 +834,27 @@ impl DatabaseService {
                     .bind(uid)
                     .fetch_all(pool)
                     .await?;
-                rows.into_iter().map(|r| sqlx::Row::get(&r, "plugin_id")).collect()
+                rows.into_iter()
+                    .map(|r| sqlx::Row::get(&r, "plugin_id"))
+                    .collect()
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query("SELECT plugin_id FROM plugin_favorites WHERE user_id = ?")
                     .bind(uid)
                     .fetch_all(pool)
                     .await?;
-                rows.into_iter().map(|r| sqlx::Row::get(&r, "plugin_id")).collect()
+                rows.into_iter()
+                    .map(|r| sqlx::Row::get(&r, "plugin_id"))
+                    .collect()
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query("SELECT plugin_id FROM plugin_favorites WHERE user_id = ?")
                     .bind(uid)
                     .fetch_all(pool)
                     .await?;
-                rows.into_iter().map(|r| sqlx::Row::get(&r, "plugin_id")).collect()
+                rows.into_iter()
+                    .map(|r| sqlx::Row::get(&r, "plugin_id"))
+                    .collect()
             }
         };
 
@@ -776,22 +862,43 @@ impl DatabaseService {
     }
 
     pub async fn get_plugin_review_stats_internal(&self) -> Result<serde_json::Value> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let (total, active, pending): (i64, i64, i64) = match runtime {
             DatabasePool::PostgreSQL(pool) => (
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?,
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'active'").fetch_one(pool).await?,
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'pending'").fetch_one(pool).await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry")
+                    .fetch_one(pool)
+                    .await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'active'")
+                    .fetch_one(pool)
+                    .await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'pending'")
+                    .fetch_one(pool)
+                    .await?,
             ),
             DatabasePool::SQLite(pool) => (
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?,
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'active'").fetch_one(pool).await?,
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'pending'").fetch_one(pool).await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry")
+                    .fetch_one(pool)
+                    .await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'active'")
+                    .fetch_one(pool)
+                    .await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'pending'")
+                    .fetch_one(pool)
+                    .await?,
             ),
             DatabasePool::MySQL(pool) => (
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry").fetch_one(pool).await?,
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'active'").fetch_one(pool).await?,
-                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'pending'").fetch_one(pool).await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry")
+                    .fetch_one(pool)
+                    .await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'active'")
+                    .fetch_one(pool)
+                    .await?,
+                sqlx::query_scalar("SELECT COUNT(*) FROM plugin_registry WHERE status = 'pending'")
+                    .fetch_one(pool)
+                    .await?,
             ),
         };
 
@@ -802,8 +909,15 @@ impl DatabaseService {
         }))
     }
 
-    pub async fn update_plugin_enabled_internal(&self, plugin_id: &str, enabled: bool) -> Result<()> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn update_plugin_enabled_internal(
+        &self,
+        plugin_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query("UPDATE plugin_registry SET enabled = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
@@ -831,7 +945,10 @@ impl DatabaseService {
     }
 
     pub async fn get_plugin_name_internal(&self, plugin_id: &str) -> Result<Option<String>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let name: Option<String> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_scalar("SELECT name FROM plugin_registry WHERE id = $1")
@@ -855,8 +972,14 @@ impl DatabaseService {
         Ok(name)
     }
 
-    pub async fn get_plugin_summary_internal(&self, plugin_id: &str) -> Result<Option<(String, bool)>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_plugin_summary_internal(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Option<(String, bool)>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let row: Option<(String, bool)> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as("SELECT main_category, enabled FROM plugin_registry WHERE id = $1")
@@ -881,7 +1004,10 @@ impl DatabaseService {
     }
 
     pub async fn get_plugin_tags_internal(&self, plugin_id: &str) -> Result<Vec<String>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let tags_json: Option<String> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_scalar("SELECT tags FROM plugin_registry WHERE id = $1")
@@ -902,7 +1028,7 @@ impl DatabaseService {
                     .await?
             }
         };
-        
+
         let tags = tags_json
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();

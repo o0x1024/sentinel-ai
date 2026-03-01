@@ -1,9 +1,9 @@
 //! Local time tool using rig-core Tool trait
 
+use chrono::{Local, Utc};
 use rig::tool::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use chrono::{Local, Utc};
 
 /// Local time arguments
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -16,8 +16,12 @@ pub struct LocalTimeArgs {
     pub format: String,
 }
 
-fn default_timezone() -> String { "local".to_string() }
-fn default_format() -> String { "%Y-%m-%d %H:%M:%S".to_string() }
+fn default_timezone() -> String {
+    "local".to_string()
+}
+fn default_format() -> String {
+    "%Y-%m-%d %H:%M:%S".to_string()
+}
 
 /// Local time result
 #[derive(Debug, Clone, Serialize)]
@@ -60,7 +64,8 @@ impl Tool for LocalTimeTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let (formatted, timestamp, timezone, iso8601) = match args.timezone.to_lowercase().as_str() {
+        let (formatted, timestamp, timezone, iso8601) = match args.timezone.to_lowercase().as_str()
+        {
             "utc" => {
                 let now = Utc::now();
                 (
@@ -89,4 +94,3 @@ impl Tool for LocalTimeTool {
         })
     }
 }
-

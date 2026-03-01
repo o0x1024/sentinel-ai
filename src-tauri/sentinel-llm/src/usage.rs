@@ -36,7 +36,8 @@ impl TokenUsage {
 
     /// 估算成本（基于模型定价）
     pub fn estimate_cost(&mut self, provider: &str, model: &str) {
-        self.estimated_cost = calculate_cost(provider, model, self.input_tokens, self.output_tokens);
+        self.estimated_cost =
+            calculate_cost(provider, model, self.input_tokens, self.output_tokens);
     }
 
     /// 合并另一个使用统计
@@ -91,11 +92,11 @@ pub fn calculate_cost(provider: &str, model: &str, input_tokens: u32, output_tok
         "groq" => {
             // Groq 提供免费额度，但有速率限制
             (0.0, 0.0)
-        },
+        }
         "ollama" => {
             // 本地模型无成本
             (0.0, 0.0)
-        },
+        }
         "openrouter" => {
             // OpenRouter 价格因模型而异，这里提供一些常见模型的估算
             match model_lower.as_str() {
@@ -105,7 +106,7 @@ pub fn calculate_cost(provider: &str, model: &str, input_tokens: u32, output_tok
                 m if m.contains("llama-3.1-70b") => (0.59, 0.79),
                 _ => (0.0, 0.0),
             }
-        },
+        }
         "moonshot" => match model_lower.as_str() {
             m if m.contains("moonshot-v1-8k") => (12.0, 12.0),
             m if m.contains("moonshot-v1-32k") => (24.0, 24.0),
@@ -124,7 +125,7 @@ pub fn calculate_cost(provider: &str, model: &str, input_tokens: u32, output_tok
         "togetherai" => {
             // TogetherAI 价格因模型而异
             (0.2, 0.2) // 平均估算
-        },
+        }
         "cohere" => match model_lower.as_str() {
             m if m.contains("command-r-plus") => (3.0, 15.0),
             m if m.contains("command-r") => (0.5, 1.5),
@@ -171,9 +172,9 @@ mod tests {
     fn test_merge_usage() {
         let mut usage1 = TokenUsage::new(100, 200).with_cost(0.01);
         let usage2 = TokenUsage::new(50, 100).with_cost(0.005);
-        
+
         usage1.merge(&usage2);
-        
+
         assert_eq!(usage1.input_tokens, 150);
         assert_eq!(usage1.output_tokens, 300);
         assert_eq!(usage1.total_tokens, 450);

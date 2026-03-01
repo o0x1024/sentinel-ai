@@ -263,4 +263,3 @@ impl AiConversation {
 pub fn get_default_models() -> HashMap<AiProvider, Vec<AiModel>> {
     HashMap::new()
 }
-

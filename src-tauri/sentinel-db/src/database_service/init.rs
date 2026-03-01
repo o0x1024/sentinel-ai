@@ -1,24 +1,18 @@
+use crate::database_service::migrations::{
+    AgentTeamMigration, AgentTodosMigration, AsmEnhancementMigration, FloatTypeMigration,
+    IntegerTypeMigration, SubagentMessagesMigration, SubagentRunsMigration,
+    TaskToolIntegrationMigration, TimestampTypeMigration,
+};
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
+use chrono::Utc;
 use sqlx::postgres::PgPool;
 use tracing::info;
-use chrono::Utc;
-use crate::database_service::service::DatabaseService;
-use crate::database_service::migrations::{
-    AgentTodosMigration,
-    SubagentMessagesMigration,
-    SubagentRunsMigration,
-    TaskToolIntegrationMigration,
-    AsmEnhancementMigration,
-    FloatTypeMigration,
-    TimestampTypeMigration,
-    IntegerTypeMigration,
-    AgentTeamMigration,
-};
 
 impl DatabaseService {
     pub async fn create_database_schema(&self, pool: &PgPool) -> Result<()> {
         info!("Creating database schema...");
-        
+
         // 核心配置表
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS configurations (
@@ -31,8 +25,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(category, key)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // LLM 测试套件表
         sqlx::query(
@@ -44,8 +40,10 @@ impl DatabaseService {
                 cases TEXT NOT NULL DEFAULT '[]',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // AI 对话和消息表
         sqlx::query(
@@ -69,8 +67,10 @@ impl DatabaseService {
                 is_archived BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS ai_messages (
@@ -89,8 +89,10 @@ impl DatabaseService {
                 architecture_meta TEXT,
                 structured_data TEXT,
                 FOREIGN KEY(conversation_id) REFERENCES ai_conversations(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 扫描任务和漏洞表
         sqlx::query(
@@ -115,8 +117,10 @@ impl DatabaseService {
                 created_by TEXT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 扫描会话和阶段表
         sqlx::query(
@@ -138,8 +142,10 @@ impl DatabaseService {
                 started_at TIMESTAMP WITH TIME ZONE,
                 completed_at TIMESTAMP WITH TIME ZONE,
                 created_by TEXT
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS scan_stages (
@@ -156,8 +162,10 @@ impl DatabaseService {
                 completed_at TIMESTAMP WITH TIME ZONE,
                 duration_ms INTEGER,
                 FOREIGN KEY(session_id) REFERENCES scan_sessions(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS vulnerabilities (
@@ -185,8 +193,10 @@ impl DatabaseService {
                 notes TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Workflow 任务和定义表
         sqlx::query(
@@ -204,8 +214,10 @@ impl DatabaseService {
                 error_message TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS workflow_run_steps (
@@ -218,8 +230,10 @@ impl DatabaseService {
                 error_message TEXT,
                 PRIMARY KEY(run_id, step_id),
                 FOREIGN KEY(run_id) REFERENCES workflow_runs(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS workflow_definitions (
@@ -235,9 +249,10 @@ impl DatabaseService {
                 created_by TEXT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
-        
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 工具执行日志表
         sqlx::query(
@@ -259,8 +274,10 @@ impl DatabaseService {
                 artifacts TEXT,
                 metadata TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Agent 任务和会话表
         sqlx::query(
@@ -279,8 +296,10 @@ impl DatabaseService {
                 error_message TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -291,8 +310,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(task_id) REFERENCES agent_tasks(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agent_session_logs (
@@ -303,8 +324,10 @@ impl DatabaseService {
                 source TEXT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agent_execution_results (
@@ -315,8 +338,10 @@ impl DatabaseService {
                 error TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agent_execution_steps (
@@ -331,16 +356,20 @@ impl DatabaseService {
                 error_message TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agent_run_states (
                 execution_id TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL,
                 updated_at BIGINT NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Memory executions (agent memory persistence)
         sqlx::query(
@@ -353,13 +382,17 @@ impl DatabaseService {
                 error TEXT,
                 response_excerpt TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_memory_executions_created_at
-               ON memory_executions(created_at)"#
-        ).execute(pool).await?;
+               ON memory_executions(created_at)"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 插件和收藏表
         sqlx::query(
@@ -382,8 +415,10 @@ impl DatabaseService {
                 validation_status TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS plugin_favorites (
@@ -392,8 +427,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(plugin_id, user_id),
                 FOREIGN KEY(plugin_id) REFERENCES plugin_registry(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 通知和 MCP 配置
         sqlx::query(
@@ -407,8 +444,10 @@ impl DatabaseService {
                 enabled BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS mcp_server_configs (
@@ -423,8 +462,10 @@ impl DatabaseService {
                 auto_connect BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // AI 角色和 Prompt 模板表
         sqlx::query(
@@ -437,9 +478,15 @@ impl DatabaseService {
                 is_system BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
-        let _ = sqlx::query("ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'").execute(pool).await;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+        let _ = sqlx::query(
+            "ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
+        )
+        .execute(pool)
+        .await;
 
         // Fix for migration issues where created_at/updated_at might be TEXT in PostgreSQL
         let _ = sqlx::query("ALTER TABLE ai_roles ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
@@ -465,8 +512,10 @@ impl DatabaseService {
                 version TEXT DEFAULT '1.0.0',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         let _ = sqlx::query("ALTER TABLE prompt_templates ALTER COLUMN created_at TYPE TIMESTAMP WITH TIME ZONE USING created_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
         let _ = sqlx::query("ALTER TABLE prompt_templates ALTER COLUMN updated_at TYPE TIMESTAMP WITH TIME ZONE USING updated_at::TIMESTAMP WITH TIME ZONE").execute(pool).await;
@@ -482,8 +531,10 @@ impl DatabaseService {
                 cost DOUBLE PRECISION DEFAULT 0.0,
                 last_used TIMESTAMP WITH TIME ZONE,
                 PRIMARY KEY(provider, model)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Fix for migration issues where last_used might be TEXT in PostgreSQL
         let _ = sqlx::query("ALTER TABLE ai_usage_stats ALTER COLUMN last_used TYPE TIMESTAMP WITH TIME ZONE USING last_used::TIMESTAMP WITH TIME ZONE")
@@ -500,8 +551,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT NOT NULL DEFAULT '{}'
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS execution_sessions (
@@ -516,8 +569,10 @@ impl DatabaseService {
                 metadata TEXT NOT NULL DEFAULT '{}',
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(plan_id) REFERENCES execution_plans(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // 资产和关系表
         sqlx::query(
@@ -540,8 +595,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 created_by TEXT NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS asset_relationships (
@@ -556,11 +613,15 @@ impl DatabaseService {
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(source_asset_id) REFERENCES assets(id),
                 FOREIGN KEY(target_asset_id) REFERENCES assets(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Drop legacy ability_groups table if exists
-        sqlx::query("DROP TABLE IF EXISTS ability_groups").execute(pool).await?;
+        sqlx::query("DROP TABLE IF EXISTS ability_groups")
+            .execute(pool)
+            .await?;
 
         // Skills 表
         sqlx::query(
@@ -580,8 +641,10 @@ impl DatabaseService {
                 hooks TEXT NOT NULL DEFAULT '{}',
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Proxifier 代理和规则表
         sqlx::query(
@@ -597,8 +660,10 @@ impl DatabaseService {
                 sort_order INTEGER DEFAULT 0,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS proxifier_rules (
@@ -614,8 +679,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(proxy_id) REFERENCES proxifier_proxies(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Dictionary tables
         sqlx::query(
@@ -638,8 +705,10 @@ impl DatabaseService {
                 metadata TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS dictionary_words (
@@ -651,18 +720,24 @@ impl DatabaseService {
                 metadata TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_dict_id 
-               ON dictionary_words(dictionary_id)"#
-        ).execute(pool).await?;
+               ON dictionary_words(dictionary_id)"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_word 
-               ON dictionary_words(word)"#
-        ).execute(pool).await?;
+               ON dictionary_words(word)"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS dictionary_sets (
@@ -674,8 +749,10 @@ impl DatabaseService {
                 is_active BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS dictionary_set_relations (
@@ -687,8 +764,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(set_id) REFERENCES dictionary_sets(id) ON DELETE CASCADE,
                 FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Cache storage table
         sqlx::query(
@@ -700,18 +779,24 @@ impl DatabaseService {
                 expires_at TIMESTAMP WITH TIME ZONE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_cache_storage_type 
-               ON cache_storage(cache_type)"#
-        ).execute(pool).await?;
+               ON cache_storage(cache_type)"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_cache_storage_expires 
-               ON cache_storage(expires_at)"#
-        ).execute(pool).await?;
+               ON cache_storage(expires_at)"#,
+        )
+        .execute(pool)
+        .await?;
 
         // RAG 相关表
         sqlx::query(
@@ -724,8 +809,10 @@ impl DatabaseService {
                 chunk_count BIGINT DEFAULT 0,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS rag_document_sources (
@@ -743,8 +830,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS rag_chunks (
@@ -761,8 +850,10 @@ impl DatabaseService {
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 FOREIGN KEY(document_id) REFERENCES rag_document_sources(id) ON DELETE CASCADE,
                 FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS rag_queries (
@@ -774,8 +865,10 @@ impl DatabaseService {
                 processing_time_ms INTEGER,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Vulnerability table
         sqlx::query(
@@ -798,8 +891,10 @@ impl DatabaseService {
                 session_id TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Agent audit findings table
         sqlx::query(
@@ -827,8 +922,10 @@ impl DatabaseService {
                 last_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         let _ = sqlx::query("ALTER TABLE agent_audit_findings ADD COLUMN source_json TEXT")
             .execute(pool)
@@ -862,8 +959,10 @@ impl DatabaseService {
                 response_body TEXT,
                 timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Deduplication index table
         sqlx::query(
@@ -873,8 +972,10 @@ impl DatabaseService {
                 first_hit TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_hit TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (vuln_id) REFERENCES traffic_vulnerabilities(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Proxy request history table
         sqlx::query(
@@ -894,34 +995,40 @@ impl DatabaseService {
                 timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE,
                 response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE
-            )"#
-        ).execute(pool).await?;
-        
+            )"#,
+        )
+        .execute(pool)
+        .await?;
+
         // 添加压缩标记列（如果表已存在）
         let _ = sqlx::query(
             "ALTER TABLE proxy_requests ADD COLUMN request_body_compressed BOOLEAN NOT NULL DEFAULT FALSE"
         ).execute(pool).await;
-        
+
         let _ = sqlx::query(
             "ALTER TABLE proxy_requests ADD COLUMN response_body_compressed BOOLEAN NOT NULL DEFAULT FALSE"
         ).execute(pool).await;
-        
+
         // 创建索引以优化查询性能
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)"
-        ).execute(pool).await?;
-        
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_proxy_requests_host ON proxy_requests(host)")
+            .execute(pool)
+            .await?;
+
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_proxy_requests_timestamp ON proxy_requests(timestamp DESC)"
         ).execute(pool).await?;
-        
+
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_protocol ON proxy_requests(protocol)"
-        ).execute(pool).await?;
-        
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_protocol ON proxy_requests(protocol)",
+        )
+        .execute(pool)
+        .await?;
+
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)"
-        ).execute(pool).await?;
+            "CREATE INDEX IF NOT EXISTS idx_proxy_requests_status ON proxy_requests(status_code)",
+        )
+        .execute(pool)
+        .await?;
 
         // Plugin registry table
         sqlx::query(
@@ -941,8 +1048,10 @@ impl DatabaseService {
                 validation_status TEXT,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Proxy config table
         sqlx::query(
@@ -950,8 +1059,10 @@ impl DatabaseService {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Repeater tabs table
         sqlx::query(
@@ -969,8 +1080,10 @@ impl DatabaseService {
                 sort_order INTEGER DEFAULT 0,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Create traffic-related indices
         let traffic_indices = vec![
@@ -997,9 +1110,7 @@ impl DatabaseService {
         ];
 
         for index_sql in traffic_indices {
-            sqlx::query(index_sql)
-                .execute(pool)
-                .await?;
+            sqlx::query(index_sql).execute(pool).await?;
         }
 
         // CPG Security Rules table (user-defined audit rules)
@@ -1056,8 +1167,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_activity_at TIMESTAMP WITH TIME ZONE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_scopes (
@@ -1078,8 +1191,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_findings (
@@ -1113,8 +1228,10 @@ impl DatabaseService {
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_submissions (
@@ -1154,8 +1271,10 @@ impl DatabaseService {
                 created_by TEXT NOT NULL,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(finding_id) REFERENCES bounty_findings(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_evidence (
@@ -1178,8 +1297,10 @@ impl DatabaseService {
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(finding_id) REFERENCES bounty_findings(id) ON DELETE CASCADE
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS bounty_change_events (
@@ -1206,8 +1327,10 @@ impl DatabaseService {
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 resolved_at TIMESTAMP WITH TIME ZONE,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE SET NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Bounty assets table (P1-B3: Asset consolidation)
         sqlx::query(
@@ -1322,8 +1445,10 @@ impl DatabaseService {
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(scope_id) REFERENCES bounty_scopes(id) ON DELETE SET NULL,
                 FOREIGN KEY(parent_asset_id) REFERENCES bounty_assets(id) ON DELETE SET NULL
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Bounty workflow templates (built-in for bug bounty)
         sqlx::query(
@@ -1341,8 +1466,10 @@ impl DatabaseService {
                 estimated_duration_mins INTEGER,
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Bounty workflow bindings (link templates to programs/scopes)
         sqlx::query(
@@ -1362,8 +1489,10 @@ impl DatabaseService {
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(program_id) REFERENCES bounty_programs(id) ON DELETE CASCADE,
                 FOREIGN KEY(workflow_template_id) REFERENCES bounty_workflow_templates(id)
-            )"#
-        ).execute(pool).await?;
+            )"#,
+        )
+        .execute(pool)
+        .await?;
 
         // Bug Bounty indices
         let bounty_indices = vec![
@@ -1399,45 +1528,44 @@ impl DatabaseService {
         }
 
         info!("Database schema creation completed");
-        
+
         // Run migrations
         TaskToolIntegrationMigration::apply(pool).await?;
         SubagentRunsMigration::apply(pool).await?;
         SubagentMessagesMigration::apply(pool).await?;
         AgentTodosMigration::apply(pool).await?;
-        
+
         // Run ASM enhancement migration
         AsmEnhancementMigration::apply(pool).await?;
-        
+
         // Run float type migration (REAL -> DOUBLE PRECISION)
         FloatTypeMigration::apply(pool).await?;
-        
+
         // Run timestamp type migration (TEXT -> TIMESTAMP WITH TIME ZONE)
         TimestampTypeMigration::apply(pool).await?;
-        
+
         // Run integer type migration (INTEGER -> BIGINT)
         IntegerTypeMigration::apply(pool).await?;
-        
+
         Ok(())
     }
 
     pub async fn insert_default_data(&self, pool: &PgPool) -> Result<()> {
         info!("Inserting default data...");
-        
+
         // 初始化默认AI角色
         self.initialize_default_roles(pool).await?;
-        
+
         // 初始化预置 OWASP LLM Top 10 (2025) 测试套件
         self.initialize_default_llm_suites(pool).await?;
-        
+
         info!("Default data insertion completed");
         Ok(())
     }
 
     pub async fn initialize_default_llm_suites(&self, pool: &PgPool) -> Result<()> {
         let suites_json = Self::default_llm_suites_json();
-        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json)
-            .unwrap_or_default();
+        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json).unwrap_or_default();
 
         for suite in &suites {
             let id = suite["id"].as_str().unwrap_or_default();
@@ -1463,7 +1591,6 @@ impl DatabaseService {
         info!("Default LLM test suites seeded (or already present)");
         Ok(())
     }
-
 
     pub async fn initialize_default_roles(&self, pool: &PgPool) -> Result<()> {
         let roles = vec![

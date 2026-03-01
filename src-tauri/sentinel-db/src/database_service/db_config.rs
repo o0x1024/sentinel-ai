@@ -33,11 +33,11 @@ impl From<String> for DatabaseType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub db_type: DatabaseType,
-    
+
     // SQLite config
     pub path: Option<String>,
     pub enable_wal: bool,
-    
+
     // PostgreSQL/MySQL config
     pub host: Option<String>,
     pub port: Option<u16>,
@@ -45,7 +45,7 @@ pub struct DatabaseConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub enable_ssl: bool,
-    
+
     // Connection pool settings
     pub max_connections: u32,
     pub query_timeout: u64,
@@ -73,7 +73,9 @@ impl DatabaseConfig {
     pub fn build_connection_string(&self) -> String {
         match self.db_type {
             DatabaseType::SQLite => {
-                let path = self.path.as_ref()
+                let path = self
+                    .path
+                    .as_ref()
                     .map(|p| p.clone())
                     .unwrap_or_else(default_sqlite_db_path);
                 format!("sqlite:{}?mode=rwc", path)
@@ -85,7 +87,7 @@ impl DatabaseConfig {
                 let port = self.port.unwrap_or(5432);
                 let database = self.database.as_ref().unwrap_or(&default_db);
                 let ssl_mode = if self.enable_ssl { "require" } else { "prefer" };
-                
+
                 if let (Some(user), Some(pass)) = (&self.username, &self.password) {
                     format!(
                         "postgresql://{}:{}@{}:{}/{}?sslmode={}",
@@ -104,8 +106,12 @@ impl DatabaseConfig {
                 let host = self.host.as_ref().unwrap_or(&localhost);
                 let port = self.port.unwrap_or(3306);
                 let database = self.database.as_ref().unwrap_or(&default_db);
-                let ssl_mode = if self.enable_ssl { "REQUIRED" } else { "PREFERRED" };
-                
+                let ssl_mode = if self.enable_ssl {
+                    "REQUIRED"
+                } else {
+                    "PREFERRED"
+                };
+
                 if let (Some(user), Some(pass)) = (&self.username, &self.password) {
                     format!(
                         "mysql://{}:{}@{}:{}/{}?ssl-mode={}",

@@ -45,4 +45,3 @@ pub fn get_rig_provider(provider: &str) -> String {
 pub fn needs_gemini_config(provider: &str) -> bool {
     matches!(provider.to_lowercase().as_str(), "gemini" | "google")
 }
-

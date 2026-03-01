@@ -1,7 +1,7 @@
-use anyhow::Result;
 use crate::core::models::asset::*;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use std::collections::HashMap;
@@ -160,18 +160,22 @@ fn asset_matches_filter(asset: &Asset, filter: &AssetFilter) -> bool {
 
 impl DatabaseService {
     /// 创建资产
-    pub async fn create_asset_internal(&self, request: CreateAssetRequest, created_by: String) -> Result<Asset> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn create_asset_internal(
+        &self,
+        request: CreateAssetRequest,
+        created_by: String,
+    ) -> Result<Asset> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let mut asset = Asset::new(
             request.asset_type.clone(),
             request.name.clone(),
             request.value.clone(),
             created_by.clone(),
         )
-        .with_source(
-            request.source.unwrap_or_default(),
-            request.source_scan_id,
-        )
+        .with_source(request.source.unwrap_or_default(), request.source_scan_id)
         .with_metadata(request.metadata.unwrap_or_default())
         .with_tags(request.tags.unwrap_or_default())
         .with_risk_level(request.risk_level.unwrap_or(RiskLevel::Unknown))
@@ -284,7 +288,10 @@ impl DatabaseService {
 
     /// 根据ID获取资产
     pub async fn get_asset_by_id_internal(&self, id: &str) -> Result<Option<Asset>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let row: Option<AssetDbRow> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as(
@@ -336,7 +343,10 @@ impl DatabaseService {
         asset_type: &AssetType,
         value: &str,
     ) -> Result<Option<Asset>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let row: Option<AssetDbRow> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as(
@@ -386,8 +396,15 @@ impl DatabaseService {
     }
 
     /// 更新资产
-    pub async fn update_asset_internal(&self, id: &str, request: UpdateAssetRequest) -> Result<bool> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn update_asset_internal(
+        &self,
+        id: &str,
+        request: UpdateAssetRequest,
+    ) -> Result<bool> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let project_id = request.project_id.clone();
         let name = request.name.clone();
         let value = request.value.clone();
@@ -419,9 +436,8 @@ impl DatabaseService {
 
         let now = Utc::now();
         let rows_affected = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    r#"UPDATE assets SET
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                r#"UPDATE assets SET
                            project_id = COALESCE($1, project_id),
                            name = COALESCE($2, name),
                            value = COALESCE($3, value),
@@ -433,25 +449,23 @@ impl DatabaseService {
                            risk_level = COALESCE($9, risk_level),
                            updated_at = $10
                        WHERE id = $11"#,
-                )
-                .bind(project_id)
-                .bind(name)
-                .bind(value)
-                .bind(description)
-                .bind(confidence)
-                .bind(status)
-                .bind(metadata_json)
-                .bind(tags_json)
-                .bind(risk_level)
-                .bind(now)
-                .bind(id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query(
-                    r#"UPDATE assets SET
+            )
+            .bind(project_id)
+            .bind(name)
+            .bind(value)
+            .bind(description)
+            .bind(confidence)
+            .bind(status)
+            .bind(metadata_json)
+            .bind(tags_json)
+            .bind(risk_level)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::SQLite(pool) => sqlx::query(
+                r#"UPDATE assets SET
                            project_id = COALESCE(?, project_id),
                            name = COALESCE(?, name),
                            value = COALESCE(?, value),
@@ -463,25 +477,23 @@ impl DatabaseService {
                            risk_level = COALESCE(?, risk_level),
                            updated_at = ?
                        WHERE id = ?"#,
-                )
-                .bind(project_id)
-                .bind(name)
-                .bind(value)
-                .bind(description)
-                .bind(confidence)
-                .bind(status)
-                .bind(metadata_json)
-                .bind(tags_json)
-                .bind(risk_level)
-                .bind(now)
-                .bind(id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query(
-                    r#"UPDATE assets SET
+            )
+            .bind(project_id)
+            .bind(name)
+            .bind(value)
+            .bind(description)
+            .bind(confidence)
+            .bind(status)
+            .bind(metadata_json)
+            .bind(tags_json)
+            .bind(risk_level)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                r#"UPDATE assets SET
                            project_id = COALESCE(?, project_id),
                            name = COALESCE(?, name),
                            value = COALESCE(?, value),
@@ -493,22 +505,21 @@ impl DatabaseService {
                            risk_level = COALESCE(?, risk_level),
                            updated_at = ?
                        WHERE id = ?"#,
-                )
-                .bind(project_id)
-                .bind(name)
-                .bind(value)
-                .bind(description)
-                .bind(confidence)
-                .bind(status)
-                .bind(metadata_json)
-                .bind(tags_json)
-                .bind(risk_level)
-                .bind(now)
-                .bind(id)
-                .execute(pool)
-                .await?
-                .rows_affected()
-            }
+            )
+            .bind(project_id)
+            .bind(name)
+            .bind(value)
+            .bind(description)
+            .bind(confidence)
+            .bind(status)
+            .bind(metadata_json)
+            .bind(tags_json)
+            .bind(risk_level)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
         };
 
         Ok(rows_affected > 0)
@@ -516,29 +527,26 @@ impl DatabaseService {
 
     /// 删除资产
     pub async fn delete_asset_internal(&self, id: &str) -> Result<bool> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let rows_affected = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM assets WHERE id = $1")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM assets WHERE id = ?")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM assets WHERE id = ?")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
+            DatabasePool::PostgreSQL(pool) => sqlx::query("DELETE FROM assets WHERE id = $1")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::SQLite(pool) => sqlx::query("DELETE FROM assets WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query("DELETE FROM assets WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
         };
         Ok(rows_affected > 0)
     }
@@ -550,7 +558,10 @@ impl DatabaseService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<Asset>> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let mut query_builder = sqlx::QueryBuilder::new(
@@ -636,7 +647,9 @@ impl DatabaseService {
                         } else {
                             query_builder.push(" AND ");
                         }
-                        query_builder.push("created_at >= ").push_bind(created_after);
+                        query_builder
+                            .push("created_at >= ")
+                            .push_bind(created_after);
                     }
                     if let Some(created_before) = filter.created_before {
                         if !has_conditions {
@@ -645,7 +658,9 @@ impl DatabaseService {
                         } else {
                             query_builder.push(" AND ");
                         }
-                        query_builder.push("created_at <= ").push_bind(created_before);
+                        query_builder
+                            .push("created_at <= ")
+                            .push_bind(created_before);
                     }
                     if let Some(last_seen_after) = filter.last_seen_after {
                         if !has_conditions {
@@ -654,7 +669,9 @@ impl DatabaseService {
                         } else {
                             query_builder.push(" AND ");
                         }
-                        query_builder.push("last_seen >= ").push_bind(last_seen_after);
+                        query_builder
+                            .push("last_seen >= ")
+                            .push_bind(last_seen_after);
                     }
                     if let Some(last_seen_before) = filter.last_seen_before {
                         if !has_conditions {
@@ -662,7 +679,9 @@ impl DatabaseService {
                         } else {
                             query_builder.push(" AND ");
                         }
-                        query_builder.push("last_seen <= ").push_bind(last_seen_before);
+                        query_builder
+                            .push("last_seen <= ")
+                            .push_bind(last_seen_before);
                     }
                 }
 
@@ -685,7 +704,7 @@ impl DatabaseService {
                            first_seen, last_seen, created_at, updated_at, created_by
                     FROM assets
                     ORDER BY created_at DESC
-                    "#
+                    "#,
                 )
                 .fetch_all(pool)
                 .await?;
@@ -709,7 +728,7 @@ impl DatabaseService {
                            first_seen, last_seen, created_at, updated_at, created_by
                     FROM assets
                     ORDER BY created_at DESC
-                    "#
+                    "#,
                 )
                 .fetch_all(pool)
                 .await?;
@@ -730,19 +749,46 @@ impl DatabaseService {
 
     /// 获取资产统计信息
     pub async fn get_asset_stats_internal(&self) -> Result<AssetStats> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let total_assets: i64 = match runtime {
-            DatabasePool::PostgreSQL(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM assets").fetch_one(pool).await?,
-            DatabasePool::SQLite(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM assets").fetch_one(pool).await?,
-            DatabasePool::MySQL(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM assets").fetch_one(pool).await?,
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM assets")
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM assets")
+                    .fetch_one(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM assets")
+                    .fetch_one(pool)
+                    .await?
+            }
         };
 
         // 按类型统计
         let mut by_type = HashMap::new();
         let type_rows: Vec<(String, i64)> = match runtime {
-            DatabasePool::PostgreSQL(pool) => sqlx::query_as("SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type").fetch_all(pool).await?,
-            DatabasePool::SQLite(pool) => sqlx::query_as("SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type").fetch_all(pool).await?,
-            DatabasePool::MySQL(pool) => sqlx::query_as("SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type").fetch_all(pool).await?,
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as("SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type")
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as("SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type")
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as("SELECT asset_type, COUNT(*) FROM assets GROUP BY asset_type")
+                    .fetch_all(pool)
+                    .await?
+            }
         };
         for (asset_type, count) in type_rows {
             by_type.insert(asset_type, count as f64);
@@ -751,9 +797,21 @@ impl DatabaseService {
         // 按状态统计
         let mut by_status = HashMap::new();
         let status_rows: Vec<(String, i64)> = match runtime {
-            DatabasePool::PostgreSQL(pool) => sqlx::query_as("SELECT status, COUNT(*) FROM assets GROUP BY status").fetch_all(pool).await?,
-            DatabasePool::SQLite(pool) => sqlx::query_as("SELECT status, COUNT(*) FROM assets GROUP BY status").fetch_all(pool).await?,
-            DatabasePool::MySQL(pool) => sqlx::query_as("SELECT status, COUNT(*) FROM assets GROUP BY status").fetch_all(pool).await?,
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM assets GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM assets GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as("SELECT status, COUNT(*) FROM assets GROUP BY status")
+                    .fetch_all(pool)
+                    .await?
+            }
         };
         for (status, count) in status_rows {
             by_status.insert(status, count as f64);
@@ -762,9 +820,21 @@ impl DatabaseService {
         // 按风险等级统计
         let mut by_risk_level = HashMap::new();
         let risk_rows: Vec<(String, i64)> = match runtime {
-            DatabasePool::PostgreSQL(pool) => sqlx::query_as("SELECT risk_level, COUNT(*) FROM assets GROUP BY risk_level").fetch_all(pool).await?,
-            DatabasePool::SQLite(pool) => sqlx::query_as("SELECT risk_level, COUNT(*) FROM assets GROUP BY risk_level").fetch_all(pool).await?,
-            DatabasePool::MySQL(pool) => sqlx::query_as("SELECT risk_level, COUNT(*) FROM assets GROUP BY risk_level").fetch_all(pool).await?,
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query_as("SELECT risk_level, COUNT(*) FROM assets GROUP BY risk_level")
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query_as("SELECT risk_level, COUNT(*) FROM assets GROUP BY risk_level")
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query_as("SELECT risk_level, COUNT(*) FROM assets GROUP BY risk_level")
+                    .fetch_all(pool)
+                    .await?
+            }
         };
         for (risk_level, count) in risk_rows {
             by_risk_level.insert(risk_level, count as f64);
@@ -772,11 +842,24 @@ impl DatabaseService {
 
         // 按来源统计
         let mut by_source = HashMap::new();
-        let source_rows: Vec<(String, i64)> = match runtime {
-            DatabasePool::PostgreSQL(pool) => sqlx::query_as("SELECT source, COUNT(*) FROM assets WHERE source IS NOT NULL GROUP BY source").fetch_all(pool).await?,
-            DatabasePool::SQLite(pool) => sqlx::query_as("SELECT source, COUNT(*) FROM assets WHERE source IS NOT NULL GROUP BY source").fetch_all(pool).await?,
-            DatabasePool::MySQL(pool) => sqlx::query_as("SELECT source, COUNT(*) FROM assets WHERE source IS NOT NULL GROUP BY source").fetch_all(pool).await?,
-        };
+        let source_rows: Vec<(String, i64)> =
+            match runtime {
+                DatabasePool::PostgreSQL(pool) => sqlx::query_as(
+                    "SELECT source, COUNT(*) FROM assets WHERE source IS NOT NULL GROUP BY source",
+                )
+                .fetch_all(pool)
+                .await?,
+                DatabasePool::SQLite(pool) => sqlx::query_as(
+                    "SELECT source, COUNT(*) FROM assets WHERE source IS NOT NULL GROUP BY source",
+                )
+                .fetch_all(pool)
+                .await?,
+                DatabasePool::MySQL(pool) => sqlx::query_as(
+                    "SELECT source, COUNT(*) FROM assets WHERE source IS NOT NULL GROUP BY source",
+                )
+                .fetch_all(pool)
+                .await?,
+            };
         for (source, count) in source_rows {
             by_source.insert(source, count as f64);
         }
@@ -843,7 +926,10 @@ impl DatabaseService {
         relationship_type: RelationshipType,
         created_by: String,
     ) -> Result<AssetRelationship> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let relationship = AssetRelationship::new(
             source_asset_id,
             target_asset_id,
@@ -923,8 +1009,14 @@ impl DatabaseService {
     }
 
     /// 获取资产的关系
-    pub async fn get_asset_relationships_internal(&self, asset_id: &str) -> Result<(Vec<AssetRelationship>, Vec<AssetRelationship>)> {
-        let runtime = self.runtime_pool.as_ref().ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+    pub async fn get_asset_relationships_internal(
+        &self,
+        asset_id: &str,
+    ) -> Result<(Vec<AssetRelationship>, Vec<AssetRelationship>)> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let outgoing_rows = sqlx::query_as::<_, AssetRelationshipDbRow>(
@@ -1040,7 +1132,10 @@ impl DatabaseService {
         };
 
         for asset_request in request.assets {
-            match self.handle_asset_import(&asset_request, &request.merge_strategy, &created_by).await {
+            match self
+                .handle_asset_import(&asset_request, &request.merge_strategy, &created_by)
+                .await
+            {
                 Ok(action) => match action {
                     ImportAction::Created => result.created += 1,
                     ImportAction::Updated => result.updated += 1,
@@ -1066,31 +1161,35 @@ impl DatabaseService {
         created_by: &str,
     ) -> Result<ImportAction> {
         // 检查是否已存在
-        if let Some(existing) = self.find_asset_by_type_and_value_internal(&request.asset_type, &request.value).await? {
+        if let Some(existing) = self
+            .find_asset_by_type_and_value_internal(&request.asset_type, &request.value)
+            .await?
+        {
             match strategy {
                 MergeStrategy::Skip => Ok(ImportAction::Skipped),
                 MergeStrategy::Update | MergeStrategy::Replace => {
                     let update_request = UpdateAssetRequest {
-                    project_id: request.project_id.clone(),
-                    name: None,
-                    value: Some(request.value.clone()),
-                    description: None,
-                    confidence: request.confidence,
-                    status: None,
-                    metadata: request.metadata.clone(),
-                    tags: request.tags.clone(),
-                    risk_level: request.risk_level.clone(),
-                };
-                    self.update_asset_internal(&existing.id, update_request).await?;
+                        project_id: request.project_id.clone(),
+                        name: None,
+                        value: Some(request.value.clone()),
+                        description: None,
+                        confidence: request.confidence,
+                        status: None,
+                        metadata: request.metadata.clone(),
+                        tags: request.tags.clone(),
+                        risk_level: request.risk_level.clone(),
+                    };
+                    self.update_asset_internal(&existing.id, update_request)
+                        .await?;
                     Ok(ImportAction::Updated)
                 }
             }
         } else {
-            self.create_asset_internal(request.clone(), created_by.to_string()).await?;
+            self.create_asset_internal(request.clone(), created_by.to_string())
+                .await?;
             Ok(ImportAction::Created)
         }
     }
-
 }
 
 #[derive(Debug)]

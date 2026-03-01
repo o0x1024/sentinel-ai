@@ -48,7 +48,13 @@ pub trait RagDatabase: Send + Sync {
     async fn update_collection_stats(&self, collection_id: &str) -> Result<()>;
 
     async fn get_rag_documents(&self, collection_id: &str) -> Result<Vec<DocumentSource>>;
-    async fn get_rag_documents_paginated(&self, collection_id: &str, limit: i64, offset: i64, search_query: Option<&str>) -> Result<(Vec<DocumentSource>, i64)>;
+    async fn get_rag_documents_paginated(
+        &self,
+        collection_id: &str,
+        limit: i64,
+        offset: i64,
+        search_query: Option<&str>,
+    ) -> Result<(Vec<DocumentSource>, i64)>;
     async fn get_rag_chunks(&self, document_id: &str) -> Result<Vec<DocumentChunk>>;
     async fn delete_rag_document(&self, document_id: &str) -> Result<()>;
 
@@ -66,4 +72,3 @@ pub trait RagDatabase: Send + Sync {
         limit: Option<i32>,
     ) -> Result<Vec<QueryResult>>;
 }
-

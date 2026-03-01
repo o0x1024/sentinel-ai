@@ -5,9 +5,9 @@
 //! of the conversation, drastically reducing the need for exploratory
 //! tool calls to understand the codebase.
 
-use crate::buildin_tools::cpg::types::*;
 use crate::buildin_tools::cpg::security_rules;
 use crate::buildin_tools::cpg::taint;
+use crate::buildin_tools::cpg::types::*;
 
 /// Generate a compact project briefing from an existing CPG,
 /// suitable for injection into the system prompt.
@@ -21,10 +21,7 @@ pub fn generate_audit_context(cpg: &CodePropertyGraph) -> String {
     out.push_str("<code_structure>\n");
     out.push_str(&format!(
         "Project: {} ({}, {} files, {} functions, {} classes)\n",
-        &summary.root
-            .rsplit('/')
-            .next()
-            .unwrap_or(&summary.root),
+        &summary.root.rsplit('/').next().unwrap_or(&summary.root),
         summary.primary_language,
         summary.total_files,
         summary.total_functions,
@@ -32,17 +29,12 @@ pub fn generate_audit_context(cpg: &CodePropertyGraph) -> String {
     ));
 
     if summary.languages.len() > 1 {
-        out.push_str(&format!(
-            "Languages: {}\n",
-            summary.languages.join(", ")
-        ));
+        out.push_str(&format!("Languages: {}\n", summary.languages.join(", ")));
     }
 
     out.push_str(&format!(
         "Graph: {} nodes, {} edges, {} call edges\n\n",
-        summary.total_nodes,
-        summary.total_edges,
-        summary.total_call_edges,
+        summary.total_nodes, summary.total_edges, summary.total_call_edges,
     ));
 
     // ── Top files (by function count) ───────────────────────────────────
@@ -69,7 +61,12 @@ pub fn generate_audit_context(cpg: &CodePropertyGraph) -> String {
     if !entry_points.is_empty() {
         out.push_str("Entry Points:\n");
         for ep in entry_points.iter().take(20) {
-            if let CpgNodeKind::EntryPoint { method, path, handler } = &ep.kind {
+            if let CpgNodeKind::EntryPoint {
+                method,
+                path,
+                handler,
+            } = &ep.kind
+            {
                 out.push_str(&format!(
                     "  {} {} → {} ({}:{})\n",
                     method,
@@ -103,7 +100,8 @@ pub fn generate_audit_context(cpg: &CodePropertyGraph) -> String {
         }
 
         // Fan-out analysis: functions that call the most others
-        let mut fan_out: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut fan_out: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for edge in &call_edges {
             *fan_out.entry(edge.caller.clone()).or_insert(0) += 1;
         }
@@ -169,7 +167,8 @@ pub fn generate_audit_context(cpg: &CodePropertyGraph) -> String {
     let imports = cpg.list_imports(200);
     if !imports.is_empty() {
         // Deduplicate modules
-        let mut unique_modules: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut unique_modules: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut security_relevant: Vec<String> = Vec::new();
 
         for imp in &imports {
@@ -208,10 +207,7 @@ pub fn generate_audit_context(cpg: &CodePropertyGraph) -> String {
             out.push('\n');
         }
 
-        out.push_str(&format!(
-            "Total unique imports: {}\n",
-            unique_modules.len()
-        ));
+        out.push_str(&format!("Total unique imports: {}\n", unique_modules.len()));
     }
 
     out.push_str("</code_structure>\n");

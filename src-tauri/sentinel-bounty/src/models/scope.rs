@@ -131,7 +131,9 @@ impl ProgramScope {
     pub fn matches(&self, target: &str) -> bool {
         // Simple matching logic - can be enhanced with regex patterns
         match self.target_type {
-            TargetType::Domain => target == self.target || target.ends_with(&format!(".{}", self.target)),
+            TargetType::Domain => {
+                target == self.target || target.ends_with(&format!(".{}", self.target))
+            }
             TargetType::WildcardDomain => {
                 let base = self.target.trim_start_matches("*.");
                 target.ends_with(base)

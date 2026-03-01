@@ -9,14 +9,20 @@ use serde::{Deserialize, Serialize};
 
 /// Type alias for the actual executor function (provided by main crate)
 pub type TenthManExecutorFn = std::sync::Arc<
-    dyn Fn(TenthManToolArgs) 
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TenthManToolOutput, TenthManToolError>> + Send>> 
-        + Send 
-        + Sync
+    dyn Fn(
+            TenthManToolArgs,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<TenthManToolOutput, TenthManToolError>>
+                    + Send,
+            >,
+        > + Send
+        + Sync,
 >;
 
 /// Global executor storage (set by main crate at runtime)
-static TENTH_MAN_EXECUTOR: once_cell::sync::OnceCell<TenthManExecutorFn> = once_cell::sync::OnceCell::new();
+static TENTH_MAN_EXECUTOR: once_cell::sync::OnceCell<TenthManExecutorFn> =
+    once_cell::sync::OnceCell::new();
 
 /// Set the executor function (called by main crate during initialization)
 pub fn set_tenth_man_executor(executor: TenthManExecutorFn) {
@@ -30,7 +36,6 @@ fn get_executor() -> Result<&'static TenthManExecutorFn, TenthManToolError> {
     })
 }
 
-
 /// Review mode for Tenth Man
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
@@ -38,14 +43,14 @@ pub enum ReviewMode {
     /// Review complete history (using sliding window summarization)
     FullHistory,
     /// Review recent N messages
-    RecentMessages { 
+    RecentMessages {
         #[schemars(description = "Number of recent messages to review")]
-        count: usize 
+        count: usize,
     },
     /// Review specific content (backward compatible)
-    SpecificContent { 
+    SpecificContent {
         #[schemars(description = "Specific content to review")]
-        content: String 
+        content: String,
     },
 }
 
@@ -60,15 +65,15 @@ impl Default for ReviewMode {
 pub struct TenthManToolArgs {
     /// The execution ID of the current agent run
     pub execution_id: String,
-    
+
     /// Review mode (defaults to FullHistory)
     #[serde(default)]
     pub review_mode: ReviewMode,
-    
+
     /// Type of review: "quick" (lightweight risk check) or "full" (comprehensive analysis)
     #[serde(default = "default_review_type")]
     pub review_type: String,
-    
+
     /// Optional: specific focus area for the review
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus_area: Option<String>,
@@ -90,7 +95,9 @@ pub struct TenthManToolOutput {
 /// Tenth Man tool errors
 #[derive(Debug, thiserror::Error)]
 pub enum TenthManToolError {
-    #[error("LLM config not found for execution {0}. Make sure Tenth Man is properly initialized.")]
+    #[error(
+        "LLM config not found for execution {0}. Make sure Tenth Man is properly initialized."
+    )]
     ConfigNotFound(String),
     #[error("Review failed: {0}")]
     ReviewFailed(String),
@@ -106,7 +113,7 @@ impl TenthManTool {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub const NAME: &'static str = "tenth_man_review";
     pub const DESCRIPTION: &'static str = "Run a structured adversarial review (\"10th Man\") on the current work. \
         \n\n[CRITICAL RULE]: If you find yourself stuck in a loop, repeatedly failing tasks, or lacking progress after multiple attempts, you MUST proactively call this tool to break your cognitive bias and gain a new perspective.\n\n\
@@ -148,7 +155,7 @@ impl Tool for TenthManTool {
             args.review_mode,
             args.focus_area
         );
-        
+
         // Get executor and call it
         let executor = get_executor()?;
         executor(args).await

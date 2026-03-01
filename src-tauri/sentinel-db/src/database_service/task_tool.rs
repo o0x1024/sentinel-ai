@@ -22,111 +22,123 @@ impl DatabaseService {
 
         // Check if record already exists
         let existing = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    r#"SELECT id, task_id, tool_id, tool_name, tool_type, status, 
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                r#"SELECT id, task_id, tool_id, tool_name, tool_type, status, 
                        execution_count, success_count, error_count, 
                        total_execution_time_ms, avg_execution_time_ms,
                        last_execution_time, last_error_message, metadata,
                        created_at, updated_at
                        FROM task_tool_executions 
-                       WHERE task_id = $1 AND tool_id = $2"#
-                )
-                .bind(&request.task_id)
-                .bind(&request.tool_id)
-                .fetch_optional(pool)
-                .await?
-                .map(|row| TaskToolExecution {
-                    id: row.get("id"),
-                    task_id: row.get("task_id"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                    execution_count: row.get("execution_count"),
-                    success_count: row.get("success_count"),
-                    error_count: row.get("error_count"),
-                    total_execution_time_ms: row.get("total_execution_time_ms"),
-                    avg_execution_time_ms: row.get("avg_execution_time_ms"),
-                    last_execution_time: row.get("last_execution_time"),
-                    last_error_message: row.get("last_error_message"),
-                    metadata: row
-                        .get::<Option<String>, _>("metadata")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
-                })
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query(
-                    r#"SELECT id, task_id, tool_id, tool_name, tool_type, status, 
+                       WHERE task_id = $1 AND tool_id = $2"#,
+            )
+            .bind(&request.task_id)
+            .bind(&request.tool_id)
+            .fetch_optional(pool)
+            .await?
+            .map(|row| TaskToolExecution {
+                id: row.get("id"),
+                task_id: row.get("task_id"),
+                tool_id: row.get("tool_id"),
+                tool_name: row.get("tool_name"),
+                tool_type: row
+                    .get::<String, _>("tool_type")
+                    .parse()
+                    .unwrap_or(ToolType::Plugin),
+                status: row
+                    .get::<String, _>("status")
+                    .parse()
+                    .unwrap_or(ToolExecutionStatus::Idle),
+                execution_count: row.get("execution_count"),
+                success_count: row.get("success_count"),
+                error_count: row.get("error_count"),
+                total_execution_time_ms: row.get("total_execution_time_ms"),
+                avg_execution_time_ms: row.get("avg_execution_time_ms"),
+                last_execution_time: row.get("last_execution_time"),
+                last_error_message: row.get("last_error_message"),
+                metadata: row
+                    .get::<Option<String>, _>("metadata")
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }),
+            DatabasePool::SQLite(pool) => sqlx::query(
+                r#"SELECT id, task_id, tool_id, tool_name, tool_type, status, 
                        execution_count, success_count, error_count, 
                        total_execution_time_ms, avg_execution_time_ms,
                        last_execution_time, last_error_message, metadata,
                        created_at, updated_at
                        FROM task_tool_executions 
-                       WHERE task_id = ? AND tool_id = ?"#
-                )
-                .bind(&request.task_id)
-                .bind(&request.tool_id)
-                .fetch_optional(pool)
-                .await?
-                .map(|row| TaskToolExecution {
-                    id: row.get("id"),
-                    task_id: row.get("task_id"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                    execution_count: row.get("execution_count"),
-                    success_count: row.get("success_count"),
-                    error_count: row.get("error_count"),
-                    total_execution_time_ms: row.get("total_execution_time_ms"),
-                    avg_execution_time_ms: row.get("avg_execution_time_ms"),
-                    last_execution_time: row.get("last_execution_time"),
-                    last_error_message: row.get("last_error_message"),
-                    metadata: row
-                        .get::<Option<String>, _>("metadata")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
-                })
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query(
-                    r#"SELECT id, task_id, tool_id, tool_name, tool_type, status, 
+                       WHERE task_id = ? AND tool_id = ?"#,
+            )
+            .bind(&request.task_id)
+            .bind(&request.tool_id)
+            .fetch_optional(pool)
+            .await?
+            .map(|row| TaskToolExecution {
+                id: row.get("id"),
+                task_id: row.get("task_id"),
+                tool_id: row.get("tool_id"),
+                tool_name: row.get("tool_name"),
+                tool_type: row
+                    .get::<String, _>("tool_type")
+                    .parse()
+                    .unwrap_or(ToolType::Plugin),
+                status: row
+                    .get::<String, _>("status")
+                    .parse()
+                    .unwrap_or(ToolExecutionStatus::Idle),
+                execution_count: row.get("execution_count"),
+                success_count: row.get("success_count"),
+                error_count: row.get("error_count"),
+                total_execution_time_ms: row.get("total_execution_time_ms"),
+                avg_execution_time_ms: row.get("avg_execution_time_ms"),
+                last_execution_time: row.get("last_execution_time"),
+                last_error_message: row.get("last_error_message"),
+                metadata: row
+                    .get::<Option<String>, _>("metadata")
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }),
+            DatabasePool::MySQL(pool) => sqlx::query(
+                r#"SELECT id, task_id, tool_id, tool_name, tool_type, status, 
                        execution_count, success_count, error_count, 
                        total_execution_time_ms, avg_execution_time_ms,
                        last_execution_time, last_error_message, metadata,
                        created_at, updated_at
                        FROM task_tool_executions 
-                       WHERE task_id = ? AND tool_id = ?"#
-                )
-                .bind(&request.task_id)
-                .bind(&request.tool_id)
-                .fetch_optional(pool)
-                .await?
-                .map(|row| TaskToolExecution {
-                    id: row.get("id"),
-                    task_id: row.get("task_id"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                    execution_count: row.get("execution_count"),
-                    success_count: row.get("success_count"),
-                    error_count: row.get("error_count"),
-                    total_execution_time_ms: row.get("total_execution_time_ms"),
-                    avg_execution_time_ms: row.get("avg_execution_time_ms"),
-                    last_execution_time: row.get("last_execution_time"),
-                    last_error_message: row.get("last_error_message"),
-                    metadata: row
-                        .get::<Option<String>, _>("metadata")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                    created_at: row.get("created_at"),
-                    updated_at: row.get("updated_at"),
-                })
-            }
+                       WHERE task_id = ? AND tool_id = ?"#,
+            )
+            .bind(&request.task_id)
+            .bind(&request.tool_id)
+            .fetch_optional(pool)
+            .await?
+            .map(|row| TaskToolExecution {
+                id: row.get("id"),
+                task_id: row.get("task_id"),
+                tool_id: row.get("tool_id"),
+                tool_name: row.get("tool_name"),
+                tool_type: row
+                    .get::<String, _>("tool_type")
+                    .parse()
+                    .unwrap_or(ToolType::Plugin),
+                status: row
+                    .get::<String, _>("status")
+                    .parse()
+                    .unwrap_or(ToolExecutionStatus::Idle),
+                execution_count: row.get("execution_count"),
+                success_count: row.get("success_count"),
+                error_count: row.get("error_count"),
+                total_execution_time_ms: row.get("total_execution_time_ms"),
+                avg_execution_time_ms: row.get("avg_execution_time_ms"),
+                last_execution_time: row.get("last_execution_time"),
+                last_error_message: row.get("last_error_message"),
+                metadata: row
+                    .get::<Option<String>, _>("metadata")
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            }),
         };
 
         if let Some(execution) = existing {
@@ -135,7 +147,7 @@ impl DatabaseService {
 
         // Create new record
         let id = Uuid::new_v4().to_string();
-        
+
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
@@ -144,7 +156,7 @@ impl DatabaseService {
                         execution_count, success_count, error_count, 
                         total_execution_time_ms, avg_execution_time_ms,
                         created_at, updated_at)
-                       VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0, 0, 0, $7, $8)"#
+                       VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0, 0, 0, $7, $8)"#,
                 )
                 .bind(&id)
                 .bind(&request.task_id)
@@ -164,7 +176,7 @@ impl DatabaseService {
                         execution_count, success_count, error_count, 
                         total_execution_time_ms, avg_execution_time_ms,
                         created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)"#
+                       VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)"#,
                 )
                 .bind(&id)
                 .bind(&request.task_id)
@@ -184,7 +196,7 @@ impl DatabaseService {
                         execution_count, success_count, error_count, 
                         total_execution_time_ms, avg_execution_time_ms,
                         created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)"#
+                       VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)"#,
                 )
                 .bind(&id)
                 .bind(&request.task_id)
@@ -199,8 +211,10 @@ impl DatabaseService {
             }
         }
 
-        info!("Created task tool execution record: {} for task: {}, tool: {}", 
-              id, request.task_id, request.tool_id);
+        info!(
+            "Created task tool execution record: {} for task: {}, tool: {}",
+            id, request.task_id, request.tool_id
+        );
 
         Ok(TaskToolExecution {
             id,
@@ -239,18 +253,20 @@ impl DatabaseService {
         let log_id = Uuid::new_v4().to_string();
 
         // Get or create task tool execution record
-        let task_tool_exec = self.init_task_tool_execution(CreateTaskToolExecutionRequest {
-            task_id: task_id.clone(),
-            tool_id: tool_id.clone(),
-            tool_name: tool_name.clone(),
-            tool_type: tool_type.clone(),
-        }).await?;
+        let task_tool_exec = self
+            .init_task_tool_execution(CreateTaskToolExecutionRequest {
+                task_id: task_id.clone(),
+                tool_id: tool_id.clone(),
+                tool_name: tool_name.clone(),
+                tool_type: tool_type.clone(),
+            })
+            .await?;
 
         // Update status to running
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
-                    "UPDATE task_tool_executions SET status = $1, updated_at = $2 WHERE id = $3"
+                    "UPDATE task_tool_executions SET status = $1, updated_at = $2 WHERE id = $3",
                 )
                 .bind(ToolExecutionStatus::Running.to_string())
                 .bind(now)
@@ -260,7 +276,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
-                    "UPDATE task_tool_executions SET status = ?, updated_at = ? WHERE id = ?"
+                    "UPDATE task_tool_executions SET status = ?, updated_at = ? WHERE id = ?",
                 )
                 .bind(ToolExecutionStatus::Running.to_string())
                 .bind(now)
@@ -270,7 +286,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
-                    "UPDATE task_tool_executions SET status = ?, updated_at = ? WHERE id = ?"
+                    "UPDATE task_tool_executions SET status = ?, updated_at = ? WHERE id = ?",
                 )
                 .bind(ToolExecutionStatus::Running.to_string())
                 .bind(now)
@@ -282,14 +298,14 @@ impl DatabaseService {
 
         // Create execution log
         let input_json = input_params.map(|v| v.to_string());
-        
+
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
                     r#"INSERT INTO task_tool_execution_logs 
                        (id, task_tool_execution_id, task_id, tool_id, tool_name, tool_type, 
                         status, started_at, input_params, created_at)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
                 )
                 .bind(&log_id)
                 .bind(&task_tool_exec.id)
@@ -309,7 +325,7 @@ impl DatabaseService {
                     r#"INSERT INTO task_tool_execution_logs 
                        (id, task_tool_execution_id, task_id, tool_id, tool_name, tool_type, 
                         status, started_at, input_params, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
                 )
                 .bind(&log_id)
                 .bind(&task_tool_exec.id)
@@ -329,7 +345,7 @@ impl DatabaseService {
                     r#"INSERT INTO task_tool_execution_logs 
                        (id, task_tool_execution_id, task_id, tool_id, tool_name, tool_type, 
                         status, started_at, input_params, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
                 )
                 .bind(&log_id)
                 .bind(&task_tool_exec.id)
@@ -346,8 +362,10 @@ impl DatabaseService {
             }
         }
 
-        debug!("Recorded tool execution start: {} for task: {}, tool: {}", 
-               log_id, task_id, tool_id);
+        debug!(
+            "Recorded tool execution start: {} for task: {}, tool: {}",
+            log_id, task_id, tool_id
+        );
 
         Ok(log_id)
     }
@@ -413,7 +431,7 @@ impl DatabaseService {
                     r#"UPDATE task_tool_execution_logs 
                        SET status = $1, completed_at = $2, execution_time_ms = $3, 
                            output_result = $4, error_message = $5
-                       WHERE id = $6"#
+                       WHERE id = $6"#,
                 )
                 .bind(status.to_string())
                 .bind(now)
@@ -429,7 +447,7 @@ impl DatabaseService {
                     r#"UPDATE task_tool_execution_logs 
                        SET status = ?, completed_at = ?, execution_time_ms = ?, 
                            output_result = ?, error_message = ?
-                       WHERE id = ?"#
+                       WHERE id = ?"#,
                 )
                 .bind(status.to_string())
                 .bind(now)
@@ -445,7 +463,7 @@ impl DatabaseService {
                     r#"UPDATE task_tool_execution_logs 
                        SET status = ?, completed_at = ?, execution_time_ms = ?, 
                            output_result = ?, error_message = ?
-                       WHERE id = ?"#
+                       WHERE id = ?"#,
                 )
                 .bind(status.to_string())
                 .bind(now)
@@ -459,11 +477,16 @@ impl DatabaseService {
         }
 
         // Update aggregated task tool execution record
-        let (mut exec_count, mut success_count, mut error_count, mut total_time): (i64, i64, i64, i64) = match runtime {
+        let (mut exec_count, mut success_count, mut error_count, mut total_time): (
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let row = sqlx::query(
                     r#"SELECT execution_count, success_count, error_count, 
-                       total_execution_time_ms FROM task_tool_executions WHERE id = $1"#
+                       total_execution_time_ms FROM task_tool_executions WHERE id = $1"#,
                 )
                 .bind(&task_tool_exec_id)
                 .fetch_one(pool)
@@ -478,7 +501,7 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 let row = sqlx::query(
                     r#"SELECT execution_count, success_count, error_count, 
-                       total_execution_time_ms FROM task_tool_executions WHERE id = ?"#
+                       total_execution_time_ms FROM task_tool_executions WHERE id = ?"#,
                 )
                 .bind(&task_tool_exec_id)
                 .fetch_one(pool)
@@ -493,7 +516,7 @@ impl DatabaseService {
             DatabasePool::MySQL(pool) => {
                 let row = sqlx::query(
                     r#"SELECT execution_count, success_count, error_count, 
-                       total_execution_time_ms FROM task_tool_executions WHERE id = ?"#
+                       total_execution_time_ms FROM task_tool_executions WHERE id = ?"#,
                 )
                 .bind(&task_tool_exec_id)
                 .fetch_one(pool)
@@ -529,7 +552,7 @@ impl DatabaseService {
                        SET status = $1, execution_count = $2, success_count = $3, error_count = $4,
                            total_execution_time_ms = $5, avg_execution_time_ms = $6,
                            last_execution_time = $7, last_error_message = $8, updated_at = $9
-                       WHERE id = $10"#
+                       WHERE id = $10"#,
                 )
                 .bind(final_status.to_string())
                 .bind(exec_count)
@@ -550,7 +573,7 @@ impl DatabaseService {
                        SET status = ?, execution_count = ?, success_count = ?, error_count = ?,
                            total_execution_time_ms = ?, avg_execution_time_ms = ?,
                            last_execution_time = ?, last_error_message = ?, updated_at = ?
-                       WHERE id = ?"#
+                       WHERE id = ?"#,
                 )
                 .bind(final_status.to_string())
                 .bind(exec_count)
@@ -571,7 +594,7 @@ impl DatabaseService {
                        SET status = ?, execution_count = ?, success_count = ?, error_count = ?,
                            total_execution_time_ms = ?, avg_execution_time_ms = ?,
                            last_execution_time = ?, last_error_message = ?, updated_at = ?
-                       WHERE id = ?"#
+                       WHERE id = ?"#,
                 )
                 .bind(final_status.to_string())
                 .bind(exec_count)
@@ -588,7 +611,10 @@ impl DatabaseService {
             }
         }
 
-        debug!("Recorded tool execution complete: {} (success: {})", log_id, success);
+        debug!(
+            "Recorded tool execution complete: {} (success: {})",
+            log_id, success
+        );
 
         Ok(())
     }
@@ -609,23 +635,29 @@ impl DatabaseService {
                        FROM task_tool_execution_logs l
                        LEFT JOIN scan_tasks t ON l.task_id = t.id
                        WHERE l.task_id = $1 AND l.status = 'running'
-                       ORDER BY l.started_at DESC"#
+                       ORDER BY l.started_at DESC"#,
                 )
                 .bind(&task_id)
                 .fetch_all(pool)
                 .await?;
 
-                rows.into_iter().map(|row| ActiveToolInfo {
-                    log_id: row.get("log_id"),
-                    task_id: row.get("task_id"),
-                    task_name: row.get("task_name"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    started_at: row.get("started_at"),
-                    input_params: row.get::<Option<String>, _>("input_params")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ActiveToolInfo {
+                        log_id: row.get("log_id"),
+                        task_id: row.get("task_id"),
+                        task_name: row.get("task_name"),
+                        tool_id: row.get("tool_id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        started_at: row.get("started_at"),
+                        input_params: row
+                            .get::<Option<String>, _>("input_params")
+                            .and_then(|s| serde_json::from_str(&s).ok()),
+                    })
+                    .collect()
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
@@ -635,23 +667,29 @@ impl DatabaseService {
                        FROM task_tool_execution_logs l
                        LEFT JOIN scan_tasks t ON l.task_id = t.id
                        WHERE l.task_id = ? AND l.status = 'running'
-                       ORDER BY l.started_at DESC"#
+                       ORDER BY l.started_at DESC"#,
                 )
                 .bind(&task_id)
                 .fetch_all(pool)
                 .await?;
 
-                rows.into_iter().map(|row| ActiveToolInfo {
-                    log_id: row.get("log_id"),
-                    task_id: row.get("task_id"),
-                    task_name: row.get("task_name"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    started_at: row.get("started_at"),
-                    input_params: row.get::<Option<String>, _>("input_params")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ActiveToolInfo {
+                        log_id: row.get("log_id"),
+                        task_id: row.get("task_id"),
+                        task_name: row.get("task_name"),
+                        tool_id: row.get("tool_id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        started_at: row.get("started_at"),
+                        input_params: row
+                            .get::<Option<String>, _>("input_params")
+                            .and_then(|s| serde_json::from_str(&s).ok()),
+                    })
+                    .collect()
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
@@ -661,23 +699,29 @@ impl DatabaseService {
                        FROM task_tool_execution_logs l
                        LEFT JOIN scan_tasks t ON l.task_id = t.id
                        WHERE l.task_id = ? AND l.status = 'running'
-                       ORDER BY l.started_at DESC"#
+                       ORDER BY l.started_at DESC"#,
                 )
                 .bind(&task_id)
                 .fetch_all(pool)
                 .await?;
 
-                rows.into_iter().map(|row| ActiveToolInfo {
-                    log_id: row.get("log_id"),
-                    task_id: row.get("task_id"),
-                    task_name: row.get("task_name"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    started_at: row.get("started_at"),
-                    input_params: row.get::<Option<String>, _>("input_params")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ActiveToolInfo {
+                        log_id: row.get("log_id"),
+                        task_id: row.get("task_id"),
+                        task_name: row.get("task_name"),
+                        tool_id: row.get("tool_id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        started_at: row.get("started_at"),
+                        input_params: row
+                            .get::<Option<String>, _>("input_params")
+                            .and_then(|s| serde_json::from_str(&s).ok()),
+                    })
+                    .collect()
             }
         };
 
@@ -691,105 +735,116 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let (total_executions, successful_executions, failed_executions, total_execution_time, tools_used) =
-            match runtime {
-                DatabasePool::PostgreSQL(pool) => {
-                    let row = sqlx::query(
-                        r#"SELECT 
+        let (
+            total_executions,
+            successful_executions,
+            failed_executions,
+            total_execution_time,
+            tools_used,
+        ) = match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                let row = sqlx::query(
+                    r#"SELECT 
                            SUM(execution_count) as total_executions,
                            SUM(success_count) as successful_executions,
                            SUM(error_count) as failed_executions,
                            SUM(total_execution_time_ms) as total_execution_time
                            FROM task_tool_executions 
-                           WHERE task_id = $1"#
-                    )
-                    .bind(&task_id)
-                    .fetch_one(pool)
-                    .await?;
+                           WHERE task_id = $1"#,
+                )
+                .bind(&task_id)
+                .fetch_one(pool)
+                .await?;
 
-                    let tools_used = sqlx::query(
-                        "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = $1"
-                    )
-                    .bind(&task_id)
-                    .fetch_all(pool)
-                    .await?
-                    .iter()
-                    .map(|r| r.get::<String, _>("tool_name"))
-                    .collect();
+                let tools_used = sqlx::query(
+                    "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = $1",
+                )
+                .bind(&task_id)
+                .fetch_all(pool)
+                .await?
+                .iter()
+                .map(|r| r.get::<String, _>("tool_name"))
+                .collect();
 
-                    (
-                        row.get::<Option<i64>, _>("total_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("successful_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("failed_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("total_execution_time").unwrap_or(0),
-                        tools_used,
-                    )
-                }
-                DatabasePool::SQLite(pool) => {
-                    let row = sqlx::query(
-                        r#"SELECT 
+                (
+                    row.get::<Option<i64>, _>("total_executions").unwrap_or(0),
+                    row.get::<Option<i64>, _>("successful_executions")
+                        .unwrap_or(0),
+                    row.get::<Option<i64>, _>("failed_executions").unwrap_or(0),
+                    row.get::<Option<i64>, _>("total_execution_time")
+                        .unwrap_or(0),
+                    tools_used,
+                )
+            }
+            DatabasePool::SQLite(pool) => {
+                let row = sqlx::query(
+                    r#"SELECT 
                            SUM(execution_count) as total_executions,
                            SUM(success_count) as successful_executions,
                            SUM(error_count) as failed_executions,
                            SUM(total_execution_time_ms) as total_execution_time
                            FROM task_tool_executions 
-                           WHERE task_id = ?"#
-                    )
-                    .bind(&task_id)
-                    .fetch_one(pool)
-                    .await?;
+                           WHERE task_id = ?"#,
+                )
+                .bind(&task_id)
+                .fetch_one(pool)
+                .await?;
 
-                    let tools_used = sqlx::query(
-                        "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = ?"
-                    )
-                    .bind(&task_id)
-                    .fetch_all(pool)
-                    .await?
-                    .iter()
-                    .map(|r| r.get::<String, _>("tool_name"))
-                    .collect();
+                let tools_used = sqlx::query(
+                    "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = ?",
+                )
+                .bind(&task_id)
+                .fetch_all(pool)
+                .await?
+                .iter()
+                .map(|r| r.get::<String, _>("tool_name"))
+                .collect();
 
-                    (
-                        row.get::<Option<i64>, _>("total_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("successful_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("failed_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("total_execution_time").unwrap_or(0),
-                        tools_used,
-                    )
-                }
-                DatabasePool::MySQL(pool) => {
-                    let row = sqlx::query(
-                        r#"SELECT 
+                (
+                    row.get::<Option<i64>, _>("total_executions").unwrap_or(0),
+                    row.get::<Option<i64>, _>("successful_executions")
+                        .unwrap_or(0),
+                    row.get::<Option<i64>, _>("failed_executions").unwrap_or(0),
+                    row.get::<Option<i64>, _>("total_execution_time")
+                        .unwrap_or(0),
+                    tools_used,
+                )
+            }
+            DatabasePool::MySQL(pool) => {
+                let row = sqlx::query(
+                    r#"SELECT 
                            SUM(execution_count) as total_executions,
                            SUM(success_count) as successful_executions,
                            SUM(error_count) as failed_executions,
                            SUM(total_execution_time_ms) as total_execution_time
                            FROM task_tool_executions 
-                           WHERE task_id = ?"#
-                    )
-                    .bind(&task_id)
-                    .fetch_one(pool)
-                    .await?;
+                           WHERE task_id = ?"#,
+                )
+                .bind(&task_id)
+                .fetch_one(pool)
+                .await?;
 
-                    let tools_used = sqlx::query(
-                        "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = ?"
-                    )
-                    .bind(&task_id)
-                    .fetch_all(pool)
-                    .await?
-                    .iter()
-                    .map(|r| r.get::<String, _>("tool_name"))
-                    .collect();
+                let tools_used = sqlx::query(
+                    "SELECT DISTINCT tool_name FROM task_tool_executions WHERE task_id = ?",
+                )
+                .bind(&task_id)
+                .fetch_all(pool)
+                .await?
+                .iter()
+                .map(|r| r.get::<String, _>("tool_name"))
+                .collect();
 
-                    (
-                        row.get::<Option<i64>, _>("total_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("successful_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("failed_executions").unwrap_or(0),
-                        row.get::<Option<i64>, _>("total_execution_time").unwrap_or(0),
-                        tools_used,
-                    )
-                }
-            };
+                (
+                    row.get::<Option<i64>, _>("total_executions").unwrap_or(0),
+                    row.get::<Option<i64>, _>("successful_executions")
+                        .unwrap_or(0),
+                    row.get::<Option<i64>, _>("failed_executions").unwrap_or(0),
+                    row.get::<Option<i64>, _>("total_execution_time")
+                        .unwrap_or(0),
+                    tools_used,
+                )
+            }
+        };
 
         Ok(ToolStatistics {
             total_executions,
@@ -817,7 +872,8 @@ impl DatabaseService {
                 let mut query_str = r#"SELECT id, tool_name, tool_type, status, started_at, 
                                        completed_at, execution_time_ms, error_message
                                        FROM task_tool_execution_logs 
-                                       WHERE task_id = $1"#.to_string();
+                                       WHERE task_id = $1"#
+                    .to_string();
                 if tool_id.is_some() {
                     query_str.push_str(" AND tool_id = $2");
                 }
@@ -830,22 +886,31 @@ impl DatabaseService {
                     query = query.bind(tid);
                 }
                 let rows = query.fetch_all(pool).await?;
-                rows.into_iter().map(|row| ExecutionRecord {
-                    id: row.get("id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                    started_at: row.get("started_at"),
-                    completed_at: row.get("completed_at"),
-                    execution_time_ms: row.get("execution_time_ms"),
-                    error_message: row.get("error_message"),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ExecutionRecord {
+                        id: row.get("id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        status: row
+                            .get::<String, _>("status")
+                            .parse()
+                            .unwrap_or(ToolExecutionStatus::Idle),
+                        started_at: row.get("started_at"),
+                        completed_at: row.get("completed_at"),
+                        execution_time_ms: row.get("execution_time_ms"),
+                        error_message: row.get("error_message"),
+                    })
+                    .collect()
             }
             DatabasePool::SQLite(pool) => {
                 let mut query_str = r#"SELECT id, tool_name, tool_type, status, started_at, 
                                        completed_at, execution_time_ms, error_message
                                        FROM task_tool_execution_logs 
-                                       WHERE task_id = ?"#.to_string();
+                                       WHERE task_id = ?"#
+                    .to_string();
                 if tool_id.is_some() {
                     query_str.push_str(" AND tool_id = ?");
                 }
@@ -858,22 +923,31 @@ impl DatabaseService {
                     query = query.bind(tid);
                 }
                 let rows = query.fetch_all(pool).await?;
-                rows.into_iter().map(|row| ExecutionRecord {
-                    id: row.get("id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                    started_at: row.get("started_at"),
-                    completed_at: row.get("completed_at"),
-                    execution_time_ms: row.get("execution_time_ms"),
-                    error_message: row.get("error_message"),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ExecutionRecord {
+                        id: row.get("id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        status: row
+                            .get::<String, _>("status")
+                            .parse()
+                            .unwrap_or(ToolExecutionStatus::Idle),
+                        started_at: row.get("started_at"),
+                        completed_at: row.get("completed_at"),
+                        execution_time_ms: row.get("execution_time_ms"),
+                        error_message: row.get("error_message"),
+                    })
+                    .collect()
             }
             DatabasePool::MySQL(pool) => {
                 let mut query_str = r#"SELECT id, tool_name, tool_type, status, started_at, 
                                        completed_at, execution_time_ms, error_message
                                        FROM task_tool_execution_logs 
-                                       WHERE task_id = ?"#.to_string();
+                                       WHERE task_id = ?"#
+                    .to_string();
                 if tool_id.is_some() {
                     query_str.push_str(" AND tool_id = ?");
                 }
@@ -886,16 +960,24 @@ impl DatabaseService {
                     query = query.bind(tid);
                 }
                 let rows = query.fetch_all(pool).await?;
-                rows.into_iter().map(|row| ExecutionRecord {
-                    id: row.get("id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    status: row.get::<String, _>("status").parse().unwrap_or(ToolExecutionStatus::Idle),
-                    started_at: row.get("started_at"),
-                    completed_at: row.get("completed_at"),
-                    execution_time_ms: row.get("execution_time_ms"),
-                    error_message: row.get("error_message"),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ExecutionRecord {
+                        id: row.get("id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        status: row
+                            .get::<String, _>("status")
+                            .parse()
+                            .unwrap_or(ToolExecutionStatus::Idle),
+                        started_at: row.get("started_at"),
+                        completed_at: row.get("completed_at"),
+                        execution_time_ms: row.get("execution_time_ms"),
+                        error_message: row.get("error_message"),
+                    })
+                    .collect()
             }
         };
 
@@ -953,21 +1035,27 @@ impl DatabaseService {
                        FROM task_tool_execution_logs l
                        LEFT JOIN scan_tasks t ON l.task_id = t.id
                        WHERE l.status = 'running'
-                       ORDER BY l.started_at DESC"#
+                       ORDER BY l.started_at DESC"#,
                 )
                 .fetch_all(pool)
                 .await?;
-                rows.into_iter().map(|row| ActiveToolInfo {
-                    log_id: row.get("log_id"),
-                    task_id: row.get("task_id"),
-                    task_name: row.get("task_name"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    started_at: row.get("started_at"),
-                    input_params: row.get::<Option<String>, _>("input_params")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ActiveToolInfo {
+                        log_id: row.get("log_id"),
+                        task_id: row.get("task_id"),
+                        task_name: row.get("task_name"),
+                        tool_id: row.get("tool_id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        started_at: row.get("started_at"),
+                        input_params: row
+                            .get::<Option<String>, _>("input_params")
+                            .and_then(|s| serde_json::from_str(&s).ok()),
+                    })
+                    .collect()
             }
             DatabasePool::SQLite(pool) => {
                 let rows = sqlx::query(
@@ -977,21 +1065,27 @@ impl DatabaseService {
                        FROM task_tool_execution_logs l
                        LEFT JOIN scan_tasks t ON l.task_id = t.id
                        WHERE l.status = 'running'
-                       ORDER BY l.started_at DESC"#
+                       ORDER BY l.started_at DESC"#,
                 )
                 .fetch_all(pool)
                 .await?;
-                rows.into_iter().map(|row| ActiveToolInfo {
-                    log_id: row.get("log_id"),
-                    task_id: row.get("task_id"),
-                    task_name: row.get("task_name"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    started_at: row.get("started_at"),
-                    input_params: row.get::<Option<String>, _>("input_params")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ActiveToolInfo {
+                        log_id: row.get("log_id"),
+                        task_id: row.get("task_id"),
+                        task_name: row.get("task_name"),
+                        tool_id: row.get("tool_id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        started_at: row.get("started_at"),
+                        input_params: row
+                            .get::<Option<String>, _>("input_params")
+                            .and_then(|s| serde_json::from_str(&s).ok()),
+                    })
+                    .collect()
             }
             DatabasePool::MySQL(pool) => {
                 let rows = sqlx::query(
@@ -1001,21 +1095,27 @@ impl DatabaseService {
                        FROM task_tool_execution_logs l
                        LEFT JOIN scan_tasks t ON l.task_id = t.id
                        WHERE l.status = 'running'
-                       ORDER BY l.started_at DESC"#
+                       ORDER BY l.started_at DESC"#,
                 )
                 .fetch_all(pool)
                 .await?;
-                rows.into_iter().map(|row| ActiveToolInfo {
-                    log_id: row.get("log_id"),
-                    task_id: row.get("task_id"),
-                    task_name: row.get("task_name"),
-                    tool_id: row.get("tool_id"),
-                    tool_name: row.get("tool_name"),
-                    tool_type: row.get::<String, _>("tool_type").parse().unwrap_or(ToolType::Plugin),
-                    started_at: row.get("started_at"),
-                    input_params: row.get::<Option<String>, _>("input_params")
-                        .and_then(|s| serde_json::from_str(&s).ok()),
-                }).collect()
+                rows.into_iter()
+                    .map(|row| ActiveToolInfo {
+                        log_id: row.get("log_id"),
+                        task_id: row.get("task_id"),
+                        task_name: row.get("task_name"),
+                        tool_id: row.get("tool_id"),
+                        tool_name: row.get("tool_name"),
+                        tool_type: row
+                            .get::<String, _>("tool_type")
+                            .parse()
+                            .unwrap_or(ToolType::Plugin),
+                        started_at: row.get("started_at"),
+                        input_params: row
+                            .get::<Option<String>, _>("input_params")
+                            .and_then(|s| serde_json::from_str(&s).ok()),
+                    })
+                    .collect()
             }
         };
 

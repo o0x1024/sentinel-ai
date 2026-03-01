@@ -1,6 +1,6 @@
-use anyhow::{Result, Context};
-use sqlx::postgres::PgPool;
+use anyhow::{Context, Result};
 use sqlx::mysql::MySqlPool;
+use sqlx::postgres::PgPool;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
@@ -17,9 +17,9 @@ pub enum DatabasePool {
 impl DatabasePool {
     pub async fn connect(config: &DatabaseConfig) -> Result<Self> {
         info!("Connecting to database: {:?}", config.db_type);
-        
+
         let connection_string = config.build_connection_string();
-        
+
         match config.db_type {
             DatabaseType::PostgreSQL => {
                 let pool = sqlx::postgres::PgPoolOptions::new()
@@ -28,7 +28,7 @@ impl DatabasePool {
                     .connect(&connection_string)
                     .await
                     .context("Failed to connect to PostgreSQL database")?;
-                
+
                 Ok(DatabasePool::PostgreSQL(pool))
             }
             DatabaseType::SQLite => {
@@ -51,12 +51,20 @@ impl DatabasePool {
                     .acquire_timeout(Duration::from_secs(config.query_timeout))
                     .after_connect(move |conn, _meta| {
                         Box::pin(async move {
-                            sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await?;
+                            sqlx::query("PRAGMA foreign_keys = ON")
+                                .execute(&mut *conn)
+                                .await?;
                             // Wait before returning SQLITE_BUSY to reduce transient write contention.
-                            sqlx::query("PRAGMA busy_timeout = 10000").execute(&mut *conn).await?;
+                            sqlx::query("PRAGMA busy_timeout = 10000")
+                                .execute(&mut *conn)
+                                .await?;
                             if enable_wal {
-                                sqlx::query("PRAGMA journal_mode = WAL").execute(&mut *conn).await?;
-                                sqlx::query("PRAGMA synchronous = NORMAL").execute(&mut *conn).await?;
+                                sqlx::query("PRAGMA journal_mode = WAL")
+                                    .execute(&mut *conn)
+                                    .await?;
+                                sqlx::query("PRAGMA synchronous = NORMAL")
+                                    .execute(&mut *conn)
+                                    .await?;
                             }
                             Ok(())
                         })
@@ -79,7 +87,7 @@ impl DatabasePool {
             }
         }
     }
-    
+
     pub async fn test_connection(&self) -> Result<()> {
         match self {
             DatabasePool::PostgreSQL(pool) => {
@@ -94,7 +102,7 @@ impl DatabasePool {
         }
         Ok(())
     }
-    
+
     pub fn db_type(&self) -> DatabaseType {
         match self {
             DatabasePool::PostgreSQL(_) => DatabaseType::PostgreSQL,

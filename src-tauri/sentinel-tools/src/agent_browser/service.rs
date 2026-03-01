@@ -4,7 +4,7 @@
 //! and exposing operations for AI assistant tools.
 
 use super::client::BrowserClient;
-use super::daemon::{ensure_daemon, is_daemon_running, cleanup_daemon_files};
+use super::daemon::{cleanup_daemon_files, ensure_daemon, is_daemon_running};
 use super::types::*;
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -52,7 +52,10 @@ impl AgentBrowserService {
         client.launch(self.config.headless, viewport)?;
 
         self.initialized = true;
-        info!("Browser service initialized with session: {}", self.config.session);
+        info!(
+            "Browser service initialized with session: {}",
+            self.config.session
+        );
         Ok(())
     }
 
@@ -79,16 +82,21 @@ impl AgentBrowserService {
     // ==================== Navigation ====================
 
     /// Open a URL
-    pub async fn open(&mut self, url: &str, wait_until: Option<&str>, headless: Option<bool>) -> Result<NavigateResult> {
+    pub async fn open(
+        &mut self,
+        url: &str,
+        wait_until: Option<&str>,
+        headless: Option<bool>,
+    ) -> Result<NavigateResult> {
         self.ensure_init().await?;
-        
+
         // If headless mode is specified and different from current, update it
         if let Some(headless_mode) = headless {
             if self.config.headless != headless_mode {
                 self.set_headless(headless_mode).await?;
             }
         }
-        
+
         let client = self.client();
         let result = client.navigate(url, wait_until)?;
 
@@ -210,7 +218,12 @@ impl AgentBrowserService {
     }
 
     /// Type text character by character
-    pub async fn type_text(&mut self, target: &str, text: &str, delay_ms: Option<u32>) -> Result<()> {
+    pub async fn type_text(
+        &mut self,
+        target: &str,
+        text: &str,
+        delay_ms: Option<u32>,
+    ) -> Result<()> {
         self.ensure_init().await?;
         let client = self.client();
         client.type_text(target, text, delay_ms)?;
@@ -450,22 +463,22 @@ impl AgentBrowserService {
     /// Note: This will close the current browser and reinitialize with new headless setting
     pub async fn set_headless(&mut self, headless: bool) -> Result<()> {
         info!("Setting headless mode to: {}", headless);
-        
+
         // Only update if different from current setting
         if self.config.headless != headless {
             self.config.headless = headless;
-            
+
             // If already initialized, close and reinitialize
             if self.initialized {
                 info!("Closing browser to apply new headless setting");
                 let _ = self.close().await;
                 self.initialized = false;
-                
+
                 // Wait a bit for browser to fully close
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
         }
-        
+
         // Always ensure browser is initialized with correct headless setting
         self.ensure_init().await?;
         info!("Browser initialized with headless={}", headless);
@@ -484,11 +497,14 @@ impl AgentBrowserService {
     }
 
     /// Get tracked network requests (optionally filtered)
-    pub async fn get_network_requests(&mut self, filter: Option<&str>) -> Result<Vec<NetworkRequest>> {
+    pub async fn get_network_requests(
+        &mut self,
+        filter: Option<&str>,
+    ) -> Result<Vec<NetworkRequest>> {
         self.ensure_init().await?;
         let client = self.client();
         let result = client.requests(filter, false)?;
-        
+
         let requests = result["requests"]
             .as_array()
             .map(|arr| {
@@ -497,7 +513,7 @@ impl AgentBrowserService {
                     .collect()
             })
             .unwrap_or_default();
-        
+
         Ok(requests)
     }
 
@@ -520,7 +536,7 @@ impl AgentBrowserService {
     /// Extract domain from URL
     fn extract_domain(url: &str) -> Option<String> {
         let url = url.trim();
-        
+
         // Parse URL to get domain
         if let Some(domain_start) = url.find("://") {
             let after_protocol = &url[domain_start + 3..];
@@ -547,39 +563,40 @@ impl AgentBrowserService {
     /// Returns all non-static requests from the target domain
     pub async fn get_discovered_apis(&mut self) -> Result<Vec<String>> {
         let requests = self.get_network_requests(None).await?;
-        
+
         // Get current page URL to determine target domain
         let current_url = self.get_current_url().await.unwrap_or_default();
         let target_domain = Self::extract_domain(&current_url);
-        
+
         let apis: Vec<String> = requests
             .iter()
             .filter(|r| {
                 let url = &r.url;
                 let resource_type = &r.resource_type;
                 let url_lower = url.to_lowercase();
-                
+
                 // Only keep requests from target domain
                 if let Some(ref domain) = target_domain {
                     if let Some(req_domain) = Self::extract_domain(url) {
-                        if !req_domain.eq_ignore_ascii_case(domain) && 
-                           !req_domain.ends_with(&format!(".{}", domain)) {
+                        if !req_domain.eq_ignore_ascii_case(domain)
+                            && !req_domain.ends_with(&format!(".{}", domain))
+                        {
                             return false;
                         }
                     } else {
                         return false;
                     }
                 }
-                
+
                 // Only exclude static resources
-                let is_static = url_lower.ends_with(".js") 
-                    || url_lower.ends_with(".css") 
-                    || url_lower.ends_with(".png") 
-                    || url_lower.ends_with(".jpg") 
+                let is_static = url_lower.ends_with(".js")
+                    || url_lower.ends_with(".css")
+                    || url_lower.ends_with(".png")
+                    || url_lower.ends_with(".jpg")
                     || url_lower.ends_with(".jpeg")
-                    || url_lower.ends_with(".gif") 
-                    || url_lower.ends_with(".svg") 
-                    || url_lower.ends_with(".woff") 
+                    || url_lower.ends_with(".gif")
+                    || url_lower.ends_with(".svg")
+                    || url_lower.ends_with(".woff")
                     || url_lower.ends_with(".woff2")
                     || url_lower.ends_with(".ttf")
                     || url_lower.ends_with(".ico")
@@ -597,15 +614,19 @@ impl AgentBrowserService {
                     || resource_type == "font"
                     || resource_type == "media"
                     || resource_type == "script";
-                
+
                 !is_static
             })
             .map(|r| {
-                let method = if r.method.is_empty() { "GET" } else { &r.method };
+                let method = if r.method.is_empty() {
+                    "GET"
+                } else {
+                    &r.method
+                };
                 format!("{} {}", method, r.url)
             })
             .collect();
-        
+
         Ok(apis)
     }
 }

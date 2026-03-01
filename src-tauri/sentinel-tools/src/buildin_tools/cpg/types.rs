@@ -97,7 +97,9 @@ impl CpgNodeKind {
             Self::Module { name } => name.clone(),
             Self::Class { name, .. } => name.clone(),
             Self::Function { name, .. } => name.clone(),
-            Self::Method { name, class_name, .. } => {
+            Self::Method {
+                name, class_name, ..
+            } => {
                 if let Some(cls) = class_name {
                     format!("{}.{}", cls, name)
                 } else {
@@ -225,10 +227,7 @@ impl CodePropertyGraph {
 
         // Update symbol index
         if !name.is_empty() {
-            self.symbol_index
-                .entry(name)
-                .or_default()
-                .push(idx);
+            self.symbol_index.entry(name).or_default().push(idx);
         }
 
         // Update location index
@@ -261,7 +260,12 @@ impl CodePropertyGraph {
     pub fn function_count(&self) -> usize {
         self.graph
             .node_weights()
-            .filter(|n| matches!(n.kind, CpgNodeKind::Function { .. } | CpgNodeKind::Method { .. }))
+            .filter(|n| {
+                matches!(
+                    n.kind,
+                    CpgNodeKind::Function { .. } | CpgNodeKind::Method { .. }
+                )
+            })
             .count()
     }
 

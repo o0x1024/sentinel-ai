@@ -28,9 +28,15 @@ pub struct HttpRequestArgs {
     pub follow_redirects: bool,
 }
 
-fn default_method() -> String { "GET".to_string() }
-fn default_timeout() -> u64 { 30 }
-fn default_follow_redirects() -> bool { true }
+fn default_method() -> String {
+    "GET".to_string()
+}
+fn default_timeout() -> u64 {
+    30
+}
+fn default_follow_redirects() -> bool {
+    true
+}
 
 /// HTTP request result
 #[derive(Debug, Clone, Serialize)]
@@ -73,7 +79,7 @@ impl Default for HttpRequestTool {
                 builder.build().unwrap_or_default()
             })
         });
-        
+
         Self { client }
     }
 }
@@ -122,7 +128,12 @@ impl Tool for HttpRequestTool {
             "DELETE" => self.client.delete(url.clone()),
             "HEAD" => self.client.head(url.clone()),
             "PATCH" => self.client.patch(url.clone()),
-            _ => return Err(HttpRequestError::RequestFailed(format!("Unsupported method: {}", method))),
+            _ => {
+                return Err(HttpRequestError::RequestFailed(format!(
+                    "Unsupported method: {}",
+                    method
+                )))
+            }
         };
 
         // Add headers
@@ -139,7 +150,9 @@ impl Tool for HttpRequestTool {
         request = request.timeout(std::time::Duration::from_secs(args.timeout_secs));
 
         // Send request
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
 
         let status_code = response.status().as_u16();
@@ -154,32 +167,34 @@ impl Tool for HttpRequestTool {
         }
 
         // Get body
-        let body = response.text().await
+        let body = response
+            .text()
+            .await
             .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
         let original_size = body.len();
-        
+
         // Check if body should be stored to container file
-        let body = match crate::output_storage::store_output_unified(
-            "http_response",
-            &body,
-            None,
-        ).await {
-            Ok(storage_result) => storage_result.get_agent_content(),
-            Err(e) => {
-                tracing::warn!("Failed to store HTTP response to container: {}", e);
-                // Fallback: return original body (or truncate if too large)
-                if body.len() > 100_000 {
-                    let preview = body.chars().take(100_000).collect::<String>();
-                    format!("{}\n\n[Response too large, showing first 100K chars. Total: {} KB]", 
-                        preview, original_size / 1024)
-                } else {
-                    body
+        let body =
+            match crate::output_storage::store_output_unified("http_response", &body, None).await {
+                Ok(storage_result) => storage_result.get_agent_content(),
+                Err(e) => {
+                    tracing::warn!("Failed to store HTTP response to container: {}", e);
+                    // Fallback: return original body (or truncate if too large)
+                    if body.len() > 100_000 {
+                        let preview = body.chars().take(100_000).collect::<String>();
+                        format!(
+                            "{}\n\n[Response too large, showing first 100K chars. Total: {} KB]",
+                            preview,
+                            original_size / 1024
+                        )
+                    } else {
+                        body
+                    }
                 }
-            }
-        };
-        
+            };
+
         let truncated = body.contains("[Large Output Stored");
-        
+
         let body_length = body.len();
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -196,4 +211,3 @@ impl Tool for HttpRequestTool {
         })
     }
 }
-

@@ -56,18 +56,18 @@ pub async fn get_plugin_context(plugin_id: &str) -> Option<PluginContext> {
 fn create_plugin_executor(plugin_id: String) -> ToolExecutor {
     create_executor(move |args: Value| {
         let pid = plugin_id.clone();
-        
+
         async move {
             let ctx = get_plugin_context(&pid)
                 .await
                 .ok_or_else(|| format!("Plugin '{}' not registered", pid))?;
-            
+
             // Clone the context data for use in spawn_blocking
             let plugin_id = ctx.plugin_id.clone();
             let plugin_name = ctx.name.clone();
             let plugin_code = ctx.code.clone();
             let args_clone = args.clone();
-            
+
             // Run plugin execution in a blocking thread since JsRuntime is not Send+Sync
             // We use spawn_blocking + LocalSet to handle non-Send futures
             let result = tokio::task::spawn_blocking(move || {
@@ -76,19 +76,17 @@ fn create_plugin_executor(plugin_id: String) -> ToolExecutor {
                     .enable_all()
                     .build()
                     .map_err(|e| format!("Failed to create runtime: {}", e))?;
-                
+
                 // Use LocalSet to run non-Send futures
                 let local = tokio::task::LocalSet::new();
-                local.block_on(&rt, execute_plugin_async(
-                    plugin_id,
-                    plugin_name,
-                    plugin_code,
-                    args_clone,
-                ))
+                local.block_on(
+                    &rt,
+                    execute_plugin_async(plugin_id, plugin_name, plugin_code, args_clone),
+                )
             })
             .await
             .map_err(|e| format!("Plugin execution task failed: {}", e))??;
-            
+
             Ok(result)
         }
     })
@@ -101,11 +99,8 @@ async fn execute_plugin_async(
     plugin_code: String,
     args: Value,
 ) -> Result<Value, String> {
-    tracing::info!(
-        "Executing plugin: {} (id: {})",
-        plugin_name, plugin_id
-    );
-    
+    tracing::info!("Executing plugin: {} (id: {})", plugin_name, plugin_id);
+
     // Create plugin metadata
     let metadata = sentinel_plugins::PluginMetadata {
         id: plugin_id.clone(),
@@ -118,28 +113,29 @@ async fn execute_plugin_async(
         tags: vec![],
         description: Some(format!("Agent tool plugin: {}", plugin_name)),
     };
-    
+
     // Create a PluginExecutor with restart capability (1000 executions before restart warning)
     let executor = sentinel_plugins::PluginExecutor::new(metadata, plugin_code, 1000)
         .map_err(|e| format!("Failed to create plugin executor: {}", e))?;
-    
+
     tracing::debug!(
         "Plugin loaded successfully, executing agent function with args: {:?}",
         args
     );
-    
+
     // Execute the plugin's agent function (analyze/run/execute)
-    let (findings, last_result) = executor.execute_agent(&args)
+    let (findings, last_result) = executor
+        .execute_agent(&args)
         .await
         .map_err(|e| format!("Plugin execution failed: {}", e))?;
-    
+
     tracing::info!(
         "Plugin {} executed successfully, findings: {}, has_result: {}",
         plugin_id,
         findings.len(),
         last_result.is_some()
     );
-    
+
     // Build the result
     // If the plugin returned a result via op_plugin_return, use that
     // Otherwise, return the findings and execution status
@@ -148,24 +144,27 @@ async fn execute_plugin_async(
         Ok(result)
     } else if !findings.is_empty() {
         // Plugin emitted findings via Sentinel.emitFinding()
-        let findings_json: Vec<Value> = findings.into_iter().map(|f| {
-            serde_json::json!({
-                "id": f.id,
-                "vuln_type": f.vuln_type,
-                "severity": format!("{:?}", f.severity).to_lowercase(),
-                "confidence": format!("{:?}", f.confidence).to_lowercase(),
-                "title": f.title,
-                "description": f.description,
-                "evidence": f.evidence,
-                "location": f.location,
-                "url": f.url,
-                "method": f.method,
-                "cwe": f.cwe,
-                "owasp": f.owasp,
-                "remediation": f.remediation,
+        let findings_json: Vec<Value> = findings
+            .into_iter()
+            .map(|f| {
+                serde_json::json!({
+                    "id": f.id,
+                    "vuln_type": f.vuln_type,
+                    "severity": format!("{:?}", f.severity).to_lowercase(),
+                    "confidence": format!("{:?}", f.confidence).to_lowercase(),
+                    "title": f.title,
+                    "description": f.description,
+                    "evidence": f.evidence,
+                    "location": f.location,
+                    "url": f.url,
+                    "method": f.method,
+                    "cwe": f.cwe,
+                    "owasp": f.owasp,
+                    "remediation": f.remediation,
+                })
             })
-        }).collect();
-        
+            .collect();
+
         Ok(serde_json::json!({
             "plugin_id": plugin_id,
             "plugin_name": plugin_name,
@@ -185,15 +184,12 @@ async fn execute_plugin_async(
 }
 
 /// Load and register plugin tools to server
-pub async fn load_plugin_tools_to_server(
-    tool_server: &ToolServer,
-    plugins: Vec<PluginToolMeta>,
-) {
+pub async fn load_plugin_tools_to_server(tool_server: &ToolServer, plugins: Vec<PluginToolMeta>) {
     tracing::info!("Loading {} plugin tools", plugins.len());
-    
+
     for plugin_meta in plugins {
         let full_name = format!("plugin::{}", plugin_meta.plugin_id);
-        
+
         // Register plugin context if code is available
         if let Some(code) = &plugin_meta.code {
             let ctx = PluginContext {
@@ -203,19 +199,21 @@ pub async fn load_plugin_tools_to_server(
             };
             register_plugin_context(ctx).await;
         }
-        
+
         let executor = create_plugin_executor(plugin_meta.plugin_id.clone());
-        
-        tool_server.register_plugin_tool(
-            &plugin_meta.plugin_id,
-            &plugin_meta.name,
-            &plugin_meta.description,
-            plugin_meta.input_schema,
-            None,
-            plugin_meta.category,
-            executor,
-        ).await;
-        
+
+        tool_server
+            .register_plugin_tool(
+                &plugin_meta.plugin_id,
+                &plugin_meta.name,
+                &plugin_meta.description,
+                plugin_meta.input_schema,
+                None,
+                plugin_meta.category,
+                executor,
+            )
+            .await;
+
         tracing::debug!("Registered plugin tool: {}", full_name);
     }
 }
@@ -234,18 +232,20 @@ impl PluginToolAdapter {
     pub fn create_tool_def(meta: &PluginToolMeta) -> DynamicToolDef {
         let plugin_id = meta.plugin_id.clone();
         let full_name = format!("plugin::{}", plugin_id);
-        
+
         DynamicToolDef {
             name: full_name,
             description: meta.description.clone(),
             input_schema: meta.input_schema.clone(),
             output_schema: None,
-            source: ToolSource::Plugin { plugin_id: plugin_id.clone() },
+            source: ToolSource::Plugin {
+                plugin_id: plugin_id.clone(),
+            },
             category: meta.category.clone().unwrap_or_else(|| "other".to_string()),
             executor: create_plugin_executor(plugin_id),
         }
     }
-    
+
     /// 从插件代码获取 input_schema（仅通过运行时调用 get_input_schema）
     ///
     /// 加载插件后调用其导出的 `get_input_schema()` 函数获取 schema。
@@ -258,13 +258,17 @@ impl PluginToolAdapter {
     /// # 返回
     /// - 成功：返回插件定义的 JSON Schema
     /// - 失败：返回默认空 schema
-    pub async fn get_input_schema_runtime(code: &str, metadata: sentinel_plugins::PluginMetadata) -> Value {
-        tracing::info!("Getting input schema via runtime call for plugin: {}", metadata.id);
-        
+    pub async fn get_input_schema_runtime(
+        code: &str,
+        metadata: sentinel_plugins::PluginMetadata,
+    ) -> Value {
+        tracing::info!(
+            "Getting input schema via runtime call for plugin: {}",
+            metadata.id
+        );
+
         match sentinel_plugins::get_input_schema_from_code(code, metadata).await {
-            Ok(schema) => {
-                schema
-            }
+            Ok(schema) => schema,
             Err(e) => {
                 tracing::warn!(
                     "Failed to get input schema from runtime: {}, plugin must export get_input_schema()",
@@ -275,11 +279,17 @@ impl PluginToolAdapter {
             }
         }
     }
-    
+
     /// Get plugin output schema via runtime call
-    pub async fn get_output_schema_runtime(code: &str, metadata: sentinel_plugins::PluginMetadata) -> Value {
-        tracing::info!("Getting output schema via runtime call for plugin: {}", metadata.id);
-        
+    pub async fn get_output_schema_runtime(
+        code: &str,
+        metadata: sentinel_plugins::PluginMetadata,
+    ) -> Value {
+        tracing::info!(
+            "Getting output schema via runtime call for plugin: {}",
+            metadata.id
+        );
+
         match sentinel_plugins::get_output_schema_from_code(code, metadata).await {
             Ok(schema) => {
                 tracing::info!("Successfully got output schema from plugin runtime");
@@ -295,7 +305,7 @@ impl PluginToolAdapter {
             }
         }
     }
-    
+
     /// Default empty schema
     fn default_schema() -> Value {
         serde_json::json!({
@@ -318,7 +328,7 @@ mod tests {
         };
 
         register_plugin_context(ctx.clone()).await;
-        
+
         let retrieved = get_plugin_context("test-plugin").await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().name, "Test Plugin");

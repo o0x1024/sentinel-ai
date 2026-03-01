@@ -23,13 +23,13 @@ impl MemoryLeakDetector {
         let mut system = System::new_all();
         system.refresh_all();
         let pid = sysinfo::get_current_pid().unwrap();
-        
+
         system.refresh_process(pid);
         let baseline_mb = system
             .process(pid)
             .map(|p| p.memory() as f64 / 1024.0 / 1024.0)
             .unwrap_or(0.0);
-        
+
         Self {
             system,
             pid,
@@ -40,7 +40,7 @@ impl MemoryLeakDetector {
 
     fn sample(&mut self, elapsed: Duration) {
         self.system.refresh_process(self.pid);
-        
+
         if let Some(process) = self.system.process(self.pid) {
             let memory_mb = process.memory() as f64 / 1024.0 / 1024.0;
             self.samples.push((elapsed, memory_mb));
@@ -58,7 +58,11 @@ impl MemoryLeakDetector {
         let sum_x: f64 = self.samples.iter().map(|(d, _)| d.as_secs_f64()).sum();
         let sum_y: f64 = self.samples.iter().map(|(_, m)| *m).sum();
         let sum_xy: f64 = self.samples.iter().map(|(d, m)| d.as_secs_f64() * m).sum();
-        let sum_x2: f64 = self.samples.iter().map(|(d, _)| d.as_secs_f64().powi(2)).sum();
+        let sum_x2: f64 = self
+            .samples
+            .iter()
+            .map(|(d, _)| d.as_secs_f64().powi(2))
+            .sum();
 
         // 线性回归: y = mx + b
         let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x.powi(2));
@@ -72,13 +76,13 @@ impl MemoryLeakDetector {
 
     fn print_report(&self) {
         let (is_leaking, slope, _) = self.detect_leak();
-        
+
         println!("\n{}", "=".repeat(80));
         println!("Memory Leak Detection Report");
         println!("{}", "=".repeat(80));
         println!("Baseline Memory: {:.2} MB", self.baseline_mb);
         println!("Samples Collected: {}", self.samples.len());
-        
+
         if let Some((_, first_mem)) = self.samples.first() {
             if let Some((_, last_mem)) = self.samples.last() {
                 println!("First Sample: {:.2} MB", first_mem);
@@ -86,9 +90,12 @@ impl MemoryLeakDetector {
                 println!("Memory Growth: {:.2} MB", last_mem - first_mem);
             }
         }
-        
+
         println!("Growth Rate: {:.4} MB/s", slope);
-        println!("Leak Detected: {}", if is_leaking { "YES ⚠️" } else { "NO ✓" });
+        println!(
+            "Leak Detected: {}",
+            if is_leaking { "YES ⚠️" } else { "NO ✓" }
+        );
         println!("{}", "=".repeat(80));
     }
 }
@@ -153,7 +160,10 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let mut detector = MemoryLeakDetector::new();
     let start = Instant::now();
@@ -163,7 +173,7 @@ export function scan_transaction(transaction) {
     while start.elapsed() < test_duration {
         let transaction = create_test_transaction();
         let _ = engine.scan_transaction(&transaction).await;
-        
+
         iteration += 1;
         if iteration % 100 == 0 {
             detector.sample(start.elapsed());
@@ -171,7 +181,7 @@ export function scan_transaction(transaction) {
     }
 
     detector.print_report();
-    
+
     let (is_leaking, slope, _) = detector.detect_leak();
     assert!(!is_leaking, "Memory leak detected: {:.4} MB/s", slope);
 }
@@ -216,7 +226,10 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let mut detector = MemoryLeakDetector::new();
     let start = Instant::now();
@@ -226,7 +239,7 @@ export function scan_transaction(transaction) {
     while start.elapsed() < test_duration {
         let transaction = create_test_transaction();
         let _ = engine.scan_transaction(&transaction).await;
-        
+
         iteration += 1;
         if iteration % 10 == 0 {
             detector.sample(start.elapsed());
@@ -234,7 +247,7 @@ export function scan_transaction(transaction) {
     }
 
     detector.print_report();
-    
+
     let (is_leaking, slope, _) = detector.detect_leak();
     assert!(!is_leaking, "Memory leak detected: {:.4} MB/s", slope);
 }
@@ -296,7 +309,10 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let mut detector = MemoryLeakDetector::new();
     let start = Instant::now();
@@ -306,7 +322,7 @@ export function scan_transaction(transaction) {
     while start.elapsed() < test_duration {
         let transaction = create_test_transaction();
         let _ = engine.scan_transaction(&transaction).await;
-        
+
         iteration += 1;
         if iteration % 50 == 0 {
             detector.sample(start.elapsed());
@@ -314,7 +330,7 @@ export function scan_transaction(transaction) {
     }
 
     detector.print_report();
-    
+
     let (is_leaking, slope, _) = detector.detect_leak();
     assert!(!is_leaking, "Memory leak detected: {:.4} MB/s", slope);
 }
@@ -362,7 +378,10 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let mut detector = MemoryLeakDetector::new();
     let start = Instant::now();
@@ -372,7 +391,7 @@ export function scan_transaction(transaction) {
     while start.elapsed() < test_duration {
         let transaction = create_test_transaction();
         let _ = engine.scan_transaction(&transaction).await;
-        
+
         iteration += 1;
         if iteration % 50 == 0 {
             detector.sample(start.elapsed());
@@ -380,7 +399,7 @@ export function scan_transaction(transaction) {
     }
 
     detector.print_report();
-    
+
     let (is_leaking, slope, _) = detector.detect_leak();
     assert!(!is_leaking, "Memory leak detected: {:.4} MB/s", slope);
 }
@@ -430,7 +449,10 @@ export async function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let mut detector = MemoryLeakDetector::new();
     let start = Instant::now();
@@ -440,7 +462,7 @@ export async function scan_transaction(transaction) {
     while start.elapsed() < test_duration {
         let transaction = create_test_transaction();
         let _ = engine.scan_transaction(&transaction).await;
-        
+
         iteration += 1;
         if iteration % 20 == 0 {
             detector.sample(start.elapsed());
@@ -448,7 +470,7 @@ export async function scan_transaction(transaction) {
     }
 
     detector.print_report();
-    
+
     let (is_leaking, slope, _) = detector.detect_leak();
     assert!(!is_leaking, "Memory leak detected: {:.4} MB/s", slope);
 }
@@ -499,14 +521,17 @@ export function scan_transaction(transaction) {
     while start.elapsed() < test_duration {
         // 每次创建新引擎（测试隔离性）
         let mut engine = PluginEngine::new().unwrap();
-        engine.load_plugin_with_metadata(code, metadata.clone()).await.unwrap();
-        
+        engine
+            .load_plugin_with_metadata(code, metadata.clone())
+            .await
+            .unwrap();
+
         let transaction = create_test_transaction();
         let _ = engine.scan_transaction(&transaction).await;
-        
+
         // 显式销毁引擎
         drop(engine);
-        
+
         iteration += 1;
         if iteration % 10 == 0 {
             detector.sample(start.elapsed());
@@ -514,8 +539,7 @@ export function scan_transaction(transaction) {
     }
 
     detector.print_report();
-    
+
     let (is_leaking, slope, _) = detector.detect_leak();
     assert!(!is_leaking, "Memory leak detected: {:.4} MB/s", slope);
 }
-

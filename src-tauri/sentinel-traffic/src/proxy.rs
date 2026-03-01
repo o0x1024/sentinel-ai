@@ -6,7 +6,7 @@
 //! - 请求/响应 tee（异步扫描队列）
 //! - 忽略上游证书验证（用于抓取证书异常的站点）
 
-use crate::{TrafficError, ProxyStats, RequestContext, ResponseContext, Result};
+use crate::{ProxyStats, RequestContext, ResponseContext, Result, TrafficError};
 use brotli::Decompressor;
 use flate2::read::GzDecoder;
 use http_body_util::{BodyExt, Full};
@@ -549,10 +549,10 @@ pub enum ScanTask {
     Request(RequestContext),
     Response(ResponseContext),
     ReloadPlugin(String),
-    RemovePlugin(String), // 移除/禁用插件
-    FailedConnection(FailedConnection), // TLS 握手失败的连接
+    RemovePlugin(String),                            // 移除/禁用插件
+    FailedConnection(FailedConnection),              // TLS 握手失败的连接
     WebSocketConnection(WebSocketConnectionContext), // WebSocket 连接建立
-    WebSocketMessage(WebSocketMessageContext), // WebSocket 消息
+    WebSocketMessage(WebSocketMessageContext),       // WebSocket 消息
 }
 
 /// 代理处理器（实现 Hudsucker HttpHandler）
@@ -1014,10 +1014,7 @@ impl TrafficProxyHandler {
                         (decompressed, true)
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to decompress brotli body: {}, returning empty",
-                            e
-                        );
+                        warn!("Failed to decompress brotli body: {}, returning empty", e);
                         (Vec::new(), false) // 解压失败返回空数据
                     }
                 }
@@ -1037,10 +1034,7 @@ impl TrafficProxyHandler {
                         (decompressed, true)
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to decompress deflate body: {}, returning empty",
-                            e
-                        );
+                        warn!("Failed to decompress deflate body: {}, returning empty", e);
                         (Vec::new(), false)
                     }
                 }

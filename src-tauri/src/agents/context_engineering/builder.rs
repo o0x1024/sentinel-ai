@@ -17,8 +17,7 @@ use crate::agents::context_engineering::checkpoint::{
 };
 use crate::agents::context_engineering::memory_index::{
     evict_low_value_items, ingest_memory_items, ingest_memory_items_persistent,
-    retrieve_memory_items_hybrid,
-    MemoryQuery,
+    retrieve_memory_items_hybrid, MemoryQuery,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
 use crate::agents::context_engineering::policy::{ContextPolicy, ContextScope};

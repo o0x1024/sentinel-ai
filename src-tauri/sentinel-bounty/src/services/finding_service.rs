@@ -1,10 +1,10 @@
 //! Finding management service
 
-use chrono::Utc;
 use crate::error::{BountyError, Result};
+use chrono::Utc;
 use sentinel_db::{BountyFindingRow, DatabaseService};
-use uuid::Uuid;
 use std::collections::HashSet;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct CreateFindingInput {
@@ -91,11 +91,11 @@ impl FindingService {
             input.asset_id.as_deref(),
         );
 
-        if let Some(existing) = db
-            .get_bounty_finding_by_fingerprint(&fingerprint)
-            .await?
-        {
-            return Err(BountyError::DuplicateFinding(format!("Duplicate finding exists: {}", existing.id)));
+        if let Some(existing) = db.get_bounty_finding_by_fingerprint(&fingerprint).await? {
+            return Err(BountyError::DuplicateFinding(format!(
+                "Duplicate finding exists: {}",
+                existing.id
+            )));
         }
 
         let mut duplicate_of: Option<String> = None;
@@ -130,7 +130,9 @@ impl FindingService {
             impact: input.impact,
             remediation: input.remediation,
             evidence_ids_json: None,
-            tags_json: input.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
+            tags_json: input
+                .tags
+                .map(|t| serde_json::to_string(&t).unwrap_or_default()),
             metadata_json: None,
             fingerprint,
             duplicate_of,
@@ -142,8 +144,7 @@ impl FindingService {
             created_by: "user".to_string(),
         };
 
-        db.create_bounty_finding(&finding)
-            .await?;
+        db.create_bounty_finding(&finding).await?;
         Ok(finding)
     }
 
@@ -152,33 +153,58 @@ impl FindingService {
         id: &str,
         input: UpdateFindingInput,
     ) -> Result<bool> {
-        let existing = db
-            .get_bounty_finding(id)
-            .await?;
+        let existing = db.get_bounty_finding(id).await?;
 
         let Some(mut finding) = existing else {
             return Ok(false);
         };
 
-        if let Some(title) = input.title { finding.title = title; }
-        if let Some(description) = input.description { finding.description = description; }
-        if let Some(finding_type) = input.finding_type { finding.finding_type = finding_type; }
-        if let Some(severity) = input.severity { finding.severity = severity; }
-        if let Some(status) = input.status { finding.status = status; }
-        if let Some(confidence) = input.confidence { finding.confidence = confidence; }
-        if input.cvss_score.is_some() { finding.cvss_score = input.cvss_score; }
-        if input.cwe_id.is_some() { finding.cwe_id = input.cwe_id; }
-        if input.affected_url.is_some() { finding.affected_url = input.affected_url; }
-        if input.affected_parameter.is_some() { finding.affected_parameter = input.affected_parameter; }
-        if let Some(steps) = input.reproduction_steps {
-            finding.reproduction_steps_json = Some(serde_json::to_string(&steps).unwrap_or_default());
+        if let Some(title) = input.title {
+            finding.title = title;
         }
-        if input.impact.is_some() { finding.impact = input.impact; }
-        if input.remediation.is_some() { finding.remediation = input.remediation; }
+        if let Some(description) = input.description {
+            finding.description = description;
+        }
+        if let Some(finding_type) = input.finding_type {
+            finding.finding_type = finding_type;
+        }
+        if let Some(severity) = input.severity {
+            finding.severity = severity;
+        }
+        if let Some(status) = input.status {
+            finding.status = status;
+        }
+        if let Some(confidence) = input.confidence {
+            finding.confidence = confidence;
+        }
+        if input.cvss_score.is_some() {
+            finding.cvss_score = input.cvss_score;
+        }
+        if input.cwe_id.is_some() {
+            finding.cwe_id = input.cwe_id;
+        }
+        if input.affected_url.is_some() {
+            finding.affected_url = input.affected_url;
+        }
+        if input.affected_parameter.is_some() {
+            finding.affected_parameter = input.affected_parameter;
+        }
+        if let Some(steps) = input.reproduction_steps {
+            finding.reproduction_steps_json =
+                Some(serde_json::to_string(&steps).unwrap_or_default());
+        }
+        if input.impact.is_some() {
+            finding.impact = input.impact;
+        }
+        if input.remediation.is_some() {
+            finding.remediation = input.remediation;
+        }
         if let Some(tags) = input.tags {
             finding.tags_json = Some(serde_json::to_string(&tags).unwrap_or_default());
         }
-        if input.duplicate_of.is_some() { finding.duplicate_of = input.duplicate_of; }
+        if input.duplicate_of.is_some() {
+            finding.duplicate_of = input.duplicate_of;
+        }
 
         let new_fingerprint = calculate_finding_fingerprint(
             &finding.program_id,
@@ -194,15 +220,23 @@ impl FindingService {
                 .get_bounty_finding_by_fingerprint_excluding(&new_fingerprint, &finding.id)
                 .await?
             {
-                return Err(BountyError::DuplicateFinding(format!("Duplicate finding exists: {}", existing.id)));
+                return Err(BountyError::DuplicateFinding(format!(
+                    "Duplicate finding exists: {}",
+                    existing.id
+                )));
             }
             finding.fingerprint = new_fingerprint;
         }
 
         let similarity = SimilarityConfig::default();
-        if let Some((similar_id, score)) = find_similar_finding_from_row(db, &finding, &similarity, Some(&finding.id)).await? {
+        if let Some((similar_id, score)) =
+            find_similar_finding_from_row(db, &finding, &similarity, Some(&finding.id)).await?
+        {
             if score >= similarity.threshold {
-                return Err(BountyError::DuplicateFinding(format!("Similar finding exists: {} (score {:.2})", similar_id, score)));
+                return Err(BountyError::DuplicateFinding(format!(
+                    "Similar finding exists: {} (score {:.2})",
+                    similar_id, score
+                )));
             }
         }
 
@@ -214,10 +248,7 @@ impl FindingService {
             .map_err(|e| e.into())
     }
 
-    pub async fn batch_delete_findings(
-        db: &DatabaseService,
-        ids: Vec<String>,
-    ) -> Result<u64> {
+    pub async fn batch_delete_findings(db: &DatabaseService, ids: Vec<String>) -> Result<u64> {
         db.batch_delete_bounty_findings(&ids)
             .await
             .map_err(|e| e.into())
@@ -261,7 +292,10 @@ fn calculate_finding_fingerprint(
     let basis = if !url_key.is_empty() || !param_key.is_empty() {
         format!("{}:{}:{}:{}", program_id, finding_type, url_key, param_key)
     } else {
-        format!("{}:{}:{}:{}:{}", program_id, finding_type, title_key, desc_key, asset_key)
+        format!(
+            "{}:{}:{}:{}:{}",
+            program_id, finding_type, title_key, desc_key, asset_key
+        )
     };
 
     format!("{:x}", md5::compute(basis.as_bytes()))
@@ -296,7 +330,11 @@ async fn find_similar_finding(
     config: &SimilarityConfig,
 ) -> Result<Option<(String, f64)>> {
     let candidates = db
-        .list_bounty_findings_for_similarity(&input.program_id, &input.finding_type, config.candidate_limit)
+        .list_bounty_findings_for_similarity(
+            &input.program_id,
+            &input.finding_type,
+            config.candidate_limit,
+        )
         .await?;
 
     let mut best: Option<(String, f64)> = None;
@@ -326,7 +364,11 @@ async fn find_similar_finding_from_row(
     exclude_id: Option<&str>,
 ) -> Result<Option<(String, f64)>> {
     let candidates = db
-        .list_bounty_findings_for_similarity(&row.program_id, &row.finding_type, config.candidate_limit)
+        .list_bounty_findings_for_similarity(
+            &row.program_id,
+            &row.finding_type,
+            config.candidate_limit,
+        )
         .await?;
 
     let mut best: Option<(String, f64)> = None;
@@ -374,7 +416,10 @@ fn similarity_score(
     total_weight += config.description_weight;
     score += config.description_weight * desc_sim;
 
-    if let (Some(a), Some(b)) = (url_a.and_then(canonicalize_url), url_b.and_then(canonicalize_url)) {
+    if let (Some(a), Some(b)) = (
+        url_a.and_then(canonicalize_url),
+        url_b.and_then(canonicalize_url),
+    ) {
         total_weight += config.url_weight;
         score += config.url_weight * if a == b { 1.0 } else { 0.0 };
     }
@@ -382,7 +427,12 @@ fn similarity_score(
     if let (Some(a), Some(b)) = (param_a, param_b) {
         if !a.trim().is_empty() && !b.trim().is_empty() {
             total_weight += config.parameter_weight;
-            score += config.parameter_weight * if a.trim().eq_ignore_ascii_case(b.trim()) { 1.0 } else { 0.0 };
+            score += config.parameter_weight
+                * if a.trim().eq_ignore_ascii_case(b.trim()) {
+                    1.0
+                } else {
+                    0.0
+                };
         }
     }
 
@@ -401,7 +451,11 @@ fn jaccard_similarity(a: &str, b: &str) -> f64 {
     }
     let intersection = set_a.intersection(&set_b).count() as f64;
     let union = set_a.union(&set_b).count() as f64;
-    if union == 0.0 { 0.0 } else { intersection / union }
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
 }
 
 fn tokenize(s: &str) -> HashSet<String> {

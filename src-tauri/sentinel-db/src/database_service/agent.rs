@@ -1,8 +1,8 @@
-use anyhow::Result;
-use crate::core::models::agent::{AgentTask, AgentSessionData, AgentExecutionResult, SessionLog};
+use crate::core::models::agent::{AgentExecutionResult, AgentSessionData, AgentTask, SessionLog};
 use crate::core::models::workflow::WorkflowStepDetail;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
 
 impl DatabaseService {
     // ============================================================================
@@ -100,10 +100,12 @@ impl DatabaseService {
         let rows = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 if let Some(uid) = user_id {
-                    sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE user_id = $1 ORDER BY id DESC")
-                        .bind(uid)
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, AgentTask>(
+                        "SELECT * FROM agent_tasks WHERE user_id = $1 ORDER BY id DESC",
+                    )
+                    .bind(uid)
+                    .fetch_all(pool)
+                    .await?
                 } else {
                     sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks ORDER BY id DESC")
                         .fetch_all(pool)
@@ -112,10 +114,12 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 if let Some(uid) = user_id {
-                    sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE user_id = ? ORDER BY id DESC")
-                        .bind(uid)
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, AgentTask>(
+                        "SELECT * FROM agent_tasks WHERE user_id = ? ORDER BY id DESC",
+                    )
+                    .bind(uid)
+                    .fetch_all(pool)
+                    .await?
                 } else {
                     sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks ORDER BY id DESC")
                         .fetch_all(pool)
@@ -124,10 +128,12 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 if let Some(uid) = user_id {
-                    sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks WHERE user_id = ? ORDER BY id DESC")
-                        .bind(uid)
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, AgentTask>(
+                        "SELECT * FROM agent_tasks WHERE user_id = ? ORDER BY id DESC",
+                    )
+                    .bind(uid)
+                    .fetch_all(pool)
+                    .await?
                 } else {
                     sqlx::query_as::<_, AgentTask>("SELECT * FROM agent_tasks ORDER BY id DESC")
                         .fetch_all(pool)
@@ -138,7 +144,13 @@ impl DatabaseService {
         Ok(rows)
     }
 
-    pub async fn update_agent_task_status_internal(&self, id: &str, status: &str, _agent_name: Option<&str>, _architecture: Option<&str>) -> Result<()> {
+    pub async fn update_agent_task_status_internal(
+        &self,
+        id: &str,
+        status: &str,
+        _agent_name: Option<&str>,
+        _architecture: Option<&str>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -169,7 +181,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_agent_task_timing_internal(&self, id: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, execution_time_ms: Option<u64>) -> Result<()> {
+    pub async fn update_agent_task_timing_internal(
+        &self,
+        id: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        execution_time_ms: Option<u64>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -206,7 +224,11 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_agent_task_error_internal(&self, id: &str, error_message: &str) -> Result<()> {
+    pub async fn update_agent_task_error_internal(
+        &self,
+        id: &str,
+        error_message: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -241,7 +263,12 @@ impl DatabaseService {
     // Agent Session Operations
     // ============================================================================
 
-    pub async fn create_agent_session_internal(&self, session_id: &str, task_id: &str, agent_name: &str) -> Result<()> {
+    pub async fn create_agent_session_internal(
+        &self,
+        session_id: &str,
+        task_id: &str,
+        agent_name: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -281,7 +308,11 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_agent_session_status_internal(&self, session_id: &str, status: &str) -> Result<()> {
+    pub async fn update_agent_session_status_internal(
+        &self,
+        session_id: &str,
+        status: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -312,7 +343,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_agent_session_internal(&self, session_id: &str) -> Result<Option<AgentSessionData>> {
+    pub async fn get_agent_session_internal(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AgentSessionData>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -347,19 +381,25 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let rows = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as::<_, AgentSessionData>("SELECT * FROM agent_sessions ORDER BY created_at DESC")
-                    .fetch_all(pool)
-                    .await?
+                sqlx::query_as::<_, AgentSessionData>(
+                    "SELECT * FROM agent_sessions ORDER BY created_at DESC",
+                )
+                .fetch_all(pool)
+                .await?
             }
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as::<_, AgentSessionData>("SELECT * FROM agent_sessions ORDER BY created_at DESC")
-                    .fetch_all(pool)
-                    .await?
+                sqlx::query_as::<_, AgentSessionData>(
+                    "SELECT * FROM agent_sessions ORDER BY created_at DESC",
+                )
+                .fetch_all(pool)
+                .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as::<_, AgentSessionData>("SELECT * FROM agent_sessions ORDER BY created_at DESC")
-                    .fetch_all(pool)
-                    .await?
+                sqlx::query_as::<_, AgentSessionData>(
+                    "SELECT * FROM agent_sessions ORDER BY created_at DESC",
+                )
+                .fetch_all(pool)
+                .await?
             }
         };
         Ok(rows)
@@ -397,7 +437,13 @@ impl DatabaseService {
     // Agent Log & Result Operations
     // ============================================================================
 
-    pub async fn add_agent_session_log_internal(&self, session_id: &str, level: &str, message: &str, source: &str) -> Result<()> {
+    pub async fn add_agent_session_log_internal(
+        &self,
+        session_id: &str,
+        level: &str,
+        message: &str,
+        source: &str,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -443,23 +489,24 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_agent_session_logs_internal(&self, session_id: &str) -> Result<Vec<SessionLog>> {
+    pub async fn get_agent_session_logs_internal(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<SessionLog>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let rows = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as::<_, SessionLog>(
-                    "SELECT * FROM agent_session_logs WHERE session_id = $1 ORDER BY created_at ASC"
-                )
-                .bind(session_id)
-                .fetch_all(pool)
-                .await?
-            }
+            DatabasePool::PostgreSQL(pool) => sqlx::query_as::<_, SessionLog>(
+                "SELECT * FROM agent_session_logs WHERE session_id = $1 ORDER BY created_at ASC",
+            )
+            .bind(session_id)
+            .fetch_all(pool)
+            .await?,
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, SessionLog>(
-                    "SELECT * FROM agent_session_logs WHERE session_id = ? ORDER BY created_at ASC"
+                    "SELECT * FROM agent_session_logs WHERE session_id = ? ORDER BY created_at ASC",
                 )
                 .bind(session_id)
                 .fetch_all(pool)
@@ -467,7 +514,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, SessionLog>(
-                    "SELECT * FROM agent_session_logs WHERE session_id = ? ORDER BY created_at ASC"
+                    "SELECT * FROM agent_session_logs WHERE session_id = ? ORDER BY created_at ASC",
                 )
                 .bind(session_id)
                 .fetch_all(pool)
@@ -477,7 +524,11 @@ impl DatabaseService {
         Ok(rows)
     }
 
-    pub async fn save_agent_execution_result_internal(&self, session_id: &str, result: &AgentExecutionResult) -> Result<()> {
+    pub async fn save_agent_execution_result_internal(
+        &self,
+        session_id: &str,
+        result: &AgentExecutionResult,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -523,7 +574,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_agent_execution_result_internal(&self, session_id: &str) -> Result<Option<AgentExecutionResult>> {
+    pub async fn get_agent_execution_result_internal(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<AgentExecutionResult>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -531,7 +585,7 @@ impl DatabaseService {
         let row = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as::<_, AgentExecutionResult>(
-                    "SELECT * FROM agent_execution_results WHERE session_id = $1"
+                    "SELECT * FROM agent_execution_results WHERE session_id = $1",
                 )
                 .bind(session_id)
                 .fetch_optional(pool)
@@ -539,7 +593,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_as::<_, AgentExecutionResult>(
-                    "SELECT * FROM agent_execution_results WHERE session_id = ?"
+                    "SELECT * FROM agent_execution_results WHERE session_id = ?",
                 )
                 .bind(session_id)
                 .fetch_optional(pool)
@@ -547,7 +601,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query_as::<_, AgentExecutionResult>(
-                    "SELECT * FROM agent_execution_results WHERE session_id = ?"
+                    "SELECT * FROM agent_execution_results WHERE session_id = ?",
                 )
                 .bind(session_id)
                 .fetch_optional(pool)
@@ -561,7 +615,11 @@ impl DatabaseService {
     // Agent Step Operations
     // ============================================================================
 
-    pub async fn save_agent_execution_step_internal(&self, session_id: &str, step: &WorkflowStepDetail) -> Result<()> {
+    pub async fn save_agent_execution_step_internal(
+        &self,
+        session_id: &str,
+        step: &WorkflowStepDetail,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -607,41 +665,46 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_agent_execution_steps_internal(&self, session_id: &str) -> Result<Vec<WorkflowStepDetail>> {
+    pub async fn get_agent_execution_steps_internal(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<WorkflowStepDetail>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let rows = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as::<_, WorkflowStepDetail>(
-                    "SELECT * FROM agent_execution_steps WHERE session_id = $1 ORDER BY started_at ASC"
-                )
-                .bind(session_id)
-                .fetch_all(pool)
-                .await?
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query_as::<_, WorkflowStepDetail>(
-                    "SELECT * FROM agent_execution_steps WHERE session_id = ? ORDER BY started_at ASC"
-                )
-                .bind(session_id)
-                .fetch_all(pool)
-                .await?
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query_as::<_, WorkflowStepDetail>(
-                    "SELECT * FROM agent_execution_steps WHERE session_id = ? ORDER BY started_at ASC"
-                )
-                .bind(session_id)
-                .fetch_all(pool)
-                .await?
-            }
+            DatabasePool::PostgreSQL(pool) => sqlx::query_as::<_, WorkflowStepDetail>(
+                "SELECT * FROM agent_execution_steps WHERE session_id = $1 ORDER BY started_at ASC",
+            )
+            .bind(session_id)
+            .fetch_all(pool)
+            .await?,
+            DatabasePool::SQLite(pool) => sqlx::query_as::<_, WorkflowStepDetail>(
+                "SELECT * FROM agent_execution_steps WHERE session_id = ? ORDER BY started_at ASC",
+            )
+            .bind(session_id)
+            .fetch_all(pool)
+            .await?,
+            DatabasePool::MySQL(pool) => sqlx::query_as::<_, WorkflowStepDetail>(
+                "SELECT * FROM agent_execution_steps WHERE session_id = ? ORDER BY started_at ASC",
+            )
+            .bind(session_id)
+            .fetch_all(pool)
+            .await?,
         };
         Ok(rows)
     }
 
-    pub async fn update_agent_execution_step_status_internal(&self, step_id: &str, status: &str, started_at: Option<chrono::DateTime<chrono::Utc>>, completed_at: Option<chrono::DateTime<chrono::Utc>>, duration_ms: Option<u64>, error_message: Option<&str>) -> Result<()> {
+    pub async fn update_agent_execution_step_status_internal(
+        &self,
+        step_id: &str,
+        status: &str,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        duration_ms: Option<u64>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()

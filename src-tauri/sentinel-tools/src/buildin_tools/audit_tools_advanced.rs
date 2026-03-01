@@ -105,7 +105,10 @@ impl Tool for ReadFileTool {
         if path.is_empty() {
             return Err(ReadFileError::InvalidArgs("path is required".to_string()));
         }
-        let limit = args.limit.unwrap_or(READ_FILE_DEFAULT_LIMIT).clamp(1, READ_FILE_MAX_LIMIT);
+        let limit = args
+            .limit
+            .unwrap_or(READ_FILE_DEFAULT_LIMIT)
+            .clamp(1, READ_FILE_MAX_LIMIT);
         let offset = args.offset.unwrap_or(1).max(1);
         let runtime = load_audit_runtime().await;
         match runtime.mode {
@@ -125,7 +128,10 @@ async fn is_dir_docker(path: &str, runtime: &AuditRuntime) -> bool {
 }
 
 async fn path_exists_docker(path: &str, runtime: &AuditRuntime) -> bool {
-    let script = format!("[ -e {} ] && echo EXISTS || echo MISSING", shell_escape(path));
+    let script = format!(
+        "[ -e {} ] && echo EXISTS || echo MISSING",
+        shell_escape(path)
+    );
     let args = vec!["-c".to_string(), script];
     run_audit_command("bash", &args, 5, runtime, false)
         .await
@@ -196,12 +202,23 @@ async fn read_file_docker(
                 candidates.join(", ")
             ));
         }
-        hints.push("tip: call read_file with path='/workspace' first to discover mounted project roots".to_string());
-        return Err(ReadFileError::Io(format!("{} ({})", path, hints.join("; "))));
+        hints.push(
+            "tip: call read_file with path='/workspace' first to discover mounted project roots"
+                .to_string(),
+        );
+        return Err(ReadFileError::Io(format!(
+            "{} ({})",
+            path,
+            hints.join("; ")
+        )));
     }
 
     if is_dir_docker(path, runtime).await {
-        let args = vec!["--color=never".to_string(), "-la".to_string(), path.to_string()];
+        let args = vec![
+            "--color=never".to_string(),
+            "-la".to_string(),
+            path.to_string(),
+        ];
         let out = run_audit_command("ls", &args, 10, runtime, false)
             .await
             .map_err(ReadFileError::CommandFailed)?;
@@ -237,7 +254,9 @@ async fn read_file_docker(
 
     let lines: Vec<&str> = out.stdout.lines().collect();
     let returned = lines.len();
-    let truncated = total_lines.map(|t| t > offset + returned.saturating_sub(1)).unwrap_or(false);
+    let truncated = total_lines
+        .map(|t| t > offset + returned.saturating_sub(1))
+        .unwrap_or(false);
     let numbered: Vec<String> = lines
         .iter()
         .enumerate()
@@ -365,7 +384,11 @@ fn parse_ls_output(output: &str) -> Vec<DirEntry> {
         if name == "." || name == ".." {
             continue;
         }
-        entries.push(DirEntry { name, is_dir, size_bytes: size });
+        entries.push(DirEntry {
+            name,
+            is_dir,
+            size_bytes: size,
+        });
     }
     entries
 }
@@ -457,9 +480,7 @@ impl Tool for ProjectOverviewTool {
         let max_depth = args.max_depth.unwrap_or(PROJECT_MAX_DEPTH).clamp(1, 8);
 
         match runtime.mode {
-            ShellExecutionMode::Docker => {
-                project_overview_docker(&path, max_depth, &runtime).await
-            }
+            ShellExecutionMode::Docker => project_overview_docker(&path, max_depth, &runtime).await,
             ShellExecutionMode::Host => project_overview_host(&path, max_depth).await,
         }
     }
@@ -575,7 +596,10 @@ fn build_overview_from_file_list(
     }
     let mut languages: Vec<LangStat> = lang_counts
         .into_iter()
-        .map(|(language, file_count)| LangStat { language: language.to_string(), file_count })
+        .map(|(language, file_count)| LangStat {
+            language: language.to_string(),
+            file_count,
+        })
         .collect();
     languages.sort_by(|a, b| b.file_count.cmp(&a.file_count));
     languages.truncate(10);
@@ -600,7 +624,10 @@ fn build_overview_from_file_list(
     let mut dependency_manifests: Vec<ManifestInfo> = Vec::new();
     let mut manifests_found: Vec<&str> = Vec::new();
     for file in files {
-        let fname = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let fname = Path::new(file)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         if let Some((_, kind)) = manifest_patterns.iter().find(|(pat, _)| *pat == fname) {
             dependency_manifests.push(ManifestInfo {
                 path: file.to_string(),
@@ -615,8 +642,7 @@ fn build_overview_from_file_list(
     let file_set: std::collections::HashSet<String> =
         files.iter().map(|f| f.to_lowercase()).collect();
     let has_file = |name: &str| file_set.iter().any(|f| f.ends_with(name));
-    let has_content_pattern =
-        |pat: &str| files.iter().any(|f| f.to_lowercase().contains(pat));
+    let has_content_pattern = |pat: &str| files.iter().any(|f| f.to_lowercase().contains(pat));
 
     if has_file("next.config.js") || has_file("next.config.ts") {
         frameworks.push("Next.js".to_string());
@@ -630,7 +656,11 @@ fn build_overview_from_file_list(
     if has_file("angular.json") {
         frameworks.push("Angular".to_string());
     }
-    if has_content_pattern("react") && file_set.iter().any(|f| f.ends_with(".jsx") || f.ends_with(".tsx")) {
+    if has_content_pattern("react")
+        && file_set
+            .iter()
+            .any(|f| f.ends_with(".jsx") || f.ends_with(".tsx"))
+    {
         frameworks.push("React".to_string());
     }
     if has_file("manage.py") || has_content_pattern("django") {
@@ -642,7 +672,10 @@ fn build_overview_from_file_list(
     if has_content_pattern("fastapi") {
         frameworks.push("FastAPI".to_string());
     }
-    if has_content_pattern("spring") || has_file("application.properties") || has_file("application.yml") {
+    if has_content_pattern("spring")
+        || has_file("application.properties")
+        || has_file("application.yml")
+    {
         frameworks.push("Spring".to_string());
     }
     if manifests_found.contains(&"cargo") {
@@ -1029,7 +1062,11 @@ impl Tool for DependencyAuditTool {
                 let (vulns, method, note) = if run_scanners {
                     run_security_scanner(kind, &manifest_path, &runtime).await
                 } else {
-                    (vec![], "static_only".to_string(), Some("Scanner skipped (run_scanners=false)".to_string()))
+                    (
+                        vec![],
+                        "static_only".to_string(),
+                        Some("Scanner skipped (run_scanners=false)".to_string()),
+                    )
                 };
                 manifests.push(ManifestScan {
                     kind: kind.to_string(),
@@ -1060,11 +1097,7 @@ impl Tool for DependencyAuditTool {
     }
 }
 
-async fn find_manifest_files(
-    root: &str,
-    name: &str,
-    runtime: &AuditRuntime,
-) -> Vec<String> {
+async fn find_manifest_files(root: &str, name: &str, runtime: &AuditRuntime) -> Vec<String> {
     // Use find command to locate manifest files (skip .git, node_modules, target)
     let find_args = vec![
         root.to_string(),
@@ -1086,7 +1119,12 @@ async fn find_manifest_files(
         "*/.cargo/*".to_string(),
     ];
     match run_audit_command("find", &find_args, 20, runtime, true).await {
-        Ok(out) => out.stdout.lines().map(str::to_string).filter(|s| !s.is_empty()).collect(),
+        Ok(out) => out
+            .stdout
+            .lines()
+            .map(str::to_string)
+            .filter(|s| !s.is_empty())
+            .collect(),
         Err(_) => vec![],
     }
 }
@@ -1148,9 +1186,8 @@ fn parse_cargo_deps(content: &str) -> Vec<DepInfo> {
     // Track table-style deps like [dependencies.serde]
     let mut table_dep_name: Option<String> = None;
 
-    static RE_INLINE_VERSION: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r#"version\s*=\s*"([^"]+)""#).unwrap()
-    });
+    static RE_INLINE_VERSION: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r#"version\s*=\s*"([^"]+)""#).unwrap());
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -1317,7 +1354,11 @@ async fn run_npm_audit(
             let vulns = parse_npm_audit_json(&out.stdout);
             (vulns, "scanner".to_string(), None)
         }
-        Ok(_) => (vec![], "scanner".to_string(), Some("npm audit returned no output".to_string())),
+        Ok(_) => (
+            vec![],
+            "scanner".to_string(),
+            Some("npm audit returned no output".to_string()),
+        ),
         Err(e) => (vec![], "scanner_unavailable".to_string(), Some(e)),
     }
 }
@@ -1383,17 +1424,18 @@ async fn run_cargo_audit(
     dir: &str,
     runtime: &AuditRuntime,
 ) -> (Vec<VulnInfo>, String, Option<String>) {
-    let script = format!(
-        "cd {} && cargo audit --json 2>/dev/null",
-        shell_escape(dir)
-    );
+    let script = format!("cd {} && cargo audit --json 2>/dev/null", shell_escape(dir));
     let args = vec!["-c".to_string(), script];
     match run_audit_command("bash", &args, 120, runtime, true).await {
         Ok(out) if !out.stdout.trim().is_empty() => {
             let vulns = parse_cargo_audit_json(&out.stdout);
             (vulns, "scanner".to_string(), None)
         }
-        Ok(_) => (vec![], "scanner_unavailable".to_string(), Some("cargo audit not installed or no vulnerabilities".to_string())),
+        Ok(_) => (
+            vec![],
+            "scanner_unavailable".to_string(),
+            Some("cargo audit not installed or no vulnerabilities".to_string()),
+        ),
         Err(e) => (vec![], "scanner_unavailable".to_string(), Some(e)),
     }
 }
@@ -1498,7 +1540,10 @@ fn parse_pip_audit_json(json_str: &str) -> Vec<VulnInfo> {
     let mut vulns = Vec::new();
     if let Some(arr) = json.as_array() {
         for entry in arr {
-            let pkg = entry.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+            let pkg = entry
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
             let ver = entry
                 .get("version")
                 .and_then(|v| v.as_str())
@@ -1523,10 +1568,7 @@ fn parse_pip_audit_json(json_str: &str) -> Vec<VulnInfo> {
                             .and_then(|a| a.first())
                             .and_then(|v| v.as_str())
                             .map(str::to_string),
-                        advisory_url: v
-                            .get("link")
-                            .and_then(|l| l.as_str())
-                            .map(str::to_string),
+                        advisory_url: v.get("link").and_then(|l| l.as_str()).map(str::to_string),
                     });
                 }
             }
@@ -1633,7 +1675,9 @@ impl Tool for CrossFileTaintTool {
         let source_patterns = args
             .source_patterns
             .unwrap_or_else(default_cross_source_patterns);
-        let sink_patterns = args.sink_patterns.unwrap_or_else(default_cross_sink_patterns);
+        let sink_patterns = args
+            .sink_patterns
+            .unwrap_or_else(default_cross_sink_patterns);
 
         if source_patterns.is_empty() || sink_patterns.is_empty() {
             return Err(CrossFileTaintError::InvalidArgs(
@@ -1697,7 +1741,9 @@ impl Tool for CrossFileTaintTool {
                     };
 
                     for rg_line in rg_out.stdout.lines() {
-                        let Some(hit) = parse_rg_line(rg_line) else { continue };
+                        let Some(hit) = parse_rg_line(rg_line) else {
+                            continue;
+                        };
                         // Check if this hit is near a sink point
                         for sink_pt in sink_points {
                             let dist = (hit.line as isize - sink_pt.1 as isize).unsigned_abs();
@@ -1793,15 +1839,14 @@ fn extract_tainted_ident(text: &str) -> Option<String> {
     // e.g., "request.getParameter("foo")" → "foo"
     let text = text.trim();
 
-    static RE_GET_PARAM: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r#"get\w*\(\s*["'](\w+)["']"#).unwrap()
-    });
+    static RE_GET_PARAM: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r#"get\w*\(\s*["'](\w+)["']"#).unwrap());
     static RE_DOT_FIELD: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r"(?:req|request|ctx|context|params|query|body|input|args?)\.\w+\.(\w+)").unwrap()
+        regex::Regex::new(r"(?:req|request|ctx|context|params|query|body|input|args?)\.\w+\.(\w+)")
+            .unwrap()
     });
-    static RE_DOT_SINGLE: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r"(?:req|request|ctx|context)\.\w+\b").unwrap()
-    });
+    static RE_DOT_SINGLE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"(?:req|request|ctx|context)\.\w+\b").unwrap());
 
     // Named parameter in function call: getParameter("name"), get("key"), etc.
     if let Some(cap) = RE_GET_PARAM.captures(text) {
@@ -2007,7 +2052,9 @@ impl Tool for AuditReportTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         if args.findings.is_empty() {
-            return Err(AuditReportError::InvalidArgs("findings must not be empty".to_string()));
+            return Err(AuditReportError::InvalidArgs(
+                "findings must not be empty".to_string(),
+            ));
         }
         let format = args.format.as_deref().unwrap_or("markdown").to_lowercase();
         let title = args
@@ -2065,11 +2112,7 @@ fn render_markdown(
     for sev in &["critical", "high", "medium", "low", "info"] {
         let count = severity_summary.get(*sev).copied().unwrap_or(0);
         if count > 0 {
-            out.push_str(&format!(
-                "| {} | {} |\n",
-                sev.to_uppercase(),
-                count
-            ));
+            out.push_str(&format!("| {} | {} |\n", sev.to_uppercase(), count));
         }
     }
     out.push_str(&format!("| **Total** | **{}** |\n\n", findings.len()));
@@ -2081,7 +2124,10 @@ fn render_markdown(
         .filter(|f| {
             f.get("evidence")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().any(|v| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)))
+                .map(|arr| {
+                    arr.iter()
+                        .any(|v| v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false))
+                })
                 .unwrap_or(false)
         })
         .count() as f64;
@@ -2114,9 +2160,21 @@ fn render_markdown(
         })
         .count() as f64;
 
-    let evidence_rate = if total > 0.0 { with_evidence_count / total } else { 0.0 };
-    let uncertain_rate = if total > 0.0 { uncertain_count / total } else { 0.0 };
-    let false_positive_rate = if total > 0.0 { false_positive_count / total } else { 0.0 };
+    let evidence_rate = if total > 0.0 {
+        with_evidence_count / total
+    } else {
+        0.0
+    };
+    let uncertain_rate = if total > 0.0 {
+        uncertain_count / total
+    } else {
+        0.0
+    };
+    let false_positive_rate = if total > 0.0 {
+        false_positive_count / total
+    } else {
+        0.0
+    };
 
     let min_evidence_rate = 0.70;
     let max_uncertain_rate = 0.30;
@@ -2151,11 +2209,11 @@ fn render_markdown(
     out.push_str("## Findings\n\n");
     for (i, f) in findings.iter().enumerate() {
         let id = f.get("id").and_then(|v| v.as_str()).unwrap_or("-");
-        let title_f = f.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
-        let severity = f
-            .get("severity")
+        let title_f = f
+            .get("title")
             .and_then(|v| v.as_str())
-            .unwrap_or("info");
+            .unwrap_or("Untitled");
+        let severity = f.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
         let cwe = f.get("cwe").and_then(|v| v.as_str()).unwrap_or("-");
         let confidence = f
             .get("confidence")

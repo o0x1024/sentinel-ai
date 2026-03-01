@@ -135,8 +135,6 @@ pub struct Migration {
     pub checksum: String,
 }
 
-
-
 /// 扫描任务
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ScanTask {
@@ -297,8 +295,6 @@ impl Vulnerability {
     }
 }
 
-
-
 /// MCP连接
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct McpConnection {
@@ -360,7 +356,7 @@ pub struct AiConversation {
     pub total_messages: i32,
     pub total_tokens: i32,
     pub cost: f64,
-    pub tags: Option<String>, // JSON数组
+    pub tags: Option<String>,        // JSON数组
     pub tool_config: Option<String>, // JSON工具配置
     pub is_archived: bool,
     pub created_at: DateTime<Utc>,
@@ -437,8 +433,8 @@ pub struct AiMessage {
     pub metadata: Option<String>, // JSON对象
     pub token_count: Option<i32>,
     pub cost: Option<f64>,
-    pub tool_calls: Option<String>,  // JSON数组
-    pub attachments: Option<String>, // JSON数组
+    pub tool_calls: Option<String>,        // JSON数组
+    pub attachments: Option<String>,       // JSON数组
     pub reasoning_content: Option<String>, // 推理内容（deepseek-reasoner）
     pub timestamp: DateTime<Utc>,
     pub architecture_type: Option<String>,
@@ -457,8 +453,6 @@ pub struct AiUsageStats {
     pub cost: f64,
     pub last_used: Option<DateTime<Utc>>,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ConversationSegment {
@@ -494,8 +488,6 @@ pub struct Configuration {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct NotificationRule {

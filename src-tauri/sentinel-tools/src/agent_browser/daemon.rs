@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use tracing::{debug, info};
 
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 #[cfg(windows)]
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 /// Get the temp directory for daemon files
 fn get_temp_dir() -> PathBuf {
@@ -46,7 +46,10 @@ pub fn get_pid_file(session: &str) -> PathBuf {
 fn get_port_for_session(session: &str) -> u16 {
     let mut hash: i32 = 0;
     for c in session.chars() {
-        hash = hash.wrapping_shl(5).wrapping_sub(hash).wrapping_add(c as i32);
+        hash = hash
+            .wrapping_shl(5)
+            .wrapping_sub(hash)
+            .wrapping_add(c as i32);
     }
     // Port range 49152-65535
     49152 + ((hash.abs() as u32) % 16383) as u16
@@ -83,7 +86,9 @@ fn is_process_alive(pid: u32) -> bool {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if handle != std::ptr::null_mut() {
@@ -116,13 +121,15 @@ pub fn cleanup_daemon_files(session: &str) {
 fn get_daemon_script_path() -> Result<PathBuf> {
     // Try multiple locations
     let mut candidates = vec![];
-    
+
     // Development: absolute path (for debugging)
     #[cfg(debug_assertions)]
     {
-        candidates.push(PathBuf::from("/Users/a1024/code/ai/sentinel-ai/src-tauri/agent-browser/dist/daemon.js"));
+        candidates.push(PathBuf::from(
+            "/Users/a1024/code/ai/sentinel-ai/src-tauri/agent-browser/dist/daemon.js",
+        ));
     }
-    
+
     // Release: bundled resources directory
     #[cfg(not(debug_assertions))]
     {
@@ -150,7 +157,7 @@ fn get_daemon_script_path() -> Result<PathBuf> {
             }
         }
     }
-    
+
     candidates.extend(vec![
         // Development: in src-tauri directory
         PathBuf::from("src-tauri/agent-browser/dist/daemon.js"),
@@ -171,7 +178,7 @@ fn get_daemon_script_path() -> Result<PathBuf> {
             return Ok(path.clone());
         }
     }
-    
+
     // Log current directory for debugging
     if let Ok(cwd) = env::current_dir() {
         debug!("Current working directory: {:?}", cwd);
@@ -197,7 +204,9 @@ fn get_daemon_script_path() -> Result<PathBuf> {
         }
     }
 
-    anyhow::bail!("agent-browser daemon not found. Please install it with: npm install -g agent-browser")
+    anyhow::bail!(
+        "agent-browser daemon not found. Please install it with: npm install -g agent-browser"
+    )
 }
 
 /// Get tauri app data directory
@@ -242,7 +251,10 @@ impl DaemonManager {
             return Ok(());
         }
 
-        info!("Starting agent-browser daemon for session: {}", self.session);
+        info!(
+            "Starting agent-browser daemon for session: {}",
+            self.session
+        );
 
         // Clean up any stale files
         cleanup_daemon_files(&self.session);
@@ -259,12 +271,15 @@ impl DaemonManager {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        
+
         // Set Chrome executable path based on platform if not already set
         if env::var("AGENT_BROWSER_EXECUTABLE_PATH").is_err() {
             #[cfg(target_os = "macos")]
             {
-                cmd.env("AGENT_BROWSER_EXECUTABLE_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+                cmd.env(
+                    "AGENT_BROWSER_EXECUTABLE_PATH",
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                );
             }
             #[cfg(target_os = "windows")]
             {
@@ -296,7 +311,9 @@ impl DaemonManager {
             }
         }
 
-        let child = cmd.spawn().context("Failed to start agent-browser daemon")?;
+        let child = cmd
+            .spawn()
+            .context("Failed to start agent-browser daemon")?;
         let pid = child.id();
         info!("Daemon started with PID: {}", pid);
 
@@ -393,7 +410,9 @@ fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        };
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
             if handle != std::ptr::null_mut() {
@@ -435,7 +454,7 @@ pub fn stop_daemon(session: &str) {
 pub fn stop_all_daemons() {
     // Stop default session
     stop_daemon("default");
-    
+
     // Clean up any stale files
     let tmp_dir = std::env::temp_dir();
     if let Ok(entries) = std::fs::read_dir(&tmp_dir) {

@@ -1,11 +1,21 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TaskPriority { Low, Normal, High, Critical }
+pub enum TaskPriority {
+    Low,
+    Normal,
+    High,
+    Critical,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LogLevel { Debug, Info, Warn, Error }
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AgentTask {
@@ -14,7 +24,7 @@ pub struct AgentTask {
     pub target: Option<String>,
     pub parameters: String, // Store as JSON string for sqlx
     pub user_id: String,
-    pub priority: String, // Store as string for sqlx
+    pub priority: String,     // Store as string for sqlx
     pub timeout: Option<i64>, // Store as i64 for sqlx
 }
 

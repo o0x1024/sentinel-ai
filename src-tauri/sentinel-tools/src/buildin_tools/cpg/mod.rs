@@ -13,15 +13,15 @@
 //! - `context`         — Audit context generator (system prompt injection)
 //! - `tools`           — Agent-callable tool wrappers
 
-pub mod types;
-pub mod parser;
 pub mod builder;
+pub mod context;
+pub mod parser;
 pub mod query;
 pub mod security_rules;
 pub mod taint;
-pub mod context;
 pub mod tools;
+pub mod types;
 
-pub use tools::{BuildCpgTool, QueryCpgTool, CpgTaintAnalysisTool, CpgSecurityScanTool};
-pub use types::{CodePropertyGraph, CpgNodeKind, CpgEdgeKind};
-pub use context::{generate_audit_context, cpg_availability_notice};
+pub use context::{cpg_availability_notice, generate_audit_context};
+pub use tools::{BuildCpgTool, CpgSecurityScanTool, CpgTaintAnalysisTool, QueryCpgTool};
+pub use types::{CodePropertyGraph, CpgEdgeKind, CpgNodeKind};

@@ -1,8 +1,8 @@
+use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
-use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::service::DatabaseService;
 
 impl DatabaseService {
     pub async fn get_cache_internal(&self, key: &str) -> Result<Option<String>> {
@@ -54,7 +54,13 @@ impl DatabaseService {
         Ok(value)
     }
 
-    pub async fn set_cache_internal(&self, key: &str, value: &str, cache_type: &str, expires_at: Option<DateTime<Utc>>) -> Result<()> {
+    pub async fn set_cache_internal(
+        &self,
+        key: &str,
+        value: &str,
+        cache_type: &str,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -162,24 +168,30 @@ impl DatabaseService {
 
         let affected = match runtime {
             DatabasePool::PostgreSQL(pool) => {
-                let result = sqlx::query("DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= $1")
-                    .bind(now)
-                    .execute(pool)
-                    .await?;
+                let result = sqlx::query(
+                    "DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= $1",
+                )
+                .bind(now)
+                .execute(pool)
+                .await?;
                 result.rows_affected()
             }
             DatabasePool::SQLite(pool) => {
-                let result = sqlx::query("DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= ?")
-                    .bind(now)
-                    .execute(pool)
-                    .await?;
+                let result = sqlx::query(
+                    "DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                )
+                .bind(now)
+                .execute(pool)
+                .await?;
                 result.rows_affected()
             }
             DatabasePool::MySQL(pool) => {
-                let result = sqlx::query("DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= ?")
-                    .bind(now)
-                    .execute(pool)
-                    .await?;
+                let result = sqlx::query(
+                    "DELETE FROM cache_storage WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                )
+                .bind(now)
+                .execute(pool)
+                .await?;
                 result.rows_affected()
             }
         };
@@ -187,19 +199,23 @@ impl DatabaseService {
         Ok(affected)
     }
 
-    pub async fn get_all_cache_keys_internal(&self, cache_type: Option<String>) -> Result<Vec<String>> {
+    pub async fn get_all_cache_keys_internal(
+        &self,
+        cache_type: Option<String>,
+    ) -> Result<Vec<String>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        
+
         let keys = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 if let Some(t) = cache_type {
-                    let rows = sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = $1")
-                        .bind(t)
-                        .fetch_all(pool)
-                        .await?;
+                    let rows =
+                        sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = $1")
+                            .bind(t)
+                            .fetch_all(pool)
+                            .await?;
                     rows.iter().map(|r| r.get("cache_key")).collect()
                 } else {
                     let rows = sqlx::query("SELECT cache_key FROM cache_storage")
@@ -210,10 +226,11 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 if let Some(t) = cache_type {
-                    let rows = sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = ?")
-                        .bind(t)
-                        .fetch_all(pool)
-                        .await?;
+                    let rows =
+                        sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = ?")
+                            .bind(t)
+                            .fetch_all(pool)
+                            .await?;
                     rows.iter().map(|r| r.get("cache_key")).collect()
                 } else {
                     let rows = sqlx::query("SELECT cache_key FROM cache_storage")
@@ -224,10 +241,11 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 if let Some(t) = cache_type {
-                    let rows = sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = ?")
-                        .bind(t)
-                        .fetch_all(pool)
-                        .await?;
+                    let rows =
+                        sqlx::query("SELECT cache_key FROM cache_storage WHERE cache_type = ?")
+                            .bind(t)
+                            .fetch_all(pool)
+                            .await?;
                     rows.iter().map(|r| r.get("cache_key")).collect()
                 } else {
                     let rows = sqlx::query("SELECT cache_key FROM cache_storage")

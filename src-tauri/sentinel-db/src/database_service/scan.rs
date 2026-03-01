@@ -1,7 +1,7 @@
-use anyhow::Result;
-use crate::core::models::database::{ScanTask, Vulnerability, ToolExecution};
+use crate::core::models::database::{ScanTask, ToolExecution, Vulnerability};
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
 
 impl DatabaseService {
     pub async fn create_scan_task_internal(&self, task: &ScanTask) -> Result<()> {
@@ -119,38 +119,50 @@ impl DatabaseService {
         let rows = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 if let Some(pid) = project_id {
-                    sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE project_id = $1 ORDER BY created_at DESC")
-                        .bind(pid)
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, ScanTask>(
+                        "SELECT * FROM scan_tasks WHERE project_id = $1 ORDER BY created_at DESC",
+                    )
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
                 } else {
-                    sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks ORDER BY created_at DESC")
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, ScanTask>(
+                        "SELECT * FROM scan_tasks ORDER BY created_at DESC",
+                    )
+                    .fetch_all(pool)
+                    .await?
                 }
             }
             DatabasePool::SQLite(pool) => {
                 if let Some(pid) = project_id {
-                    sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE project_id = ? ORDER BY created_at DESC")
-                        .bind(pid)
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, ScanTask>(
+                        "SELECT * FROM scan_tasks WHERE project_id = ? ORDER BY created_at DESC",
+                    )
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
                 } else {
-                    sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks ORDER BY created_at DESC")
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, ScanTask>(
+                        "SELECT * FROM scan_tasks ORDER BY created_at DESC",
+                    )
+                    .fetch_all(pool)
+                    .await?
                 }
             }
             DatabasePool::MySQL(pool) => {
                 if let Some(pid) = project_id {
-                    sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks WHERE project_id = ? ORDER BY created_at DESC")
-                        .bind(pid)
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, ScanTask>(
+                        "SELECT * FROM scan_tasks WHERE project_id = ? ORDER BY created_at DESC",
+                    )
+                    .bind(pid)
+                    .fetch_all(pool)
+                    .await?
                 } else {
-                    sqlx::query_as::<_, ScanTask>("SELECT * FROM scan_tasks ORDER BY created_at DESC")
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, ScanTask>(
+                        "SELECT * FROM scan_tasks ORDER BY created_at DESC",
+                    )
+                    .fetch_all(pool)
+                    .await?
                 }
             }
         };
@@ -220,7 +232,12 @@ impl DatabaseService {
         Ok(rows)
     }
 
-    pub async fn update_scan_task_status_internal(&self, id: &str, status: &str, progress: Option<f64>) -> Result<()> {
+    pub async fn update_scan_task_status_internal(
+        &self,
+        id: &str,
+        status: &str,
+        progress: Option<f64>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -460,7 +477,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_vulnerabilities_internal(&self, project_id: Option<&str>) -> Result<Vec<Vulnerability>> {
+    pub async fn get_vulnerabilities_internal(
+        &self,
+        project_id: Option<&str>,
+    ) -> Result<Vec<Vulnerability>> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -473,9 +493,11 @@ impl DatabaseService {
                         .fetch_all(pool)
                         .await?
                 } else {
-                    sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities ORDER BY created_at DESC")
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, Vulnerability>(
+                        "SELECT * FROM vulnerabilities ORDER BY created_at DESC",
+                    )
+                    .fetch_all(pool)
+                    .await?
                 }
             }
             DatabasePool::SQLite(pool) => {
@@ -485,9 +507,11 @@ impl DatabaseService {
                         .fetch_all(pool)
                         .await?
                 } else {
-                    sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities ORDER BY created_at DESC")
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, Vulnerability>(
+                        "SELECT * FROM vulnerabilities ORDER BY created_at DESC",
+                    )
+                    .fetch_all(pool)
+                    .await?
                 }
             }
             DatabasePool::MySQL(pool) => {
@@ -497,9 +521,11 @@ impl DatabaseService {
                         .fetch_all(pool)
                         .await?
                 } else {
-                    sqlx::query_as::<_, Vulnerability>("SELECT * FROM vulnerabilities ORDER BY created_at DESC")
-                        .fetch_all(pool)
-                        .await?
+                    sqlx::query_as::<_, Vulnerability>(
+                        "SELECT * FROM vulnerabilities ORDER BY created_at DESC",
+                    )
+                    .fetch_all(pool)
+                    .await?
                 }
             }
         };
@@ -718,7 +744,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_tool_executions_by_tool_internal(&self, tool_id: &str) -> Result<Vec<ToolExecution>> {
+    pub async fn get_tool_executions_by_tool_internal(
+        &self,
+        tool_id: &str,
+    ) -> Result<Vec<ToolExecution>> {
         let runtime = self
             .runtime_pool
             .as_ref()

@@ -287,3 +287,7 @@ rmcp = { version = "0.9.1", features = [
 ] }
 rig-core = { version = "0.30.0", features = ["derive"] }
 rig-lancedb = "0.2.33"
+
+[patch.crates-io]
+# Local hotfix for DeepSeek reasoning/tool-call streaming compatibility.
+rig-core = { path = "vendor/rig-core-0.30.0" }

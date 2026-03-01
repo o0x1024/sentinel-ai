@@ -38,20 +38,32 @@ pub struct RagConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum ChunkingStrategy { 
-    FixedSize, 
+pub enum ChunkingStrategy {
+    FixedSize,
     #[default]
-    RecursiveCharacter, 
-    Semantic, 
-    StructureAware 
+    RecursiveCharacter,
+    Semantic,
+    StructureAware,
 }
 
-fn default_context_window() -> usize { 1 }
-fn default_min_chunk_size() -> usize { 100 }
-fn default_max_chunk_size() -> usize { 3000 }
-fn default_chunk_expansion_enabled() -> bool { true }
-fn default_chunk_expansion_before() -> usize { 1 }
-fn default_chunk_expansion_after() -> usize { 1 }
+fn default_context_window() -> usize {
+    1
+}
+fn default_min_chunk_size() -> usize {
+    100
+}
+fn default_max_chunk_size() -> usize {
+    3000
+}
+fn default_chunk_expansion_enabled() -> bool {
+    true
+}
+fn default_chunk_expansion_before() -> usize {
+    1
+}
+fn default_chunk_expansion_after() -> usize {
+    1
+}
 
 impl Default for RagConfig {
     fn default() -> Self {
@@ -83,4 +95,3 @@ impl Default for RagConfig {
         }
     }
 }
-

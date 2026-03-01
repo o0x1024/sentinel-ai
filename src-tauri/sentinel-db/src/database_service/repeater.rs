@@ -1,8 +1,8 @@
+use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Row};
-use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::service::DatabaseService;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RepeaterTab {
@@ -180,7 +180,7 @@ impl DatabaseService {
 
         Ok(tabs)
     }
-    
+
     /// Get a single repeater tab by ID
     pub async fn get_repeater_tab(&self, id: &str) -> Result<Option<RepeaterTab>> {
         let runtime = self
@@ -303,10 +303,10 @@ impl DatabaseService {
                 })
             }
         };
-        
+
         Ok(tab)
     }
-    
+
     /// Create a new repeater tab
     pub async fn create_repeater_tab(&self, request: CreateRepeaterTabRequest) -> Result<()> {
         let runtime = self
@@ -385,10 +385,10 @@ impl DatabaseService {
                 .await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Update a repeater tab
     pub async fn update_repeater_tab(&self, request: UpdateRepeaterTabRequest) -> Result<()> {
         let runtime = self
@@ -491,10 +491,10 @@ impl DatabaseService {
                 .await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Delete a repeater tab
     pub async fn delete_repeater_tab(&self, id: &str) -> Result<()> {
         let runtime = self
@@ -521,10 +521,10 @@ impl DatabaseService {
                     .await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Delete all repeater tabs
     pub async fn delete_all_repeater_tabs(&self) -> Result<()> {
         let runtime = self
@@ -548,10 +548,10 @@ impl DatabaseService {
                     .await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Delete multiple repeater tabs by IDs
     pub async fn delete_repeater_tabs(&self, ids: Vec<String>) -> Result<()> {
         let runtime = self
@@ -584,12 +584,15 @@ impl DatabaseService {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Update sort orders for multiple tabs
-    pub async fn update_repeater_tabs_sort_order(&self, tab_orders: Vec<(String, i32)>) -> Result<()> {
+    pub async fn update_repeater_tabs_sort_order(
+        &self,
+        tab_orders: Vec<(String, i32)>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -598,36 +601,42 @@ impl DatabaseService {
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 for (id, sort_order) in tab_orders {
-                    sqlx::query("UPDATE repeater_tabs SET sort_order = $1, updated_at = $2 WHERE id = $3")
-                        .bind(sort_order)
-                        .bind(&now)
-                        .bind(&id)
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "UPDATE repeater_tabs SET sort_order = $1, updated_at = $2 WHERE id = $3",
+                    )
+                    .bind(sort_order)
+                    .bind(&now)
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
                 }
             }
             DatabasePool::SQLite(pool) => {
                 for (id, sort_order) in tab_orders {
-                    sqlx::query("UPDATE repeater_tabs SET sort_order = ?, updated_at = ? WHERE id = ?")
-                        .bind(sort_order)
-                        .bind(&now)
-                        .bind(&id)
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "UPDATE repeater_tabs SET sort_order = ?, updated_at = ? WHERE id = ?",
+                    )
+                    .bind(sort_order)
+                    .bind(&now)
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
                 }
             }
             DatabasePool::MySQL(pool) => {
                 for (id, sort_order) in tab_orders {
-                    sqlx::query("UPDATE repeater_tabs SET sort_order = ?, updated_at = ? WHERE id = ?")
-                        .bind(sort_order)
-                        .bind(&now)
-                        .bind(&id)
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "UPDATE repeater_tabs SET sort_order = ?, updated_at = ? WHERE id = ?",
+                    )
+                    .bind(sort_order)
+                    .bind(&now)
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
                 }
             }
         }
-        
+
         Ok(())
     }
 }

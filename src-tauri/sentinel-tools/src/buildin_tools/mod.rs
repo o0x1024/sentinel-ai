@@ -10,23 +10,23 @@ pub mod ocr;
 pub mod port_scan;
 pub mod shell;
 pub mod skills;
-pub mod subdomain_brute;
 pub mod subagent_tool;
+pub mod subdomain_brute;
 pub mod tenth_man_tool;
 pub mod todos;
 pub mod web_search;
 
-pub use browser::*;
 pub use audit_tools::{CallGraphLiteTool, CodeSearchTool, GitCloneRepoTool, GitDiffScopeTool};
-pub use cpg::{BuildCpgTool, QueryCpgTool, CpgTaintAnalysisTool, CpgSecurityScanTool};
-pub use cpg::tools::{try_get_cpg_audit_context, try_auto_build_cpg};
 pub use audit_tools_advanced::{
     AuditCoverageTool, AuditReportTool, CrossFileTaintTool, DependencyAuditTool,
     ProjectOverviewTool, ReadFileTool,
 };
 pub use audit_tools_v2::{
-    GetFunctionDetailTool, GetAttackSurfaceTool, SmartFileSummaryTool, TraceDataFlowTool,
+    GetAttackSurfaceTool, GetFunctionDetailTool, SmartFileSummaryTool, TraceDataFlowTool,
 };
+pub use browser::*;
+pub use cpg::tools::{try_auto_build_cpg, try_get_cpg_audit_context};
+pub use cpg::{BuildCpgTool, CpgSecurityScanTool, CpgTaintAnalysisTool, QueryCpgTool};
 pub use http_request::HttpRequestTool;
 pub use local_time::LocalTimeTool;
 pub use memory::MemoryManagerTool;
@@ -34,10 +34,8 @@ pub use ocr::OcrTool;
 pub use port_scan::PortScanTool;
 pub use shell::ShellTool;
 pub use skills::SkillsTool;
+pub use subagent_tool::{SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool};
 pub use subdomain_brute::SubdomainBruteTool;
-pub use subagent_tool::{
-    SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool,
-};
 pub use tenth_man_tool::TenthManTool;
 pub use todos::TodosTool;
 pub use web_search::WebSearchTool;
@@ -124,7 +122,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(SubagentAwaitTool::new()),
         Box::new(SubagentChannelTool::new()),
     ];
-    
+
     let mut definitions = Vec::new();
     for tool in tools {
         definitions.push(tool.definition(String::new()).await);

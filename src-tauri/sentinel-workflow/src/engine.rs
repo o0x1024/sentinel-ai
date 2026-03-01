@@ -1,10 +1,10 @@
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use log::info;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use log::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
@@ -96,7 +96,7 @@ pub struct WorkflowExecutionStatus {
     pub total_steps: Option<u32>,
     pub progress: Option<u32>,
     pub started_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>, 
+    pub completed_at: Option<DateTime<Utc>>,
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
     pub step_details: HashMap<String, StepExecutionDetail>,
@@ -116,16 +116,16 @@ pub enum ExecutionStatus {
 pub struct StepExecutionDetail {
     pub step_id: String,
     pub status: ExecutionStatus,
-    pub started_at: Option<DateTime<Utc>>, 
-    pub completed_at: Option<DateTime<Utc>>, 
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
     pub retry_count: u32,
 }
 
 pub struct WorkflowEngine {
-    active_executions: RwLock<HashMap<String, WorkflowExecutionStatus>>, 
-    workflow_cache: RwLock<HashMap<String, WorkflowDefinition>>, 
+    active_executions: RwLock<HashMap<String, WorkflowExecutionStatus>>,
+    workflow_cache: RwLock<HashMap<String, WorkflowDefinition>>,
 }
 
 impl Default for WorkflowEngine {
@@ -136,15 +136,22 @@ impl Default for WorkflowEngine {
 
 impl WorkflowEngine {
     pub fn new() -> Self {
-        Self { 
+        Self {
             active_executions: RwLock::new(HashMap::new()),
             workflow_cache: RwLock::new(HashMap::new()),
         }
     }
 
-    pub async fn execute_workflow(&self, workflow: &WorkflowDefinition, _context: Option<HashMap<String, serde_json::Value>>) -> Result<String> {
+    pub async fn execute_workflow(
+        &self,
+        workflow: &WorkflowDefinition,
+        _context: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<String> {
         let execution_id = Uuid::new_v4().to_string();
-        info!("Starting workflow execution: {} ({})", workflow.metadata.name, execution_id);
+        info!(
+            "Starting workflow execution: {} ({})",
+            workflow.metadata.name, execution_id
+        );
         let execution_status = WorkflowExecutionStatus {
             execution_id: execution_id.clone(),
             workflow_id: workflow.metadata.id.clone(),
@@ -171,7 +178,12 @@ impl WorkflowEngine {
     }
 
     #[allow(dead_code)]
-    async fn execute_workflow_steps(&self, workflow: &WorkflowDefinition, execution_id: &str, _context: Option<HashMap<String, serde_json::Value>>) -> Result<()> {
+    async fn execute_workflow_steps(
+        &self,
+        workflow: &WorkflowDefinition,
+        execution_id: &str,
+        _context: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<()> {
         info!("Executing workflow steps for: {}", execution_id);
         for (index, step) in workflow.steps.iter().enumerate() {
             info!("Executing step {}: {}", index + 1, step.name);
@@ -186,9 +198,15 @@ impl WorkflowEngine {
         Ok(())
     }
 
-    pub async fn get_execution_status(&self, execution_id: &str) -> Result<WorkflowExecutionStatus> {
+    pub async fn get_execution_status(
+        &self,
+        execution_id: &str,
+    ) -> Result<WorkflowExecutionStatus> {
         let executions = self.active_executions.read().await;
-        executions.get(execution_id).cloned().ok_or_else(|| anyhow::anyhow!("Execution not found: {}", execution_id))
+        executions
+            .get(execution_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Execution not found: {}", execution_id))
     }
 
     pub async fn cancel_execution(&self, execution_id: &str) -> Result<()> {
@@ -222,12 +240,21 @@ impl WorkflowEngine {
                 error: None,
                 retry_count: 0,
             };
-            execution.step_details.insert(step_id.to_string(), step_detail);
-            if let Some(completed) = execution.completed_steps.as_mut() { *completed += 1; }
+            execution
+                .step_details
+                .insert(step_id.to_string(), step_detail);
+            if let Some(completed) = execution.completed_steps.as_mut() {
+                *completed += 1;
+            }
         }
     }
 
-    pub async fn mark_step_completed_with_result(&self, execution_id: &str, step_id: &str, result: serde_json::Value) {
+    pub async fn mark_step_completed_with_result(
+        &self,
+        execution_id: &str,
+        step_id: &str,
+        result: serde_json::Value,
+    ) {
         let mut executions = self.active_executions.write().await;
         if let Some(execution) = executions.get_mut(execution_id) {
             let step_detail = StepExecutionDetail {
@@ -239,19 +266,32 @@ impl WorkflowEngine {
                 error: None,
                 retry_count: 0,
             };
-            execution.step_details.insert(step_id.to_string(), step_detail);
-            if let Some(completed) = execution.completed_steps.as_mut() { *completed += 1; }
+            execution
+                .step_details
+                .insert(step_id.to_string(), step_detail);
+            if let Some(completed) = execution.completed_steps.as_mut() {
+                *completed += 1;
+            }
         }
     }
 
     pub async fn update_progress(&self, execution_id: &str, progress: u32) {
         let mut executions = self.active_executions.write().await;
-        if let Some(execution) = executions.get_mut(execution_id) { execution.progress = Some(progress); }
+        if let Some(execution) = executions.get_mut(execution_id) {
+            execution.progress = Some(progress);
+        }
     }
 
-    pub async fn get_step_result(&self, execution_id: &str, step_id: &str) -> Option<serde_json::Value> {
+    pub async fn get_step_result(
+        &self,
+        execution_id: &str,
+        step_id: &str,
+    ) -> Option<serde_json::Value> {
         let executions = self.active_executions.read().await;
-        executions.get(execution_id).and_then(|e| e.step_details.get(step_id)).and_then(|d| d.result.clone())
+        executions
+            .get(execution_id)
+            .and_then(|e| e.step_details.get(step_id))
+            .and_then(|d| d.result.clone())
     }
 
     pub async fn mark_execution_completed(&self, execution_id: &str) {
@@ -260,7 +300,9 @@ impl WorkflowEngine {
             execution.status = ExecutionStatus::Completed;
             execution.completed_at = Some(Utc::now());
             execution.progress = Some(100);
-            execution.result = Some(serde_json::json!({"status": "completed", "message": "Workflow executed successfully"}));
+            execution.result = Some(
+                serde_json::json!({"status": "completed", "message": "Workflow executed successfully"}),
+            );
         }
     }
 
@@ -277,14 +319,22 @@ impl WorkflowEngine {
         let mut executions = self.active_executions.write().await;
         let mut to_remove = Vec::new();
         for (execution_id, execution) in executions.iter() {
-            if matches!(execution.status, ExecutionStatus::Completed | ExecutionStatus::Failed | ExecutionStatus::Cancelled) {
+            if matches!(
+                execution.status,
+                ExecutionStatus::Completed | ExecutionStatus::Failed | ExecutionStatus::Cancelled
+            ) {
                 if let Some(completed_at) = execution.completed_at {
                     let elapsed = Utc::now().signed_duration_since(completed_at);
-                    if elapsed.num_hours() > 24 { to_remove.push(execution_id.clone()); }
+                    if elapsed.num_hours() > 24 {
+                        to_remove.push(execution_id.clone());
+                    }
                 }
             }
         }
-        for execution_id in to_remove { executions.remove(&execution_id); info!("Cleaned up completed execution: {}", execution_id); }
+        for execution_id in to_remove {
+            executions.remove(&execution_id);
+            info!("Cleaned up completed execution: {}", execution_id);
+        }
     }
 
     pub async fn get_active_executions(&self) -> Vec<WorkflowExecutionStatus> {
@@ -292,4 +342,3 @@ impl WorkflowEngine {
         executions.values().cloned().collect()
     }
 }
-

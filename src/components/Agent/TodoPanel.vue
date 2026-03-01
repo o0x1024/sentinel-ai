@@ -4,6 +4,15 @@
       <i class="fas fa-tasks text-primary"></i>
       <span class="font-semibold text-base-content">{{ $t('agent.todos') }}</span>
       <span v-if="rootTodos.length > 0" class="badge badge-sm badge-primary">{{ rootTodos.length }}</span>
+      <select
+        v-if="showSourceSelector"
+        v-model="selectedSourceModel"
+        class="select select-xs select-bordered ml-2 max-w-[180px]"
+      >
+        <option v-for="option in sourceOptions" :key="option.key" :value="option.key">
+          {{ option.label }} ({{ option.count }})
+        </option>
+      </select>
       <span class="ml-auto text-xs text-success" v-if="progress > 0">{{ progress }}%</span>
       <button 
         @click="$emit('close')"
@@ -40,19 +49,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed } from 'vue'
 import type { Todo } from '@/types/todo'
 import { getRootTodos, getChildTodos, calculateProgress } from '@/types/todo'
 import TodoItem from './TodoItem.vue'
 
+interface TodoSourceOption {
+  key: string
+  label: string
+  count: number
+}
+
 const props = defineProps<{
   todos: Todo[]
   isActive?: boolean
+  sourceOptions?: TodoSourceOption[]
+  selectedSourceKey?: string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   close: []
+  sourceChange: [sourceKey: string]
 }>()
+
+const showSourceSelector = computed(() => (props.sourceOptions?.length || 0) > 1)
+const sourceOptions = computed(() => props.sourceOptions || [])
+const selectedSourceModel = computed({
+  get: () => props.selectedSourceKey || sourceOptions.value[0]?.key || '',
+  set: (value: string) => {
+    emit('sourceChange', value)
+  },
+})
 
 // Top-level tasks (no parent_id)
 const rootTodos = computed(() => getRootTodos(props.todos))

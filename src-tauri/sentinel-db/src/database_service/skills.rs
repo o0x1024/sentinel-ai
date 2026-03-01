@@ -1,10 +1,10 @@
+use crate::database_service::connection_manager::DatabasePool;
+use crate::database_service::service::DatabaseService;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, Row};
-use crate::database_service::connection_manager::DatabasePool;
-use crate::database_service::service::DatabaseService;
 
 /// Level 1: Basic metadata (for LLM selection phase 1 - initial discovery)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +105,8 @@ struct SkillDbRow {
 
 impl SkillDbRow {
     fn into_skill(self) -> Skill {
-        let allowed_tools: Vec<String> = serde_json::from_str(&self.allowed_tools).unwrap_or_default();
+        let allowed_tools: Vec<String> =
+            serde_json::from_str(&self.allowed_tools).unwrap_or_default();
         let hooks: Option<Value> = serde_json::from_str(&self.hooks).ok();
         Skill {
             id: self.id,
@@ -274,7 +275,8 @@ impl DatabaseService {
                 .await?;
                 row.map(|r| {
                     let allowed_tools_str: String = r.get("allowed_tools");
-                    let allowed_tools: Vec<String> = serde_json::from_str(&allowed_tools_str).unwrap_or_default();
+                    let allowed_tools: Vec<String> =
+                        serde_json::from_str(&allowed_tools_str).unwrap_or_default();
                     let hooks_str: String = r.get("hooks");
                     let hooks: Option<Value> = serde_json::from_str(&hooks_str).ok();
                     SkillDetail {
@@ -304,7 +306,8 @@ impl DatabaseService {
                 .await?;
                 row.map(|r| {
                     let allowed_tools_str: String = r.get("allowed_tools");
-                    let allowed_tools: Vec<String> = serde_json::from_str(&allowed_tools_str).unwrap_or_default();
+                    let allowed_tools: Vec<String> =
+                        serde_json::from_str(&allowed_tools_str).unwrap_or_default();
                     let hooks_str: String = r.get("hooks");
                     let hooks: Option<Value> = serde_json::from_str(&hooks_str).ok();
                     SkillDetail {
@@ -334,7 +337,8 @@ impl DatabaseService {
                 .await?;
                 row.map(|r| {
                     let allowed_tools_str: String = r.get("allowed_tools");
-                    let allowed_tools: Vec<String> = serde_json::from_str(&allowed_tools_str).unwrap_or_default();
+                    let allowed_tools: Vec<String> =
+                        serde_json::from_str(&allowed_tools_str).unwrap_or_default();
                     let hooks_str: String = r.get("hooks");
                     let hooks: Option<Value> = serde_json::from_str(&hooks_str).ok();
                     SkillDetail {
@@ -474,7 +478,12 @@ impl DatabaseService {
         let id = payload.id.clone();
         let now = Utc::now();
         let allowed_tools_json = serde_json::to_string(&payload.allowed_tools)?;
-        let hooks_json = serde_json::to_string(&payload.hooks.clone().unwrap_or_else(|| Value::Object(Default::default())))?;
+        let hooks_json = serde_json::to_string(
+            &payload
+                .hooks
+                .clone()
+                .unwrap_or_else(|| Value::Object(Default::default())),
+        )?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
@@ -563,11 +572,7 @@ impl DatabaseService {
     }
 
     /// Update an existing skill
-    pub async fn update_skill_internal(
-        &self,
-        id: &str,
-        payload: &UpdateSkill,
-    ) -> Result<bool> {
+    pub async fn update_skill_internal(&self, id: &str, payload: &UpdateSkill) -> Result<bool> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -579,21 +584,37 @@ impl DatabaseService {
         let existing = existing.unwrap();
 
         let name = payload.name.as_ref().unwrap_or(&existing.name);
-        let description = payload.description.as_ref().unwrap_or(&existing.description);
-        let source_path = payload.source_path.as_ref().unwrap_or(&existing.source_path);
-        let argument_hint = payload.argument_hint.as_ref().unwrap_or(&existing.argument_hint);
+        let description = payload
+            .description
+            .as_ref()
+            .unwrap_or(&existing.description);
+        let source_path = payload
+            .source_path
+            .as_ref()
+            .unwrap_or(&existing.source_path);
+        let argument_hint = payload
+            .argument_hint
+            .as_ref()
+            .unwrap_or(&existing.argument_hint);
         let disable_model_invocation = payload
             .disable_model_invocation
             .unwrap_or(existing.disable_model_invocation);
         let user_invocable = payload.user_invocable.unwrap_or(existing.user_invocable);
-        let allowed_tools = payload.allowed_tools.as_ref().unwrap_or(&existing.allowed_tools);
+        let allowed_tools = payload
+            .allowed_tools
+            .as_ref()
+            .unwrap_or(&existing.allowed_tools);
         let model = payload.model.as_ref().unwrap_or(&existing.model);
         let context = payload.context.as_ref().unwrap_or(&existing.context);
         let agent = payload.agent.as_ref().unwrap_or(&existing.agent);
         let hooks = payload.hooks.as_ref().or(existing.hooks.as_ref());
 
         let allowed_tools_json = serde_json::to_string(allowed_tools)?;
-        let hooks_json = serde_json::to_string(&hooks.cloned().unwrap_or_else(|| Value::Object(Default::default())))?;
+        let hooks_json = serde_json::to_string(
+            &hooks
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Default::default())),
+        )?;
         let now = Utc::now();
 
         match runtime {
@@ -669,27 +690,21 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         let rows_affected = match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query("DELETE FROM skills WHERE id = $1")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM skills WHERE id = ?")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM skills WHERE id = ?")
-                    .bind(id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
+            DatabasePool::PostgreSQL(pool) => sqlx::query("DELETE FROM skills WHERE id = $1")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::SQLite(pool) => sqlx::query("DELETE FROM skills WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query("DELETE FROM skills WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
         };
 
         Ok(rows_affected > 0)

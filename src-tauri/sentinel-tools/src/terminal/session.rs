@@ -1,11 +1,11 @@
 //! Terminal session management
 
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 /// Execution mode for terminal session
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -99,33 +99,54 @@ impl TerminalSession {
     pub async fn add_subscriber(&self, tx: mpsc::UnboundedSender<Vec<u8>>) {
         // Send history to new subscriber
         let history = self.output_history.read().await;
-        info!("[Terminal Session {}] Adding subscriber with history, chunks: {}", self.id, history.len());
-        
+        info!(
+            "[Terminal Session {}] Adding subscriber with history, chunks: {}",
+            self.id,
+            history.len()
+        );
+
         for (i, data) in history.iter().enumerate() {
-            info!("[Terminal Session {}] Sending history chunk {}: {} bytes", self.id, i, data.len());
+            info!(
+                "[Terminal Session {}] Sending history chunk {}: {} bytes",
+                self.id,
+                i,
+                data.len()
+            );
             if let Err(e) = tx.send(data.clone()) {
-                error!("[Terminal Session {}] Failed to send history chunk {}: {}", self.id, i, e);
+                error!(
+                    "[Terminal Session {}] Failed to send history chunk {}: {}",
+                    self.id, i, e
+                );
             }
         }
-        
+
         self.output_txs.write().await.push(tx);
-        info!("[Terminal Session {}] Subscriber added, total subscribers: {}", 
-            self.id, self.output_txs.read().await.len());
+        info!(
+            "[Terminal Session {}] Subscriber added, total subscribers: {}",
+            self.id,
+            self.output_txs.read().await.len()
+        );
     }
 
     /// Add an output subscriber without history (for LLM - only captures new output)
     pub async fn add_subscriber_no_history(&self, tx: mpsc::UnboundedSender<Vec<u8>>) {
-        info!("[Terminal Session {}] Adding subscriber without history (LLM mode)", self.id);
+        info!(
+            "[Terminal Session {}] Adding subscriber without history (LLM mode)",
+            self.id
+        );
         self.output_txs.write().await.push(tx);
-        info!("[Terminal Session {}] Subscriber added, total subscribers: {}", 
-            self.id, self.output_txs.read().await.len());
+        info!(
+            "[Terminal Session {}] Subscriber added, total subscribers: {}",
+            self.id,
+            self.output_txs.read().await.len()
+        );
     }
 
     /// Broadcast output to all subscribers
     async fn broadcast_output(
-        output_txs: Arc<RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>>, 
+        output_txs: Arc<RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>>,
         output_history: Arc<RwLock<Vec<Vec<u8>>>>,
-        data: Vec<u8>
+        data: Vec<u8>,
     ) {
         // Add to history (keep last 1000 chunks)
         {
@@ -137,16 +158,11 @@ impl TerminalSession {
         }
 
         let mut txs = output_txs.write().await;
-        txs.retain(|tx| {
-            tx.send(data.clone()).is_ok()
-        });
+        txs.retain(|tx| tx.send(data.clone()).is_ok());
     }
 
     /// Start the terminal session
-    pub async fn start(
-        &mut self,
-        output_tx: mpsc::UnboundedSender<Vec<u8>>,
-    ) -> Result<(), String> {
+    pub async fn start(&mut self, output_tx: mpsc::UnboundedSender<Vec<u8>>) -> Result<(), String> {
         info!("Starting terminal session: {}", self.id);
         self.add_subscriber(output_tx).await;
 
@@ -157,9 +173,7 @@ impl TerminalSession {
     }
 
     /// Start Docker-based session with PTY support
-    async fn start_docker_session(
-        &mut self,
-    ) -> Result<(), String> {
+    async fn start_docker_session(&mut self) -> Result<(), String> {
         // Get or create container
         let container_id = self.get_or_create_container().await?;
         self.container_id = Some(container_id.clone());
@@ -168,9 +182,7 @@ impl TerminalSession {
         // Some reused containers may have broken cwd state and trigger OCI breakout protection.
         let mut exec_workdir = self.config.working_dir.clone();
         if let Some(ref wd) = self.config.working_dir {
-            let supports_workdir = self
-                .probe_docker_exec_workdir(&container_id, wd)
-                .await;
+            let supports_workdir = self.probe_docker_exec_workdir(&container_id, wd).await;
             if !supports_workdir {
                 warn!(
                     "Container {} rejected exec workdir '{}', falling back to shell default cwd",
@@ -194,37 +206,43 @@ impl TerminalSession {
         // Build docker exec command with PTY support
         let mut cmd_builder = CommandBuilder::new("docker");
         cmd_builder.arg("exec");
-        cmd_builder.arg("-it");  // ✅ Now we can use -it with PTY!
+        cmd_builder.arg("-it"); // ✅ Now we can use -it with PTY!
 
         for (key, value) in &self.config.env_vars {
             cmd_builder.arg("-e");
             cmd_builder.arg(format!("{}={}", key, value));
         }
-        
+
         // For Kali images, use sandbox user
         if self.config.docker_image.contains("kali") {
             cmd_builder.arg("-u");
             cmd_builder.arg("sandbox");
         }
-        
+
         // Add working directory
         if let Some(ref wd) = exec_workdir {
             cmd_builder.arg("-w");
             cmd_builder.arg(wd);
         }
-        
+
         // Add container_id and shell
         cmd_builder.arg(&container_id);
         cmd_builder.arg(&self.config.shell);
 
         // Spawn command through PTY
-        let _child = pty_pair.slave.spawn_command(cmd_builder)
+        let _child = pty_pair
+            .slave
+            .spawn_command(cmd_builder)
             .map_err(|e| format!("Failed to spawn docker exec with PTY: {}", e))?;
 
         // Get PTY master for reading/writing
-        let mut pty_reader = pty_pair.master.try_clone_reader()
+        let mut pty_reader = pty_pair
+            .master
+            .try_clone_reader()
             .map_err(|e| format!("Failed to clone PTY reader: {}", e))?;
-        let mut pty_writer = pty_pair.master.take_writer()
+        let mut pty_writer = pty_pair
+            .master
+            .take_writer()
             .map_err(|e| format!("Failed to get PTY writer: {}", e))?;
         self.pty_master = Some(Arc::new(std::sync::Mutex::new(pty_pair.master)));
 
@@ -251,7 +269,7 @@ impl TerminalSession {
         let output_txs_clone = self.output_txs.clone();
         let output_history_clone = self.output_history.clone();
         let last_activity = self.last_activity.clone();
-        
+
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
             let mut buffer = [0u8; 8192];
@@ -288,14 +306,14 @@ impl TerminalSession {
         *self.state.write().await = SessionState::Running;
 
         info!("Terminal session started with PTY: {}", self.id);
-        
+
         // Execute initial_command if provided
         if let Some(ref initial_cmd) = self.config.initial_command {
             if !initial_cmd.is_empty() {
                 info!("Executing initial command: {}", initial_cmd);
                 // Wait a bit for shell to be ready
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                
+
                 // Send the command with newline
                 let cmd_with_newline = format!("{}\n", initial_cmd);
                 if let Err(e) = stdin_tx.send(cmd_with_newline.into_bytes()) {
@@ -309,7 +327,7 @@ impl TerminalSession {
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             let _ = stdin_tx.send(b"cd /workspace 2>/dev/null || true\n".to_vec());
         }
-        
+
         Ok(())
     }
 
@@ -348,9 +366,7 @@ impl TerminalSession {
     }
 
     /// Start host-based session with PTY support
-    async fn start_host_session(
-        &mut self,
-    ) -> Result<(), String> {
+    async fn start_host_session(&mut self) -> Result<(), String> {
         warn!("Starting terminal on host (less secure)");
 
         let pty_system = native_pty_system();
@@ -455,14 +471,14 @@ impl TerminalSession {
         if self.config.reuse_container {
             if let Some(container_id) = self.find_reusable_container().await? {
                 info!("Reusing existing container: {}", container_id);
-                
+
                 // Make sure container is running
                 self.ensure_container_running(&container_id).await?;
-                
+
                 return Ok(container_id);
             }
         }
-        
+
         // No reusable container found, create new one
         self.create_container().await
     }
@@ -496,7 +512,7 @@ impl TerminalSession {
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        
+
         if container_id.is_empty() {
             info!("No reusable container found");
             Ok(None)
@@ -540,16 +556,15 @@ impl TerminalSession {
 
     /// Create Docker container
     async fn create_container(&self) -> Result<String, String> {
-        info!("Creating Docker container with image: {}", self.config.docker_image);
+        info!(
+            "Creating Docker container with image: {}",
+            self.config.docker_image
+        );
 
         // Check if we should use a non-root user
         let use_sandbox_user = self.config.docker_image.contains("kali");
-        
-        let mut args = vec![
-            "run",
-            "-d",
-            "-i",
-        ];
+
+        let mut args = vec!["run", "-d", "-i"];
 
         // Add container name if specified (for reuse)
         if let Some(ref name) = self.config.container_name {
@@ -567,7 +582,7 @@ impl TerminalSession {
             "--security-opt",
             "no-new-privileges=false",
         ]);
-        
+
         // Add working directory mount if specified
         if let Some(ref wd) = self.config.working_dir {
             args.push("-v");
@@ -575,7 +590,7 @@ impl TerminalSession {
             args.push("-w");
             args.push(wd);
         }
-        
+
         args.push(&self.config.docker_image);
         args.push("sleep");
         args.push("infinity");
@@ -588,7 +603,7 @@ impl TerminalSession {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             // If container name already exists, try to remove it and retry
             if stderr.contains("already in use") {
                 warn!("Container name already in use, removing old container");
@@ -597,36 +612,42 @@ impl TerminalSession {
                         .args(&["rm", "-f", name])
                         .output()
                         .await;
-                    
+
                     // Retry creation
                     let retry_output = Command::new("docker")
                         .args(&args)
                         .output()
                         .await
                         .map_err(|e| format!("Failed to create container (retry): {}", e))?;
-                    
+
                     if !retry_output.status.success() {
                         let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
                         return Err(format!("Docker run failed (retry): {}", retry_stderr));
                     }
-                    
-                    let container_id = String::from_utf8_lossy(&retry_output.stdout).trim().to_string();
+
+                    let container_id = String::from_utf8_lossy(&retry_output.stdout)
+                        .trim()
+                        .to_string();
                     info!("Container created (after retry): {}", container_id);
                     return self.setup_container(&container_id, use_sandbox_user).await;
                 }
             }
-            
+
             return Err(format!("Docker run failed: {}", stderr));
         }
 
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         info!("Container created: {}", container_id);
-        
+
         self.setup_container(&container_id, use_sandbox_user).await
     }
 
     /// Setup container (create user, directories, etc.)
-    async fn setup_container(&self, container_id: &str, use_sandbox_user: bool) -> Result<String, String> {
+    async fn setup_container(
+        &self,
+        container_id: &str,
+        use_sandbox_user: bool,
+    ) -> Result<String, String> {
         // For Kali images, create sandbox user if it doesn't exist
         if use_sandbox_user {
             info!("Setting up sandbox user in container");
@@ -638,21 +659,21 @@ impl TerminalSession {
                 // Set ownership
                 "chown -R sandbox:sandbox /workspace 2>/dev/null || true",
             ];
-            
+
             for cmd in setup_commands {
                 let result = Command::new("docker")
                     .args(&["exec", "--user", "root", container_id, "bash", "-c", cmd])
                     .output()
                     .await;
-                
+
                 if let Err(e) = result {
                     warn!("Failed to execute setup command '{}': {}", cmd, e);
                 }
             }
-            
+
             info!("Sandbox user setup completed");
         }
-        
+
         Ok(container_id.to_string())
     }
 
@@ -747,7 +768,10 @@ impl TerminalSession {
         // Only remove container if not configured for reuse
         if !self.config.reuse_container {
             if let Some(ref container_id) = self.container_id {
-                info!("Removing container (not configured for reuse): {}", container_id);
+                info!(
+                    "Removing container (not configured for reuse): {}",
+                    container_id
+                );
                 let _ = Command::new("docker")
                     .args(&["rm", "-f", container_id])
                     .output()

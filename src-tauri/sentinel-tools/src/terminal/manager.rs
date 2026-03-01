@@ -1,6 +1,6 @@
 //! Terminal session manager
 
-use super::session::{TerminalSession, TerminalSessionConfig, SessionState, ExecutionMode};
+use super::session::{ExecutionMode, SessionState, TerminalSession, TerminalSessionConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -77,7 +77,12 @@ impl TerminalSessionManager {
     }
 
     /// Resize a PTY-backed session
-    pub async fn resize_session(&self, session_id: &str, rows: u16, cols: u16) -> Result<(), String> {
+    pub async fn resize_session(
+        &self,
+        session_id: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<(), String> {
         let session = self
             .get_session(session_id)
             .await
@@ -173,9 +178,9 @@ impl TerminalSessionManager {
     /// Clean up unused containers (manually invoked)
     pub async fn cleanup_containers(&self) -> Result<Vec<String>, String> {
         use tokio::process::Command;
-        
+
         info!("Cleaning up unused sentinel-sandbox containers");
-        
+
         // Get all sentinel-sandbox containers
         let output = Command::new("docker")
             .args(&[

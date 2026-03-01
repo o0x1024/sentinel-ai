@@ -8,8 +8,8 @@
 //! 5. 资源耗尽场景（文件句柄、网络连接）
 
 use sentinel_plugins::{
-    HttpTransaction, PluginEngine, PluginExecutor, PluginManager, PluginMetadata,
-    RequestContext, ResponseContext, Severity,
+    HttpTransaction, PluginEngine, PluginExecutor, PluginManager, PluginMetadata, RequestContext,
+    ResponseContext, Severity,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -39,9 +39,18 @@ impl StressTestResult {
         println!("{}", "=".repeat(80));
         println!("Duration: {:?}", self.duration);
         println!("Iterations: {}", self.iterations);
-        println!("Success: {} | Errors: {}", self.success_count, self.error_count);
-        println!("Peak Memory: {:.2} MB | Avg Memory: {:.2} MB", self.peak_memory_mb, self.avg_memory_mb);
-        println!("Peak CPU: {:.2}% | Avg CPU: {:.2}%", self.peak_cpu_percent, self.avg_cpu_percent);
+        println!(
+            "Success: {} | Errors: {}",
+            self.success_count, self.error_count
+        );
+        println!(
+            "Peak Memory: {:.2} MB | Avg Memory: {:.2} MB",
+            self.peak_memory_mb, self.avg_memory_mb
+        );
+        println!(
+            "Peak CPU: {:.2}% | Avg CPU: {:.2}%",
+            self.peak_cpu_percent, self.avg_cpu_percent
+        );
         println!("Throughput: {:.2} ops/sec", self.throughput_per_sec);
         println!("{}", "=".repeat(80));
     }
@@ -60,7 +69,7 @@ impl ResourceMonitor {
         let mut system = System::new_all();
         system.refresh_all();
         let pid = sysinfo::get_current_pid().unwrap();
-        
+
         Self {
             system,
             pid,
@@ -71,11 +80,11 @@ impl ResourceMonitor {
 
     fn sample(&mut self) {
         self.system.refresh_process(self.pid);
-        
+
         if let Some(process) = self.system.process(self.pid) {
             let memory_mb = process.memory() as f64 / 1024.0 / 1024.0;
             let cpu_percent = process.cpu_usage();
-            
+
             self.memory_samples.push(memory_mb);
             self.cpu_samples.push(cpu_percent as f64);
         }
@@ -86,7 +95,7 @@ impl ResourceMonitor {
         let avg_mem = self.memory_samples.iter().sum::<f64>() / self.memory_samples.len() as f64;
         let peak_cpu = self.cpu_samples.iter().cloned().fold(0.0f64, f64::max);
         let avg_cpu = self.cpu_samples.iter().sum::<f64>() / self.cpu_samples.len() as f64;
-        
+
         (peak_mem, avg_mem, peak_cpu, avg_cpu)
     }
 }
@@ -97,7 +106,7 @@ fn create_test_transaction(size_kb: usize) -> HttpTransaction {
     use std::collections::HashMap;
 
     let body = vec![b'A'; size_kb * 1024];
-    
+
     HttpTransaction {
         request: RequestContext {
             id: uuid::Uuid::new_v4().to_string(),
@@ -121,9 +130,7 @@ fn create_test_transaction(size_kb: usize) -> HttpTransaction {
         response: Some(ResponseContext {
             request_id: uuid::Uuid::new_v4().to_string(),
             status: 200,
-            headers: HashMap::from([
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ]),
+            headers: HashMap::from([("Content-Type".to_string(), "application/json".to_string())]),
             body,
             content_type: Some("application/json".to_string()),
             timestamp: Utc::now(),
@@ -164,7 +171,8 @@ export function scan_transaction(transaction) {
         }];
     }
 }
-"#.to_string();
+"#
+    .to_string();
 
     (metadata, code)
 }
@@ -223,7 +231,8 @@ export function scan_transaction(transaction) {
         confidence: "high"
     }];
 }
-"#.to_string();
+"#
+    .to_string();
 
     (metadata, code)
 }
@@ -266,7 +275,8 @@ export function scan_transaction(transaction) {
         confidence: "high"
     }];
 }
-"#.to_string();
+"#
+    .to_string();
 
     (metadata, code)
 }
@@ -281,7 +291,10 @@ export function scan_transaction(transaction) {
 async fn test_single_engine_long_running() {
     let (metadata, code) = create_simple_plugin();
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(&code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(&code, metadata)
+        .await
+        .unwrap();
 
     let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
@@ -398,7 +411,10 @@ async fn test_concurrent_engine_creation() {
 async fn test_cpu_intensive_plugin() {
     let (metadata, code) = create_cpu_intensive_plugin();
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(&code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(&code, metadata)
+        .await
+        .unwrap();
 
     let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
@@ -435,7 +451,10 @@ async fn test_cpu_intensive_plugin() {
     result.print_report();
 
     // CPU使用率应该较高
-    println!("CPU usage check: avg={:.2}%, peak={:.2}%", avg_cpu, peak_cpu);
+    println!(
+        "CPU usage check: avg={:.2}%, peak={:.2}%",
+        avg_cpu, peak_cpu
+    );
 }
 
 /// 测试4: 内存密集型插件压力测试
@@ -444,7 +463,10 @@ async fn test_cpu_intensive_plugin() {
 async fn test_memory_intensive_plugin() {
     let (metadata, code) = create_memory_intensive_plugin();
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(&code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(&code, metadata)
+        .await
+        .unwrap();
 
     let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
@@ -483,7 +505,10 @@ async fn test_memory_intensive_plugin() {
     result.print_report();
 
     // 内存使用应该可控
-    println!("Memory usage check: avg={:.2}MB, peak={:.2}MB", avg_mem, peak_mem);
+    println!(
+        "Memory usage check: avg={:.2}MB, peak={:.2}MB",
+        avg_mem, peak_mem
+    );
 }
 
 /// 测试5: 最大并发线程数测试
@@ -498,10 +523,10 @@ async fn test_max_concurrent_threads() {
 
     // 逐步增加并发数，找到系统极限
     let concurrency_levels = vec![10, 50, 100, 200, 500, 1000];
-    
+
     for concurrency in concurrency_levels {
         println!("\nTesting concurrency level: {}", concurrency);
-        
+
         let semaphore = Arc::new(Semaphore::new(concurrency));
         let mut handles = vec![];
 
@@ -537,17 +562,23 @@ async fn test_max_concurrent_threads() {
         }
 
         monitor.sample();
-        
+
         let current_success = success.load(Ordering::Relaxed);
         let current_errors = errors.load(Ordering::Relaxed);
         let (peak_mem, _avg_mem, peak_cpu, _avg_cpu) = monitor.get_stats();
-        
-        println!("  Success: {} | Errors: {}", current_success, current_errors);
+
+        println!(
+            "  Success: {} | Errors: {}",
+            current_success, current_errors
+        );
         println!("  Memory: {:.2}MB | CPU: {:.2}%", peak_mem, peak_cpu);
-        
+
         // 如果错误率超过20%，停止测试
         if current_errors as f64 / (current_success + current_errors) as f64 > 0.2 {
-            println!("  ERROR RATE TOO HIGH - Max concurrency: {}", concurrency / 2);
+            println!(
+                "  ERROR RATE TOO HIGH - Max concurrency: {}",
+                concurrency / 2
+            );
             break;
         }
     }
@@ -621,11 +652,14 @@ async fn test_plugin_executor_long_running() {
 async fn test_large_transaction_processing() {
     let (metadata, code) = create_simple_plugin();
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(&code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(&code, metadata)
+        .await
+        .unwrap();
 
     let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
-    
+
     // 测试不同大小的事务
     let sizes_kb = vec![1, 10, 100, 1000, 5000];
     let mut success = 0;
@@ -634,10 +668,10 @@ async fn test_large_transaction_processing() {
 
     for size in sizes_kb {
         println!("\nTesting transaction size: {} KB", size);
-        
+
         for _ in 0..10 {
             monitor.sample();
-            
+
             let transaction = create_test_transaction(size);
             match engine.scan_transaction(&transaction).await {
                 Ok(_) => success += 1,
@@ -645,7 +679,7 @@ async fn test_large_transaction_processing() {
             }
             total_iterations += 1;
         }
-        
+
         let (peak_mem, _, _, _) = monitor.get_stats();
         println!("  Memory after {} KB: {:.2} MB", size, peak_mem);
     }
@@ -674,20 +708,26 @@ async fn test_large_transaction_processing() {
 #[ignore]
 async fn test_plugin_manager_concurrent_scan() {
     let manager = PluginManager::new();
-    
+
     // 注册多个插件
     for i in 0..5 {
         let (mut metadata, code) = create_simple_plugin();
         metadata.id = format!("stress-test-{}", i);
-        
-        manager.register_plugin(metadata.id.clone(), metadata, true).await.unwrap();
-        manager.set_plugin_code(format!("stress-test-{}", i), code).await.unwrap();
+
+        manager
+            .register_plugin(metadata.id.clone(), metadata, true)
+            .await
+            .unwrap();
+        manager
+            .set_plugin_code(format!("stress-test-{}", i), code)
+            .await
+            .unwrap();
     }
 
     let mut monitor = ResourceMonitor::new();
     let start = Instant::now();
     let iterations = 1000;
-    
+
     let success = Arc::new(AtomicUsize::new(0));
     let errors = Arc::new(AtomicUsize::new(0));
     let semaphore = Arc::new(Semaphore::new(50));
@@ -705,7 +745,7 @@ async fn test_plugin_manager_concurrent_scan() {
 
             let plugin_id = format!("stress-test-{}", i % 5);
             let transaction = create_test_transaction(1);
-            
+
             match manager.scan_transaction(&plugin_id, &transaction).await {
                 Ok(_) => success.fetch_add(1, Ordering::Relaxed),
                 Err(_) => errors.fetch_add(1, Ordering::Relaxed),
@@ -741,4 +781,3 @@ async fn test_plugin_manager_concurrent_scan() {
 
     result.print_report();
 }
-

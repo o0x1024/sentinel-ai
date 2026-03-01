@@ -3,17 +3,17 @@
 //! Provides persistent terminal sessions for interactive tools like msfconsole, sqlmap, etc.
 
 pub mod command;
+pub mod manager;
 pub mod server;
 pub mod session;
-pub mod manager;
 
-pub use command::{normalize_command, detect_shell_prompt, WaitStrategy};
+pub use command::{detect_shell_prompt, normalize_command, WaitStrategy};
+pub use manager::{ContainerInfo, SessionInfo, TerminalSessionManager};
 pub use server::TerminalServer;
-pub use session::{TerminalSession, TerminalSessionConfig, SessionState, ExecutionMode};
-pub use manager::{TerminalSessionManager, SessionInfo, ContainerInfo};
+pub use session::{ExecutionMode, SessionState, TerminalSession, TerminalSessionConfig};
 
-use std::sync::Arc;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
 
 /// Global terminal session manager for sharing between tools and UI
 pub static TERMINAL_MANAGER: Lazy<Arc<TerminalSessionManager>> =

@@ -107,11 +107,7 @@ pub fn write_tool_log(
     {
         Ok(mut file) => {
             if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                tracing::error!(
-                    "Failed to write to tool log file {}: {}",
-                    log_file_path,
-                    e
-                );
+                tracing::error!("Failed to write to tool log file {}: {}", log_file_path, e);
             } else {
                 let _ = file.flush();
             }
@@ -186,7 +182,15 @@ pub fn log_request(
     system_prompt: Option<&str>,
     user_prompt: &str,
 ) {
-    log_request_with_image(session_id, conversation_id, provider, model, system_prompt, user_prompt, false);
+    log_request_with_image(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        system_prompt,
+        user_prompt,
+        false,
+    );
 }
 
 /// 记录 LLM 请求（含图片标记）

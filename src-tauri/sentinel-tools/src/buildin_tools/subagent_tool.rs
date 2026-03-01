@@ -423,25 +423,37 @@ pub struct SubagentChannelOutput {
 // ============================================================================
 
 pub type SubagentExecuteExecutorFn = std::sync::Arc<
-    dyn Fn(SubagentExecuteArgs)
-        -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<SubagentExecuteOutput, SubagentToolError>> + Send>,
+    dyn Fn(
+            SubagentExecuteArgs,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<SubagentExecuteOutput, SubagentToolError>>
+                    + Send,
+            >,
         > + Send
         + Sync,
 >;
 
 pub type SubagentAwaitExecutorFn = std::sync::Arc<
-    dyn Fn(SubagentAwaitArgs)
-        -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<SubagentAwaitOutput, SubagentToolError>> + Send>,
+    dyn Fn(
+            SubagentAwaitArgs,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<SubagentAwaitOutput, SubagentToolError>>
+                    + Send,
+            >,
         > + Send
         + Sync,
 >;
 
 pub type SubagentChannelExecutorFn = std::sync::Arc<
-    dyn Fn(SubagentChannelArgs)
-        -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<SubagentChannelOutput, SubagentToolError>> + Send>,
+    dyn Fn(
+            SubagentChannelArgs,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<SubagentChannelOutput, SubagentToolError>>
+                    + Send,
+            >,
         > + Send
         + Sync,
 >;
@@ -496,7 +508,8 @@ impl SubagentExecuteTool {
     }
 
     pub const NAME: &'static str = "subagent_execute";
-    pub const DESCRIPTION: &'static str = "Execute subagent tasks in unified modes: sync, async, or workflow.";
+    pub const DESCRIPTION: &'static str =
+        "Execute subagent tasks in unified modes: sync, async, or workflow.";
 }
 
 impl Tool for SubagentExecuteTool {

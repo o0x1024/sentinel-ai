@@ -40,8 +40,7 @@ pub struct RagConfig {
     pub chunk_expansion_after: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ChunkingStrategy {
     FixedSize,
     #[default]
@@ -49,7 +48,6 @@ pub enum ChunkingStrategy {
     Semantic,
     StructureAware,
 }
-
 
 impl Default for RagConfig {
     fn default() -> Self {
@@ -121,7 +119,7 @@ impl SupportedFileType {
             _ => None,
         }
     }
-    
+
     /// Get all supported file extensions
     pub fn all_extensions() -> Vec<String> {
         vec![
@@ -132,7 +130,7 @@ impl SupportedFileType {
             "pdf".to_string(),
         ]
     }
-    
+
     /// Get primary extensions (without aliases)
     pub fn primary_extensions() -> Vec<String> {
         vec![
@@ -144,10 +142,21 @@ impl SupportedFileType {
     }
 }
 
-fn default_context_window() -> usize { 1 }
-fn default_min_chunk_size() -> usize { 100 }
-fn default_max_chunk_size() -> usize { 3000 }
-fn default_chunk_expansion_enabled() -> bool { true }
-fn default_chunk_expansion_before() -> usize { 1 }
-fn default_chunk_expansion_after() -> usize { 1 }
-
+fn default_context_window() -> usize {
+    1
+}
+fn default_min_chunk_size() -> usize {
+    100
+}
+fn default_max_chunk_size() -> usize {
+    3000
+}
+fn default_chunk_expansion_enabled() -> bool {
+    true
+}
+fn default_chunk_expansion_before() -> usize {
+    1
+}
+fn default_chunk_expansion_after() -> usize {
+    1
+}

@@ -1,3 +1,5 @@
+use crate::buildin_tools::shell::{get_shell_config, ShellExecutionMode};
+use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rig::tool::Tool;
@@ -9,14 +11,11 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::fs;
 use tokio::process::Command;
-use crate::buildin_tools::shell::{get_shell_config, ShellExecutionMode};
-use crate::docker_sandbox::{DockerSandbox, DockerSandboxConfig};
 
 // ── Cached regex patterns ───────────────────────────────────────────────────
 
-static RE_HUNK: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").unwrap()
-});
+static RE_HUNK: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").unwrap());
 
 static RE_FN_RUST: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:pub(?:\(\w+\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
@@ -26,13 +25,11 @@ static RE_FN_JS: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:export\s+)?(?:async\s+)?function\s*\*?\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
 });
 
-static RE_FN_PY_RB: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
-});
+static RE_FN_PY_RB: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 
-static RE_FN_GO: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"func\s+(?:\([^)]*\)\s+)?([A-Za-z_][A-Za-z0-9_]*)").unwrap()
-});
+static RE_FN_GO: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"func\s+(?:\([^)]*\)\s+)?([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct CodeSearchArgs {
@@ -115,7 +112,9 @@ impl Tool for CodeSearchTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         if args.pattern.trim().is_empty() {
-            return Err(CodeSearchError::InvalidArgs("pattern is required".to_string()));
+            return Err(CodeSearchError::InvalidArgs(
+                "pattern is required".to_string(),
+            ));
         }
 
         let runtime = load_audit_runtime().await;
@@ -151,13 +150,9 @@ impl Tool for CodeSearchTool {
         command_args.push(args.pattern.clone());
         command_args.push(path.clone());
 
-        let output = run_command_for_code_search(
-            "rg",
-            &command_args,
-            CODE_SEARCH_TIMEOUT_SECS,
-            &runtime,
-        )
-        .await?;
+        let output =
+            run_command_for_code_search("rg", &command_args, CODE_SEARCH_TIMEOUT_SECS, &runtime)
+                .await?;
 
         let mut matches = Vec::new();
         for line in output.stdout.lines() {
@@ -169,7 +164,11 @@ impl Tool for CodeSearchTool {
             }
         }
 
-        let total_matches = output.stdout.lines().filter(|line| parse_rg_line(line).is_some()).count();
+        let total_matches = output
+            .stdout
+            .lines()
+            .filter(|line| parse_rg_line(line).is_some())
+            .count();
         let truncated = total_matches > matches.len();
 
         Ok(CodeSearchOutput {
@@ -269,7 +268,9 @@ impl Tool for GitDiffScopeTool {
         let max_files = args.max_files.clamp(1, 1000);
 
         if base_ref.trim().is_empty() || target_ref.trim().is_empty() {
-            return Err(GitDiffScopeError::InvalidArgs("base_ref and target_ref must not be empty".to_string()));
+            return Err(GitDiffScopeError::InvalidArgs(
+                "base_ref and target_ref must not be empty".to_string(),
+            ));
         }
 
         let mut numstat_args = vec![
@@ -405,7 +406,9 @@ impl Tool for GitCloneRepoTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let repo_url = args.repo_url.trim().to_string();
         if repo_url.is_empty() {
-            return Err(GitCloneRepoError::InvalidArgs("repo_url is required".to_string()));
+            return Err(GitCloneRepoError::InvalidArgs(
+                "repo_url is required".to_string(),
+            ));
         }
 
         let runtime = load_audit_runtime().await;
@@ -618,7 +621,8 @@ impl Tool for CallGraphLiteTool {
         focus_names.sort();
         focus_names.dedup();
 
-        let escaped_names: Vec<String> = focus_names.iter().map(|name| regex::escape(name)).collect();
+        let escaped_names: Vec<String> =
+            focus_names.iter().map(|name| regex::escape(name)).collect();
         let call_pattern = format!(r"\b({})\s*\(", escaped_names.join("|"));
         let mut calls_args = vec![
             "--line-number".to_string(),
@@ -639,7 +643,10 @@ impl Tool for CallGraphLiteTool {
 
         let mut defs_by_file: HashMap<String, Vec<(String, usize)>> = HashMap::new();
         for (name, file, line) in &definitions {
-            defs_by_file.entry(file.clone()).or_default().push((name.clone(), *line));
+            defs_by_file
+                .entry(file.clone())
+                .or_default()
+                .push((name.clone(), *line));
         }
         for defs in defs_by_file.values_mut() {
             defs.sort_by_key(|(_, line)| *line);
@@ -661,9 +668,16 @@ impl Tool for CallGraphLiteTool {
 
         let mut edge_map: HashMap<String, CallGraphEdge> = HashMap::new();
         for line in calls_out.stdout.lines() {
-            let Some(parsed) = parse_rg_line(line) else { continue };
-            let Some(callee) = extract_called_name(&parsed.text, &focus_names) else { continue };
-            let Some(caller) = nearest_function_for_line(&defs_by_file, &parsed.file, parsed.line) else { continue };
+            let Some(parsed) = parse_rg_line(line) else {
+                continue;
+            };
+            let Some(callee) = extract_called_name(&parsed.text, &focus_names) else {
+                continue;
+            };
+            let Some(caller) = nearest_function_for_line(&defs_by_file, &parsed.file, parsed.line)
+            else {
+                continue;
+            };
             if caller == callee {
                 continue;
             }
@@ -697,8 +711,6 @@ impl Tool for CallGraphLiteTool {
         })
     }
 }
-
-
 
 pub(crate) fn resolve_effective_path(input: Option<&str>, mode: &ShellExecutionMode) -> String {
     if *mode == ShellExecutionMode::Docker {
@@ -756,10 +768,7 @@ fn resolve_clone_parent_path(input: Option<&str>, mode: &ShellExecutionMode) -> 
 
 fn infer_repo_name_from_url(repo_url: &str) -> String {
     let cleaned = repo_url.trim().trim_end_matches('/');
-    let last = cleaned
-        .rsplit(&['/', ':'][..])
-        .next()
-        .unwrap_or("repo");
+    let last = cleaned.rsplit(&['/', ':'][..]).next().unwrap_or("repo");
     let normalized = last.trim_end_matches(".git").trim();
     if normalized.is_empty() {
         "repo".to_string()
@@ -781,16 +790,19 @@ fn join_path_for_mode(parent: &str, name: &str, mode: &ShellExecutionMode) -> St
     }
 }
 
-async fn ensure_clone_parent_exists(parent: &str, runtime: &AuditRuntime) -> Result<(), GitCloneRepoError> {
+async fn ensure_clone_parent_exists(
+    parent: &str,
+    runtime: &AuditRuntime,
+) -> Result<(), GitCloneRepoError> {
     match runtime.mode {
         ShellExecutionMode::Docker => {
             let args = vec!["-p".to_string(), parent.to_string()];
             run_command_for_git_clone("mkdir", &args, 20, runtime).await?;
             Ok(())
         }
-        _ => fs::create_dir_all(parent)
-            .await
-            .map_err(|e| GitCloneRepoError::CommandFailed(format!("failed to create parent dir: {}", e))),
+        _ => fs::create_dir_all(parent).await.map_err(|e| {
+            GitCloneRepoError::CommandFailed(format!("failed to create parent dir: {}", e))
+        }),
     }
 }
 
@@ -801,10 +813,15 @@ async fn is_git_repo(path: &str, runtime: &AuditRuntime) -> bool {
         "rev-parse".to_string(),
         "--is-inside-work-tree".to_string(),
     ];
-    run_audit_command("git", &args, 20, runtime, false).await.is_ok()
+    run_audit_command("git", &args, 20, runtime, false)
+        .await
+        .is_ok()
 }
 
-async fn get_repo_head_commit(path: &str, runtime: &AuditRuntime) -> Result<String, GitCloneRepoError> {
+async fn get_repo_head_commit(
+    path: &str,
+    runtime: &AuditRuntime,
+) -> Result<String, GitCloneRepoError> {
     let args = vec![
         "-C".to_string(),
         path.to_string(),
@@ -896,7 +913,10 @@ pub(crate) async fn run_audit_command(
         }
         ShellExecutionMode::Host => {
             let mut command = Command::new(program);
-            command.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+            command
+                .args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
             let timeout = Duration::from_secs(timeout_secs);
             let output = tokio::time::timeout(timeout, command.output())
                 .await
@@ -1029,10 +1049,22 @@ fn parse_hunks(output: &str) -> HashMap<String, Vec<DiffHunk>> {
         }
         if let Some(caps) = RE_HUNK.captures(line) {
             if let Some(path) = current_file.clone() {
-                let old_start = caps.get(1).and_then(|v| v.as_str().parse::<usize>().ok()).unwrap_or(0);
-                let old_count = caps.get(2).and_then(|v| v.as_str().parse::<usize>().ok()).unwrap_or(1);
-                let new_start = caps.get(3).and_then(|v| v.as_str().parse::<usize>().ok()).unwrap_or(0);
-                let new_count = caps.get(4).and_then(|v| v.as_str().parse::<usize>().ok()).unwrap_or(1);
+                let old_start = caps
+                    .get(1)
+                    .and_then(|v| v.as_str().parse::<usize>().ok())
+                    .unwrap_or(0);
+                let old_count = caps
+                    .get(2)
+                    .and_then(|v| v.as_str().parse::<usize>().ok())
+                    .unwrap_or(1);
+                let new_start = caps
+                    .get(3)
+                    .and_then(|v| v.as_str().parse::<usize>().ok())
+                    .unwrap_or(0);
+                let new_count = caps
+                    .get(4)
+                    .and_then(|v| v.as_str().parse::<usize>().ok())
+                    .unwrap_or(1);
                 hunks_by_file.entry(path).or_default().push(DiffHunk {
                     old_start,
                     old_count,
@@ -1085,8 +1117,6 @@ fn nearest_function_for_line(
     result
 }
 
-
-
 async fn run_command_for_call_graph(
     program: &str,
     args: &[String],
@@ -1104,5 +1134,3 @@ async fn run_command_for_call_graph(
         }
     }
 }
-
-

@@ -14,7 +14,6 @@ use super::cpg::types::*;
 
 use petgraph::Direction;
 
-
 // ============================================================================
 // GetFunctionDetailTool
 // ============================================================================
@@ -252,7 +251,8 @@ impl Tool for GetFunctionDetailTool {
         if args.include_body {
             for func in &mut functions {
                 if !func.file.is_empty() && func.line_end > func.line_start {
-                    func.body = read_function_body(&func.file, func.line_start, func.line_end).await;
+                    func.body =
+                        read_function_body(&func.file, func.line_start, func.line_end).await;
                 }
             }
         }
@@ -395,8 +395,7 @@ impl Tool for GetAttackSurfaceTool {
             } = &node.kind
             {
                 // Find the handler function node
-                let handler_detail =
-                    find_handler_detail(&cpg, idx, handler);
+                let handler_detail = find_handler_detail(&cpg, idx, handler);
 
                 let auth_annotations = handler_detail.auth_annotations.clone();
                 let auth_status = if auth_annotations.is_empty() {
@@ -661,7 +660,9 @@ impl Tool for SmartFileSummaryTool {
         let file_idx = cpg
             .file_index
             .iter()
-            .find(|(k, _)| k.as_str() == file_path || k.ends_with(file_path) || file_path.ends_with(k.as_str()))
+            .find(|(k, _)| {
+                k.as_str() == file_path || k.ends_with(file_path) || file_path.ends_with(k.as_str())
+            })
             .map(|(_, v)| *v);
 
         let file_idx = file_idx.ok_or_else(|| {
@@ -716,8 +717,7 @@ impl Tool for SmartFileSummaryTool {
                     visibility,
                     is_async: _,
                 } => {
-                    let params = cpg
-                        .get_parameter_names(*child_idx);
+                    let params = cpg.get_parameter_names(*child_idx);
                     skeleton.push(SkeletonEntry {
                         kind: "function".to_string(),
                         name: name.clone(),
@@ -739,8 +739,7 @@ impl Tool for SmartFileSummaryTool {
                     is_async: _,
                     ..
                 } => {
-                    let params = cpg
-                        .get_parameter_names(*child_idx);
+                    let params = cpg.get_parameter_names(*child_idx);
                     let display_name = if let Some(cls) = class_name {
                         format!("{}.{}", cls, name)
                     } else {
@@ -787,7 +786,9 @@ impl Tool for SmartFileSummaryTool {
                     call_site_count += 1;
                 }
                 CpgNodeKind::EntryPoint {
-                    method, path, handler,
+                    method,
+                    path,
+                    handler,
                 } => {
                     exposed_endpoints.push(format!("{} {} -> {}", method, path, handler));
                     entry_point_count += 1;
@@ -988,8 +989,10 @@ impl Tool for TraceDataFlowTool {
 
             // BFS through call graph
             let mut visited = std::collections::HashSet::new();
-            let mut queue: std::collections::VecDeque<(petgraph::graph::NodeIndex, Vec<petgraph::graph::NodeIndex>)> =
-                std::collections::VecDeque::new();
+            let mut queue: std::collections::VecDeque<(
+                petgraph::graph::NodeIndex,
+                Vec<petgraph::graph::NodeIndex>,
+            )> = std::collections::VecDeque::new();
             queue.push_back((*start_idx, vec![*start_idx]));
             visited.insert(*start_idx);
 
@@ -1031,9 +1034,9 @@ impl Tool for TraceDataFlowTool {
                         .collect();
 
                     let sink_type = infer_sink_type(&cpg.graph[current]);
-                    let confidence =
-                        ((max_depth as f64 - path_so_far.len() as f64 + 1.0) / max_depth as f64)
-                            .clamp(0.3, 0.95);
+                    let confidence = ((max_depth as f64 - path_so_far.len() as f64 + 1.0)
+                        / max_depth as f64)
+                        .clamp(0.3, 0.95);
 
                     all_paths.push(DataFlowPath {
                         steps,
@@ -1071,11 +1074,18 @@ impl Tool for TraceDataFlowTool {
         all_paths.sort_by(|a, b| {
             b.reaches_dangerous_sink
                 .cmp(&a.reaches_dangerous_sink)
-                .then(b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+                .then(
+                    b.confidence
+                        .partial_cmp(&a.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
         });
         all_paths.truncate(50);
 
-        let dangerous = all_paths.iter().filter(|p| p.reaches_dangerous_sink).count();
+        let dangerous = all_paths
+            .iter()
+            .filter(|p| p.reaches_dangerous_sink)
+            .count();
 
         Ok(TraceDataFlowOutput {
             from: from.to_string(),
@@ -1458,10 +1468,7 @@ fn find_handler_detail(
     }
 }
 
-fn find_function_nodes(
-    cpg: &CodePropertyGraph,
-    name: &str,
-) -> Vec<petgraph::graph::NodeIndex> {
+fn find_function_nodes(cpg: &CodePropertyGraph, name: &str) -> Vec<petgraph::graph::NodeIndex> {
     let mut results = Vec::new();
     let name_lower = name.to_lowercase();
 
@@ -1490,7 +1497,11 @@ fn is_dangerous_sink_node(cpg: &CodePropertyGraph, idx: petgraph::graph::NodeInd
         return true;
     }
     // Command execution sinks
-    if name.contains("system") || name.contains("popen") || name.contains("subprocess") || name.contains("child_process") {
+    if name.contains("system")
+        || name.contains("popen")
+        || name.contains("subprocess")
+        || name.contains("child_process")
+    {
         return true;
     }
     // Eval sinks

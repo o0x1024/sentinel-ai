@@ -357,7 +357,7 @@ pub(crate) fn reconstruct_chat_history(
                     if has_tool_calls {
                         chat_msg.tool_calls =
                             Some(serde_json::to_string(&tool_calls_json).unwrap_or_default());
-                        // 确保有 reasoning_content（即使为空）
+                        // Keep historical behavior: preserve field but don't force non-empty placeholder.
                         chat_msg.reasoning_content = Some(reasoning_content.unwrap_or_default());
                     } else if has_reasoning {
                         chat_msg.reasoning_content = reasoning_content;

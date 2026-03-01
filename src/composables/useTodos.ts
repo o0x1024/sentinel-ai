@@ -22,7 +22,10 @@ import {
 
 export interface UseTodosReturn {
   // 状态
-  todos: Ref<Todo[]>
+  todos: ComputedRef<Todo[]>
+  todosByExecutionId: ComputedRef<Record<string, Todo[]>>
+  executionIds: ComputedRef<string[]>
+  lastExecutionId: ComputedRef<string | undefined>
   rootTodos: ComputedRef<Todo[]>
   stats: ComputedRef<TodoStats>
   progress: ComputedRef<number>
@@ -32,9 +35,11 @@ export interface UseTodosReturn {
   currentTask: ComputedRef<Todo | undefined>
   
   // 方法
+  getTodosForExecution: (executionId: string) => Todo[]
   getChildren: (parentId: string) => Todo[]
   getIndicator: (status: TodoStatus) => string
   clearTodos: () => void
+  clearTodosForExecution: (executionId: string) => void
   open: () => void
   close: () => void
   toggle: () => void
@@ -46,11 +51,11 @@ export interface UseTodosReturn {
 
 // Global state for todos panel (singleton pattern like useTerminal)
 const globalTodosState = ref<{
-  todos: Todo[]
+  todosByExecutionId: Record<string, Todo[]>
   isTodosPanelActive: boolean
   lastExecutionId: string | undefined
 }>({
-  todos: [],
+  todosByExecutionId: {},
   isTodosPanelActive: false,
   lastExecutionId: undefined,
 })
@@ -70,34 +75,53 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     return typeof executionId === 'string' ? executionId : executionId.value
   }
 
+  const todos = computed<Todo[]>(() => {
+    const targetId = getExecutionId()
+    if (targetId) return globalTodosState.value.todosByExecutionId[targetId] || []
+    const latestId = globalTodosState.value.lastExecutionId
+    if (latestId) return globalTodosState.value.todosByExecutionId[latestId] || []
+    return []
+  })
+
+  const todosByExecutionId = computed(() => globalTodosState.value.todosByExecutionId)
+  const executionIds = computed(() => Object.keys(globalTodosState.value.todosByExecutionId))
+  const lastExecutionId = computed(() => globalTodosState.value.lastExecutionId)
+
   // 顶级任务（无 parent_id）
-  const rootTodos = computed(() => getRootTodos(globalTodosState.value.todos))
+  const rootTodos = computed(() => getRootTodos(todos.value))
 
   // 统计信息
   const stats = computed<TodoStats>(() => ({
-    total: globalTodosState.value.todos.length,
-    pending: globalTodosState.value.todos.filter(t => t.status === 'pending').length,
-    in_progress: globalTodosState.value.todos.filter(t => t.status === 'in_progress').length,
-    completed: globalTodosState.value.todos.filter(t => t.status === 'completed').length,
+    total: todos.value.length,
+    pending: todos.value.filter(t => t.status === 'pending').length,
+    in_progress: todos.value.filter(t => t.status === 'in_progress').length,
+    completed: todos.value.filter(t => t.status === 'completed').length,
   }))
 
   // 完成进度
-  const progress = computed(() => calculateProgress(globalTodosState.value.todos))
+  const progress = computed(() => calculateProgress(todos.value))
 
   // 是否有 todos（实时数据）
-  const hasTodos = computed(() => globalTodosState.value.todos.length > 0)
+  const hasTodos = computed(() => todos.value.length > 0)
 
   // 是否有历史记录（用于判断是否可以重新打开面板）
-  const hasHistory = computed(() => globalTodosState.value.todos.length > 0)
+  const hasHistory = computed(() => {
+    return Object.values(globalTodosState.value.todosByExecutionId).some((items) => items.length > 0)
+  })
 
   // 当前进行中的任务
   const currentTask = computed(() => 
-    globalTodosState.value.todos.find(t => t.status === 'in_progress')
+    todos.value.find(t => t.status === 'in_progress')
   )
+
+  const getTodosForExecution = (id: string): Todo[] => {
+    if (!id) return []
+    return globalTodosState.value.todosByExecutionId[id] || []
+  }
 
   // 获取子任务
   const getChildren = (parentId: string): Todo[] => {
-    return getChildTodos(globalTodosState.value.todos, parentId)
+    return getChildTodos(todos.value, parentId)
   }
 
   // 获取状态指示符
@@ -107,7 +131,25 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
 
   // 清空 todos
   const clearTodos = (): void => {
-    globalTodosState.value.todos = []
+    const targetId = getExecutionId()
+    if (targetId) {
+      delete globalTodosState.value.todosByExecutionId[targetId]
+      if (globalTodosState.value.lastExecutionId === targetId) {
+        globalTodosState.value.lastExecutionId = undefined
+      }
+      return
+    }
+    globalTodosState.value.todosByExecutionId = {}
+    globalTodosState.value.lastExecutionId = undefined
+  }
+
+  const clearTodosForExecution = (id: string): void => {
+    if (!id) return
+    if (!(id in globalTodosState.value.todosByExecutionId)) return
+    delete globalTodosState.value.todosByExecutionId[id]
+    if (globalTodosState.value.lastExecutionId === id) {
+      globalTodosState.value.lastExecutionId = undefined
+    }
   }
 
   // 打开面板
@@ -138,17 +180,12 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
         return
       }
 
-      // 检测新的 execution_id，清空旧数据
-      if (event.payload.execution_id !== globalTodosState.value.lastExecutionId) {
-        console.log('[useTodos] New execution detected, clearing old todos:', {
-          old: globalTodosState.value.lastExecutionId,
-          new: event.payload.execution_id
-        })
-        globalTodosState.value.todos = []
-        globalTodosState.value.lastExecutionId = event.payload.execution_id
+      globalTodosState.value.todosByExecutionId = {
+        ...globalTodosState.value.todosByExecutionId,
+        [event.payload.execution_id]: event.payload.todos,
       }
+      globalTodosState.value.lastExecutionId = event.payload.execution_id
 
-      globalTodosState.value.todos = event.payload.todos
       // 当有新 todos 时自动打开面板，同时关闭终端面板
       if (event.payload.todos.length > 0) {
         globalTodosState.value.isTodosPanelActive = true
@@ -207,7 +244,10 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
   })
 
   return {
-    todos: computed(() => globalTodosState.value.todos),
+    todos,
+    todosByExecutionId,
+    executionIds,
+    lastExecutionId,
     rootTodos,
     stats,
     progress,
@@ -215,9 +255,11 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
     hasHistory,
     isTodosPanelActive: computed(() => globalTodosState.value.isTodosPanelActive),
     currentTask,
+    getTodosForExecution,
     getChildren,
     getIndicator,
     clearTodos,
+    clearTodosForExecution,
     open,
     close,
     toggle,

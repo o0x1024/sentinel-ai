@@ -1,8 +1,8 @@
 //! CPG builder — walks source files, parses with tree-sitter, populates the graph.
 
+use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use petgraph::graph::NodeIndex;
 use walkdir::WalkDir;
 
 use super::parser::{self, Language};
@@ -114,14 +114,7 @@ pub fn build_cpg(root: &str, max_files: usize) -> Result<CodePropertyGraph, Stri
 
         // Walk AST and populate CPG
         let root_node = tree.root_node();
-        walk_ast(
-            &mut cpg,
-            &source,
-            &rel_path,
-            lang,
-            root_node,
-            file_idx,
-        );
+        walk_ast(&mut cpg, &source, &rel_path, lang, root_node, file_idx);
 
         file_count += 1;
     }
@@ -263,7 +256,9 @@ fn walk_ast(
     if call_kinds.contains(&kind) {
         if let Some(callee) = extract_callee_name(node, source) {
             let call_idx = cpg.add_node(CpgNode {
-                kind: CpgNodeKind::CallSite { callee: callee.clone() },
+                kind: CpgNodeKind::CallSite {
+                    callee: callee.clone(),
+                },
                 file: Some(file_path.to_string()),
                 start_line,
                 end_line,
@@ -314,7 +309,10 @@ fn extract_class_name(node: tree_sitter::Node, source: &[u8], _lang: Language) -
     // Fallback: find first identifier child
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            if child.kind() == "identifier" || child.kind() == "type_identifier" || child.kind() == "name" {
+            if child.kind() == "identifier"
+                || child.kind() == "type_identifier"
+                || child.kind() == "name"
+            {
                 return node_text(child, source);
             }
         }
@@ -330,7 +328,10 @@ fn extract_parent_class(node: tree_sitter::Node, source: &[u8], _lang: Language)
     // Java/C# extends
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            if child.kind() == "superclass" || child.kind() == "class_heritage" || child.kind() == "base_list" {
+            if child.kind() == "superclass"
+                || child.kind() == "class_heritage"
+                || child.kind() == "base_list"
+            {
                 // Get the type name inside
                 for j in 0..child.child_count() {
                     if let Some(gc) = child.child(j) {
@@ -467,23 +468,21 @@ fn extract_parameters(
     func_idx: NodeIndex,
 ) {
     // Look for "parameters" or "formal_parameters" child
-    let param_list = func_node
-        .child_by_field_name("parameters")
-        .or_else(|| {
-            for i in 0..func_node.child_count() {
-                if let Some(child) = func_node.child(i) {
-                    let ck = child.kind();
-                    if ck == "parameters"
-                        || ck == "formal_parameters"
-                        || ck == "parameter_list"
-                        || ck == "formal_parameter_list"
-                    {
-                        return Some(child);
-                    }
+    let param_list = func_node.child_by_field_name("parameters").or_else(|| {
+        for i in 0..func_node.child_count() {
+            if let Some(child) = func_node.child(i) {
+                let ck = child.kind();
+                if ck == "parameters"
+                    || ck == "formal_parameters"
+                    || ck == "parameter_list"
+                    || ck == "formal_parameter_list"
+                {
+                    return Some(child);
                 }
             }
-            None
-        });
+        }
+        None
+    });
 
     if let Some(params) = param_list {
         let mut idx = 0;
@@ -547,15 +546,25 @@ fn extract_visibility(node: tree_sitter::Node, source: &[u8], lang: Language) ->
             for i in 0..node.child_count() {
                 if let Some(child) = node.child(i) {
                     if let Some(text) = node_text(child, source) {
-                        if text == "public" || text == "private" || text == "protected" || text == "internal" {
+                        if text == "public"
+                            || text == "private"
+                            || text == "protected"
+                            || text == "internal"
+                        {
                             return text;
                         }
                     }
                     if child.kind() == "modifiers" || child.kind() == "modifier_list" {
                         if let Some(text) = node_text(child, source) {
-                            if text.contains("public") { return "public".to_string(); }
-                            if text.contains("private") { return "private".to_string(); }
-                            if text.contains("protected") { return "protected".to_string(); }
+                            if text.contains("public") {
+                                return "public".to_string();
+                            }
+                            if text.contains("private") {
+                                return "private".to_string();
+                            }
+                            if text.contains("protected") {
+                                return "protected".to_string();
+                            }
                         }
                     }
                 }
@@ -603,7 +612,11 @@ fn detect_static(node: tree_sitter::Node, source: &[u8], _lang: Language) -> boo
     false
 }
 
-fn detect_method_context(node: tree_sitter::Node, source: &[u8], lang: Language) -> (bool, Option<String>) {
+fn detect_method_context(
+    node: tree_sitter::Node,
+    source: &[u8],
+    lang: Language,
+) -> (bool, Option<String>) {
     // Walk up through named ancestors to see if inside a class
     if let Some(parent) = node.parent() {
         let pk = parent.kind();
@@ -618,7 +631,10 @@ fn detect_method_context(node: tree_sitter::Node, source: &[u8], lang: Language)
             let class_node = if class_kinds.contains(&pk) {
                 parent
             } else {
-                parent.parent().filter(|gp| class_kinds.contains(&gp.kind())).unwrap_or(parent)
+                parent
+                    .parent()
+                    .filter(|gp| class_kinds.contains(&gp.kind()))
+                    .unwrap_or(parent)
             };
             if let Some(name) = extract_class_name(class_node, source, lang) {
                 return (true, Some(name));

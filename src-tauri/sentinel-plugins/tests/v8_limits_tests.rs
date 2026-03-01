@@ -14,7 +14,7 @@ fn create_test_transaction(body_size_kb: usize) -> HttpTransaction {
     use std::collections::HashMap;
 
     let body = vec![b'A'; body_size_kb * 1024];
-    
+
     HttpTransaction {
         request: sentinel_plugins::RequestContext {
             id: uuid::Uuid::new_v4().to_string(),
@@ -100,11 +100,14 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     match engine.scan_transaction(&transaction).await {
         Ok(findings) => {
             println!("Duration: {:?}", start.elapsed());
@@ -178,11 +181,14 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     match engine.scan_transaction(&transaction).await {
         Ok(findings) => {
             println!("Duration: {:?}", start.elapsed());
@@ -245,17 +251,21 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     // 使用 timeout 防止真正的无限循环
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        engine.scan_transaction(&transaction)
-    ).await;
-    
+        engine.scan_transaction(&transaction),
+    )
+    .await;
+
     match result {
         Ok(Ok(findings)) => {
             println!("Duration: {:?}", start.elapsed());
@@ -348,18 +358,23 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     match engine.scan_transaction(&transaction).await {
         Ok(findings) => {
             println!("Duration: {:?}", start.elapsed());
             println!("Findings: {}", findings.len());
             for finding in findings {
                 println!("  - {}: {}", finding.title, finding.description);
-                if let Ok(results) = serde_json::from_str::<Vec<serde_json::Value>>(&finding.evidence) {
+                if let Ok(results) =
+                    serde_json::from_str::<Vec<serde_json::Value>>(&finding.evidence)
+                {
                     for result in results {
                         println!("    {:?}", result);
                     }
@@ -447,11 +462,14 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     match engine.scan_transaction(&transaction).await {
         Ok(findings) => {
             println!("Duration: {:?}", start.elapsed());
@@ -540,11 +558,14 @@ export function scan_transaction(transaction) {
 "#;
 
     let mut engine = PluginEngine::new().unwrap();
-    engine.load_plugin_with_metadata(code, metadata).await.unwrap();
+    engine
+        .load_plugin_with_metadata(code, metadata)
+        .await
+        .unwrap();
 
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     match engine.scan_transaction(&transaction).await {
         Ok(findings) => {
             println!("Duration: {:?}", start.elapsed());
@@ -603,19 +624,19 @@ export function scan_transaction(transaction) {
 
     let num_executors = 10;
     let mut executors = vec![];
-    
+
     // 创建多个 Executor（每个运行在独立线程中，避免 V8 Isolate 冲突）
     for i in 0..num_executors {
         let mut meta = metadata.clone();
         meta.id = format!("v8-test-isolation-{}", i);
-        
+
         let executor = PluginExecutor::new(meta, code.to_string(), 1000).unwrap();
         executors.push(executor);
     }
-    
+
     let start = Instant::now();
     let transaction = create_test_transaction(1);
-    
+
     // 并发执行（每个 Executor 在自己的线程中，不会相互干扰）
     let mut handles = vec![];
     for (i, executor) in executors.into_iter().enumerate() {
@@ -634,14 +655,13 @@ export function scan_transaction(transaction) {
         });
         handles.push(handle);
     }
-    
+
     // 等待所有执行完成
     for handle in handles {
         let _ = handle.await;
     }
-    
+
     println!("\nDuration: {:?}", start.elapsed());
     println!("Expected: Each executor should have counter = 1");
     println!("All executors run in separate threads with isolated V8 Isolates ✓");
 }
-

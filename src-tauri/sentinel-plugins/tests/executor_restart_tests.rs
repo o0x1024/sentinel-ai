@@ -2,9 +2,7 @@
 //!
 //! 验证 PluginExecutor 的重启功能能有效防止内存泄漏
 
-use sentinel_plugins::{
-    HttpTransaction, PluginExecutor, PluginMetadata, Severity,
-};
+use sentinel_plugins::{HttpTransaction, PluginExecutor, PluginMetadata, Severity};
 use std::time::{Duration, Instant};
 use sysinfo::System;
 
@@ -75,8 +73,7 @@ async fn test_auto_restart_functionality() {
 
     let (metadata, code) = create_simple_plugin();
     let restart_threshold = 100;
-    let executor =
-        PluginExecutor::new(metadata, code, restart_threshold).unwrap();
+    let executor = PluginExecutor::new(metadata, code, restart_threshold).unwrap();
 
     println!("Restart threshold: {} executions", restart_threshold);
 
@@ -103,7 +100,10 @@ async fn test_auto_restart_functionality() {
     println!("Final Statistics:");
     println!("  Total executions: {}", stats.total_executions);
     println!("  Restart count: {}", stats.restart_count);
-    println!("  Current instance executions: {}", stats.current_instance_executions);
+    println!(
+        "  Current instance executions: {}",
+        stats.current_instance_executions
+    );
 
     // 验证重启次数
     let expected_restarts = iterations / restart_threshold;
@@ -132,8 +132,7 @@ async fn test_restart_memory_comparison() {
     println!("\nScenario 1: Without Restart (1000 executions)");
     {
         let (metadata, code) = create_simple_plugin();
-        let executor =
-            PluginExecutor::new(metadata, code, 999999).unwrap(); // 永不重启
+        let executor = PluginExecutor::new(metadata, code, 999999).unwrap(); // 永不重启
 
         system.refresh_process(pid);
         let start_mem = system.process(pid).unwrap().memory() as f64 / 1024.0 / 1024.0;
@@ -290,7 +289,10 @@ async fn test_manual_restart() {
     let stats_before = executor.get_stats().await.unwrap();
     println!("Before restart:");
     println!("  Total executions: {}", stats_before.total_executions);
-    println!("  Current instance: {}", stats_before.current_instance_executions);
+    println!(
+        "  Current instance: {}",
+        stats_before.current_instance_executions
+    );
     println!("  Restarts: {}", stats_before.restart_count);
 
     // 手动重启
@@ -307,7 +309,10 @@ async fn test_manual_restart() {
     let stats_after = executor.get_stats().await.unwrap();
     println!("\nAfter restart:");
     println!("  Total executions: {}", stats_after.total_executions);
-    println!("  Current instance: {}", stats_after.current_instance_executions);
+    println!(
+        "  Current instance: {}",
+        stats_after.current_instance_executions
+    );
     println!("  Restarts: {}", stats_after.restart_count);
 
     // 验证
@@ -334,8 +339,7 @@ async fn test_different_restart_thresholds() {
         println!("\nTesting threshold: {}", threshold);
 
         let (metadata, code) = create_simple_plugin();
-        let executor =
-            PluginExecutor::new(metadata, code, threshold).unwrap();
+        let executor = PluginExecutor::new(metadata, code, threshold).unwrap();
 
         let start = Instant::now();
         for _ in 0..iterations {
@@ -358,4 +362,3 @@ async fn test_different_restart_thresholds() {
 
     println!("\n{}", "=".repeat(80));
 }
-

@@ -1,15 +1,15 @@
+pub mod agent;
 pub mod ai;
 pub mod asset;
 pub mod database;
 pub mod dictionary;
 pub mod mcp;
-pub mod scan_session;
-pub mod scan;
-pub mod vulnerability;
-pub mod agent;
 pub mod rag;
-pub mod workflow;
 pub mod rag_config;
+pub mod scan;
+pub mod scan_session;
+pub mod vulnerability;
+pub mod workflow;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

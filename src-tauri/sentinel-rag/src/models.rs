@@ -1,8 +1,9 @@
+pub use sentinel_core::models::rag::{
+    ChunkMetadata, CollectionInfo, DocumentChunk, DocumentSource, IngestionStatus,
+    IngestionStatusEnum, QueryResult,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-pub use sentinel_core::models::rag::{
-    DocumentChunk, ChunkMetadata, DocumentSource, IngestionStatusEnum, IngestionStatus, QueryResult, CollectionInfo
-};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RagQueryRequest {

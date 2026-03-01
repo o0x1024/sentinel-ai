@@ -178,8 +178,12 @@ impl WorkflowToolAdapter {
     }
 
     /// Extract input schema from workflow definition
-    pub async fn extract_input_schema(definition: &Value, tool_server: Option<&ToolServer>) -> Value {
-        let keys: Vec<String> = definition.as_object()
+    pub async fn extract_input_schema(
+        definition: &Value,
+        tool_server: Option<&ToolServer>,
+    ) -> Value {
+        let keys: Vec<String> = definition
+            .as_object()
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
         tracing::info!(
@@ -203,17 +207,18 @@ impl WorkflowToolAdapter {
                                 "description": format!("Input parameter: {}", name)
                             }),
                         );
-                    } 
+                    }
                     // Handle object inputs {"name": "foo", "type": "string", ...}
                     else if let Some(obj) = item.as_object() {
                         if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
-                            let type_str = obj.get("type").and_then(|v| v.as_str()).unwrap_or("string");
+                            let type_str =
+                                obj.get("type").and_then(|v| v.as_str()).unwrap_or("string");
                             let desc = obj
                                 .get("label")
                                 .or(obj.get("description"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(name);
-                            
+
                             properties.insert(
                                 name.to_string(),
                                 serde_json::json!({
@@ -221,9 +226,13 @@ impl WorkflowToolAdapter {
                                     "description": desc
                                 }),
                             );
-                            
+
                             // Check if required
-                            if obj.get("required").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            if obj
+                                .get("required")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
                                 required.push(name.to_string());
                             }
                         }
@@ -232,8 +241,10 @@ impl WorkflowToolAdapter {
             } else if let Some(obj) = params.as_object() {
                 // Handle map inputs {"foo": {"type": "string"}}
                 for (name, spec) in obj {
-                    if name == "schema" { continue; } // skip schema key if it's mixed in
-                    
+                    if name == "schema" {
+                        continue;
+                    } // skip schema key if it's mixed in
+
                     let mut prop = spec.clone();
                     if !prop.is_object() {
                         // If spec is just a string (type), wrap it
@@ -253,7 +264,9 @@ impl WorkflowToolAdapter {
                     "properties": properties
                 });
                 if !required.is_empty() {
-                    schema.as_object_mut()?.insert("required".to_string(), serde_json::json!(required));
+                    schema
+                        .as_object_mut()?
+                        .insert("required".to_string(), serde_json::json!(required));
                 }
                 return Some(schema);
             }
@@ -274,7 +287,7 @@ impl WorkflowToolAdapter {
 
         // 2. Check "parameters" key (alias)
         if let Some(params) = definition.get("parameters") {
-             if let Some(schema) = build_schema_from_params(params) {
+            if let Some(schema) = build_schema_from_params(params) {
                 return schema;
             }
         }
@@ -286,39 +299,65 @@ impl WorkflowToolAdapter {
 
         // 4. Try to find from nodes (Start/trigger block or first node)
         if let Some(nodes) = definition.get("nodes").and_then(|n| n.as_array()) {
-            tracing::debug!("Workflow has {} nodes, checking for start/trigger node", nodes.len());
-            
+            tracing::debug!(
+                "Workflow has {} nodes, checking for start/trigger node",
+                nodes.len()
+            );
+
             for node in nodes {
                 // Check both "type" and "node_type" (different formats)
-                let node_type = node.get("node_type")
+                let node_type = node
+                    .get("node_type")
                     .or(node.get("type"))
                     .and_then(|t| t.as_str())
                     .unwrap_or("");
-                
-                tracing::debug!("Checking node type: '{}' for workflow input schema", node_type);
-                
-                if node_type == "start" || node_type == "trigger" || node_type == "webhook" 
-                    || node_type == "trigger_schedule" || node_type == "input" {
-                    
+
+                tracing::debug!(
+                    "Checking node type: '{}' for workflow input schema",
+                    node_type
+                );
+
+                if node_type == "start"
+                    || node_type == "trigger"
+                    || node_type == "webhook"
+                    || node_type == "trigger_schedule"
+                    || node_type == "input"
+                {
                     // Method 1: Check for input_ports array (standard node format)
                     if let Some(input_ports) = node.get("input_ports").and_then(|p| p.as_array()) {
                         if !input_ports.is_empty() {
                             let mut properties = serde_json::Map::new();
                             let mut required = Vec::new();
-                            
+
                             for port in input_ports {
                                 if let Some(port_obj) = port.as_object() {
-                                    let port_id = port_obj.get("id").and_then(|v| v.as_str()).unwrap_or("input");
-                                    
+                                    let port_id = port_obj
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("input");
+
                                     // Skip generic flow ports like "in", "flow", "trigger"
-                                    if port_id == "in" || port_id == "flow" || port_id == "trigger" || port_id == "input" {
+                                    if port_id == "in"
+                                        || port_id == "flow"
+                                        || port_id == "trigger"
+                                        || port_id == "input"
+                                    {
                                         continue;
                                     }
 
-                                    let port_name = port_obj.get("name").and_then(|v| v.as_str()).unwrap_or(port_id);
-                                    let port_type = port_obj.get("port_type").and_then(|v| v.as_str()).unwrap_or("string");
-                                    let is_required = port_obj.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    
+                                    let port_name = port_obj
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or(port_id);
+                                    let port_type = port_obj
+                                        .get("port_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("string");
+                                    let is_required = port_obj
+                                        .get("required")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+
                                     // Convert port_type to JSON schema type
                                     let json_type = match port_type.to_lowercase().as_str() {
                                         "integer" | "int" | "number" => "number",
@@ -327,32 +366,41 @@ impl WorkflowToolAdapter {
                                         "object" | "json" => "object",
                                         _ => "string",
                                     };
-                                    
-                                    properties.insert(port_id.to_string(), serde_json::json!({
-                                        "type": json_type,
-                                        "description": port_name
-                                    }));
-                                    
+
+                                    properties.insert(
+                                        port_id.to_string(),
+                                        serde_json::json!({
+                                            "type": json_type,
+                                            "description": port_name
+                                        }),
+                                    );
+
                                     if is_required {
                                         required.push(port_id.to_string());
                                     }
                                 }
                             }
-                            
+
                             if !properties.is_empty() {
                                 let mut schema = serde_json::json!({
                                     "type": "object",
                                     "properties": properties
                                 });
                                 if !required.is_empty() {
-                                    schema.as_object_mut().unwrap().insert("required".to_string(), serde_json::json!(required));
+                                    schema.as_object_mut().unwrap().insert(
+                                        "required".to_string(),
+                                        serde_json::json!(required),
+                                    );
                                 }
-                                tracing::info!("Extracted workflow input schema from input_ports: {:?}", schema);
+                                tracing::info!(
+                                    "Extracted workflow input schema from input_ports: {:?}",
+                                    schema
+                                );
                                 return schema;
                             }
                         }
                     }
-                    
+
                     // Method 2: Check params for schema definition
                     if let Some(params) = node.get("params").and_then(|p| p.as_object()) {
                         // Check if params has input_schema or schema field
@@ -360,7 +408,7 @@ impl WorkflowToolAdapter {
                             tracing::info!("Found input_schema in node params");
                             return schema.clone();
                         }
-                        
+
                         // Convert params to schema (each param key becomes a property)
                         if !params.is_empty() {
                             let mut properties = serde_json::Map::new();
@@ -369,30 +417,42 @@ impl WorkflowToolAdapter {
                                 if key.starts_with("_") || key == "type" || key == "node_type" {
                                     continue;
                                 }
-                                
-                                let param_type = if value.is_string() { "string" }
-                                    else if value.is_number() { "number" }
-                                    else if value.is_boolean() { "boolean" }
-                                    else if value.is_array() { "array" }
-                                    else { "object" };
-                                
-                                properties.insert(key.clone(), serde_json::json!({
-                                    "type": param_type,
-                                    "description": format!("Parameter: {}", key)
-                                }));
+
+                                let param_type = if value.is_string() {
+                                    "string"
+                                } else if value.is_number() {
+                                    "number"
+                                } else if value.is_boolean() {
+                                    "boolean"
+                                } else if value.is_array() {
+                                    "array"
+                                } else {
+                                    "object"
+                                };
+
+                                properties.insert(
+                                    key.clone(),
+                                    serde_json::json!({
+                                        "type": param_type,
+                                        "description": format!("Parameter: {}", key)
+                                    }),
+                                );
                             }
-                            
+
                             if !properties.is_empty() {
                                 let schema = serde_json::json!({
                                     "type": "object",
                                     "properties": properties
                                 });
-                                tracing::info!("Extracted workflow input schema from params: {:?}", schema);
+                                tracing::info!(
+                                    "Extracted workflow input schema from params: {:?}",
+                                    schema
+                                );
                                 return schema;
                             }
                         }
                     }
-                    
+
                     // Method 3: Check data/inputs fields
                     if let Some(data) = node.get("data").or(node.get("inputs")) {
                         if let Some(schema) = data.get("input_schema") {
@@ -412,27 +472,44 @@ impl WorkflowToolAdapter {
                     }
                 }
             }
-            
+
             // If no start node found, try to use the first node's input_ports
             if let Some(first_node) = nodes.first() {
-                if let Some(input_ports) = first_node.get("input_ports").and_then(|p| p.as_array()) {
+                if let Some(input_ports) = first_node.get("input_ports").and_then(|p| p.as_array())
+                {
                     if !input_ports.is_empty() {
                         let mut properties = serde_json::Map::new();
                         let mut required = Vec::new();
-                        
+
                         for port in input_ports {
                             if let Some(port_obj) = port.as_object() {
-                                let port_id = port_obj.get("id").and_then(|v| v.as_str()).unwrap_or("input");
-                                
+                                let port_id = port_obj
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("input");
+
                                 // Skip generic flow ports like "in", "flow", "trigger"
-                                if port_id == "in" || port_id == "flow" || port_id == "trigger" || port_id == "input" {
+                                if port_id == "in"
+                                    || port_id == "flow"
+                                    || port_id == "trigger"
+                                    || port_id == "input"
+                                {
                                     continue;
                                 }
 
-                                let port_name = port_obj.get("name").and_then(|v| v.as_str()).unwrap_or(port_id);
-                                let port_type = port_obj.get("port_type").and_then(|v| v.as_str()).unwrap_or("string");
-                                let is_required = port_obj.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
-                                
+                                let port_name = port_obj
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(port_id);
+                                let port_type = port_obj
+                                    .get("port_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("string");
+                                let is_required = port_obj
+                                    .get("required")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
                                 let json_type = match port_type.to_lowercase().as_str() {
                                     "integer" | "int" | "number" => "number",
                                     "boolean" | "bool" => "boolean",
@@ -440,32 +517,41 @@ impl WorkflowToolAdapter {
                                     "object" | "json" => "object",
                                     _ => "string",
                                 };
-                                
-                                properties.insert(port_id.to_string(), serde_json::json!({
-                                    "type": json_type,
-                                    "description": port_name
-                                }));
-                                
+
+                                properties.insert(
+                                    port_id.to_string(),
+                                    serde_json::json!({
+                                        "type": json_type,
+                                        "description": port_name
+                                    }),
+                                );
+
                                 if is_required {
                                     required.push(port_id.to_string());
                                 }
                             }
                         }
-                        
+
                         if !properties.is_empty() {
                             let mut schema = serde_json::json!({
                                 "type": "object",
                                 "properties": properties
                             });
                             if !required.is_empty() {
-                                schema.as_object_mut().unwrap().insert("required".to_string(), serde_json::json!(required));
+                                schema
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("required".to_string(), serde_json::json!(required));
                             }
-                            tracing::info!("Extracted workflow input schema from first node input_ports: {:?}", schema);
+                            tracing::info!(
+                                "Extracted workflow input schema from first node input_ports: {:?}",
+                                schema
+                            );
                             return schema;
                         }
                     }
                 }
-                
+
                 // Fallback Method 2: Check params for schema definition (for first node)
                 if let Some(params) = first_node.get("params").and_then(|p| p.as_object()) {
                     // Check if params has input_schema or schema field
@@ -473,7 +559,7 @@ impl WorkflowToolAdapter {
                         tracing::info!("Found input_schema in first node params");
                         return schema.clone();
                     }
-                    
+
                     // Convert params to schema (each param key becomes a property)
                     if !params.is_empty() {
                         let mut properties = serde_json::Map::new();
@@ -482,25 +568,37 @@ impl WorkflowToolAdapter {
                             if key.starts_with("_") || key == "type" || key == "node_type" {
                                 continue;
                             }
-                            
-                            let param_type = if value.is_string() { "string" }
-                                else if value.is_number() { "number" }
-                                else if value.is_boolean() { "boolean" }
-                                else if value.is_array() { "array" }
-                                else { "object" };
-                            
-                            properties.insert(key.clone(), serde_json::json!({
-                                "type": param_type,
-                                "description": format!("Parameter: {}", key)
-                            }));
+
+                            let param_type = if value.is_string() {
+                                "string"
+                            } else if value.is_number() {
+                                "number"
+                            } else if value.is_boolean() {
+                                "boolean"
+                            } else if value.is_array() {
+                                "array"
+                            } else {
+                                "object"
+                            };
+
+                            properties.insert(
+                                key.clone(),
+                                serde_json::json!({
+                                    "type": param_type,
+                                    "description": format!("Parameter: {}", key)
+                                }),
+                            );
                         }
-                        
+
                         if !properties.is_empty() {
                             let schema = serde_json::json!({
                                 "type": "object",
                                 "properties": properties
                             });
-                            tracing::info!("Extracted workflow input schema from first node params: {:?}", schema);
+                            tracing::info!(
+                                "Extracted workflow input schema from first node params: {:?}",
+                                schema
+                            );
                             return schema;
                         }
                     }
@@ -530,15 +628,15 @@ impl WorkflowToolAdapter {
                     // Start node types like "start" are already handled, so if we are here,
                     // it might be a tool node. The 'node_type' might correspond to a tool ID.
                     // Or it might be stored in data.tool_id or similar.
-                    
+
                     let mut candidate_tool_ids = Vec::new();
 
                     // 1. Direct node type (e.g. "http_request", "plugin__xyz")
                     if let Some(nt) = first_node.get("node_type").and_then(|t| t.as_str()) {
-                         candidate_tool_ids.push(nt.to_string());
+                        candidate_tool_ids.push(nt.to_string());
                     }
-                     if let Some(nt) = first_node.get("type").and_then(|t| t.as_str()) {
-                         candidate_tool_ids.push(nt.to_string());
+                    if let Some(nt) = first_node.get("type").and_then(|t| t.as_str()) {
+                        candidate_tool_ids.push(nt.to_string());
                     }
 
                     // 2. data.tool_id
@@ -555,8 +653,8 @@ impl WorkflowToolAdapter {
                         }
 
                         if let Some(tool_info) = server.get_tool(&tool_name).await {
-                             tracing::info!("Found schema for first node tool: {}", tool_name);
-                             return tool_info.input_schema.clone();
+                            tracing::info!("Found schema for first node tool: {}", tool_name);
+                            return tool_info.input_schema.clone();
                         }
                     }
                 }
@@ -635,7 +733,11 @@ impl WorkflowToolAdapter {
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let ports = if output_ports.is_empty() { input_ports } else { output_ports };
+            let ports = if output_ports.is_empty() {
+                input_ports
+            } else {
+                output_ports
+            };
 
             let mut properties = serde_json::Map::new();
             let mut required = Vec::new();
@@ -669,7 +771,11 @@ impl WorkflowToolAdapter {
                     }),
                 );
 
-                if port.get("required").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if port
+                    .get("required")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
                     required.push(port_id.to_string());
                 }
             }
@@ -779,7 +885,8 @@ where
                     continue;
                 }
 
-                let input_schema = WorkflowToolAdapter::extract_input_schema(&workflow, Some(tool_server)).await;
+                let input_schema =
+                    WorkflowToolAdapter::extract_input_schema(&workflow, Some(tool_server)).await;
                 let output_schema = WorkflowToolAdapter::extract_output_schema(&workflow);
 
                 // Register workflow context
@@ -793,7 +900,14 @@ where
                 // Register as tool
                 let executor = create_workflow_executor(id.to_string());
                 tool_server
-                    .register_workflow_tool(id, name, description, input_schema, output_schema, executor)
+                    .register_workflow_tool(
+                        id,
+                        name,
+                        description,
+                        input_schema,
+                        output_schema,
+                        executor,
+                    )
                     .await;
 
                 count += 1;

@@ -1,8 +1,3 @@
-use anyhow::Result;
-use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::{Column, Row, TypeInfo};
-use std::path::PathBuf;
-use serde_json::Value;
 use crate::core::models::database::DatabaseStats;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::db_config::{
@@ -10,9 +5,14 @@ use crate::database_service::db_config::{
 };
 use crate::database_service::migration::DatabaseMigration;
 use crate::database_service::migrations::AgentTeamMigration;
+use anyhow::Result;
+use serde_json::Value;
+use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::{Column, Row, TypeInfo};
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 #[derive(Debug, Clone)]
 /// 数据库服务
@@ -70,7 +70,7 @@ impl DatabaseService {
     pub fn pool(&self) -> &PgPool {
         self.get_pool().expect("Database not initialized")
     }
-    
+
     // Deprecated exact match for SQLite but kept for interface compatibility if generic
     pub fn get_postgres_pool(&self) -> Result<&PgPool> {
         self.get_pool()
@@ -78,7 +78,9 @@ impl DatabaseService {
 
     pub fn get_db(&self) -> Result<crate::client::DatabaseClient> {
         match self.runtime_pool.as_ref() {
-            Some(DatabasePool::PostgreSQL(pool)) => Ok(crate::client::DatabaseClient::new(pool.clone())),
+            Some(DatabasePool::PostgreSQL(pool)) => {
+                Ok(crate::client::DatabaseClient::new(pool.clone()))
+            }
             Some(other) => Err(anyhow::anyhow!(
                 "DatabaseClient 当前仅支持 PostgreSQL，当前数据库类型: {:?}",
                 other.db_type()
@@ -200,11 +202,13 @@ impl DatabaseService {
         };
 
         self.config = Some(config.clone());
-        self.write_semaphore = Arc::new(Semaphore::new(if matches!(config.db_type, DatabaseType::SQLite) {
-            1
-        } else {
-            10
-        }));
+        self.write_semaphore = Arc::new(Semaphore::new(
+            if matches!(config.db_type, DatabaseType::SQLite) {
+                1
+            } else {
+                10
+            },
+        ));
 
         // Non-PostgreSQL databases use runtime pool for generic commands and migrations.
         if !matches!(config.db_type, DatabaseType::PostgreSQL) {
@@ -274,7 +278,7 @@ impl DatabaseService {
         self.create_database_schema(&pool).await?;
         self.ensure_migrations(&pool).await?;
         self.insert_default_data(&pool).await?;
-        
+
         self.runtime_pool = Some(DatabasePool::PostgreSQL(pool.clone()));
         self.pool = Some(pool);
         self.ensure_runtime_default_data().await?;
@@ -290,7 +294,9 @@ impl DatabaseService {
         ).fetch_one(pool).await?;
 
         if !has_category {
-            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN category TEXT").execute(pool).await?;
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN category TEXT")
+                .execute(pool)
+                .await?;
         }
 
         let has_tags: bool = sqlx::query_scalar(
@@ -298,7 +304,9 @@ impl DatabaseService {
         ).fetch_one(pool).await?;
 
         if !has_tags {
-            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN tags TEXT").execute(pool).await?;
+            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN tags TEXT")
+                .execute(pool)
+                .await?;
         }
 
         let has_is_tool: bool = sqlx::query_scalar(
@@ -306,7 +314,11 @@ impl DatabaseService {
         ).fetch_one(pool).await?;
 
         if !has_is_tool {
-            sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT FALSE").execute(pool).await?;
+            sqlx::query(
+                "ALTER TABLE workflow_definitions ADD COLUMN is_tool BOOLEAN DEFAULT FALSE",
+            )
+            .execute(pool)
+            .await?;
         }
 
         // 确保 ai_messages 表有 reasoning_content 字段
@@ -316,7 +328,9 @@ impl DatabaseService {
 
         if !has_reasoning_content {
             info!("Adding reasoning_content column to ai_messages table");
-            sqlx::query("ALTER TABLE ai_messages ADD COLUMN reasoning_content TEXT").execute(pool).await?;
+            sqlx::query("ALTER TABLE ai_messages ADD COLUMN reasoning_content TEXT")
+                .execute(pool)
+                .await?;
         }
 
         // Ensure memory_executions table exists
@@ -372,7 +386,7 @@ impl DatabaseService {
 
         if !dict_table_exists {
             info!("Creating dictionaries tables...");
-            
+
             sqlx::query(
                 r#"CREATE TABLE IF NOT EXISTS dictionaries (
                     id TEXT PRIMARY KEY,
@@ -393,8 +407,10 @@ impl DatabaseService {
                     metadata TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE TABLE IF NOT EXISTS dictionary_words (
@@ -406,18 +422,24 @@ impl DatabaseService {
                     metadata TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_dict_id 
-                   ON dictionary_words(dictionary_id)"#
-            ).execute(pool).await?;
+                   ON dictionary_words(dictionary_id)"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_word 
-                   ON dictionary_words(word)"#
-            ).execute(pool).await?;
+                   ON dictionary_words(word)"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE TABLE IF NOT EXISTS dictionary_sets (
@@ -429,8 +451,10 @@ impl DatabaseService {
                     is_active BOOLEAN DEFAULT TRUE,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE TABLE IF NOT EXISTS dictionary_set_relations (
@@ -442,16 +466,20 @@ impl DatabaseService {
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(set_id) REFERENCES dictionary_sets(id) ON DELETE CASCADE,
                     FOREIGN KEY(dictionary_id) REFERENCES dictionaries(id) ON DELETE CASCADE
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
 
             info!("Dictionaries tables created successfully");
         }
 
         // Ensure skills table exists and includes required columns
         let skills_table_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'skills')"
-        ).fetch_one(pool).await?;
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'skills')",
+        )
+        .fetch_one(pool)
+        .await?;
 
         if !skills_table_exists {
             info!("Creating skills table...");
@@ -471,8 +499,10 @@ impl DatabaseService {
                     hooks TEXT NOT NULL DEFAULT '{}',
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
         } else {
             let required_columns = [
                 ("source_path", "TEXT NOT NULL DEFAULT ''"),
@@ -496,7 +526,8 @@ impl DatabaseService {
                 .await?;
 
                 if !exists {
-                    let alter_query = format!("ALTER TABLE skills ADD COLUMN {} {}", column, column_type);
+                    let alter_query =
+                        format!("ALTER TABLE skills ADD COLUMN {} {}", column, column_type);
                     info!("Adding column '{}' to skills table", column);
                     sqlx::query(&alter_query).execute(pool).await?;
                 }
@@ -510,7 +541,9 @@ impl DatabaseService {
 
         if ability_groups_exists {
             info!("Dropping legacy ability_groups table");
-            sqlx::query("DROP TABLE IF EXISTS ability_groups").execute(pool).await?;
+            sqlx::query("DROP TABLE IF EXISTS ability_groups")
+                .execute(pool)
+                .await?;
         }
 
         // 检查并创建缓存表
@@ -520,7 +553,7 @@ impl DatabaseService {
 
         if !cache_table_exists {
             info!("Creating cache_storage table...");
-            
+
             sqlx::query(
                 r#"CREATE TABLE IF NOT EXISTS cache_storage (
                     cache_key TEXT PRIMARY KEY,
@@ -530,18 +563,24 @@ impl DatabaseService {
                     expires_at TIMESTAMP WITH TIME ZONE,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE INDEX IF NOT EXISTS idx_cache_storage_type 
-                   ON cache_storage(cache_type)"#
-            ).execute(pool).await?;
+                   ON cache_storage(cache_type)"#,
+            )
+            .execute(pool)
+            .await?;
 
             sqlx::query(
                 r#"CREATE INDEX IF NOT EXISTS idx_cache_storage_expires 
-                   ON cache_storage(expires_at)"#
-            ).execute(pool).await?;
+                   ON cache_storage(expires_at)"#,
+            )
+            .execute(pool)
+            .await?;
 
             info!("Cache storage table created successfully");
         }
@@ -562,8 +601,10 @@ impl DatabaseService {
                     cases TEXT NOT NULL DEFAULT '[]',
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )"#
-            ).execute(pool).await?;
+                )"#,
+            )
+            .execute(pool)
+            .await?;
             info!("llm_test_suites table created successfully");
         }
 
@@ -990,21 +1031,36 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_traffic_vulnerabilities_signature ON traffic_vulnerabilities(signature)",
         )
         .await?;
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN source_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN sink_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN trace_path_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN evidence_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN severity_raw TEXT")
-            .await
-            .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN source_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN sink_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN trace_path_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN evidence_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN severity_raw TEXT",
+        )
+        .await
+        .ok();
         self.execute_runtime_ddl(
             runtime,
             "ALTER TABLE agent_audit_findings ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'confirmed'",
@@ -1017,21 +1073,36 @@ impl DatabaseService {
         )
         .await
         .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN required_evidence_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN verifier_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN judge_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN provenance_json TEXT")
-            .await
-            .ok();
-        self.execute_runtime_ddl(runtime, "ALTER TABLE agent_audit_findings ADD COLUMN last_transition_at DATETIME")
-            .await
-            .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN required_evidence_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN verifier_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN judge_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN provenance_json TEXT",
+        )
+        .await
+        .ok();
+        self.execute_runtime_ddl(
+            runtime,
+            "ALTER TABLE agent_audit_findings ADD COLUMN last_transition_at DATETIME",
+        )
+        .await
+        .ok();
         self.execute_runtime_ddl(
             runtime,
             "ALTER TABLE ai_roles ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
@@ -1095,8 +1166,7 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let suites_json = Self::default_llm_suites_json();
-        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json)
-            .unwrap_or_default();
+        let suites: Vec<serde_json::Value> = serde_json::from_str(&suites_json).unwrap_or_default();
 
         for suite in &suites {
             let id = suite["id"].as_str().unwrap_or_default().to_string();
@@ -1112,8 +1182,13 @@ impl DatabaseService {
                          VALUES ($1, $2, $3, $4, $5) \
                          ON CONFLICT(id) DO NOTHING",
                     )
-                    .bind(&id).bind(&name).bind(&version).bind(&description).bind(&cases)
-                    .execute(pool).await?;
+                    .bind(&id)
+                    .bind(&name)
+                    .bind(&version)
+                    .bind(&description)
+                    .bind(&cases)
+                    .execute(pool)
+                    .await?;
                 }
                 DatabasePool::SQLite(pool) => {
                     sqlx::query(
@@ -1242,11 +1317,15 @@ impl DatabaseService {
 
     /// 获取数据库统计信息
     pub async fn get_stats_internal(&self) -> Result<DatabaseStats> {
-        let scan_tasks_count = self.safe_count_query("SELECT COUNT(*) as cnt FROM scan_tasks").await;
+        let scan_tasks_count = self
+            .safe_count_query("SELECT COUNT(*) as cnt FROM scan_tasks")
+            .await;
         let vulnerabilities_count = self
             .safe_count_query("SELECT COUNT(*) as cnt FROM vulnerabilities")
             .await;
-        let assets_count = self.safe_count_query("SELECT COUNT(*) as cnt FROM assets").await;
+        let assets_count = self
+            .safe_count_query("SELECT COUNT(*) as cnt FROM assets")
+            .await;
         let conversations_count = self
             .safe_count_query("SELECT COUNT(*) as cnt FROM ai_conversations")
             .await;
@@ -1290,7 +1369,10 @@ fn count_from_result(rows: Vec<Value>) -> i64 {
     rows.first()
         .and_then(|row| row.as_object())
         .and_then(|obj| obj.get("cnt"))
-        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
         .unwrap_or(0)
 }
 
@@ -1329,14 +1411,18 @@ where
                     let val: Option<String> = row.try_get(i).ok();
                     val.map(Value::String).unwrap_or(Value::Null)
                 }
-                "INT8" | "BIGINT" | "INT4" | "INTEGER" | "INT2" | "SMALLINT" | "INT" | "TINYINT" | "MEDIUMINT" => {
+                "INT8" | "BIGINT" | "INT4" | "INTEGER" | "INT2" | "SMALLINT" | "INT"
+                | "TINYINT" | "MEDIUMINT" => {
                     let val: Option<i64> = row.try_get(i).ok();
                     val.map(|v| Value::Number(v.into())).unwrap_or(Value::Null)
                 }
-                "FLOAT8" | "DOUBLE PRECISION" | "FLOAT4" | "REAL" | "NUMERIC" | "DOUBLE" | "FLOAT" | "DECIMAL" => {
+                "FLOAT8" | "DOUBLE PRECISION" | "FLOAT4" | "REAL" | "NUMERIC" | "DOUBLE"
+                | "FLOAT" | "DECIMAL" => {
                     let val: Option<f64> = row.try_get(i).ok();
-                    val.map(|v| Value::Number(serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into())))
-                        .unwrap_or(Value::Null)
+                    val.map(|v| {
+                        Value::Number(serde_json::Number::from_f64(v).unwrap_or_else(|| 0.into()))
+                    })
+                    .unwrap_or(Value::Null)
                 }
                 "BOOL" | "BOOLEAN" => {
                     let val: Option<bool> = row.try_get(i).ok();
@@ -1344,7 +1430,8 @@ where
                 }
                 "TIMESTAMPTZ" | "TIMESTAMP" | "DATETIME" | "DATE" => {
                     let val: Option<chrono::DateTime<chrono::Utc>> = row.try_get(i).ok();
-                    val.map(|v| Value::String(v.to_rfc3339())).unwrap_or(Value::Null)
+                    val.map(|v| Value::String(v.to_rfc3339()))
+                        .unwrap_or(Value::Null)
                 }
                 _ => {
                     if let Ok(val) = row.try_get::<i64, _>(i) {

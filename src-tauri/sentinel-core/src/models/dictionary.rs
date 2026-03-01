@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::fmt;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 /// 字典类型枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -385,8 +385,7 @@ pub struct DictionaryImportOptions {
 }
 
 /// 合并模式
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum MergeMode {
     /// 替换现有字典
     Replace,

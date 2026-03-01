@@ -87,10 +87,10 @@ impl SniCertResolver {
         // 规范化主机名 - 移除非法字符
         let sanitized_host = Self::sanitize_hostname(host);
         distinguished_name.push(DnType::CommonName, sanitized_host.as_str());
-        
+
         // 添加组织信息以提高兼容性
         distinguished_name.push(DnType::OrganizationName, "Sentinel AI Proxy");
-        
+
         params.distinguished_name = distinguished_name;
 
         // 添加 SAN (Subject Alternative Name)
@@ -100,11 +100,17 @@ impl SniCertResolver {
             // 尝试添加原始主机名和规范化后的主机名
             if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(host) {
                 params.subject_alt_names.push(SanType::DnsName(ia5));
-            } else if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(sanitized_host.as_str()) {
+            } else if let Ok(ia5) =
+                hudsucker::rcgen::string::Ia5String::try_from(sanitized_host.as_str())
+            {
                 params.subject_alt_names.push(SanType::DnsName(ia5));
-                tracing::warn!("Original hostname '{}' invalid, using sanitized '{}'", host, sanitized_host);
+                tracing::warn!(
+                    "Original hostname '{}' invalid, using sanitized '{}'",
+                    host,
+                    sanitized_host
+                );
             }
-            
+
             // 如果主机名包含通配符，也添加非通配符版本
             if let Some(base_domain) = host.strip_prefix("*.") {
                 if let Ok(ia5) = hudsucker::rcgen::string::Ia5String::try_from(base_domain) {
@@ -118,7 +124,7 @@ impl SniCertResolver {
             hudsucker::rcgen::KeyUsagePurpose::DigitalSignature,
             hudsucker::rcgen::KeyUsagePurpose::KeyEncipherment,
         ];
-        
+
         // 添加 Extended Key Usage
         params.extended_key_usages = vec![
             hudsucker::rcgen::ExtendedKeyUsagePurpose::ServerAuth,
@@ -147,7 +153,7 @@ impl SniCertResolver {
 
         certified_key
     }
-    
+
     /// 规范化主机名 - 移除或替换非法字符
     fn sanitize_hostname(host: &str) -> String {
         host.chars()
@@ -242,7 +248,7 @@ impl CertificateAuthority for ChainedCertificateAuthority {
 
         // 配置 ALPN 协议
         server_cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        
+
         // 允许使用弱加密套件以支持旧版本服务器
         server_cfg.ignore_client_order = true;
 

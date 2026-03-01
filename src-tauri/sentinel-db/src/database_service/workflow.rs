@@ -1,12 +1,20 @@
-use anyhow::Result;
 use crate::core::models::database::ExecutionStatistics;
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use anyhow::Result;
 
 impl DatabaseService {
     // --- Workflow Runs (original workflow.rs) ---
 
-    pub async fn create_workflow_run_internal(&self, id: &str, workflow_id: &str, workflow_name: &str, version: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub async fn create_workflow_run_internal(
+        &self,
+        id: &str,
+        workflow_id: &str,
+        workflow_name: &str,
+        version: &str,
+        status: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -55,7 +63,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_workflow_run_status_internal(&self, id: &str, status: &str, completed_at: Option<chrono::DateTime<chrono::Utc>>, error_message: Option<&str>) -> Result<()> {
+    pub async fn update_workflow_run_status_internal(
+        &self,
+        id: &str,
+        status: &str,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -98,7 +112,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_workflow_run_progress_internal(&self, id: &str, progress: u32, completed_steps: u32, total_steps: u32) -> Result<()> {
+    pub async fn update_workflow_run_progress_internal(
+        &self,
+        id: &str,
+        progress: u32,
+        completed_steps: u32,
+        total_steps: u32,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -141,7 +161,13 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn save_workflow_run_step_internal(&self, run_id: &str, step_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub async fn save_workflow_run_step_internal(
+        &self,
+        run_id: &str,
+        step_id: &str,
+        status: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -184,7 +210,15 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn update_workflow_run_step_status_internal(&self, run_id: &str, step_id: &str, status: &str, completed_at: chrono::DateTime<chrono::Utc>, result_json: Option<String>, error_message: Option<&str>) -> Result<()> {
+    pub async fn update_workflow_run_step_status_internal(
+        &self,
+        run_id: &str,
+        step_id: &str,
+        status: &str,
+        completed_at: chrono::DateTime<chrono::Utc>,
+        result_json: Option<String>,
+        error_message: Option<&str>,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -234,33 +268,47 @@ impl DatabaseService {
     }
 
     pub async fn list_workflow_runs_internal(&self) -> Result<Vec<serde_json::Value>> {
-        let rows = self.execute_query("SELECT id, workflow_id FROM workflow_runs ORDER BY started_at DESC").await?;
+        let rows = self
+            .execute_query("SELECT id, workflow_id FROM workflow_runs ORDER BY started_at DESC")
+            .await?;
 
         let runs = rows
             .iter()
             .map(|row| {
                 let id = row.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                let workflow_id = row.get("workflow_id").and_then(|v| v.as_str()).unwrap_or_default();
+                let workflow_id = row
+                    .get("workflow_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 serde_json::json!({ "id": id, "workflow_id": workflow_id })
             })
             .collect();
         Ok(runs)
     }
 
-    pub async fn list_workflow_runs_paginated_internal(&self, page: i64, page_size: i64, search: Option<&str>, workflow_id: Option<&str>) -> Result<(Vec<serde_json::Value>, i64)> {
+    pub async fn list_workflow_runs_paginated_internal(
+        &self,
+        page: i64,
+        page_size: i64,
+        search: Option<&str>,
+        workflow_id: Option<&str>,
+    ) -> Result<(Vec<serde_json::Value>, i64)> {
         let offset = (page - 1) * page_size;
 
         let mut where_parts = Vec::new();
         where_parts.push("1=1".to_string());
-        
+
         if let Some(wid) = workflow_id {
             where_parts.push(format!("workflow_id = '{}'", wid.replace("'", "''")));
         }
         if let Some(s) = search {
             let s_safe = s.replace("'", "''");
-            where_parts.push(format!("(workflow_name LIKE '%{}%' OR id LIKE '%{}%')", s_safe, s_safe));
+            where_parts.push(format!(
+                "(workflow_name LIKE '%{}%' OR id LIKE '%{}%')",
+                s_safe, s_safe
+            ));
         }
-        
+
         let where_clause = format!("WHERE {}", where_parts.join(" AND "));
 
         // Count total
@@ -268,13 +316,23 @@ impl DatabaseService {
         let count_rows = self.execute_query(&count_query).await?;
         let total: i64 = count_rows
             .first()
-            .and_then(|r| r.get("count").or_else(|| r.get("COUNT(*)")).or_else(|| r.get("cnt")))
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+            .and_then(|r| {
+                r.get("count")
+                    .or_else(|| r.get("COUNT(*)"))
+                    .or_else(|| r.get("cnt"))
+            })
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+            })
             .unwrap_or(0);
 
         // Query data
-        let query_str = format!("SELECT * FROM workflow_runs {} ORDER BY started_at DESC LIMIT {} OFFSET {}", where_clause, page_size, offset);
-        
+        let query_str = format!(
+            "SELECT * FROM workflow_runs {} ORDER BY started_at DESC LIMIT {} OFFSET {}",
+            where_clause, page_size, offset
+        );
+
         let rows = self.execute_query(&query_str).await?;
         let mut runs = Vec::new();
         for row in rows {
@@ -297,7 +355,10 @@ impl DatabaseService {
         Ok((runs, total))
     }
 
-    pub async fn get_workflow_run_detail_internal(&self, run_id: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get_workflow_run_detail_internal(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<serde_json::Value>> {
         let rows = self
             .execute_query(&format!(
                 "SELECT * FROM workflow_runs WHERE id = '{}'",
@@ -469,7 +530,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_workflow_definition_internal(&self, id: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get_workflow_definition_internal(
+        &self,
+        id: &str,
+    ) -> Result<Option<serde_json::Value>> {
         let rows = self
             .execute_query(&format!(
                 "SELECT * FROM workflow_definitions WHERE id = '{}'",
@@ -506,7 +570,10 @@ impl DatabaseService {
         })))
     }
 
-    pub async fn list_workflow_definitions_internal(&self, is_template: bool) -> Result<Vec<serde_json::Value>> {
+    pub async fn list_workflow_definitions_internal(
+        &self,
+        is_template: bool,
+    ) -> Result<Vec<serde_json::Value>> {
         let rows = self
             .execute_query("SELECT * FROM workflow_definitions ORDER BY updated_at DESC")
             .await?;
@@ -651,10 +718,11 @@ impl DatabaseService {
         Ok(out)
     }
 
-
     pub async fn get_execution_statistics_internal(&self) -> Result<ExecutionStatistics> {
         let total_sessions = count_query_result(
-            &self.execute_query("SELECT COUNT(*) as cnt FROM execution_sessions").await?,
+            &self
+                .execute_query("SELECT COUNT(*) as cnt FROM execution_sessions")
+                .await?,
         ) as u64;
         let completed_sessions = count_query_result(
             &self.execute_query(
@@ -676,13 +744,17 @@ impl DatabaseService {
         ) as u64;
 
         let avg_time = 0;
-        
+
         Ok(ExecutionStatistics {
             total_sessions,
             completed_sessions,
             failed_sessions,
             running_sessions,
-            success_rate: if total_sessions > 0 { (completed_sessions as f64 / total_sessions as f64) * 100.0 } else { 0.0 },
+            success_rate: if total_sessions > 0 {
+                (completed_sessions as f64 / total_sessions as f64) * 100.0
+            } else {
+                0.0
+            },
             average_execution_time: avg_time,
         })
     }
@@ -715,7 +787,14 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn save_execution_plan_internal(&self, id: &str, name: &str, description: &str, estimated_duration: u64, metadata: &serde_json::Value) -> Result<()> {
+    pub async fn save_execution_plan_internal(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+        estimated_duration: u64,
+        metadata: &serde_json::Value,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -809,7 +888,18 @@ impl DatabaseService {
         })))
     }
 
-    pub async fn save_execution_session_internal(&self, id: &str, plan_id: &str, status: &str, started_at: chrono::DateTime<chrono::Utc>, completed_at: Option<chrono::DateTime<chrono::Utc>>, current_step: Option<i32>, progress: f64, context: &serde_json::Value, metadata: &serde_json::Value) -> Result<()> {
+    pub async fn save_execution_session_internal(
+        &self,
+        id: &str,
+        plan_id: &str,
+        status: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        current_step: Option<i32>,
+        progress: f64,
+        context: &serde_json::Value,
+        metadata: &serde_json::Value,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -896,7 +986,10 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn get_execution_session_internal(&self, id: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get_execution_session_internal(
+        &self,
+        id: &str,
+    ) -> Result<Option<serde_json::Value>> {
         let rows = self
             .execute_query(&format!(
                 "SELECT * FROM execution_sessions WHERE id = '{}'",
@@ -932,7 +1025,9 @@ impl DatabaseService {
 
     pub async fn list_execution_sessions_internal(&self) -> Result<Vec<serde_json::Value>> {
         let rows = self
-            .execute_query("SELECT id, plan_id, status FROM execution_sessions ORDER BY started_at DESC")
+            .execute_query(
+                "SELECT id, plan_id, status FROM execution_sessions ORDER BY started_at DESC",
+            )
             .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
@@ -948,7 +1043,14 @@ impl DatabaseService {
 
 fn count_query_result(rows: &[serde_json::Value]) -> i64 {
     rows.first()
-        .and_then(|r| r.get("cnt").or_else(|| r.get("count")).or_else(|| r.get("COUNT(*)")))
-        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+        .and_then(|r| {
+            r.get("cnt")
+                .or_else(|| r.get("count"))
+                .or_else(|| r.get("COUNT(*)"))
+        })
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
         .unwrap_or(0)
 }

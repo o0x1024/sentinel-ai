@@ -140,12 +140,10 @@ pub async fn get_database_status(
         };
 
         let conn_info = match config.db_type {
-            sentinel_db::database_service::DatabaseType::SQLite => {
-                config
-                    .path
-                    .clone()
-                    .unwrap_or_else(|| db_path.to_string_lossy().to_string())
-            }
+            sentinel_db::database_service::DatabaseType::SQLite => config
+                .path
+                .clone()
+                .unwrap_or_else(|| db_path.to_string_lossy().to_string()),
             _ => {
                 let default_port = match config.db_type {
                     sentinel_db::database_service::DatabaseType::PostgreSQL => 5432,
@@ -161,10 +159,7 @@ pub async fn get_database_status(
         };
         (type_str.to_string(), conn_info)
     } else {
-        (
-            "SQLite".to_string(),
-            db_path.to_string_lossy().to_string(),
-        )
+        ("SQLite".to_string(), db_path.to_string_lossy().to_string())
     };
 
     let status = DatabaseStatus {

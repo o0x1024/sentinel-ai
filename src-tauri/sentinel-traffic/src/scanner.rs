@@ -6,10 +6,7 @@
 //! - 收集 Finding 并去重
 
 use crate::history_cache::{HttpRequestRecord, ProxyHistoryCache};
-use crate::{
-    Finding, TrafficError, RequestContext, ResponseContext,
-    Result, InterceptFilterRule,
-};
+use crate::{Finding, InterceptFilterRule, RequestContext, ResponseContext, Result, TrafficError};
 use sentinel_db::DatabaseService;
 use sentinel_plugins::{types::HttpTransaction, PluginExecutor};
 use std::collections::HashMap;
@@ -77,13 +74,19 @@ impl ScanPipeline {
     }
 
     /// 设置请求过滤规则
-    pub fn with_request_filter_rules(mut self, rules: Arc<RwLock<Vec<InterceptFilterRule>>>) -> Self {
+    pub fn with_request_filter_rules(
+        mut self,
+        rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
+    ) -> Self {
         self.request_filter_rules = rules;
         self
     }
 
     /// 设置响应过滤规则
-    pub fn with_response_filter_rules(mut self, rules: Arc<RwLock<Vec<InterceptFilterRule>>>) -> Self {
+    pub fn with_response_filter_rules(
+        mut self,
+        rules: Arc<RwLock<Vec<InterceptFilterRule>>>,
+    ) -> Self {
         self.response_filter_rules = rules;
         self
     }
@@ -131,14 +134,18 @@ impl ScanPipeline {
                 let mut cache = request_cache_clone.write().await;
                 let now = chrono::Utc::now();
                 let original_size = cache.len();
-                
+
                 cache.retain(|_, ctx| {
                     (now - ctx.timestamp).num_seconds() < 300 // 保留5分钟内的请求
                 });
-                
+
                 let cleaned = original_size - cache.len();
                 if cleaned > 0 {
-                    info!("Request cache cleanup: removed {} expired entries, {} remaining", cleaned, cache.len());
+                    info!(
+                        "Request cache cleanup: removed {} expired entries, {} remaining",
+                        cleaned,
+                        cache.len()
+                    );
                 }
             }
         });
@@ -165,16 +172,14 @@ impl ScanPipeline {
                         warn!("Cannot reload plugin {} - no database service", plugin_id);
                     }
                 }
-                ScanTask::RemovePlugin(plugin_id) => {
-                    match self.remove_plugin(&plugin_id).await {
-                        Ok(_) => {
-                            info!("Successfully removed plugin: {}", plugin_id);
-                        }
-                        Err(e) => {
-                            error!("Failed to remove plugin {}: {}", plugin_id, e);
-                        }
+                ScanTask::RemovePlugin(plugin_id) => match self.remove_plugin(&plugin_id).await {
+                    Ok(_) => {
+                        info!("Successfully removed plugin: {}", plugin_id);
                     }
-                }
+                    Err(e) => {
+                        error!("Failed to remove plugin {}: {}", plugin_id, e);
+                    }
+                },
                 ScanTask::FailedConnection(failed_conn) => {
                     self.process_failed_connection(failed_conn).await;
                 }
@@ -272,36 +277,48 @@ impl ScanPipeline {
                 tokio::spawn(async move {
                     // 获取信号量许可，限制并发执行
                     let _permit = semaphore_clone.acquire().await.ok();
-                    
+
                     // Check if restart is needed before execution
                     if let Ok(stats) = executor.get_stats().await {
-                        if stats.current_instance_executions >= executor.max_executions_before_restart() {
+                        if stats.current_instance_executions
+                            >= executor.max_executions_before_restart()
+                        {
                             info!(
                                 "Auto-restarting plugin {} (executions: {}/{})",
                                 plugin_id_clone,
                                 stats.current_instance_executions,
                                 executor.max_executions_before_restart()
                             );
-                            
+
                             // 重试重启最多3次
                             let mut restart_success = false;
                             for retry in 0..3 {
                                 match executor_clone.restart().await {
                                     Ok(_) => {
-                                        info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                                        info!(
+                                            "Plugin {} auto-restarted successfully",
+                                            plugin_id_clone
+                                        );
                                         restart_success = true;
                                         break;
                                     }
                                     Err(e) => {
-                                        error!("Failed to auto-restart plugin {} (attempt {}/3): {}", 
-                                            plugin_id_clone, retry + 1, e);
+                                        error!(
+                                            "Failed to auto-restart plugin {} (attempt {}/3): {}",
+                                            plugin_id_clone,
+                                            retry + 1,
+                                            e
+                                        );
                                         if retry < 2 {
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
                                         }
                                     }
                                 }
                             }
-                            
+
                             if !restart_success {
                                 error!("Plugin {} failed to restart after 3 attempts, skipping execution", plugin_id_clone);
                                 return;
@@ -422,36 +439,48 @@ impl ScanPipeline {
                 tokio::spawn(async move {
                     // 获取信号量许可，限制并发执行
                     let _permit = semaphore_clone.acquire().await.ok();
-                    
+
                     // Check if restart is needed before execution
                     if let Ok(stats) = executor.get_stats().await {
-                        if stats.current_instance_executions >= executor.max_executions_before_restart() {
+                        if stats.current_instance_executions
+                            >= executor.max_executions_before_restart()
+                        {
                             info!(
                                 "Auto-restarting plugin {} (executions: {}/{})",
                                 plugin_id_clone,
                                 stats.current_instance_executions,
                                 executor.max_executions_before_restart()
                             );
-                            
+
                             // 重试重启最多3次
                             let mut restart_success = false;
                             for retry in 0..3 {
                                 match executor_clone.restart().await {
                                     Ok(_) => {
-                                        info!("Plugin {} auto-restarted successfully", plugin_id_clone);
+                                        info!(
+                                            "Plugin {} auto-restarted successfully",
+                                            plugin_id_clone
+                                        );
                                         restart_success = true;
                                         break;
                                     }
                                     Err(e) => {
-                                        error!("Failed to auto-restart plugin {} (attempt {}/3): {}", 
-                                            plugin_id_clone, retry + 1, e);
+                                        error!(
+                                            "Failed to auto-restart plugin {} (attempt {}/3): {}",
+                                            plugin_id_clone,
+                                            retry + 1,
+                                            e
+                                        );
                                         if retry < 2 {
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
                                         }
                                     }
                                 }
                             }
-                            
+
                             if !restart_success {
                                 error!("Plugin {} failed to restart after 3 attempts, skipping execution", plugin_id_clone);
                                 return;
@@ -648,7 +677,9 @@ impl ScanPipeline {
         let rows = db_service
             .list_enabled_traffic_plugins_for_scan()
             .await
-            .map_err(|e| TrafficError::Database(format!("Failed to query enabled plugins: {}", e)))?;
+            .map_err(|e| {
+                TrafficError::Database(format!("Failed to query enabled plugins: {}", e))
+            })?;
 
         let mut loaded_count = 0;
         let mut executors = self.plugin_executors.write().await;
@@ -837,12 +868,12 @@ impl ScanPipeline {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("x-sentinel-internal"))
             .map(|(_, v)| v.as_str());
-        
+
         if let Some(value) = header_value {
             // info!("Found x-sentinel-internal header with value: {}", value);
             value == "true" || value == "1"
         } else {
-            // info!("x-sentinel-internal header not found. Available headers: {:?}", 
+            // info!("x-sentinel-internal header not found. Available headers: {:?}",
             //     headers.keys().collect::<Vec<_>>());
             false
         }
@@ -863,21 +894,27 @@ impl ScanPipeline {
     async fn should_scan_request(&self, req_ctx: &RequestContext) -> bool {
         // 首先检查是否为插件测试请求，避免递归扫描
         if Self::is_plugin_test_request(&req_ctx.headers) {
-            debug!("✓ Skipping plugin scan for test request: url={}", req_ctx.url);
+            debug!(
+                "✓ Skipping plugin scan for test request: url={}",
+                req_ctx.url
+            );
             return false;
         }
 
         // 检查是否为本应用流量且配置了排除
         let exclude_self = *self.exclude_self_traffic.read().await;
         let is_self = Self::is_self_traffic(&req_ctx.headers);
-        
+
         // info!(
-        //     "Checking request scan: url={}, exclude_self_config={}, is_self_traffic={}", 
+        //     "Checking request scan: url={}, exclude_self_config={}, is_self_traffic={}",
         //     req_ctx.url, exclude_self, is_self
         // );
-        
+
         if exclude_self && is_self {
-            debug!("✓ Skipping plugin scan for self traffic: url={}", req_ctx.url);
+            debug!(
+                "✓ Skipping plugin scan for self traffic: url={}",
+                req_ctx.url
+            );
             return false;
         }
 
@@ -928,7 +965,9 @@ impl ScanPipeline {
             };
 
             // "does_not_match" or "notMatches" means: if condition matches, skip scanning
-            if (rule.relationship == "does_not_match" || rule.relationship == "notMatches") && matches {
+            if (rule.relationship == "does_not_match" || rule.relationship == "notMatches")
+                && matches
+            {
                 debug!(
                     "Request {} skipped by filter rule: {} does_not_match {}",
                     req_ctx.url, rule.match_type, rule.condition
@@ -951,27 +990,37 @@ impl ScanPipeline {
 
     /// 检查响应是否应该被扫描（应用过滤规则）
     /// 返回 true 表示应该扫描，false 表示应该跳过
-    async fn should_scan_response(&self, req_ctx: &RequestContext, resp_ctx: &ResponseContext) -> bool {
+    async fn should_scan_response(
+        &self,
+        req_ctx: &RequestContext,
+        resp_ctx: &ResponseContext,
+    ) -> bool {
         // 首先检查是否为插件测试请求，避免递归扫描
         if Self::is_plugin_test_request(&req_ctx.headers) {
-            debug!("✓ Skipping plugin scan for test response: url={}", req_ctx.url);
+            debug!(
+                "✓ Skipping plugin scan for test response: url={}",
+                req_ctx.url
+            );
             return false;
         }
 
         // 检查是否为本应用流量且配置了排除
         let exclude_self = *self.exclude_self_traffic.read().await;
         let is_self = Self::is_self_traffic(&req_ctx.headers);
-        
+
         debug!(
-            "Checking response scan: url={}, exclude_self_config={}, is_self_traffic={}", 
+            "Checking response scan: url={}, exclude_self_config={}, is_self_traffic={}",
             req_ctx.url, exclude_self, is_self
         );
-        
+
         if exclude_self && is_self {
-            debug!("✓ Skipping plugin scan for self traffic response: url={}", req_ctx.url);
+            debug!(
+                "✓ Skipping plugin scan for self traffic response: url={}",
+                req_ctx.url
+            );
             return false;
         }
-        
+
         let rules = self.response_filter_rules.read().await;
         if rules.is_empty() {
             return true; // No rules, scan all
@@ -1029,7 +1078,9 @@ impl ScanPipeline {
             };
 
             // "does_not_match" or "notMatches" means: if condition matches, skip scanning
-            if (rule.relationship == "does_not_match" || rule.relationship == "notMatches") && matches {
+            if (rule.relationship == "does_not_match" || rule.relationship == "notMatches")
+                && matches
+            {
                 debug!(
                     "Response for {} skipped by filter rule: {} does_not_match {}",
                     req_ctx.url, rule.match_type, rule.condition
@@ -1117,28 +1168,33 @@ impl ScanPipeline {
             let response_size = resp_ctx.body.len() as i64;
 
             // 处理 edited 字段
-            let (was_edited, edited_method, edited_url, edited_request_headers, edited_request_body) =
-                if req_ctx.was_edited {
-                    let edited_headers_str = req_ctx.edited_headers.as_ref().map(|h| {
-                        h.iter()
-                            .map(|(k, v)| format!("{}: {}", k, v))
-                            .collect::<Vec<_>>()
-                            .join("\r\n")
-                    });
-                    let edited_body_str = req_ctx
-                        .edited_body
-                        .as_ref()
-                        .and_then(|b| String::from_utf8(b.clone()).ok());
-                    (
-                        true,
-                        req_ctx.edited_method.clone(),
-                        req_ctx.edited_url.clone(),
-                        edited_headers_str,
-                        edited_body_str,
-                    )
-                } else {
-                    (false, None, None, None, None)
-                };
+            let (
+                was_edited,
+                edited_method,
+                edited_url,
+                edited_request_headers,
+                edited_request_body,
+            ) = if req_ctx.was_edited {
+                let edited_headers_str = req_ctx.edited_headers.as_ref().map(|h| {
+                    h.iter()
+                        .map(|(k, v)| format!("{}: {}", k, v))
+                        .collect::<Vec<_>>()
+                        .join("\r\n")
+                });
+                let edited_body_str = req_ctx
+                    .edited_body
+                    .as_ref()
+                    .and_then(|b| String::from_utf8(b.clone()).ok());
+                (
+                    true,
+                    req_ctx.edited_method.clone(),
+                    req_ctx.edited_url.clone(),
+                    edited_headers_str,
+                    edited_body_str,
+                )
+            } else {
+                (false, None, None, None, None)
+            };
 
             let (edited_response_headers, edited_response_body, edited_status_code) =
                 if resp_ctx.was_edited {
@@ -1227,10 +1283,7 @@ impl FindingDeduplicator {
     }
 
     /// 创建去重服务（带数据库）
-    pub fn with_database(
-        finding_rx: FindingReceiver,
-        db_service: Arc<DatabaseService>,
-    ) -> Self {
+    pub fn with_database(finding_rx: FindingReceiver, db_service: Arc<DatabaseService>) -> Self {
         Self {
             finding_rx,
             cache: Arc::new(RwLock::new(std::collections::HashSet::new())),
@@ -1246,15 +1299,22 @@ impl FindingDeduplicator {
     }
 
     /// 使用共享缓存（用于在删除漏洞时清理缓存）
-    pub fn with_shared_cache(mut self, cache: Arc<RwLock<std::collections::HashSet<String>>>) -> Self {
+    pub fn with_shared_cache(
+        mut self,
+        cache: Arc<RwLock<std::collections::HashSet<String>>>,
+    ) -> Self {
         self.cache = cache;
         self
     }
 
     /// 将 Finding 转换为 TrafficFinding 并插入数据库
-    async fn insert_finding_to_db(&self, finding: &Finding, db: &Arc<DatabaseService>) -> Result<()> {
+    async fn insert_finding_to_db(
+        &self,
+        finding: &Finding,
+        db: &Arc<DatabaseService>,
+    ) -> Result<()> {
         use sentinel_db::TrafficFinding;
-        
+
         let traffic_finding = TrafficFinding {
             id: finding.id.clone(),
             plugin_id: finding.plugin_id.clone(),
@@ -1277,7 +1337,7 @@ impl FindingDeduplicator {
             response_body: finding.response_body.clone(),
             created_at: finding.created_at,
         };
-        
+
         db.insert_traffic_vulnerability(&traffic_finding).await?;
         Ok(())
     }
