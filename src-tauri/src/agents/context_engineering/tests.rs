@@ -4,7 +4,9 @@ use crate::agents::context_engineering::memory_index::{
     ingest_memory_items, retrieve_memory_items, MemoryQuery,
 };
 use crate::agents::context_engineering::tool_digest::build_tool_digest;
-use crate::agents::context_engineering::types::trim_history_preserve_tool_pairs;
+use crate::agents::context_engineering::types::{
+    trim_history_preserve_tool_pairs, ContextPacket, ToolDigestEntry,
+};
 use crate::agents::context_engineering::ContextRunState;
 
 #[test]
@@ -58,4 +60,42 @@ fn digest_extracts_artifact_reference() {
         Some("/workspace/context/shell_1.txt")
     );
     assert!(!digest.preview_snippets.is_empty() || digest.artifact_kind.is_some());
+}
+
+#[test]
+fn system_prompt_stays_static_without_runtime_sections() {
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.run_state = "Goals:\n- dynamic task".to_string();
+    packet.retrieved_memories = vec!["memory item".to_string()];
+    packet.tool_digests = vec![ToolDigestEntry {
+        status: "ok".to_string(),
+        tool_name: "shell".to_string(),
+        summary: "listed files".to_string(),
+        artifact_id: None,
+    }];
+
+    let rendered = packet.render_system_prompt();
+    assert_eq!(rendered, "STATIC_RULES");
+    assert!(!rendered.contains("[RunState]"));
+    assert!(!rendered.contains("[RetrievedMemory]"));
+    assert!(!rendered.contains("[Recent Tool Digests]"));
+}
+
+#[test]
+fn orchestrator_context_contains_runtime_sections() {
+    let mut packet = ContextPacket::new("STATIC_RULES".to_string());
+    packet.run_state = "Goals:\n- dynamic task".to_string();
+    packet.retrieved_memories = vec!["memory item".to_string()];
+    packet.tool_digests = vec![ToolDigestEntry {
+        status: "ok".to_string(),
+        tool_name: "shell".to_string(),
+        summary: "listed files".to_string(),
+        artifact_id: Some("/tmp/out.txt".to_string()),
+    }];
+
+    let rendered = packet.render_orchestrator_context();
+    assert!(rendered.contains("[RunState]"));
+    assert!(rendered.contains("[RetrievedMemory]"));
+    assert!(rendered.contains("[Recent Tool Digests]"));
+    assert!(!rendered.contains("STATIC_RULES"));
 }

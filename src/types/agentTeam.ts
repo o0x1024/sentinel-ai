@@ -134,6 +134,7 @@ export interface AgentTeamMessage {
     tool_calls?: any
     token_count?: number
     timestamp: string
+    sequence?: number
 }
 
 // ==================== 白板 ====================

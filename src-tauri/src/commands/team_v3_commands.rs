@@ -132,6 +132,7 @@ pub struct TeamV3ThreadMessage {
     pub message_type: String,
     pub payload: Value,
     pub created_at: String,
+    pub sequence: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1154,13 +1155,22 @@ fn resolve_member_id(owner_candidate: Option<&str>, members: &[String], index: u
 }
 
 fn build_team_member_execution_system_prompt(
+    _member_id: &str,
+    _profile: Option<&TeamV3MemberProfile>,
+) -> String {
+    let lines = vec![
+        "你是 Team 成员，请以严谨、可执行的方式完成分配任务。".to_string(),
+        "输出必须可追溯、可验证，避免空泛表述。".to_string(),
+        "优先依据当前用户任务与共享上下文，不要编造未提供事实。".to_string(),
+    ];
+    lines.join("\n")
+}
+
+fn build_team_member_runtime_context(
     member_id: &str,
     profile: Option<&TeamV3MemberProfile>,
 ) -> String {
-    let mut lines = vec![format!(
-        "你是 Team 成员 {}，请以严谨、可执行的方式完成分配任务。",
-        member_id
-    )];
+    let mut lines = vec![format!("成员 ID：{}", member_id)];
     if let Some(profile) = profile {
         if !profile.name.trim().is_empty() {
             lines.push(format!("成员名称：{}", profile.name.trim()));
@@ -1198,7 +1208,6 @@ fn build_team_member_execution_system_prompt(
             lines.push(format!("额外执行约束：{}", system_prompt));
         }
     }
-    lines.push("输出必须可追溯、可验证，避免空泛表述。".to_string());
     lines.join("\n")
 }
 
@@ -1662,7 +1671,7 @@ async fn get_team_v3_latest_human_message_content(
             let row = sqlx::query(
                 r#"SELECT payload FROM team_v3_messages
                    WHERE session_id = ? AND (message_type = 'human_input' OR message_type = 'user')
-                   ORDER BY created_at DESC
+                   ORDER BY created_at DESC, id DESC
                    LIMIT 1"#,
             )
             .bind(session_id)
@@ -1674,7 +1683,7 @@ async fn get_team_v3_latest_human_message_content(
             let row = sqlx::query(
                 r#"SELECT payload::text as payload FROM team_v3_messages
                    WHERE session_id = $1 AND (message_type = 'human_input' OR message_type = 'user')
-                   ORDER BY created_at DESC
+                   ORDER BY created_at DESC, id DESC
                    LIMIT 1"#,
             )
             .bind(session_id)
@@ -2788,12 +2797,24 @@ fn build_team_v3_task_prompt(
     goal: &str,
     user_input: &str,
     task: &TeamV3Task,
+    member_runtime_context: &str,
     dependency_context: &str,
     blackboard_context: &str,
     blackboard_snapshot_revision: i64,
     checkpoint_only: bool,
 ) -> String {
-    if dependency_context.trim().is_empty() && blackboard_context.trim().is_empty() {
+    let mut context_sections: Vec<String> = Vec::new();
+    if !member_runtime_context.trim().is_empty() {
+        context_sections.push(format!("成员运行时上下文：\n{}", member_runtime_context));
+    }
+    if !dependency_context.trim().is_empty() {
+        context_sections.push(format!("依赖任务输出：\n{}", dependency_context));
+    }
+    if !blackboard_context.trim().is_empty() {
+        context_sections.push(blackboard_context.to_string());
+    }
+
+    if context_sections.is_empty() {
         format!(
             "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n请直接执行该子任务，并输出结构化结论（结论、依据、风险、下一步）。",
             goal,
@@ -2803,13 +2824,6 @@ fn build_team_v3_task_prompt(
             task.instruction
         )
     } else {
-        let mut context_sections: Vec<String> = Vec::new();
-        if !dependency_context.trim().is_empty() {
-            context_sections.push(format!("依赖任务输出：\n{}", dependency_context));
-        }
-        if !blackboard_context.trim().is_empty() {
-            context_sections.push(blackboard_context.to_string());
-        }
         if checkpoint_only {
             format!(
                 "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n你必须只基于 Checkpoint（阶段总结）完成收敛，不要重新展开全量分析日志。输出结构化结论（最终结论、关键证据、风险、下一步行动）。",
@@ -3257,6 +3271,10 @@ async fn run_team_v3_execution_orchestrator(
                 member_id.as_str(),
                 member_profiles.get(member_id.as_str()),
             );
+            let member_runtime_context = build_team_member_runtime_context(
+                member_id.as_str(),
+                member_profiles.get(member_id.as_str()),
+            );
             set_team_v3_task_execution_state(
                 &runtime_pool,
                 &session_id,
@@ -3311,6 +3329,7 @@ async fn run_team_v3_execution_orchestrator(
                 goal_text.as_str(),
                 user_input.as_str(),
                 &task,
+                member_runtime_context.as_str(),
                 dependency_context.as_str(),
                 blackboard_context.as_str(),
                 blackboard_snapshot_revision,
@@ -3364,6 +3383,12 @@ async fn run_team_v3_execution_orchestrator(
                     persist_messages: false,
                     subagent_run_id: None,
                     context_policy: Some(ContextPolicy {
+                        include_working_dir: false,
+                        include_context_storage: false,
+                        include_task_mainline: false,
+                        include_run_state: false,
+                        include_document_attachments: false,
+                        include_skill_instructions: false,
                         feature_context_packet_v2: rag_enabled_for_task,
                         ..ContextPolicy::default()
                     }),
@@ -4496,6 +4521,7 @@ pub async fn team_v3_send_message(
         message_type,
         payload: request.payload,
         created_at: now,
+        sequence: None,
     })
 }
 
@@ -4512,10 +4538,11 @@ pub async fn team_v3_list_thread_messages(
     match &runtime_pool {
         DatabasePool::SQLite(pool) => {
             let rows = sqlx::query(
-                r#"SELECT id, session_id, thread_id, from_agent_id, to_agent_id, message_type, payload, created_at
+                r#"SELECT id, session_id, thread_id, from_agent_id, to_agent_id, message_type, payload, created_at,
+                          ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) as sequence
                    FROM team_v3_messages
                    WHERE session_id = ? AND thread_id = ?
-                   ORDER BY created_at ASC"#,
+                   ORDER BY created_at ASC, id ASC"#,
             )
             .bind(&session_id)
             .bind(&thread_id)
@@ -4537,6 +4564,7 @@ pub async fn team_v3_list_thread_messages(
                         message_type: r.get("message_type"),
                         payload,
                         created_at: r.get("created_at"),
+                        sequence: Some(r.get("sequence")),
                     })
                 })
                 .collect()
@@ -4544,10 +4572,11 @@ pub async fn team_v3_list_thread_messages(
         DatabasePool::PostgreSQL(pool) => {
             let rows = sqlx::query(
                 r#"SELECT id, session_id, thread_id, from_agent_id, to_agent_id, message_type,
-                          payload::text as payload, created_at::text as created_at
+                          payload::text as payload, created_at::text as created_at,
+                          ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) as sequence
                    FROM team_v3_messages
                    WHERE session_id = $1 AND thread_id = $2
-                   ORDER BY created_at ASC"#,
+                   ORDER BY created_at ASC, id ASC"#,
             )
             .bind(&session_id)
             .bind(&thread_id)
@@ -4569,6 +4598,7 @@ pub async fn team_v3_list_thread_messages(
                         message_type: r.get("message_type"),
                         payload,
                         created_at: r.get("created_at"),
+                        sequence: Some(r.get("sequence")),
                     })
                 })
                 .collect()
@@ -4589,10 +4619,11 @@ pub async fn team_v3_list_messages(
     match &runtime_pool {
         DatabasePool::SQLite(pool) => {
             let rows = sqlx::query(
-                r#"SELECT id, session_id, thread_id, from_agent_id, to_agent_id, message_type, payload, created_at
+                r#"SELECT id, session_id, thread_id, from_agent_id, to_agent_id, message_type, payload, created_at,
+                          ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) as sequence
                    FROM team_v3_messages
                    WHERE session_id = ?
-                   ORDER BY created_at ASC"#,
+                   ORDER BY created_at ASC, id ASC"#,
             )
             .bind(&session_id)
             .fetch_all(pool)
@@ -4613,6 +4644,7 @@ pub async fn team_v3_list_messages(
                         message_type: r.get("message_type"),
                         payload,
                         created_at: r.get("created_at"),
+                        sequence: Some(r.get("sequence")),
                     }
                 })
                 .collect())
@@ -4620,10 +4652,11 @@ pub async fn team_v3_list_messages(
         DatabasePool::PostgreSQL(pool) => {
             let rows = sqlx::query(
                 r#"SELECT id, session_id, thread_id, from_agent_id, to_agent_id, message_type,
-                          payload::text as payload, created_at::text as created_at
+                          payload::text as payload, created_at::text as created_at,
+                          ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) as sequence
                    FROM team_v3_messages
                    WHERE session_id = $1
-                   ORDER BY created_at ASC"#,
+                   ORDER BY created_at ASC, id ASC"#,
             )
             .bind(&session_id)
             .fetch_all(pool)
@@ -4644,6 +4677,7 @@ pub async fn team_v3_list_messages(
                         message_type: r.get("message_type"),
                         payload,
                         created_at: r.get("created_at"),
+                        sequence: Some(r.get("sequence")),
                     }
                 })
                 .collect())

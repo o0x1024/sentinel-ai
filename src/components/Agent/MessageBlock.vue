@@ -368,6 +368,12 @@
             <i class="fas fa-external-link-alt"></i>
             <span>{{ t('agent.detailsInVisionPanel') }}</span>
           </div>
+          <div
+            v-else-if="isLightweightStreamingRender"
+            class="whitespace-pre-wrap break-words text-sm leading-relaxed text-base-content/90 font-mono"
+          >
+            {{ lightweightStreamingContent }}
+          </div>
           <MarkdownRenderer 
             v-else
             :content="formattedContent" 
@@ -724,6 +730,16 @@ const normalizedMessageContent = computed(() => {
   const content = props.message.content || ''
   if (props.message.metadata?.kind !== 'team_v3_mirror') return content
   return content.replace(TEAM_PREFIX_RE, '').trimStart()
+})
+
+const isLightweightStreamingRender = computed(() => {
+  const metadata = props.message.metadata as Record<string, any> | undefined
+  return metadata?.kind === 'team_member_output' && metadata?.team_streaming === true
+})
+
+const lightweightStreamingContent = computed(() => {
+  const content = normalizedMessageContent.value || ''
+  return `${content}▍`
 })
 
 const teamSpeakerName = computed(() => {

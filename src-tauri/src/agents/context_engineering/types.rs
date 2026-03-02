@@ -8,6 +8,7 @@ use crate::agents::context_engineering::tool_digest::ToolDigest;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ContextSection {
     System,
+    OrchestratorContext,
     RunState,
     Window,
     Retrieval,
@@ -25,6 +26,7 @@ pub struct ToolDigestEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextPacket {
     pub system_instructions: String,
+    pub orchestrator_context: String,
     pub run_state: String,
     pub window_messages: Vec<ChatMessage>,
     pub retrieved_memories: Vec<String>,
@@ -35,6 +37,7 @@ impl ContextPacket {
     pub fn new(system_instructions: String) -> Self {
         Self {
             system_instructions,
+            orchestrator_context: String::new(),
             run_state: String::new(),
             window_messages: Vec::new(),
             retrieved_memories: Vec::new(),
@@ -43,14 +46,21 @@ impl ContextPacket {
     }
 
     pub fn render_system_prompt(&self) -> String {
-        let mut prompt = self.system_instructions.clone();
+        self.system_instructions.clone()
+    }
+
+    pub fn render_orchestrator_context(&self) -> String {
+        let mut prompt = String::new();
         if !self.run_state.trim().is_empty() {
-            prompt.push_str("\n\n[RunState]\n");
+            prompt.push_str("[RunState]\n");
             prompt.push_str(self.run_state.trim());
         }
 
         if !self.retrieved_memories.is_empty() {
-            prompt.push_str("\n\n[RetrievedMemory]\n");
+            if !prompt.is_empty() {
+                prompt.push_str("\n\n");
+            }
+            prompt.push_str("[RetrievedMemory]\n");
             for item in &self.retrieved_memories {
                 prompt.push_str("- ");
                 prompt.push_str(item.trim());
@@ -59,7 +69,10 @@ impl ContextPacket {
         }
 
         if !self.tool_digests.is_empty() {
-            prompt.push_str("\n\n[Recent Tool Digests]\n");
+            if !prompt.is_empty() {
+                prompt.push_str("\n\n");
+            }
+            prompt.push_str("[Recent Tool Digests]\n");
             for digest in &self.tool_digests {
                 if let Some(artifact_id) = digest.artifact_id.as_ref() {
                     prompt.push_str(&format!(
@@ -75,7 +88,7 @@ impl ContextPacket {
             }
         }
 
-        prompt
+        prompt.trim().to_string()
     }
 
     pub fn set_tool_digests(&mut self, digests: &[ToolDigest]) {

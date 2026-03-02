@@ -544,6 +544,7 @@ const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(nu
 const inputAreaRef = ref<InstanceType<typeof InputAreaComponent> | null>(null)
 const inputValue = ref('')
 const localError = ref<string | null>(null)
+const submitInFlight = ref(false)
 const conversationId = ref<string | null>(props.executionId ?? null)
 const showConversations = ref(false) // Default hidden
 const showToolConfig = ref(false)
@@ -917,8 +918,34 @@ let isPollingTeamRunStatus = false
 let teamMainFlowMessageIds = new Set<string>()
 let teamMirroredAssistantSourceIds = new Set<string>()
 let teamMirroredConversationMessageIds = new Set<string>()
+const teamPersistedToolEventKeys = new Set<string>()
 const teamStreamTempMessageByStreamId = new Map<string, string>()
+const teamStreamSegmentSeqByStreamId = new Map<string, number>()
 const teamStreamDoneIdsBySignature = new Map<string, string[]>()
+const teamLocalHumanMessageIdsBySignature = new Map<string, string[]>()
+const teamStreamDeltaBufferByStreamId = new Map<string, string>()
+const teamActiveStreamIds = new Set<string>()
+const teamPersistedAssistantSuppressionKeys = new Set<string>()
+const TEAM_STREAM_DELTA_FLUSH_INTERVAL_MS = 80
+let teamStreamDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null
+let isSyncingTeamMessages = false
+let pendingTeamMessageSyncSessionId: string | null = null
+
+const pruneTeamLocalHumanInputReconcileQueue = (sessionId?: string | null) => {
+  const keepSessionId = String(sessionId || '').trim()
+  if (!keepSessionId) {
+    teamLocalHumanMessageIdsBySignature.clear()
+    return
+  }
+
+  for (const signature of [...teamLocalHumanMessageIdsBySignature.keys()]) {
+    const separatorIndex = signature.indexOf('\u0001')
+    const signatureSessionId = separatorIndex >= 0 ? signature.slice(0, separatorIndex) : signature
+    if (signatureSessionId !== keepSessionId) {
+      teamLocalHumanMessageIdsBySignature.delete(signature)
+    }
+  }
+}
 
 const normalizeProviderName = (provider: string) => {
   const lower = provider.toLowerCase()
@@ -1396,6 +1423,17 @@ const matchesSelectedTeamMember = (message: AgentMessage, member: TeamSplitMembe
   if (member.memberName && messageMemberName === member.memberName) return true
   return false
 }
+const isTeamMessageGlobalVisible = (message: AgentMessage): boolean => {
+  const metadata = message.metadata || {}
+  const kind = String(metadata.kind || '').trim().toLowerCase()
+  const role = String(metadata.team_member_role || '').trim().toLowerCase()
+  if (message.type === 'user' || message.type === 'system') return true
+  if (kind === 'team_bridge' || kind === 'team_system' || kind === 'team_human_input') return true
+  if (role === 'user' || role === 'system' || role === 'human') return true
+  const memberId = String(metadata.team_member_id || '').trim()
+  const memberName = String(metadata.team_member_name || '').trim()
+  return !memberId && !memberName
+}
 const visibleMessages = computed<AgentMessage[]>(() => {
   const all = messages.value
   if (!teamModeEnabled.value) return all
@@ -1406,6 +1444,7 @@ const visibleMessages = computed<AgentMessage[]>(() => {
   if (!member) return all
   return all.filter((message) => {
     if (!isTeamScopedMainFlowMessage(message)) return true
+    if (isTeamMessageGlobalVisible(message)) return true
     return matchesSelectedTeamMember(message, member)
   })
 })
@@ -1427,9 +1466,10 @@ const teamWorkspaceBadgeCount = computed(
 const resolveAgentName = (agentId?: string | null) => {
   if (!agentId) return 'broadcast'
   const matched = (teamSessionDetail.value?.members || []).find((member) => member.id === agentId)
-  if (matched?.name) return matched.name
   const runtimeName = runtimeSpecAgentNameById.value.get(agentId)
-  return runtimeName || agentId
+  const displayName = (matched?.name || runtimeName || '').trim()
+  if (!displayName || displayName === agentId) return agentId
+  return `${agentId} (${displayName})`
 }
 const taskStatusBadgeClass = (status: string) => {
   const normalized = (status || '').toLowerCase()
@@ -2315,6 +2355,62 @@ const appendTeamBridgeMessage = (content: string) => {
   })
 }
 
+const buildTeamHumanInputSignature = (sessionId: string | null | undefined, content: string) => {
+  return `${String(sessionId || '').trim()}\u0001${content.trim()}`
+}
+
+const markTeamLocalHumanInputForReconcile = (sessionId: string, content: string, localMessageId: string) => {
+  const signature = buildTeamHumanInputSignature(sessionId, content)
+  const queue = teamLocalHumanMessageIdsBySignature.get(signature) || []
+  queue.push(localMessageId)
+  teamLocalHumanMessageIdsBySignature.set(signature, queue)
+}
+
+const consumeTeamLocalHumanInputForPersistedMessage = (sessionId: string | null | undefined, content: string): number | null => {
+  const signature = buildTeamHumanInputSignature(sessionId, content)
+  const queue = teamLocalHumanMessageIdsBySignature.get(signature)
+  if (!queue || queue.length === 0) return null
+  let removedIndex: number | null = null
+
+  while (queue.length > 0) {
+    const localId = queue.shift()
+    if (!localId) break
+    const idx = agentEvents.messages.value.findIndex((item) => item.id === localId)
+    if (idx >= 0) {
+      agentEvents.messages.value.splice(idx, 1)
+      removedIndex = removedIndex === null ? idx : Math.min(removedIndex, idx)
+    }
+  }
+
+  if (queue.length === 0) {
+    teamLocalHumanMessageIdsBySignature.delete(signature)
+  } else {
+    teamLocalHumanMessageIdsBySignature.set(signature, queue)
+  }
+
+  return removedIndex
+}
+
+const pushTeamHumanInputLocalEcho = (sessionId: string, content: string) => {
+  const normalizedContent = content.trim()
+  if (!sessionId || !normalizedContent) return
+  const localMessageId = `team-local-user:${crypto.randomUUID()}`
+  agentEvents.messages.value.push({
+    id: localMessageId,
+    type: 'user',
+    content: normalizedContent,
+    timestamp: Date.now(),
+    metadata: {
+      kind: 'team_human_input',
+      team_member_id: 'human',
+      team_member_name: 'human',
+      team_member_role: 'user',
+      team_session_id: sessionId,
+    },
+  })
+  markTeamLocalHumanInputForReconcile(sessionId, normalizedContent, localMessageId)
+}
+
 const mapTeamMessageType = (role: string): AgentMessage['type'] => {
   const normalized = (role || '').toLowerCase()
   if (normalized === 'user') return 'user'
@@ -2425,6 +2521,50 @@ const inferTeamToolSuccess = (result: unknown): boolean => {
   return true
 }
 
+const normalizeTeamSequence = (value: unknown): number | undefined => {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return undefined
+  const int = Math.floor(num)
+  return int > 0 ? int : undefined
+}
+
+const getTeamMessageSequence = (message: AgentMessage): number | undefined => {
+  return normalizeTeamSequence(message.metadata?.team_sequence)
+}
+
+const resolveTeamSequenceInsertIndex = (teamSequence?: number | null): number | null => {
+  const seq = normalizeTeamSequence(teamSequence)
+  if (seq === undefined) return null
+  for (let i = 0; i < agentEvents.messages.value.length; i += 1) {
+    const candidate = agentEvents.messages.value[i]
+    if (!isTeamScopedMainFlowMessage(candidate)) continue
+    const existingSeq = getTeamMessageSequence(candidate)
+    if (existingSeq !== undefined && existingSeq > seq) {
+      return i
+    }
+  }
+  return null
+}
+
+const resolveTeamStreamTransientInsertIndex = (streamId?: string | null): number | null => {
+  const normalizedStreamId = String(streamId || '').trim()
+  if (!normalizedStreamId) return null
+
+  // Keep real-time events in arrival order within the same stream:
+  // always append after the last message already associated with this stream.
+  const tempMessageId = teamStreamTempMessageByStreamId.get(normalizedStreamId)
+  let lastStreamIdx = -1
+  for (let i = 0; i < agentEvents.messages.value.length; i += 1) {
+    const item = agentEvents.messages.value[i]
+    const itemStreamId = String(item.metadata?.team_stream_id || '').trim()
+    const sameTemp = !!tempMessageId && item.id === tempMessageId
+    if (itemStreamId !== normalizedStreamId && !sameTemp) continue
+    lastStreamIdx = i
+  }
+  if (lastStreamIdx >= 0) return lastStreamIdx + 1
+  return null
+}
+
 const buildTeamToolCallCompositeKey = (
   toolCallId?: string | null,
   memberId?: string | null,
@@ -2468,6 +2608,7 @@ const upsertTeamToolCallToMainFlow = (params: {
   toolResult?: unknown
   success?: boolean
   timestamp?: number
+  teamSequence?: number
   memberId?: string
   memberName?: string
   streamId?: string
@@ -2512,6 +2653,7 @@ const upsertTeamToolCallToMainFlow = (params: {
     ? `正在调用工具: ${toolName}`
     : `工具调用完成: ${toolName}`
   const timestamp = existing?.timestamp ?? params.timestamp ?? Date.now()
+  const teamSequence = normalizeTeamSequence(params.teamSequence ?? existingMeta.team_sequence)
   const metadata = {
     ...existingMeta,
     kind: 'tool_call',
@@ -2526,6 +2668,7 @@ const upsertTeamToolCallToMainFlow = (params: {
     team_member_name: params.memberName || existingMeta.team_member_name,
     team_stream_id: params.streamId || existingMeta.team_stream_id,
     team_session_id: activeTeamSessionId.value || existingMeta.team_session_id,
+    team_sequence: teamSequence,
   }
 
   if (existing) {
@@ -2542,17 +2685,18 @@ const upsertTeamToolCallToMainFlow = (params: {
         metadata.team_member_name,
       )
     }
-    sortMainFlowMessagesByTimestamp()
     return
   }
 
-  agentEvents.messages.value.push({
+  const preferredIndex = resolveTeamSequenceInsertIndex(teamSequence)
+  const fallbackStreamIndex = resolveTeamStreamTransientInsertIndex(params.streamId)
+  insertMainFlowMessageAtPreferredIndex({
     id: stableId,
     type: 'tool_call',
     content,
     timestamp,
     metadata,
-  })
+  }, preferredIndex ?? fallbackStreamIndex)
   if (params.mode === 'result') {
     pushTeamShellFallbackNoticeIfNeeded(
       toolName,
@@ -2562,7 +2706,6 @@ const upsertTeamToolCallToMainFlow = (params: {
       metadata.team_member_name,
     )
   }
-  sortMainFlowMessagesByTimestamp()
 }
 
 const buildTeamMessageSignature = (
@@ -2573,15 +2716,70 @@ const buildTeamMessageSignature = (
   return `${(role || '').trim().toLowerCase()}\u0001${(memberName || '').trim()}\u0001${content.trim()}`
 }
 
+const buildTeamPersistedAssistantSuppressionKey = (
+  sessionId: string | undefined,
+  memberName: string | undefined,
+  content: string,
+) => {
+  return `${(sessionId || '').trim()}\u0001${(memberName || '').trim()}\u0001${content.trim()}`
+}
+
+const allocateTeamStreamSegmentMessageId = (streamId: string) => {
+  const normalized = String(streamId || '').trim()
+  if (!normalized) return `team-stream:${crypto.randomUUID()}`
+  const current = teamStreamSegmentSeqByStreamId.get(normalized) || 0
+  const next = current + 1
+  teamStreamSegmentSeqByStreamId.set(normalized, next)
+  return `team-stream:${normalized}:${next}`
+}
+
+const clearTeamStreamDeltaFlushTimer = () => {
+  if (teamStreamDeltaFlushTimer) {
+    clearTimeout(teamStreamDeltaFlushTimer)
+    teamStreamDeltaFlushTimer = null
+  }
+}
+
+const flushTeamStreamDeltaBuffers = (streamId?: string) => {
+  const targetIds = streamId ? [streamId] : [...teamStreamDeltaBufferByStreamId.keys()]
+  for (const sid of targetIds) {
+    const buffered = teamStreamDeltaBufferByStreamId.get(sid)
+    if (!buffered) continue
+    const tempMessageId = teamStreamTempMessageByStreamId.get(sid) || `team-stream:${sid}`
+    const message = agentEvents.messages.value.find((item) => item.id === tempMessageId)
+    if (!message) continue
+    message.content = `${message.content || ''}${buffered}`
+    message.metadata = {
+      ...(message.metadata || {}),
+      team_streaming: teamActiveStreamIds.has(sid),
+    }
+    teamStreamDeltaBufferByStreamId.delete(sid)
+  }
+  if (teamStreamDeltaBufferByStreamId.size === 0) {
+    clearTeamStreamDeltaFlushTimer()
+  }
+}
+
+const scheduleTeamStreamDeltaFlush = () => {
+  if (teamStreamDeltaFlushTimer) return
+  teamStreamDeltaFlushTimer = setTimeout(() => {
+    teamStreamDeltaFlushTimer = null
+    flushTeamStreamDeltaBuffers()
+  }, TEAM_STREAM_DELTA_FLUSH_INTERVAL_MS)
+}
+
 const upsertTeamStreamTempMessage = (
   streamId: string,
   memberId?: string,
   memberName?: string,
+  options?: { streaming?: boolean },
 ) => {
-  const tempMessageId = teamStreamTempMessageByStreamId.get(streamId) || `team-stream:${streamId}`
+  const isStreaming = options?.streaming ?? teamActiveStreamIds.has(streamId)
+  const tempMessageId = teamStreamTempMessageByStreamId.get(streamId) || allocateTeamStreamSegmentMessageId(streamId)
+  const fallbackStreamIndex = resolveTeamStreamTransientInsertIndex(streamId)
   if (!teamStreamTempMessageByStreamId.has(streamId)) {
     teamStreamTempMessageByStreamId.set(streamId, tempMessageId)
-    agentEvents.messages.value.push({
+    insertMainFlowMessageAtPreferredIndex({
       id: tempMessageId,
       type: 'final',
       content: '',
@@ -2591,14 +2789,17 @@ const upsertTeamStreamTempMessage = (
         team_member_id: memberId,
         team_member_name: memberName,
         team_member_role: 'assistant',
+        team_streaming: isStreaming,
+        team_stream_id: streamId,
+        team_session_id: activeTeamSessionId.value || undefined,
       },
-    })
+    }, fallbackStreamIndex)
     return tempMessageId
   }
 
   const existing = agentEvents.messages.value.find((item) => item.id === tempMessageId)
   if (!existing) {
-    agentEvents.messages.value.push({
+    insertMainFlowMessageAtPreferredIndex({
       id: tempMessageId,
       type: 'final',
       content: '',
@@ -2608,8 +2809,11 @@ const upsertTeamStreamTempMessage = (
         team_member_id: memberId,
         team_member_name: memberName,
         team_member_role: 'assistant',
+        team_streaming: isStreaming,
+        team_stream_id: streamId,
+        team_session_id: activeTeamSessionId.value || undefined,
       },
-    })
+    }, fallbackStreamIndex)
   } else {
     existing.metadata = {
       ...(existing.metadata || {}),
@@ -2617,6 +2821,9 @@ const upsertTeamStreamTempMessage = (
       team_member_id: memberId,
       team_member_name: memberName,
       team_member_role: 'assistant',
+      team_streaming: isStreaming,
+      team_stream_id: streamId,
+      team_session_id: activeTeamSessionId.value || existing.metadata?.team_session_id,
     }
   }
 
@@ -2625,15 +2832,19 @@ const upsertTeamStreamTempMessage = (
 
 const handleTeamMessageStreamStart = (payload: AgentTeamMessageStreamStartEvent) => {
   if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
-  upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name)
+  teamActiveStreamIds.add(payload.stream_id)
+  upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name, { streaming: true })
 }
 
 const handleTeamMessageStreamDelta = (payload: AgentTeamMessageStreamDeltaEvent) => {
   if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
-  const tempMessageId = upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name)
-  const message = agentEvents.messages.value.find((item) => item.id === tempMessageId)
-  if (!message) return
-  message.content = `${message.content || ''}${payload.delta || ''}`
+  teamActiveStreamIds.add(payload.stream_id)
+  upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name, { streaming: true })
+  if (payload.delta) {
+    const buffered = teamStreamDeltaBufferByStreamId.get(payload.stream_id) || ''
+    teamStreamDeltaBufferByStreamId.set(payload.stream_id, `${buffered}${payload.delta}`)
+    scheduleTeamStreamDeltaFlush()
+  }
 }
 
 const markTeamStreamDoneForReconcile = (
@@ -2647,9 +2858,44 @@ const markTeamStreamDoneForReconcile = (
   teamStreamDoneIdsBySignature.set(signature, queue)
 }
 
+const splitTeamStreamAssistantSegmentAtToolBoundary = (payload: {
+  stream_id: string
+  member_name?: string
+}) => {
+  const streamId = String(payload.stream_id || '').trim()
+  if (!streamId) return
+
+  // Flush buffered text first so the segment before tool_call is fully materialized.
+  flushTeamStreamDeltaBuffers(streamId)
+
+  const tempMessageId = teamStreamTempMessageByStreamId.get(streamId)
+  if (!tempMessageId) return
+  const message = agentEvents.messages.value.find((item) => item.id === tempMessageId)
+
+  teamStreamTempMessageByStreamId.delete(streamId)
+  if (!message) return
+
+  const finalizedContent = (message.content || '').trim()
+  if (!finalizedContent) {
+    const idx = agentEvents.messages.value.findIndex((item) => item.id === tempMessageId)
+    if (idx >= 0) {
+      agentEvents.messages.value.splice(idx, 1)
+    }
+    return
+  }
+
+  message.metadata = {
+    ...(message.metadata || {}),
+    team_streaming: false,
+  }
+  markTeamStreamDoneForReconcile(tempMessageId, payload.member_name, finalizedContent)
+}
+
 const handleTeamMessageStreamDone = (payload: AgentTeamMessageStreamDoneEvent) => {
   if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
-  const tempMessageId = upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name)
+  flushTeamStreamDeltaBuffers(payload.stream_id)
+  teamActiveStreamIds.delete(payload.stream_id)
+  const tempMessageId = upsertTeamStreamTempMessage(payload.stream_id, payload.member_id, payload.member_name, { streaming: false })
   const message = agentEvents.messages.value.find((item) => item.id === tempMessageId)
   if (!message) return
 
@@ -2662,6 +2908,16 @@ const handleTeamMessageStreamDone = (payload: AgentTeamMessageStreamDoneEvent) =
 
   const finalContent = (message.content || '').trim()
   if (finalContent.length > 0 && message.type !== 'error') {
+    const persistedCanonicalContent =
+      typeof payload.content === 'string' && payload.content.trim().length > 0
+        ? payload.content.trim()
+        : finalContent
+    const suppressionKey = buildTeamPersistedAssistantSuppressionKey(
+      payload.session_id,
+      payload.member_name,
+      persistedCanonicalContent,
+    )
+    teamPersistedAssistantSuppressionKeys.add(suppressionKey)
     markTeamStreamDoneForReconcile(tempMessageId, payload.member_name, finalContent)
   } else {
     if (finalContent.length === 0 && message.type !== 'error') {
@@ -2676,8 +2932,95 @@ const handleTeamMessageStreamDone = (payload: AgentTeamMessageStreamDoneEvent) =
   void syncTeamMessagesToMainFlow(payload.session_id)
 }
 
+const buildTeamPersistedToolEventKey = (
+  sessionId: string | undefined,
+  streamId: string | undefined,
+  toolCallId: string | undefined,
+  messageType: 'tool_call' | 'tool_result',
+) => {
+  return `${String(sessionId || '').trim()}\u0001${String(streamId || '').trim()}\u0001${String(toolCallId || '').trim()}\u0001${messageType}`
+}
+
+const persistTeamToolEvent = async (
+  messageType: 'tool_call' | 'tool_result',
+  payload: AgentTeamToolCallEvent | AgentTeamToolResultEvent,
+) => {
+  const sessionId = String(payload?.session_id || '').trim()
+  const toolCallId = String(payload?.tool_call_id || '').trim()
+  if (!sessionId || !toolCallId) return
+
+  const persistKey = buildTeamPersistedToolEventKey(
+    sessionId,
+    payload.stream_id,
+    toolCallId,
+    messageType,
+  )
+  if (teamPersistedToolEventKeys.has(persistKey)) return
+  teamPersistedToolEventKeys.add(persistKey)
+
+  try {
+    if (messageType === 'tool_call') {
+      const toolPayload = payload as AgentTeamToolCallEvent
+      await invoke('team_v3_send_message', {
+        sessionId,
+        request: {
+          thread_id: sessionId,
+          from_agent_id: toolPayload.member_id || toolPayload.member_name || 'team_tool',
+          to_agent_id: null,
+          message_type: 'tool_call',
+          payload: {
+            content: `[Tool Call] ${toolPayload.name || 'unknown'}`,
+            tool_call_id: toolCallId,
+            name: toolPayload.name,
+            arguments: toolPayload.arguments,
+            stream_id: toolPayload.stream_id,
+            phase: toolPayload.phase,
+            timestamp: toolPayload.timestamp || new Date().toISOString(),
+          },
+        },
+      })
+      return
+    }
+
+    const resultPayload = payload as AgentTeamToolResultEvent
+    const existing = findTeamToolCallMessage(
+      buildTeamToolCallCompositeKey(
+        toolCallId,
+        resultPayload.member_id,
+        resultPayload.member_name,
+        resultPayload.stream_id,
+      ),
+      toolCallId,
+    )
+    const toolName = String(existing?.metadata?.tool_name || 'unknown').trim() || 'unknown'
+    await invoke('team_v3_send_message', {
+      sessionId,
+      request: {
+        thread_id: sessionId,
+        from_agent_id: resultPayload.member_id || resultPayload.member_name || 'team_tool',
+        to_agent_id: null,
+        message_type: 'tool_result',
+        payload: {
+          content: `[Tool Result] ${toolName}`,
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          result: resultPayload.result,
+          success: resultPayload.success !== false,
+          stream_id: resultPayload.stream_id,
+          phase: resultPayload.phase,
+          timestamp: resultPayload.timestamp || new Date().toISOString(),
+        },
+      },
+    })
+  } catch (e) {
+    teamPersistedToolEventKeys.delete(persistKey)
+    console.warn(`[AgentView] Failed to persist team ${messageType} event:`, e)
+  }
+}
+
 const handleTeamToolCall = (payload: AgentTeamToolCallEvent) => {
   if (!payload?.session_id || payload.session_id !== activeTeamSessionId.value) return
+  splitTeamStreamAssistantSegmentAtToolBoundary(payload)
   upsertTeamToolCallToMainFlow({
     toolCallId: payload.tool_call_id,
     toolName: payload.name,
@@ -2689,6 +3032,7 @@ const handleTeamToolCall = (payload: AgentTeamToolCallEvent) => {
     phase: payload.phase,
     mode: 'start',
   })
+  void persistTeamToolEvent('tool_call', payload)
 }
 
 const handleTeamToolResult = (payload: AgentTeamToolResultEvent) => {
@@ -2704,12 +3048,14 @@ const handleTeamToolResult = (payload: AgentTeamToolResultEvent) => {
     phase: payload.phase,
     mode: 'result',
   })
+  void persistTeamToolEvent('tool_result', payload)
 }
 
-const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage) => {
+const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage): number | null => {
   const signature = buildTeamMessageSignature(msg.role, msg.member_name, msg.content || '')
   const queue = teamStreamDoneIdsBySignature.get(signature)
-  if (!queue || queue.length === 0) return
+  if (!queue || queue.length === 0) return null
+  let removedIndex: number | null = null
 
   while (queue.length > 0) {
     const tempId = queue.shift()
@@ -2717,6 +3063,7 @@ const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage) => {
     const idx = agentEvents.messages.value.findIndex((item) => item.id === tempId)
     if (idx >= 0) {
       agentEvents.messages.value.splice(idx, 1)
+      removedIndex = idx
       for (const [streamId, mappedTempId] of teamStreamTempMessageByStreamId.entries()) {
         if (mappedTempId === tempId) {
           teamStreamTempMessageByStreamId.delete(streamId)
@@ -2732,10 +3079,26 @@ const consumeTeamStreamTempForPersistedMessage = (msg: AgentTeamMessage) => {
   } else {
     teamStreamDoneIdsBySignature.set(signature, queue)
   }
+
+  return removedIndex
+}
+
+const insertMainFlowMessageAtPreferredIndex = (message: AgentMessage, preferredIndex?: number | null) => {
+  const sequenceDerivedIndex = resolveTeamSequenceInsertIndex(message.metadata?.team_sequence)
+  const candidateIndex = preferredIndex ?? sequenceDerivedIndex
+  const targetIndex = typeof candidateIndex === 'number' && Number.isFinite(candidateIndex)
+    ? Math.min(Math.max(Math.floor(candidateIndex), 0), agentEvents.messages.value.length)
+    : -1
+  if (targetIndex >= 0) {
+    agentEvents.messages.value.splice(targetIndex, 0, message)
+    return
+  }
+  agentEvents.messages.value.push(message)
 }
 
 const buildTeamMirroredConversationRole = (role: string): string | null => {
   const normalized = (role || '').toLowerCase()
+  if (normalized === 'user') return 'user'
   if (normalized === 'assistant') return 'assistant'
   if (normalized === 'system') return 'system'
   if (normalized === 'tool_call' || normalized === 'tool_result') return 'tool'
@@ -2833,7 +3196,6 @@ const mirrorTeamMessageToConversation = async (msg: AgentTeamMessage) => {
 
 const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
   if (!Array.isArray(messagesResp) || messagesResp.length === 0) return
-  let changed = false
   // Backend already returns messages ordered by created_at ASC.
   // Keep backend order to avoid tie-break instability when timestamps are identical.
   for (const msg of messagesResp) {
@@ -2857,10 +3219,11 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
             team_member_id: msg.member_id,
             team_member_name: msg.member_name,
             team_member_role: msg.role,
+            team_session_id: msg.session_id,
+            team_sequence: normalizeTeamSequence(msg.sequence),
           },
         })
         void mirrorTeamMessageToConversation(msg)
-        changed = true
       }
       teamMainFlowMessageIds.add(msg.id)
       continue
@@ -2879,6 +3242,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
             toolResult: hasResult ? (tc as any).result : undefined,
             success: hasResult ? (tc as any).success !== false : undefined,
             timestamp: msgTime,
+            teamSequence: msg.sequence,
             memberId: msg.member_id,
             memberName: msg.member_name,
             mode: msg.role === 'tool_result' || hasResult ? 'result' : 'start',
@@ -2891,6 +3255,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           toolResult: msg.role === 'tool_result' ? msg.content : undefined,
           success: msg.role === 'tool_result' ? true : undefined,
           timestamp: msgTime,
+          teamSequence: msg.sequence,
           memberId: msg.member_id,
           memberName: msg.member_name,
           mode: msg.role === 'tool_result' ? 'result' : 'start',
@@ -2900,23 +3265,47 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
       teamMainFlowMessageIds.add(msg.id)
       continue
     }
+    if (msg.role === 'assistant') {
+      const assistantContent = (msg.content || '').trim()
+      if (assistantContent) {
+        const suppressionKey = buildTeamPersistedAssistantSuppressionKey(
+          msg.session_id,
+          msg.member_name,
+          assistantContent,
+        )
+        if (teamPersistedAssistantSuppressionKeys.has(suppressionKey)) {
+          teamMainFlowMessageIds.add(msg.id)
+          void mirrorTeamMessageToConversation(msg)
+          continue
+        }
+      }
+    }
     if ((msg.content || '').trim()) {
-      consumeTeamStreamTempForPersistedMessage(msg)
+      let preferredIndex: number | null = null
+      if (msg.role === 'user') {
+        preferredIndex = consumeTeamLocalHumanInputForPersistedMessage(msg.session_id, msg.content || '')
+      }
+      const kind = msg.role === 'user' ? 'team_human_input' : 'team_member_output'
+      const streamTempIndex = consumeTeamStreamTempForPersistedMessage(msg)
+      if (preferredIndex === null && streamTempIndex !== null) {
+        preferredIndex = streamTempIndex
+      }
       teamMainFlowMessageIds.add(msg.id)
-      agentEvents.messages.value.push({
+      insertMainFlowMessageAtPreferredIndex({
         id: `team:${msg.id}`,
         type: mapTeamMessageType(msg.role),
         content: msg.content,
         timestamp: msgTime,
         metadata: {
-          kind: 'team_member_output',
+          kind,
           team_member_id: msg.member_id,
           team_member_name: msg.member_name,
           team_member_role: msg.role,
+          team_session_id: msg.session_id,
+          team_sequence: normalizeTeamSequence(msg.sequence),
         },
-      })
+      }, preferredIndex)
       void mirrorTeamMessageToConversation(msg)
-      changed = true
     }
     if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
       for (let i = 0; i < msg.tool_calls.length; i += 1) {
@@ -2931,6 +3320,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           toolResult: hasResult ? (tc as any).result : undefined,
           success: hasResult ? (tc as any).success !== false : undefined,
           timestamp: msgTime,
+          teamSequence: msg.sequence,
           memberId: msg.member_id,
           memberName: msg.member_name,
           mode: hasResult ? 'result' : 'start',
@@ -2938,38 +3328,12 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
       }
     }
   }
-  if (changed) {
-    sortMainFlowMessagesByTimestamp()
-  }
 }
 
 const parseConversationMessageTimestamp = (raw: unknown): number => {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw
   const parsed = Date.parse(typeof raw === 'string' ? raw : '')
   return Number.isFinite(parsed) ? parsed : 0
-}
-
-const sortMainFlowMessagesByTimestamp = () => {
-  const current = agentEvents.messages.value
-  if (!Array.isArray(current) || current.length <= 1) return
-  const withIndex = current.map((item, index) => ({ item, index }))
-  withIndex.sort((a, b) => {
-    const ta = Number.isFinite(a.item.timestamp) ? a.item.timestamp : 0
-    const tb = Number.isFinite(b.item.timestamp) ? b.item.timestamp : 0
-    if (ta !== tb) return ta - tb
-    return a.index - b.index
-  })
-  const reordered = withIndex.map((entry) => entry.item)
-  let changed = false
-  for (let i = 0; i < current.length; i += 1) {
-    if (current[i] !== reordered[i]) {
-      changed = true
-      break
-    }
-  }
-  if (changed) {
-    agentEvents.messages.value = reordered
-  }
 }
 
 const persistTeamSessionState = async (sessionId: string, nextState: string) => {
@@ -3099,6 +3463,11 @@ const handleTeamExecutionError = async (payload: AgentErrorEvent) => {
 const syncTeamMessagesToMainFlow = async (sessionId?: string | null) => {
   const sid = sessionId || activeTeamSessionId.value
   if (!sid) return
+  if (isSyncingTeamMessages) {
+    pendingTeamMessageSyncSessionId = sid
+    return
+  }
+  isSyncingTeamMessages = true
   try {
     const messagesResp = await agentTeamApi.getMessages(sid)
     if (!messagesResp || activeTeamSessionId.value !== sid) return
@@ -3106,17 +3475,34 @@ const syncTeamMessagesToMainFlow = async (sessionId?: string | null) => {
     appendTeamMessagesToMainFlow(messagesResp)
   } catch (e) {
     console.warn('[AgentView] Failed to sync team messages to main flow:', e)
+  } finally {
+    isSyncingTeamMessages = false
+    const queued = pendingTeamMessageSyncSessionId
+    pendingTeamMessageSyncSessionId = null
+    if (queued && queued === activeTeamSessionId.value && queued !== sid) {
+      void syncTeamMessagesToMainFlow(queued)
+    } else if (queued && queued === activeTeamSessionId.value && queued === sid) {
+      // Multiple refresh requests for same session are coalesced into one extra pass.
+      void syncTeamMessagesToMainFlow(queued)
+    }
   }
 }
 
 const refreshTeamRuntimeData = async (sessionId: string) => {
-  const [tasksResp, blackboardResp] = await Promise.allSettled([
+  const [sessionResp, tasksResp, blackboardResp] = await Promise.allSettled([
+    agentTeamApi.getSession(sessionId),
     agentTeamApi.listTasks(sessionId),
     isTeamWorkspaceActive.value
       ? agentTeamApi.listBlackboardEntries(sessionId, 200)
       : Promise.resolve(null),
   ])
   if (activeTeamSessionId.value !== sessionId) return
+
+  if (sessionResp.status === 'fulfilled') {
+    teamSessionDetail.value = sessionResp.value
+  } else {
+    console.warn('[AgentView] Failed to refresh team session detail:', sessionResp.reason)
+  }
 
   if (tasksResp.status === 'fulfilled') {
     teamTasks.value = tasksResp.value
@@ -3267,11 +3653,13 @@ const createAndStartTeamSession = async (goal: string) => {
   })
   activeTeamSessionId.value = session.id
   teamSessionState.value = session.state
+  pushTeamHumanInputLocalEcho(session.id, goal)
   await agentTeamApi.submitMessage({
     session_id: session.id,
     content: goal,
     resume: false,
   })
+  await syncTeamMessagesToMainFlow(session.id)
   if (isTeamWorkspaceActive.value) {
     await loadTeamWorkspaceData()
   }
@@ -3293,11 +3681,13 @@ const routeTeamMessage = async (content: string) => {
     return
   }
 
+  pushTeamHumanInputLocalEcho(currentSession.id, content)
   await agentTeamApi.submitMessage({
     session_id: currentSession.id,
     content,
     resume: currentSession.state === 'SUSPENDED_FOR_HUMAN',
   })
+  await syncTeamMessagesToMainFlow(currentSession.id)
 
   teamSessionState.value = currentSession.state
   if (isTeamWorkspaceActive.value) {
@@ -4738,7 +5128,6 @@ const loadConversationHistory = async (convId: string) => {
       }
 
       agentEvents.messages.value = timeline
-      sortMainFlowMessagesByTimestamp()
       await syncActiveTeamSession()
       if (currentLoadToken !== historyLoadToken.value || conversationId.value !== convId) {
         console.log('[AgentView] Skip stale team session sync after history load for:', convId)
@@ -4846,200 +5235,209 @@ const handleCreateConversation = async (newConvId?: string) => {
 
 // Handle submit
 const handleSubmit = async () => {
+  if (submitInFlight.value) {
+    console.log('[AgentView] Ignore duplicated submit while previous send is in-flight')
+    return
+  }
   const task = inputValue.value.trim()
   if (!task) return
-  
+
+  submitInFlight.value = true
   localError.value = null
 
-  if (teamModeEnabled.value) {
-    try {
-      if (isExecuting.value && conversationId.value) {
-        await handleStop()
-        await new Promise(resolve => setTimeout(resolve, 300))
-      }
-
-      await ensureConversationForTeamSession()
-
-      let fullTask = task
-      if (referencedTraffic.value.length > 0) {
-        const trafficContext = buildTrafficContext(referencedTraffic.value)
-        fullTask = `${trafficContext}\n\nUser task: ${task}`
-      }
-
-      // Clear input and pending artifacts in Team mode.
-      inputValue.value = ''
-      const usedDocuments = processedDocuments.value.filter(d => d.status === 'ready')
-      pendingAttachments.value = []
-      pendingDocuments.value = []
-      processedDocuments.value = []
-      referencedTraffic.value = []
-
-      if (usedDocuments.length > 0) {
-        agentEvents.setPendingDocumentAttachments(usedDocuments)
-      }
-
-      nextTick(() => {
-        scrollMessageViewportToBottom()
-      })
-
-      emit('submit', fullTask)
-      await routeTeamMessage(fullTask)
-      if (activeTeamSessionId.value) {
-        teamSessionState.value = 'EXECUTING'
-        ensureTeamRunStatusPolling()
-        await persistTeamSessionState(activeTeamSessionId.value, 'EXECUTING')
-        await agentTeamApi.startRun(
-          activeTeamSessionId.value,
-          conversationId.value || undefined,
-          ragEnabled.value,
-        )
-        if (isTeamWorkspaceActive.value) {
-          await loadTeamWorkspaceData()
+  try {
+    if (teamModeEnabled.value) {
+      try {
+        if (isExecuting.value && conversationId.value) {
+          await handleStop()
+          await new Promise(resolve => setTimeout(resolve, 300))
         }
+
+        await ensureConversationForTeamSession()
+
+        let fullTask = task
+        if (referencedTraffic.value.length > 0) {
+          const trafficContext = buildTrafficContext(referencedTraffic.value)
+          fullTask = `${trafficContext}\n\nUser task: ${task}`
+        }
+
+        // Clear input and pending artifacts in Team mode.
+        inputValue.value = ''
+        const usedDocuments = processedDocuments.value.filter(d => d.status === 'ready')
+        pendingAttachments.value = []
+        pendingDocuments.value = []
+        processedDocuments.value = []
+        referencedTraffic.value = []
+
+        if (usedDocuments.length > 0) {
+          agentEvents.setPendingDocumentAttachments(usedDocuments)
+        }
+
+        nextTick(() => {
+          scrollMessageViewportToBottom()
+        })
+
+        emit('submit', fullTask)
+        await routeTeamMessage(fullTask)
+        if (activeTeamSessionId.value) {
+          teamSessionState.value = 'EXECUTING'
+          ensureTeamRunStatusPolling()
+          await persistTeamSessionState(activeTeamSessionId.value, 'EXECUTING')
+          await agentTeamApi.startRun(
+            activeTeamSessionId.value,
+            conversationId.value || undefined,
+            ragEnabled.value,
+          )
+          if (isTeamWorkspaceActive.value) {
+            await loadTeamWorkspaceData()
+          }
+        }
+        emit('complete', {
+          mode: 'team',
+          session_id: activeTeamSessionId.value,
+          execution_id: conversationId.value,
+        })
+      } catch (e: any) {
+        const errorMsg = e?.toString?.() || String(e)
+        localError.value = errorMsg
+        emit('error', errorMsg)
       }
-      emit('complete', {
-        mode: 'team',
-        session_id: activeTeamSessionId.value,
-        execution_id: conversationId.value,
+      return
+    }
+    
+    // Takeover: if currently executing, cancel previous stream first
+    if (isExecuting.value && conversationId.value) {
+      console.log('[AgentView] Takeover: stopping current execution to handle new message')
+      try {
+        const partial = agentEvents.streamingContent.value?.trim()
+        if (partial) {
+          const partialMsgId = crypto.randomUUID()
+          console.log('[AgentView] Takeover: saving partial response:', partial.substring(0, 100))
+          // First solidify the partial output of the old stream locally as the final assistant message
+          agentEvents.messages.value.push({
+            id: partialMsgId,
+            type: 'final' as any,
+            content: partial,
+            timestamp: Date.now(),
+          })
+          // Then write to database to ensure conversation history consistency
+          await invoke('save_ai_message', {
+            request: {
+              id: partialMsgId,
+              conversation_id: conversationId.value,
+              role: 'assistant',
+              content: partial,
+            },
+          })
+        }
+        
+        // Stop the current execution
+        await handleStop()
+        
+        // Wait a bit for the backend to fully stop
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+        console.log('[AgentView] Takeover: previous execution stopped, proceeding with new message')
+      } catch (e) {
+        console.warn('[AgentView] Takeover stop failed, continuing:', e)
+      }
+    }
+
+    // Build full task with traffic context
+    let fullTask = task
+    let displayContent: string | undefined = undefined
+    if (referencedTraffic.value.length > 0) {
+      const trafficContext = buildTrafficContext(referencedTraffic.value)
+      fullTask = `${trafficContext}\n\nUser task: ${task}`
+      // Display content is just the user's original input
+      displayContent = task
+    }
+    
+    // Clear input and references
+    inputValue.value = ''
+    const usedAttachments = [...pendingAttachments.value]
+    const usedDocuments = processedDocuments.value.filter(d => d.status === 'ready')
+    const usedTraffic = [...referencedTraffic.value]
+    pendingAttachments.value = []
+    pendingDocuments.value = []
+    processedDocuments.value = []
+    referencedTraffic.value = []
+    
+    // Store document attachments for later injection into user message
+    // We'll inject them when the user_message event arrives from backend
+    if (usedDocuments.length > 0) {
+      agentEvents.setPendingDocumentAttachments(usedDocuments)
+    }
+    
+    // Force scroll to bottom when user sends a message
+    nextTick(() => {
+      scrollMessageViewportToBottom()
+    })
+    
+    // Emit submit event
+    emit('submit', fullTask)
+    
+    try {
+      // Ensure conversation exists or create new one
+      if (!conversationId.value) {
+        console.log('[AgentView] No conversation ID, creating new conversation')
+        const convId = await invoke<string>('create_ai_conversation', {
+          request: {
+            title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
+            service_name: 'default'
+          }
+        })
+        conversationId.value = convId
+        currentConversationTitle.value = t('agent.newConversationTitle')
+        console.log('[AgentView] Created new conversation:', convId)
+        
+        // Refresh conversation list
+        conversationListRef.value?.loadConversations()
+      }
+      
+      const modelOverrideValue = assistantSelectedModel.value && assistantSelectedModel.value.includes('/')
+        ? assistantSelectedModel.value
+        : undefined
+
+      if (conversationId.value) {
+        void maybeAutoRenameConversationByFirstMessage(conversationId.value, task)
+      }
+
+      // Call agent_execute command (tool config passed directly from frontend to ensure latest config takes effect immediately)
+      const result = await invoke('agent_execute', {
+        task: fullTask,
+        config: {
+          max_iterations: 10,
+          timeout_secs: 300,
+          force_todos: props.showTodos,
+          enable_rag: ragEnabled.value,
+          enable_tenth_man_rule: tenthManEnabled.value,
+          conversation_id: conversationId.value,
+          message_id: null,
+          attachments: usedAttachments.length > 0 ? usedAttachments : undefined,
+          document_attachments: usedDocuments.length > 0 ? usedDocuments : undefined,
+          tool_config: buildEffectiveToolConfigForExecution(),
+          audit_config: toolConfig.value.audit_mode
+            ? {
+                ...(toolConfig.value.audit_config || defaultAuditConfig()),
+                enabled: true,
+              }
+            : undefined,
+          display_content: displayContent,
+          model_override: modelOverrideValue,
+        }
       })
+      
+      emit('complete', result)
     } catch (e: any) {
-      const errorMsg = e?.toString?.() || String(e)
+      const errorMsg = e.toString()
       localError.value = errorMsg
       emit('error', errorMsg)
     }
-    return
+    // isExecuting and isStreaming are automatically managed by useAgentEvents, no manual setting needed
+  } finally {
+    submitInFlight.value = false
   }
-  
-  // Takeover: if currently executing, cancel previous stream first
-  if (isExecuting.value && conversationId.value) {
-    console.log('[AgentView] Takeover: stopping current execution to handle new message')
-    try {
-      const partial = agentEvents.streamingContent.value?.trim()
-      if (partial) {
-        const partialMsgId = crypto.randomUUID()
-        console.log('[AgentView] Takeover: saving partial response:', partial.substring(0, 100))
-        // First solidify the partial output of the old stream locally as the final assistant message
-        agentEvents.messages.value.push({
-          id: partialMsgId,
-          type: 'final' as any,
-          content: partial,
-          timestamp: Date.now(),
-        })
-        // Then write to database to ensure conversation history consistency
-        await invoke('save_ai_message', {
-          request: {
-            id: partialMsgId,
-            conversation_id: conversationId.value,
-            role: 'assistant',
-            content: partial,
-          },
-        })
-      }
-      
-      // Stop the current execution
-      await handleStop()
-      
-      // Wait a bit for the backend to fully stop
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      console.log('[AgentView] Takeover: previous execution stopped, proceeding with new message')
-    } catch (e) {
-      console.warn('[AgentView] Takeover stop failed, continuing:', e)
-    }
-  }
-
-  // Build full task with traffic context
-  let fullTask = task
-  let displayContent: string | undefined = undefined
-  if (referencedTraffic.value.length > 0) {
-    const trafficContext = buildTrafficContext(referencedTraffic.value)
-    fullTask = `${trafficContext}\n\nUser task: ${task}`
-    // Display content is just the user's original input
-    displayContent = task
-  }
-  
-  // Clear input and references
-  inputValue.value = ''
-  const usedAttachments = [...pendingAttachments.value]
-  const usedDocuments = processedDocuments.value.filter(d => d.status === 'ready')
-  const usedTraffic = [...referencedTraffic.value]
-  pendingAttachments.value = []
-  pendingDocuments.value = []
-  processedDocuments.value = []
-  referencedTraffic.value = []
-  
-  // Store document attachments for later injection into user message
-  // We'll inject them when the user_message event arrives from backend
-  if (usedDocuments.length > 0) {
-    agentEvents.setPendingDocumentAttachments(usedDocuments)
-  }
-  
-  // Force scroll to bottom when user sends a message
-  nextTick(() => {
-    scrollMessageViewportToBottom()
-  })
-  
-  // Emit submit event
-  emit('submit', fullTask)
-  
-  try {
-    // Ensure conversation exists or create new one
-    if (!conversationId.value) {
-      console.log('[AgentView] No conversation ID, creating new conversation')
-      const convId = await invoke<string>('create_ai_conversation', {
-        request: {
-          title: `${t('agent.newConversationTitle')} ${new Date().toLocaleString()}`,
-          service_name: 'default'
-        }
-      })
-      conversationId.value = convId
-      currentConversationTitle.value = t('agent.newConversationTitle')
-      console.log('[AgentView] Created new conversation:', convId)
-      
-      // Refresh conversation list
-      conversationListRef.value?.loadConversations()
-    }
-    
-    const modelOverrideValue = assistantSelectedModel.value && assistantSelectedModel.value.includes('/')
-      ? assistantSelectedModel.value
-      : undefined
-
-    if (conversationId.value) {
-      void maybeAutoRenameConversationByFirstMessage(conversationId.value, task)
-    }
-
-    // Call agent_execute command (tool config passed directly from frontend to ensure latest config takes effect immediately)
-    const result = await invoke('agent_execute', {
-      task: fullTask,
-      config: {
-        max_iterations: 10,
-        timeout_secs: 300,
-        force_todos: props.showTodos,
-        enable_rag: ragEnabled.value,
-        enable_tenth_man_rule: tenthManEnabled.value,
-        conversation_id: conversationId.value,
-        message_id: null,
-        attachments: usedAttachments.length > 0 ? usedAttachments : undefined,
-        document_attachments: usedDocuments.length > 0 ? usedDocuments : undefined,
-        tool_config: buildEffectiveToolConfigForExecution(),
-        audit_config: toolConfig.value.audit_mode
-          ? {
-              ...(toolConfig.value.audit_config || defaultAuditConfig()),
-              enabled: true,
-            }
-          : undefined,
-        display_content: displayContent,
-        model_override: modelOverrideValue,
-      }
-    })
-    
-    emit('complete', result)
-  } catch (e: any) {
-    const errorMsg = e.toString()
-    localError.value = errorMsg
-    emit('error', errorMsg)
-  }
-  // isExecuting and isStreaming are automatically managed by useAgentEvents, no manual setting needed
 }
 
 // Load tool config from database
@@ -5163,6 +5561,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopTeamRunStatusPolling()
+  clearTeamStreamDeltaFlushTimer()
+  teamStreamDeltaBufferByStreamId.clear()
+  teamStreamSegmentSeqByStreamId.clear()
+  teamPersistedAssistantSuppressionKeys.clear()
+  teamPersistedToolEventKeys.clear()
+  teamLocalHumanMessageIdsBySignature.clear()
+  teamActiveStreamIds.clear()
+  pendingTeamMessageSyncSessionId = null
   if (unlistenAiConfigUpdated) {
     unlistenAiConfigUpdated()
     unlistenAiConfigUpdated = null
@@ -5237,8 +5643,16 @@ watch(activeTeamSessionId, async (newId, oldId) => {
     selectedTeamTaskId.value = null
     teamMainFlowMessageIds = new Set<string>()
     teamMirroredAssistantSourceIds = new Set<string>()
+    teamPersistedToolEventKeys.clear()
     teamStreamTempMessageByStreamId.clear()
+    teamStreamSegmentSeqByStreamId.clear()
     teamStreamDoneIdsBySignature.clear()
+    pruneTeamLocalHumanInputReconcileQueue(newId)
+    teamStreamDeltaBufferByStreamId.clear()
+    teamActiveStreamIds.clear()
+    teamPersistedAssistantSuppressionKeys.clear()
+    clearTeamStreamDeltaFlushTimer()
+    pendingTeamMessageSyncSessionId = null
   }
   ensureTeamRunStatusPolling()
   if (newId) {

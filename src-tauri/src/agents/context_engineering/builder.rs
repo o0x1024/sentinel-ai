@@ -125,10 +125,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    system_prompt.push_str(&format!(
-        "\n\n[SystemContext: Current Execution ID is '{}'. Use this for todos tool calls.]",
-        input.execution_id
-    ));
+    if policy.include_run_state {
+        system_prompt.push_str(&format!(
+            "\n\n[SystemContext: Current Execution ID is '{}'. Use this for todos tool calls.]",
+            input.execution_id
+        ));
+    }
 
     system_prompt.push_str(
         "\n\n[Stuck Resolution Rule]\n\
@@ -471,12 +473,13 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         trim_trace.push("trimmed_tool_digests".to_string());
     }
 
+    packet.orchestrator_context = packet.render_orchestrator_context();
+    let orchestrator_context_tokens = estimate_tokens(&packet.orchestrator_context);
+
     let history_tokens: usize = history_messages.iter().map(estimate_message_tokens).sum();
     let available_for_history = safe_limit
         .saturating_sub(system_tokens)
-        .saturating_sub(run_state_tokens)
-        .saturating_sub(retrieval_tokens)
-        .saturating_sub(tool_digest_tokens)
+        .saturating_sub(orchestrator_context_tokens)
         .min(budget.window_max_tokens);
 
     if history_tokens > available_for_history {
@@ -487,6 +490,10 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             estimate_message_tokens,
         );
         trim_trace.push("trimmed_window".to_string());
+    }
+
+    if !packet.orchestrator_context.trim().is_empty() {
+        history_messages.insert(0, ChatMessage::user(packet.orchestrator_context.clone()));
     }
 
     packet.system_instructions = system_prompt_content.clone();
@@ -522,6 +529,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "summary_global_tokens": summary_stats.global_summary_tokens,
             "summary_segment_tokens": summary_stats.segment_summary_tokens,
             "summary_segment_count": summary_stats.segment_count,
+            "orchestrator_context_tokens": orchestrator_context_tokens,
             "trim_trace": trim_trace,
         }),
     );
@@ -653,8 +661,8 @@ fn render_run_state(
             state.selected_tools.join(", ")
         ));
     }
-    // Tool digests are rendered separately in ContextPacket::render_system_prompt
-    // to avoid duplication.
+    // Tool digests are rendered in ContextPacket::render_orchestrator_context
+    // and injected as a user-context message to avoid dynamic data in system.
     condense_text(&out, policy.run_state_max_chars)
 }
 

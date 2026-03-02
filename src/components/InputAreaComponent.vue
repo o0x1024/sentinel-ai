@@ -1395,9 +1395,16 @@ const canSend = computed(() => {
   return true
 })
 
+const SEND_EVENT_DEDUP_WINDOW_MS = 300
+let lastSendEmitAt = 0
 const emitSend = () => {
+  const now = Date.now()
+  if (now - lastSendEmitAt < SEND_EVENT_DEDUP_WINDOW_MS) {
+    return
+  }
   if (!canSend.value) return
   if (props.isLoading && !allowTakeover.value) return
+  lastSendEmitAt = now
   emit('send-message')
   // 发送后恢复高度
   requestAnimationFrame(() => autoResize())

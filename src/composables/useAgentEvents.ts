@@ -461,6 +461,37 @@ export function useAgentEvents(
       if (imgAttachments) {
         metadata.image_attachments = imgAttachments
       }
+
+      const existingById = messages.value.find(item => item.id === payload.message_id)
+      if (existingById) {
+        existingById.type = 'user'
+        existingById.content = payload.content
+        existingById.timestamp = payload.timestamp
+        existingById.metadata = Object.keys(metadata).length > 0 ? metadata : undefined
+        return
+      }
+
+      // Reconcile fallback message inserted by agent:start when it arrives before user_message.
+      let fallbackIndex = -1
+      for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+        const item = messages.value[i]
+        if (item.type !== 'user') continue
+        if (item.content !== payload.content) continue
+        const kind = String(item.metadata?.kind || '')
+        if (kind === 'user_start_fallback') {
+          fallbackIndex = i
+          break
+        }
+      }
+      if (fallbackIndex >= 0) {
+        const target = messages.value[fallbackIndex]
+        target.id = payload.message_id
+        target.type = 'user'
+        target.content = payload.content
+        target.timestamp = payload.timestamp
+        target.metadata = Object.keys(metadata).length > 0 ? metadata : undefined
+        return
+      }
       
       messages.value.push({
         id: payload.message_id,
@@ -506,7 +537,9 @@ export function useAgentEvents(
           type: 'user',
           content: payload.task,
           timestamp: Date.now(),
-          metadata: docAttachments ? { document_attachments: docAttachments } : undefined,
+          metadata: docAttachments
+            ? { document_attachments: docAttachments, kind: 'user_start_fallback' }
+            : { kind: 'user_start_fallback' },
         })
       }
     })

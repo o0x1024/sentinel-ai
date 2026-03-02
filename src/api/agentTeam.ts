@@ -19,6 +19,7 @@ type TeamV3MessageRow = {
   message_type: string
   payload: any
   created_at: string
+  sequence?: number | null
 }
 
 type TeamV3BlackboardRow = {
@@ -142,6 +143,7 @@ function mapV3MessageToLegacy(row: TeamV3MessageRow): AgentTeamMessage {
     tool_calls: toolCalls,
     token_count: undefined,
     timestamp: row.created_at,
+    sequence: Number.isFinite(Number(row.sequence)) ? Number(row.sequence) : undefined,
   }
 }
 
