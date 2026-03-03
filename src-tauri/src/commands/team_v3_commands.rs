@@ -9,11 +9,11 @@ use crate::agents::ContextPolicy;
 use crate::services::ai::AiServiceManager;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use sentinel_db::{database_service::connection_manager::DatabasePool, DatabaseService};
+use sentinel_db::{database_service::connection_manager::DatabasePool, Database, DatabaseService};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -1161,7 +1161,7 @@ fn build_team_member_execution_system_prompt(
     let lines = vec![
         "你是 Team 成员，请以严谨、可执行的方式完成分配任务。".to_string(),
         "输出必须可追溯、可验证，避免空泛表述。".to_string(),
-        "优先依据当前用户任务与共享上下文，不要编造未提供事实。".to_string(),
+        "优先依据当前用户任务与共享上下文，不要编造未提供事实。\n".to_string(),
     ];
     lines.join("\n")
 }
@@ -2793,6 +2793,65 @@ async fn resolve_team_v3_provider_config(
     Ok(provider_config)
 }
 
+fn team_v3_default_tool_config() -> ToolConfig {
+    ToolConfig {
+        enabled: false,
+        selection_strategy: ToolSelectionStrategy::Keyword,
+        max_tools: 5,
+        fixed_tools: vec!["interactive_shell".to_string()],
+        disabled_tools: Vec::new(),
+        allowed_tools: Vec::new(),
+    }
+}
+
+async fn load_team_v3_tool_config(app_handle: &AppHandle) -> ToolConfig {
+    let default = team_v3_default_tool_config();
+    let Some(db) = app_handle.try_state::<Arc<DatabaseService>>() else {
+        tracing::info!(
+            "Team V3 tool config: database state unavailable, using default config (strategy={:?}, enabled={})",
+            default.selection_strategy,
+            default.enabled
+        );
+        return default;
+    };
+
+    match db.get_config("agent", "tool_config").await {
+        Ok(Some(config_str)) => match serde_json::from_str::<ToolConfig>(&config_str) {
+            Ok(config) => {
+                tracing::info!(
+                    "Team V3 tool config loaded from DB (strategy={:?}, enabled={}, max_tools={})",
+                    config.selection_strategy,
+                    config.enabled,
+                    config.max_tools
+                );
+                config
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Team V3 tool config parse failed, using default config: {}",
+                    err
+                );
+                default
+            }
+        },
+        Ok(None) => {
+            tracing::info!(
+                "Team V3 tool config missing in DB, using default config (strategy={:?}, enabled={})",
+                default.selection_strategy,
+                default.enabled
+            );
+            default
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Team V3 tool config query failed, using default config: {}",
+                err
+            );
+            default
+        }
+    }
+}
+
 fn build_team_v3_task_prompt(
     goal: &str,
     user_input: &str,
@@ -3181,6 +3240,7 @@ async fn run_team_v3_execution_orchestrator(
     rag_enabled: bool,
 ) -> Result<String> {
     let provider_config = resolve_team_v3_provider_config(ai_manager.as_ref()).await?;
+    let team_tool_config = load_team_v3_tool_config(&app_handle).await;
     let rig_provider = provider_config
         .rig_provider
         .clone()
@@ -3350,6 +3410,7 @@ async fn run_team_v3_execution_orchestrator(
             let task_key_for_timeout = task.task_key.clone();
             let is_summary_task_for_task = is_summary_task;
             let rag_enabled_for_task = rag_enabled;
+            let task_tool_config = team_tool_config.clone();
             join_set.spawn(async move {
                 let execution_id = format!(
                     "team-v3:{}:{}:{}:{}",
@@ -3368,14 +3429,7 @@ async fn run_team_v3_execution_orchestrator(
                     api_base: provider_config.api_base.clone(),
                     max_iterations,
                     timeout_secs,
-                    tool_config: Some(ToolConfig {
-                        selection_strategy: ToolSelectionStrategy::Keyword,
-                        max_tools: 8,
-                        fixed_tools: Vec::new(),
-                        disabled_tools: Vec::new(),
-                        allowed_tools: Vec::new(),
-                        enabled: true,
-                    }),
+                    tool_config: Some(task_tool_config),
                     enable_tenth_man_rule: false,
                     tenth_man_config: None,
                     document_attachments: None,
@@ -3383,12 +3437,12 @@ async fn run_team_v3_execution_orchestrator(
                     persist_messages: false,
                     subagent_run_id: None,
                     context_policy: Some(ContextPolicy {
-                        include_working_dir: false,
-                        include_context_storage: false,
+                        include_working_dir: true,
+                        include_context_storage: true,
                         include_task_mainline: false,
-                        include_run_state: false,
+                        include_run_state: true,
                         include_document_attachments: false,
-                        include_skill_instructions: false,
+                        include_skill_instructions: true,
                         feature_context_packet_v2: rag_enabled_for_task,
                         ..ContextPolicy::default()
                     }),

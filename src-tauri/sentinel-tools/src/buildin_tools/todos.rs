@@ -514,12 +514,12 @@ impl Tool for TodosTool {
             save_todos_to_db(&execution_id, &list).await;
         }
 
-        // Emit event if successful and not just a "get_list" action
+        // Emit events for UI synchronization.
         if let Ok(ref output) = result {
-            if args.action != "get_list" {
-                if let Some(ref list) = output.list {
-                    if let Some(handle) = &*APP_HANDLE.read().await {
-                        // Emit legacy event for existing UI
+            if let Some(ref list) = output.list {
+                if let Some(handle) = &*APP_HANDLE.read().await {
+                    if args.action != "get_list" {
+                        // Emit legacy event for existing UI.
                         let _ = handle.emit(
                             "agent:plan_updated",
                             serde_json::json!({
@@ -530,41 +530,41 @@ impl Tool for TodosTool {
                                 }
                             }),
                         );
-
-                        // Emit agent-todos-update event for useTodos.ts
-                        let todos_json: Vec<serde_json::Value> = list
-                            .items
-                            .iter()
-                            .enumerate()
-                            .map(|(i, item)| {
-                                serde_json::json!({
-                                    "id": format!("{}_{}", execution_id, i),
-                                    "content": item.description,
-                                    "status": match item.status {
-                                        TodoStatus::Pending => "pending",
-                                        TodoStatus::InProgress => "in_progress",
-                                        TodoStatus::Completed => "completed",
-                                        TodoStatus::Failed => "failed",
-                                    },
-                                    "created_at": chrono::Utc::now().timestamp_millis(),
-                                    "updated_at": chrono::Utc::now().timestamp_millis(),
-                                    "metadata": {
-                                        "step_index": i,
-                                        "result": item.result
-                                    }
-                                })
-                            })
-                            .collect();
-
-                        let _ = handle.emit(
-                            "agent-todos-update",
-                            serde_json::json!({
-                                "execution_id": execution_id,
-                                "todos": todos_json,
-                                "timestamp": chrono::Utc::now().timestamp_millis()
-                            }),
-                        );
                     }
+
+                    // Emit agent-todos-update for all actions with a concrete list, including get_list.
+                    let todos_json: Vec<serde_json::Value> = list
+                        .items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, item)| {
+                            serde_json::json!({
+                                "id": format!("{}_{}", execution_id, i),
+                                "content": item.description,
+                                "status": match item.status {
+                                    TodoStatus::Pending => "pending",
+                                    TodoStatus::InProgress => "in_progress",
+                                    TodoStatus::Completed => "completed",
+                                    TodoStatus::Failed => "failed",
+                                },
+                                "created_at": chrono::Utc::now().timestamp_millis(),
+                                "updated_at": chrono::Utc::now().timestamp_millis(),
+                                "metadata": {
+                                    "step_index": i,
+                                    "result": item.result
+                                }
+                            })
+                        })
+                        .collect();
+
+                    let _ = handle.emit(
+                        "agent-todos-update",
+                        serde_json::json!({
+                            "execution_id": execution_id,
+                            "todos": todos_json,
+                            "timestamp": chrono::Utc::now().timestamp_millis()
+                        }),
+                    );
                 }
             }
         }

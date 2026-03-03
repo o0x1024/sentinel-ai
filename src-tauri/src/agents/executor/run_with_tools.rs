@@ -9,7 +9,7 @@ use sentinel_db::Database;
 use sentinel_db::DatabaseService;
 use sentinel_llm::{parse_image_from_json, ChatMessage, StreamContent, StreamingLlmClient};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
-use sentinel_tools::buildin_tools::{ShellTool, SkillsTool};
+use sentinel_tools::buildin_tools::{ShellTool, SkillsTool, TodosTool};
 use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
 use sentinel_tools::ToolServer;
 
@@ -839,6 +839,64 @@ pub async fn execute_agent_with_tools(
                     .map(|tool| {
                         if tool.name() == ShellTool::NAME {
                             DynamicTool::new(shell_def.clone())
+                        } else {
+                            tool
+                        }
+                    })
+                    .collect();
+            }
+        }
+
+        if current_tool_ids.iter().any(|id| id == TodosTool::NAME) {
+            if let Some(todos_info) = tool_server.get_tool(TodosTool::NAME).await {
+                let execution_id_for_todos = params.execution_id.clone();
+                let todos_input_schema = todos_info.input_schema.clone();
+                let todos_description = todos_info.description.clone();
+                let todos_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+                    let execution_id_for_todos = execution_id_for_todos.clone();
+                    Box::pin(async move {
+                        use rig::tool::Tool;
+                        use sentinel_tools::buildin_tools::todos::{TodosArgs, TodosTool};
+
+                        let mut patched_args = args;
+                        if let Some(obj) = patched_args.as_object_mut() {
+                            // Align todos writes with current execution context to avoid
+                            // cross-run leakage when model-provided execution_id is stale.
+                            obj.insert(
+                                "execution_id".to_string(),
+                                serde_json::Value::String(execution_id_for_todos.clone()),
+                            );
+                        }
+
+                        let tool_args: TodosArgs = serde_json::from_value(patched_args)
+                            .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                        let tool = TodosTool::new();
+                        let result = tool
+                            .call(tool_args)
+                            .await
+                            .map_err(|e| format!("Todos operation failed: {}", e))?;
+
+                        serde_json::to_value(result)
+                            .map_err(|e| format!("Failed to serialize todos result: {}", e))
+                    })
+                });
+
+                let todos_def = DynamicToolDef {
+                    name: TodosTool::NAME.to_string(),
+                    description: todos_description,
+                    input_schema: todos_input_schema,
+                    output_schema: None,
+                    source: ToolSource::Builtin,
+                    category: "system".to_string(),
+                    executor: todos_executor,
+                };
+
+                dynamic_tools = dynamic_tools
+                    .into_iter()
+                    .map(|tool| {
+                        if tool.name() == TodosTool::NAME {
+                            DynamicTool::new(todos_def.clone())
                         } else {
                             tool
                         }
