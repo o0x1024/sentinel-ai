@@ -93,10 +93,10 @@ fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String
 
     #[cfg(not(feature = "plugin-ts-transpile"))]
     {
-        return Err(
+        Err(
             "TypeScript/JSX transpilation is disabled. Rebuild with feature `plugin-ts-transpile`."
                 .to_string(),
-        );
+        )
     }
 
     #[cfg(feature = "plugin-ts-transpile")]

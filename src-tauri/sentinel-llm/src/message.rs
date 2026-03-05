@@ -126,7 +126,7 @@ pub fn convert_chat_history(history: &[ChatMessage]) -> Vec<Message> {
                     if let Some(ref reasoning) = msg.reasoning_content {
                         let trimmed = reasoning.trim();
                         if !trimmed.is_empty() {
-                            contents.push(AssistantContent::reasoning(trimmed.to_string()));
+                            contents.push(AssistantContent::reasoning(trimmed));
                         }
                     }
 

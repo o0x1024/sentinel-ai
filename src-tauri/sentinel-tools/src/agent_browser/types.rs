@@ -177,17 +177,13 @@ impl Default for BrowserConfig {
 /// Scroll direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ScrollDirection {
     Up,
+    #[default]
     Down,
     Left,
     Right,
-}
-
-impl Default for ScrollDirection {
-    fn default() -> Self {
-        Self::Down
-    }
 }
 
 /// Wait options

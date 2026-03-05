@@ -1,6 +1,7 @@
 //! Tool-enabled execution path.
 
 use anyhow::Result;
+use regex::Regex;
 use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -136,6 +137,25 @@ fn apply_allowed_tools_policy(mut tool_ids: Vec<String>, allowed_tools: &[String
 }
 
 fn infer_tool_result_success(raw: &str) -> bool {
+    fn has_hard_error(text: &str) -> bool {
+        let lower = text.trim().to_lowercase();
+        if lower.is_empty() {
+            return false;
+        }
+        if lower.contains("toolset error")
+            || lower.contains("tool execution failed")
+            || lower.contains("shell execution failed")
+            || lower.contains("command timeout after")
+            || lower.contains("llm request timeout")
+            || lower.contains("traceback (most recent call last)")
+            || lower.contains("fatal error:")
+        {
+            return true;
+        }
+        (lower.contains("timed out") || lower.contains("timeout after"))
+            && (lower.contains("error") || lower.contains("failed"))
+    }
+
     fn visit(value: &serde_json::Value) -> bool {
         match value {
             serde_json::Value::Null => true,
@@ -143,6 +163,9 @@ fn infer_tool_result_success(raw: &str) -> bool {
             serde_json::Value::Number(n) => n.as_i64().map(|v| v == 0).unwrap_or(true),
             serde_json::Value::String(s) => {
                 let lower = s.trim().to_lowercase();
+                if has_hard_error(&lower) {
+                    return false;
+                }
                 if lower.starts_with("error:") || lower.starts_with("failed:") {
                     return false;
                 }
@@ -181,6 +204,9 @@ fn infer_tool_result_success(raw: &str) -> bool {
         Ok(v) => visit(&v),
         Err(_) => {
             let lower = raw.trim().to_lowercase();
+            if has_hard_error(&lower) {
+                return false;
+            }
             if lower.starts_with("error:") || lower.starts_with("failed:") {
                 return false;
             }
@@ -193,7 +219,11 @@ fn shorten_for_fingerprint(raw: &str, max_chars: usize) -> String {
     if raw.chars().count() <= max_chars {
         return raw.trim().to_string();
     }
-    raw.chars().take(max_chars).collect::<String>().trim().to_string()
+    raw.chars()
+        .take(max_chars)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn tool_loop_fingerprint(tool_name: &str, arguments: &str, result: &str) -> u64 {
@@ -243,6 +273,333 @@ fn parse_team_stream_context(execution_id: &str) -> Option<TeamStreamContext> {
         member_id,
         phase: "task_execution".to_string(),
     })
+}
+
+#[derive(Debug, Clone)]
+struct CompletionGuardConfig {
+    enabled: bool,
+    tool_heavy_min_tool_calls: usize,
+    min_response_chars_tool_heavy: usize,
+    min_response_chars_after_timeout: usize,
+    unfinished_prefix_max_chars: usize,
+    enforce_artifact_proof: bool,
+}
+
+impl Default for CompletionGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            tool_heavy_min_tool_calls: 4,
+            min_response_chars_tool_heavy: 80,
+            min_response_chars_after_timeout: 280,
+            unfinished_prefix_max_chars: 320,
+            enforce_artifact_proof: true,
+        }
+    }
+}
+
+fn parse_bool_config_value(raw: &str) -> Option<bool> {
+    match raw.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_usize_config_value(raw: &str) -> Option<usize> {
+    raw.trim().parse::<usize>().ok().filter(|v| *v > 0)
+}
+
+async fn load_completion_guard_config(db: &DatabaseService) -> CompletionGuardConfig {
+    let mut cfg = CompletionGuardConfig::default();
+
+    if let Ok(Some(v)) = db.get_config("agent", "completion_guard_enabled").await {
+        if let Some(parsed) = parse_bool_config_value(&v) {
+            cfg.enabled = parsed;
+        }
+    }
+    if let Ok(Some(v)) = db
+        .get_config("agent", "completion_guard_tool_heavy_min_tool_calls")
+        .await
+    {
+        if let Some(parsed) = parse_usize_config_value(&v) {
+            cfg.tool_heavy_min_tool_calls = parsed;
+        }
+    }
+    if let Ok(Some(v)) = db
+        .get_config("agent", "completion_guard_min_response_chars_tool_heavy")
+        .await
+    {
+        if let Some(parsed) = parse_usize_config_value(&v) {
+            cfg.min_response_chars_tool_heavy = parsed;
+        }
+    }
+    if let Ok(Some(v)) = db
+        .get_config("agent", "completion_guard_min_response_chars_after_timeout")
+        .await
+    {
+        if let Some(parsed) = parse_usize_config_value(&v) {
+            cfg.min_response_chars_after_timeout = parsed;
+        }
+    }
+    if let Ok(Some(v)) = db
+        .get_config("agent", "completion_guard_unfinished_prefix_max_chars")
+        .await
+    {
+        if let Some(parsed) = parse_usize_config_value(&v) {
+            cfg.unfinished_prefix_max_chars = parsed;
+        }
+    }
+    if let Ok(Some(v)) = db
+        .get_config("agent", "completion_guard_enforce_artifact_proof")
+        .await
+    {
+        if let Some(parsed) = parse_bool_config_value(&v) {
+            cfg.enforce_artifact_proof = parsed;
+        }
+    }
+
+    cfg
+}
+
+#[derive(Debug, Clone)]
+struct CompletionGuardReport {
+    passed: bool,
+    reasons: Vec<String>,
+    required_artifact: Option<String>,
+}
+
+fn trim_path_token(raw: &str) -> String {
+    raw.trim_matches(|c: char| {
+        matches!(
+            c,
+            '`' | '"' | '\'' | ',' | '.' | ';' | ':' | '：' | '。' | '，' | '；'
+        )
+    })
+    .to_string()
+}
+
+fn extract_required_artifact_path(task: &str) -> Option<String> {
+    let lower = task.to_lowercase();
+    let wants_artifact = [
+        "放到",
+        "放在",
+        "保存到",
+        "保存至",
+        "写到",
+        "写入",
+        "输出到",
+        "put ",
+        "save ",
+        "write ",
+        "place ",
+    ]
+    .iter()
+    .any(|kw| lower.contains(kw));
+
+    if !wants_artifact {
+        return None;
+    }
+
+    // Prefer explicit absolute file paths first.
+    if let Ok(abs_file_re) = Regex::new(r#"(/[^ \t\r\n'"`]+?\.[A-Za-z0-9_+-]+)"#) {
+        if let Some(path) = abs_file_re
+            .captures(task)
+            .and_then(|cap| cap.get(1))
+            .map(|m| trim_path_token(m.as_str()))
+            .filter(|p| !p.is_empty())
+        {
+            return Some(path);
+        }
+    }
+
+    // Fallback: compose "dir + filename" when user says "put X into /dir/".
+    let filename = Regex::new(r#"([A-Za-z0-9_.-]+\.[A-Za-z0-9_+-]+)"#)
+        .ok()
+        .and_then(|re| re.find_iter(task).last())
+        .map(|m| trim_path_token(m.as_str()))
+        .filter(|s| !s.is_empty());
+    let directory = Regex::new(r#"(/[^ \t\r\n'"`]*?/)"#)
+        .ok()
+        .and_then(|re| re.find_iter(task).last())
+        .map(|m| trim_path_token(m.as_str()))
+        .filter(|s| !s.is_empty());
+
+    match (directory, filename) {
+        (Some(dir), Some(file)) => Some(format!("{}{}", dir, file)),
+        _ => None,
+    }
+}
+
+fn tool_result_looks_timeout(raw: &str) -> bool {
+    let lower = raw.to_lowercase();
+    lower.contains("toolset error")
+        || lower.contains("tool execution failed")
+        || lower.contains("shell execution failed")
+        || lower.contains("command timeout after")
+        || lower.contains("llm request timeout")
+        || ((lower.contains("timed out") || lower.contains("timeout after"))
+            && (lower.contains("error") || lower.contains("failed")))
+}
+
+fn looks_like_unfinished_response(text: &str, config: &CompletionGuardConfig) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+    let unfinished_prefix = [
+        "let me ",
+        "i will ",
+        "i'll ",
+        "让我",
+        "我来",
+        "我先",
+        "接下来",
+    ]
+    .iter()
+    .any(|p| lower.starts_with(p));
+    if unfinished_prefix && lower.chars().count() < config.unfinished_prefix_max_chars {
+        return true;
+    }
+
+    [":", "：", "...", "…", ",", "，", ";", "；"]
+        .iter()
+        .any(|s| trimmed.ends_with(s))
+}
+
+fn has_artifact_proof(required_path: &str, tool_calls: &[ToolCallRecord]) -> bool {
+    if std::path::Path::new(required_path).exists() {
+        return true;
+    }
+
+    let required_lower = required_path.to_lowercase();
+    let required_name_lower = std::path::Path::new(required_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+    let required_dir_lower = std::path::Path::new(required_path)
+        .parent()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    tool_calls.iter().filter(|c| c.success).any(|call| {
+        let args_lower = call.arguments.to_lowercase();
+        let result_lower = call
+            .result
+            .as_deref()
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        if args_lower.contains(&required_lower) || result_lower.contains(&required_lower) {
+            return true;
+        }
+
+        if required_name_lower.is_empty() {
+            return false;
+        }
+
+        let file_hit = args_lower.contains(&required_name_lower)
+            || result_lower.contains(&required_name_lower);
+        if !file_hit {
+            return false;
+        }
+        required_dir_lower.is_empty()
+            || args_lower.contains(&required_dir_lower)
+            || result_lower.contains(&required_dir_lower)
+    })
+}
+
+fn has_artifact_negative_evidence(required_path: &str, tool_calls: &[ToolCallRecord]) -> bool {
+    let required_lower = required_path.to_lowercase();
+    let required_name_lower = std::path::Path::new(required_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    tool_calls.iter().any(|call| {
+        let Some(result) = call.result.as_deref() else {
+            return false;
+        };
+        let lower = result.to_lowercase();
+        if !lower.contains("no such file or directory") {
+            return false;
+        }
+        lower.contains(&required_lower)
+            || (!required_name_lower.is_empty() && lower.contains(&required_name_lower))
+    })
+}
+
+fn evaluate_completion_guard(
+    task: &str,
+    final_response: &str,
+    full_response: &str,
+    tool_calls: &[ToolCallRecord],
+    config: &CompletionGuardConfig,
+) -> CompletionGuardReport {
+    if !config.enabled {
+        return CompletionGuardReport {
+            passed: true,
+            reasons: Vec::new(),
+            required_artifact: None,
+        };
+    }
+
+    let mut reasons = Vec::new();
+    let final_trimmed = final_response.trim();
+    let full_trimmed = full_response.trim();
+    let final_len = final_trimmed.chars().count();
+    let full_len = full_trimmed.chars().count();
+
+    let timeout_failures = tool_calls
+        .iter()
+        .filter_map(|c| c.result.as_deref())
+        .filter(|raw| tool_result_looks_timeout(raw))
+        .count();
+
+    if looks_like_unfinished_response(final_trimmed, config) {
+        reasons.push("assistant response looks unfinished".to_string());
+    }
+    if tool_calls.len() >= config.tool_heavy_min_tool_calls
+        && full_len < config.min_response_chars_tool_heavy
+    {
+        reasons.push("assistant response too short for tool-heavy execution".to_string());
+    }
+    if timeout_failures > 0 && full_len < config.min_response_chars_after_timeout {
+        reasons.push(format!(
+            "detected {} timeout/tool failures with insufficient final synthesis",
+            timeout_failures
+        ));
+    }
+    if final_len == 0 {
+        reasons.push("empty final response".to_string());
+    }
+
+    let required_artifact = if config.enforce_artifact_proof {
+        extract_required_artifact_path(task)
+    } else {
+        None
+    };
+    if config.enforce_artifact_proof {
+        if let Some(path) = required_artifact.as_ref() {
+            if has_artifact_negative_evidence(path, tool_calls) {
+                reasons.push(format!("artifact check reported missing file: {}", path));
+            }
+            if !has_artifact_proof(path, tool_calls) {
+                reasons.push(format!("required artifact not verified: {}", path));
+            }
+        }
+    }
+
+    CompletionGuardReport {
+        passed: reasons.is_empty(),
+        reasons,
+        required_artifact,
+    }
 }
 
 async fn persist_ai_message_with_retry(
@@ -346,6 +703,16 @@ pub async fn execute_agent_with_tools(
     // 1. 创建工具路由器（加载所有动态工具：工作流、MCP、插件）
     use tauri::Manager;
     let db_service = app_handle.state::<std::sync::Arc<sentinel_db::DatabaseService>>();
+    let completion_guard_config = load_completion_guard_config(db_service.inner().as_ref()).await;
+    tracing::info!(
+        "Completion guard config loaded - enabled: {}, tool_heavy_min_tool_calls: {}, min_chars_tool_heavy: {}, min_chars_after_timeout: {}, unfinished_prefix_max_chars: {}, enforce_artifact_proof: {}",
+        completion_guard_config.enabled,
+        completion_guard_config.tool_heavy_min_tool_calls,
+        completion_guard_config.min_response_chars_tool_heavy,
+        completion_guard_config.min_response_chars_after_timeout,
+        completion_guard_config.unfinished_prefix_max_chars,
+        completion_guard_config.enforce_artifact_proof
+    );
 
     let tool_router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
 
@@ -374,7 +741,7 @@ pub async fn execute_agent_with_tools(
         .plan_tools(&params.task, &tool_config, Some(&llm_config))
         .await?;
 
-    let mut selected_tool_ids =
+    let selected_tool_ids =
         apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools);
 
     tracing::info!(
@@ -509,9 +876,13 @@ pub async fn execute_agent_with_tools(
     // 7. 调用带动态工具的流式方法，增加重试机制以应对模型抖动或解析错误
     let mut retries = 0;
     let max_retries = 2; // 最多重试 2 次
+                         // Dedicated recovery budget for provider/tool-call protocol jitter that returns empty text.
+    let mut empty_response_retries = 0;
+    let max_empty_response_retries = 2;
     let mut last_error: Option<anyhow::Error> = None;
     let mut skill_reload_count = 0;
     let max_skill_reload = 3;
+    let mut empty_response_recovery_prompt = false;
 
     // 累积的工具调用记录（跨重试保留）
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
@@ -779,6 +1150,12 @@ pub async fn execute_agent_with_tools(
             history_for_retry.push(ChatMessage::user(
                 "[LoopGuard] You are repeating the same tool call arguments and getting the same result. Do not repeat identical probes. First summarize what has been learned, then change strategy (different endpoint/input/query) or explicitly conclude insufficient evidence.",
             ));
+        }
+        if empty_response_recovery_prompt {
+            history_for_retry.push(ChatMessage::user(
+                "[Recovery] Previous assistant turn returned empty text. Do not end with tool calls only. Avoid unnecessary tool calls and provide a concrete final answer summary now. If uncertainty remains, explicitly state assumptions and next checks.",
+            ));
+            empty_response_recovery_prompt = false;
         }
         force_history_with_tools = false;
         let result = client
@@ -1100,6 +1477,7 @@ pub async fn execute_agent_with_tools(
                                     let duration_ms = completed_at_ms.saturating_sub(started_at_ms);
                                     let name_for_meta = name.clone();
                                     let args_for_meta = arguments.clone();
+                                    let tool_success = infer_tool_result_success(&result);
                                     sentinel_llm::log::log_tool_result(
                                         &execution_id,
                                         Some(&execution_id),
@@ -1108,7 +1486,7 @@ pub async fn execute_agent_with_tools(
                                         &name_for_meta,
                                         &id,
                                         Some(duration_ms),
-                                        !result.to_lowercase().contains("error"),
+                                        tool_success,
                                         &result,
                                     );
                                     if let Ok(mut records) = collector.lock() {
@@ -1117,7 +1495,7 @@ pub async fn execute_agent_with_tools(
                                             name,
                                             arguments,
                                             result: Some(result.clone()),
-                                            success: !result.to_lowercase().contains("error"),
+                                            success: tool_success,
                                             sequence: seq,
                                             started_at_ms,
                                             completed_at_ms,
@@ -1137,7 +1515,6 @@ pub async fn execute_agent_with_tools(
                                         let tool_args_val: serde_json::Value =
                                             serde_json::from_str(&args_for_meta)
                                                 .unwrap_or_else(|_| json!({ "raw": args_for_meta }));
-                                        let tool_success = infer_tool_result_success(&result);
                                         let meta = json!({
                                             "kind": "tool_call",
                                             "tool_name": name_for_meta,
@@ -1588,14 +1965,6 @@ pub async fn execute_agent_with_tools(
                     full_response.clone()
                 };
 
-                tracing::info!(
-                    "Agent with tools completed - execution_id: {}, final_save_length: {}, full_response_length: {}, persisted_segments: {}",
-                    params.execution_id,
-                    final_response.len(),
-                    full_response.len(),
-                    seg_count
-                );
-
                 // 合并所有工具调用记录（包括累积的和当前的）
                 let mut all_tool_calls = Vec::new();
                 if let Ok(acc_calls) = accumulated_tool_calls.lock() {
@@ -1604,6 +1973,88 @@ pub async fn execute_agent_with_tools(
                 if let Ok(current_calls) = tool_calls_collector.lock() {
                     all_tool_calls.extend(current_calls.clone());
                 }
+
+                // Completion Firewall: reject obvious false completion before persisting success.
+                let guard = evaluate_completion_guard(
+                    &params.task,
+                    &final_response,
+                    &full_response,
+                    &all_tool_calls,
+                    &completion_guard_config,
+                );
+                if !guard.passed {
+                    let reasons = guard.reasons.clone();
+                    let reason_text = reasons.join("; ");
+                    let err = anyhow::anyhow!("Completion guard failed: {}", reason_text);
+                    tracing::warn!(
+                        "Completion guard rejected final response - execution_id: {}, reasons: {:?}, required_artifact: {:?}",
+                        params.execution_id,
+                        reasons,
+                        guard.required_artifact
+                    );
+                    let _ = app.emit(
+                        "agent:completion_guard_failed",
+                        &json!({
+                            "execution_id": params.execution_id,
+                            "reasons": reasons,
+                            "required_artifact": guard.required_artifact,
+                            "response_length": final_response.len(),
+                            "tool_calls": all_tool_calls.len(),
+                        }),
+                    );
+
+                    if retries < max_retries {
+                        retries += 1;
+                        last_error = Some(err);
+
+                        if let Ok(current_calls) = tool_calls_collector.lock() {
+                            if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                                acc.extend(current_calls.clone());
+                            }
+                        }
+                        if let Ok(current_output) = assistant_segment_buf.lock() {
+                            if !current_output.is_empty() {
+                                if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                                    if !acc.is_empty() {
+                                        acc.push_str("\n\n");
+                                    }
+                                    acc.push_str(current_output.as_str());
+                                }
+                            }
+                        }
+
+                        if let Ok(mut buf) = assistant_segment_buf.lock() {
+                            buf.clear();
+                        }
+                        if let Ok(mut buf) = reasoning_content_buf.lock() {
+                            buf.clear();
+                        }
+                        if let Ok(mut p) = pending_calls.lock() {
+                            p.clear();
+                        }
+                        if let Ok(mut tc) = tool_calls_collector.lock() {
+                            tc.clear();
+                        }
+                        if let Ok(mut fp) = last_tool_fingerprint.lock() {
+                            *fp = None;
+                        }
+                        repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+                        force_history_with_tools = true;
+                        continue;
+                    }
+
+                    last_error = Some(err);
+                    cleanup_container_context_async(&app, &params.execution_id).await;
+                    break;
+                }
+
+                tracing::info!(
+                    "Agent with tools completed - execution_id: {}, final_save_length: {}, full_response_length: {}, persisted_segments: {}",
+                    params.execution_id,
+                    final_response.len(),
+                    full_response.len(),
+                    seg_count
+                );
 
                 let tool_summaries = all_tool_calls
                     .iter()
@@ -1813,6 +2264,7 @@ pub async fn execute_agent_with_tools(
 
                 // 检查是否是可重试的错误（主要是解析错误和网络抖动）
                 let is_retryable = is_retryable_error(&err_msg);
+                let is_empty_response = is_empty_response_error(&err_msg);
                 let has_tool_activity = tool_calls_collector
                     .lock()
                     .map(|calls| !calls.is_empty())
@@ -1822,9 +2274,18 @@ pub async fn execute_agent_with_tools(
                         .map(|pending| !pending.is_empty())
                         .unwrap_or(false);
 
-                if is_retryable && !has_tool_activity && retries < max_retries {
+                if is_retryable && retries < max_retries {
                     retries += 1;
-                    last_error = Some(friendly_err);
+                    if is_empty_response {
+                        empty_response_recovery_prompt = true;
+                    }
+                    if has_tool_activity {
+                        tracing::warn!(
+                            "Retrying despite tool activity due to retryable error - execution_id: {}",
+                            params.execution_id
+                        );
+                    }
+                    last_error = Some(anyhow::anyhow!("{}", friendly_err));
 
                     // 保存当前工作到累积记录中（在清理之前）
                     if let Ok(current_calls) = tool_calls_collector.lock() {
@@ -1858,6 +2319,72 @@ pub async fn execute_agent_with_tools(
                         tc.clear();
                     }
 
+                    continue;
+                } else if is_empty_response && empty_response_retries < max_empty_response_retries {
+                    empty_response_retries += 1;
+                    empty_response_recovery_prompt = true;
+                    force_history_with_tools = true;
+                    last_error = Some(anyhow::anyhow!("{}", friendly_err));
+
+                    tracing::warn!(
+                        "Retrying agent execution with empty-response recovery (attempt {}/{}) - execution_id: {}",
+                        empty_response_retries,
+                        max_empty_response_retries,
+                        params.execution_id
+                    );
+
+                    let _ = app_handle.emit(
+                        "agent:retry",
+                        &json!({
+                            "execution_id": params.execution_id,
+                            "retry_count": retries,
+                            "max_retries": max_retries,
+                            "error": err_msg,
+                            "retry_type": "empty_response_recovery",
+                            "empty_response_retry_count": empty_response_retries,
+                            "empty_response_retry_max": max_empty_response_retries,
+                            "accumulated_progress": {
+                                "tool_calls": accumulated_tool_calls.lock().map(|c| c.len()).unwrap_or(0),
+                                "output_chars": accumulated_assistant_output.lock().map(|s| s.len()).unwrap_or(0),
+                            }
+                        }),
+                    );
+
+                    if let Ok(current_calls) = tool_calls_collector.lock() {
+                        if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                            acc.extend(current_calls.clone());
+                        }
+                    }
+
+                    if let Ok(current_output) = assistant_segment_buf.lock() {
+                        if !current_output.is_empty() {
+                            if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                                if !acc.is_empty() {
+                                    acc.push_str("\n\n");
+                                }
+                                acc.push_str(current_output.as_str());
+                            }
+                        }
+                    }
+
+                    if let Ok(mut buf) = assistant_segment_buf.lock() {
+                        buf.clear();
+                    }
+                    if let Ok(mut buf) = reasoning_content_buf.lock() {
+                        buf.clear();
+                    }
+                    if let Ok(mut p) = pending_calls.lock() {
+                        p.clear();
+                    }
+                    if let Ok(mut tc) = tool_calls_collector.lock() {
+                        tc.clear();
+                    }
+                    if let Ok(mut fp) = last_tool_fingerprint.lock() {
+                        *fp = None;
+                    }
+                    repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                     continue;
                 } else {
                     // Final failure recording
@@ -1953,7 +2480,7 @@ pub async fn execute_agent_with_tools(
 
 fn is_retryable_error(err_msg: &str) -> bool {
     let err_lower = err_msg.to_lowercase();
-    if err_lower.contains("empty response") || err_lower.contains("without textual response") {
+    if is_empty_response_error(&err_lower) {
         return true;
     }
     if err_lower.contains("error decoding response body") {
@@ -1969,4 +2496,125 @@ fn is_retryable_error(err_msg: &str) -> bool {
         return true;
     }
     false
+}
+
+fn is_empty_response_error(err_msg: &str) -> bool {
+    let err_lower = err_msg.to_lowercase();
+    err_lower.contains("empty response") || err_lower.contains("without textual response")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_call(success: bool, arguments: &str, result: &str) -> ToolCallRecord {
+        ToolCallRecord {
+            id: "tc-1".to_string(),
+            name: "shell".to_string(),
+            arguments: arguments.to_string(),
+            result: Some(result.to_string()),
+            success,
+            sequence: 0,
+            started_at_ms: 0,
+            completed_at_ms: 1,
+            duration_ms: 1,
+        }
+    }
+
+    #[test]
+    fn infer_tool_result_success_detects_timeout_failure() {
+        assert!(!infer_tool_result_success(
+            "Tool execution failed: command timeout after 180000ms"
+        ));
+    }
+
+    #[test]
+    fn infer_tool_result_success_respects_success_field() {
+        assert!(infer_tool_result_success(
+            r#"{"success":true,"output":"ok"}"#
+        ));
+        assert!(!infer_tool_result_success(
+            r#"{"success":false,"error":"boom"}"#
+        ));
+    }
+
+    #[test]
+    fn extract_required_artifact_path_prefers_absolute_path() {
+        let task = "请把结果保存到 /workspace/context/exploit.py 并返回总结";
+        assert_eq!(
+            extract_required_artifact_path(task).as_deref(),
+            Some("/workspace/context/exploit.py")
+        );
+    }
+
+    #[test]
+    fn completion_guard_rejects_missing_artifact() {
+        let task = "把 payload 放到 /workspace/context/payload.bin";
+        let calls = vec![tool_call(
+            false,
+            "ls -l /workspace/context/payload.bin",
+            "ls: /workspace/context/payload.bin: No such file or directory",
+        )];
+        let cfg = CompletionGuardConfig::default();
+        let report = evaluate_completion_guard(task, "已完成", "已完成", &calls, &cfg);
+        assert!(!report.passed);
+        assert!(report
+            .reasons
+            .iter()
+            .any(|r| r.contains("required artifact not verified")));
+    }
+
+    #[test]
+    fn completion_guard_rejects_unfinished_short_response() {
+        let calls = vec![
+            tool_call(true, "cmd1", "ok"),
+            tool_call(true, "cmd2", "ok"),
+            tool_call(true, "cmd3", "ok"),
+            tool_call(true, "cmd4", "ok"),
+        ];
+        let cfg = CompletionGuardConfig::default();
+        let report =
+            evaluate_completion_guard("run tools", "Let me check:", "Let me check:", &calls, &cfg);
+        assert!(!report.passed);
+        assert!(report
+            .reasons
+            .iter()
+            .any(|r| r.contains("looks unfinished")));
+    }
+
+    #[test]
+    fn completion_guard_passes_with_artifact_proof() {
+        let task = "Please write report to /workspace/context/final.md";
+        let calls = vec![tool_call(
+            true,
+            "cat > /workspace/context/final.md",
+            "wrote /workspace/context/final.md",
+        )];
+        let full = "任务完成。结果已写入目标文件并经过验证。";
+        let cfg = CompletionGuardConfig::default();
+        let report = evaluate_completion_guard(task, full, full, &calls, &cfg);
+        assert!(report.passed, "unexpected reasons: {:?}", report.reasons);
+    }
+
+    #[test]
+    fn completion_guard_can_be_disabled() {
+        let calls = vec![tool_call(
+            false,
+            "ls -l /workspace/context/missing.bin",
+            "Tool execution failed: command timeout after 20000ms",
+        )];
+        let cfg = CompletionGuardConfig {
+            enabled: false,
+            ..CompletionGuardConfig::default()
+        };
+        let report = evaluate_completion_guard(
+            "把 payload 放到 /workspace/context/missing.bin",
+            "Let me check:",
+            "Let me check:",
+            &calls,
+            &cfg,
+        );
+        assert!(report.passed);
+        assert!(report.reasons.is_empty());
+    }
 }

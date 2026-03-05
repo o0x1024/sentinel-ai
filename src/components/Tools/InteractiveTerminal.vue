@@ -146,6 +146,14 @@ const statusText = computed(() => {
   return 'Disconnected'
 })
 
+const buildSessionFingerprint = (
+  executionMode: ExecutionMode,
+  dockerImage: string,
+  shell: string,
+): string => {
+  return `${executionMode}|${dockerImage.trim().toLowerCase()}|${shell.trim().toLowerCase()}`
+}
+
 // Methods
 const initTerminal = () => {
   if (!terminalContainer.value) return
@@ -289,12 +297,26 @@ const connect = async () => {
     ws.value.onopen = () => {
       console.log('WebSocket connected')
       startKeepAlive()
-      
-      // If we have a sessionId from the composable, use it to reconnect
-      if (terminalComposable.currentSessionId.value) {
-        console.log('Connecting to existing session:', terminalComposable.currentSessionId.value)
-        ws.value?.send(`session:${terminalComposable.currentSessionId.value}`)
+      const currentFingerprint = buildSessionFingerprint(
+        actualExecutionMode.value,
+        actualDockerImage.value,
+        props.shell,
+      )
+      const existingSessionId = terminalComposable.currentSessionId.value
+      const existingFingerprint = terminalComposable.currentSessionFingerprint.value
+
+      // If we have a compatible existing session, reconnect.
+      if (existingSessionId && existingFingerprint === currentFingerprint) {
+        console.log('Connecting to existing session:', existingSessionId)
+        ws.value?.send(`session:${existingSessionId}`)
         return
+      }
+      if (existingSessionId && existingFingerprint !== currentFingerprint) {
+        console.log(
+          '[Terminal] Existing session config mismatch, creating new session',
+          { existingSessionId, existingFingerprint, currentFingerprint }
+        )
+        terminalComposable.setSessionId(null)
       }
 
       // No session ID yet - send default config to create a new session
@@ -318,9 +340,15 @@ const connect = async () => {
           sessionId.value = newSessionId
           isConnected.value = true
           isConnecting.value = false
+          const currentFingerprint = buildSessionFingerprint(
+            actualExecutionMode.value,
+            actualDockerImage.value,
+            props.shell,
+          )
           
           // Sync to global state so backend tools can find this session
           terminalComposable.setSessionId(newSessionId)
+          terminalComposable.setSessionFingerprint(currentFingerprint)
           console.log('[Terminal] ✓ Session established and synced to global state:', newSessionId)
           
           terminal.value?.writeln('\x1b[1;32m✓ Connected!\x1b[0m')
@@ -416,7 +444,8 @@ const reconnect = async () => {
 const createNewSession = async () => {
   await disconnect()
   // Clear old session ID to force creating a new session
-  terminalComposable.setSessionId('')
+  terminalComposable.setSessionId(null)
+  terminalComposable.setSessionFingerprint(null)
   sessionId.value = ''
   terminal.value?.writeln('\r\n\x1b[1;36mCreating new session...\x1b[0m')
   await connect()

@@ -181,7 +181,7 @@ impl Dictionary {
             source_url: None,
             tags: None,
             metadata: None,
-            created_at: now.clone(),
+            created_at: now,
             updated_at: now,
         }
     }
@@ -286,7 +286,7 @@ impl DictionarySet {
             service_type: service_type.map(|s| s.to_string()),
             scenario: None,
             is_active: true,
-            created_at: now.clone(),
+            created_at: now,
             updated_at: now,
         }
     }

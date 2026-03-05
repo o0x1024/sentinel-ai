@@ -37,7 +37,7 @@ async fn import_from_docker_if_needed(image_path: &str) -> Result<Option<String>
         .join("cache")
         .join("ocr")
         .join("docker-imports");
-    let _ = tokio::fs::create_dir_all(&dir)
+    tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| OcrError::ModelError(format!("Failed to create ocr import dir: {}", e)))?;
 
@@ -291,7 +291,7 @@ impl Tool for OcrTool {
 
         // Run in blocking context because ML inference is CPU intensive
         let text = tokio::task::spawn_blocking(move || {
-            let tool = OcrTool::default();
+            let tool = OcrTool;
             tool.run_ocr(&image_path, det_path, rec_path, dict_path)
         })
         .await

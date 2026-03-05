@@ -3,8 +3,8 @@ use base64::Engine;
 use chrono::Utc;
 use sentinel_tools::buildin_tools::shell::{get_shell_config, ShellExecutionMode};
 use sentinel_tools::output_storage::{get_host_context_dir, CONTAINER_CONTEXT_DIR};
-use sentinel_tools::DockerSandboxConfig;
 use sentinel_tools::DockerSandbox;
+use sentinel_tools::DockerSandboxConfig;
 use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
@@ -44,11 +44,7 @@ fn team_v3_artifact_root() -> Result<PathBuf> {
     Ok(get_host_context_dir().join(TEAM_V3_ARTIFACT_DIR))
 }
 
-fn build_container_artifact_path(
-    session_dir: &str,
-    task_dir: &str,
-    filename: &str,
-) -> String {
+fn build_container_artifact_path(session_dir: &str, task_dir: &str, filename: &str) -> String {
     format!(
         "{}/{}/{}/{}/{}",
         CONTAINER_CONTEXT_DIR, TEAM_V3_ARTIFACT_DIR, session_dir, task_dir, filename
@@ -88,7 +84,13 @@ async fn persist_artifact_to_container(
         CONTAINER_CONTEXT_DIR, TEAM_V3_ARTIFACT_DIR, session_dir
     );
     let mkdir_cmd = format!("mkdir -p {}/{}", target_dir, task_dir);
-    execute_checked(&sandbox, mkdir_cmd.as_str(), 15, "create artifact directory").await?;
+    execute_checked(
+        &sandbox,
+        mkdir_cmd.as_str(),
+        15,
+        "create artifact directory",
+    )
+    .await?;
 
     let encoded = base64::engine::general_purpose::STANDARD.encode(file_body.as_bytes());
     let write_cmd = format!("echo '{}' | base64 -d > {}", encoded, container_path);

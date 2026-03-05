@@ -389,7 +389,7 @@ impl AssetEnrichmentService {
 
         // Update is_alive based on HTTP status
         if let Some(status) = updated_asset.http_status {
-            let alive = status >= 200 && status < 500;
+            let alive = (200..500).contains(&status);
             if alive != updated_asset.is_alive {
                 updated_asset.is_alive = alive;
                 changed = true;

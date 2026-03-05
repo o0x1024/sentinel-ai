@@ -79,7 +79,7 @@ pub fn normalize_command(cmd: &str) -> (String, bool) {
         return (cmd.to_string(), false);
     }
 
-    let base_cmd = parts[0].split('/').last().unwrap_or(parts[0]);
+    let base_cmd = parts[0].split('/').next_back().unwrap_or(parts[0]);
 
     let normalizers: &[CommandNormalizer] = &[
         CommandNormalizer {

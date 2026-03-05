@@ -476,7 +476,7 @@
                   <span class="label-text">{{ t('settings.ai.maxTurns') }}</span>
                 </label>
                 <div class="flex items-center gap-4">
-                  <input v-model.number="settings.ai.maxTurns" type="range" min="10" max="200" step="10"
+                  <input v-model.number="settings.ai.maxTurns" type="range" min="10" max="1000" step="10"
                     class="range range-accent flex-1" @change="saveAiConfig" />
                   <span class="text-sm min-w-[60px]">{{ settings.ai.maxTurns || 100 }}</span>
                 </div>

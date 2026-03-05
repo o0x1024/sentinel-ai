@@ -12,8 +12,8 @@ use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
     browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, MemoryManagerTool,
-    OcrTool, PortScanTool, ShellTool, SkillsTool, SubdomainBruteTool, TenthManTool, TodosTool,
-    WebSearchTool,
+    OcrTool, PortScanTool, SearchExploitTool, ShellTool, SkillsTool, SubdomainBruteTool,
+    TenthManTool, TodosTool, WebSearchTool,
 };
 
 use crate::terminal::server::TerminalServer;
@@ -564,6 +564,77 @@ impl ToolServer {
 
         self.registry.register(web_search_def).await;
 
+        // Register search_exploit tool
+        let search_exploit_def = DynamicToolBuilder::new(SearchExploitTool::NAME.to_string())
+            .description(SearchExploitTool::DESCRIPTION.to_string())
+            .input_schema(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Operation mode: search or get",
+                        "enum": ["search", "get"],
+                        "default": "search"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Free-form exploit search query"
+                    },
+                    "cves": {
+                        "type": "array",
+                        "description": "CVE list (e.g. [\"CVE-2023-1234\"])",
+                        "items": { "type": "string" }
+                    },
+                    "product": {
+                        "type": "string",
+                        "description": "Target product name"
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Target product version"
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Service/protocol hint, e.g. ssh/http"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "Service port hint"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum candidates to return for search",
+                        "default": 5
+                    },
+                    "edb_id": {
+                        "type": "integer",
+                        "description": "ExploitDB ID, required when action=get"
+                    }
+                }
+            }))
+            .source(ToolSource::Builtin)
+            .category("exploitation")
+            .executor(|args| async move {
+                use crate::buildin_tools::search_exploit::{SearchExploitArgs, SearchExploitTool};
+                use rig::tool::Tool;
+
+                let tool_args: SearchExploitArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = SearchExploitTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Search exploit failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build search_exploit tool");
+
+        self.registry.register(search_exploit_def).await;
+
         // Register ocr tool
         let ocr_def = DynamicToolBuilder::new(OcrTool::NAME.to_string())
             .description(OcrTool::DESCRIPTION.to_string())
@@ -585,7 +656,7 @@ impl ToolServer {
                 let tool_args: OcrArgs = serde_json::from_value(args)
                     .map_err(|e| format!("Invalid arguments: {}", e))?;
 
-                let tool = OcrTool::default();
+                let tool = OcrTool;
                 let result = tool
                     .call(tool_args)
                     .await

@@ -126,7 +126,7 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
     fs::create_dir_all(&root)
         .with_context(|| format!("Failed to create skills root: {}", root.display()))?;
 
-// Install built-in skills
+    // Install built-in skills
     install_builtin_skills(&root);
 
     let mut count = 0usize;

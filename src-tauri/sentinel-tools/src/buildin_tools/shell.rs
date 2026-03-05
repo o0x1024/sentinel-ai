@@ -15,18 +15,13 @@ use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 /// Shell execution mode
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
 pub enum ShellExecutionMode {
     /// Execute on host machine (less secure)
     Host,
     /// Execute in Docker container (more secure)
+    #[default]
     Docker,
-}
-
-impl Default for ShellExecutionMode {
-    fn default() -> Self {
-        Self::Docker
-    }
 }
 
 /// Shell command arguments
@@ -826,7 +821,8 @@ impl Tool for ShellTool {
         if let Some(exec_id) = execution_id.as_deref() {
             clear_shell_execution_cancellation(exec_id).await;
         }
-        let (stdout, stderr, exit_code, output_stored, actual_mode, fallback_reason) = execution_result?;
+        let (stdout, stderr, exit_code, output_stored, actual_mode, fallback_reason) =
+            execution_result?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
         let execution_mode = match actual_mode {

@@ -64,8 +64,10 @@ impl Severity {
 /// Finding source
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FindingSource {
     /// Manual discovery
+    #[default]
     Manual,
     /// Traffic analysis plugin
     TrafficPlugin,
@@ -79,11 +81,6 @@ pub enum FindingSource {
     Import,
 }
 
-impl Default for FindingSource {
-    fn default() -> Self {
-        FindingSource::Manual
-    }
-}
 
 /// Vulnerability finding
 #[derive(Debug, Clone, Serialize, Deserialize)]

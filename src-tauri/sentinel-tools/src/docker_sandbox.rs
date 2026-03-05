@@ -156,7 +156,7 @@ impl ContainerPool {
         info!("Looking for persistent container: {}", container_name);
 
         let output = Command::new("docker")
-            .args(&[
+            .args([
                 "ps",
                 "-a",
                 "--filter",
@@ -192,7 +192,7 @@ impl ContainerPool {
     /// Ensure container is running
     async fn ensure_container_running(container_id: &str) -> Result<(), DockerError> {
         let output = Command::new("docker")
-            .args(&["inspect", "-f", "{{.State.Running}}", container_id])
+            .args(["inspect", "-f", "{{.State.Running}}", container_id])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -206,7 +206,7 @@ impl ContainerPool {
         if !is_running {
             info!("Container {} is not running, starting it", container_id);
             let output = Command::new("docker")
-                .args(&["start", container_id])
+                .args(["start", container_id])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output()
@@ -335,7 +335,7 @@ impl ContainerPool {
                         name
                     );
                     let _ = Command::new("docker")
-                        .args(&["rm", "-f", name])
+                        .args(["rm", "-f", name])
                         .output()
                         .await;
 
@@ -382,7 +382,7 @@ impl ContainerPool {
     /// Remove a container
     async fn remove_container(container_id: &str) -> Result<(), DockerError> {
         let output = Command::new("docker")
-            .args(&["rm", "-f", container_id])
+            .args(["rm", "-f", container_id])
             .output()
             .await
             .map_err(|e| {
@@ -455,7 +455,7 @@ impl DockerSandbox {
         info!("Building Docker image: {}", image_name);
 
         let output = Command::new("docker")
-            .args(&["build", "-t", image_name, "-f", dockerfile_path, "."])
+            .args(["build", "-t", image_name, "-f", dockerfile_path, "."])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -477,7 +477,7 @@ impl DockerSandbox {
     /// Check if image exists
     pub async fn image_exists(image_name: &str) -> bool {
         let output = Command::new("docker")
-            .args(&["images", "-q", image_name])
+            .args(["images", "-q", image_name])
             .stdout(Stdio::piped())
             .output()
             .await;
@@ -519,7 +519,7 @@ impl DockerSandbox {
 
         // Execute command in container as root (for tools like nmap -sS that require privileges)
         let mut child = Command::new("docker")
-            .args(&[
+            .args([
                 "exec",
                 "--user",
                 "root",
@@ -589,7 +589,7 @@ impl DockerSandbox {
         if let Some(container_name) = &config.container_name {
             info!("Cleaning up persistent shell container: {}", container_name);
             let output = Command::new("docker")
-                .args(&["rm", "-f", container_name])
+                .args(["rm", "-f", container_name])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output()
@@ -638,7 +638,7 @@ impl DockerSandbox {
             .unwrap_or("/workspace/uploads");
 
         let mkdir_output = Command::new("docker")
-            .args(&["exec", &container_id, "mkdir", "-p", parent_dir])
+            .args(["exec", &container_id, "mkdir", "-p", parent_dir])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -654,7 +654,7 @@ impl DockerSandbox {
 
         // Copy file using docker cp
         let output = Command::new("docker")
-            .args(&[
+            .args([
                 "cp",
                 host_path,
                 &format!("{}:{}", container_id, container_path),
@@ -694,7 +694,7 @@ impl DockerSandbox {
         );
 
         let output = Command::new("docker")
-            .args(&[
+            .args([
                 "cp",
                 &format!("{}:{}", container_id, container_path),
                 host_path,
@@ -724,7 +724,7 @@ impl DockerSandbox {
         };
 
         let output = Command::new("docker")
-            .args(&["exec", &container_id, "rm", "-f", container_path])
+            .args(["exec", &container_id, "rm", "-f", container_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()

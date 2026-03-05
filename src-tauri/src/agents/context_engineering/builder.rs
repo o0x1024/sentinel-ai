@@ -287,11 +287,21 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     .any(|kw| task_lower.contains(kw));
 
     if is_binary_security_task {
-        system_prompt.push_str(
-            "\n\n[Tool Usage Priority]\n\
-            For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and long-running interactions. Use one-off `shell` only for short, non-interactive commands.",
-        );
+        // system_prompt.push_str(
+        //     "\n\n[Tool Usage Priority]\n\
+        //     For reverse engineering / pwn / binary exploitation tasks, prefer `interactive_shell` for iterative commands, debugger sessions, and long-running interactions. Use one-off `shell` only for short, non-interactive commands.",
+        // );
     }
+
+    system_prompt.push_str(
+        "\n\n[File Editing Efficiency Rules]\n\
+        When editing existing files, optimize for incremental updates to reduce token/time cost:\n\
+        1) Prefer minimal, targeted edits (line-level patch/diff) over full-file rewrites.\n\
+        2) If a target file already exists, do NOT regenerate the entire file unless explicitly requested.\n\
+        3) Keep stable sections unchanged; isolate tunable values in compact config/parameter blocks where possible.\n\
+        4) After each edit, run a short validation command and continue with small deltas.\n\
+        5) In responses, summarize what changed instead of repeating full file content unless needed.",
+    );
 
     if policy.include_context_storage {
         let history_path =

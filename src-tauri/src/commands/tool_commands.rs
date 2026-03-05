@@ -11,8 +11,8 @@ use tokio::sync::RwLock;
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
     browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool,
-    ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool,
-    TenthManTool, TodosTool,
+    SearchExploitTool, ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool,
+    SubagentExecuteTool, TenthManTool, TodosTool,
 };
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
@@ -60,6 +60,7 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
         sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
         true,
     );
+    map.insert(SearchExploitTool::NAME.to_string(), true);
     map.insert(
         sentinel_tools::buildin_tools::MemoryManagerTool::NAME.to_string(),
         true,
@@ -346,6 +347,59 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     }
                 },
                 "required": ["action", "content"]
+            })),
+        },
+        BuiltinToolInfo {
+            id: SearchExploitTool::NAME.to_string(),
+            name: SearchExploitTool::NAME.to_string(),
+            description: SearchExploitTool::DESCRIPTION.to_string(),
+            category: "security".to_string(),
+            version: "1.0.0".to_string(),
+            enabled: *states.get(SearchExploitTool::NAME).unwrap_or(&true),
+            input_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "search or get",
+                        "enum": ["search", "get"],
+                        "default": "search"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Free-form query"
+                    },
+                    "cves": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "CVE list"
+                    },
+                    "product": {
+                        "type": "string",
+                        "description": "Target product"
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Target version"
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Target service/protocol"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "Target service port"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum results for search"
+                    },
+                    "edb_id": {
+                        "type": "integer",
+                        "description": "ExploitDB ID for action=get"
+                    }
+                }
             })),
         },
         BuiltinToolInfo {
@@ -1650,6 +1704,12 @@ pub async fn get_tools_by_category(
         "plugin" => ToolCategory::Plugin,
         "workflow" => ToolCategory::Workflow,
         "browser" => ToolCategory::Browser,
+        "utility" => ToolCategory::Utility,
+        "recon" => ToolCategory::Recon,
+        "scanning" => ToolCategory::Scanning,
+        "exploitation" => ToolCategory::Exploitation,
+        "monitoring" => ToolCategory::Monitoring,
+        "other" => ToolCategory::Other,
         _ => return Err(format!("Unknown category: {}", category)),
     };
 
@@ -1732,7 +1792,14 @@ pub use agent_config::{
     init_agent_config, load_subagent_config_from_db, AgentConfig, SubagentConfig,
 };
 
+mod exploitdb;
 mod skills;
+
+pub async fn init_exploitdb_runtime_config(
+    db_service: &Arc<sentinel_db::DatabaseService>,
+) -> Result<(), String> {
+    exploitdb::initialize_exploitdb_runtime_config(db_service).await
+}
 
 #[tauri::command]
 pub async fn init_shell_permission_handler(app: tauri::AppHandle) -> Result<(), String> {
@@ -1928,4 +1995,35 @@ pub async fn delete_skill_install_history(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<bool, String> {
     skills::delete_skill_install_history(id, db_service).await
+}
+
+#[tauri::command]
+pub async fn get_exploitdb_settings(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<exploitdb::ExploitDbSettings, String> {
+    exploitdb::get_exploitdb_settings(db_service).await
+}
+
+#[tauri::command]
+pub async fn save_exploitdb_settings(
+    repo_url: Option<String>,
+    repo_path: Option<String>,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<exploitdb::ExploitDbSettings, String> {
+    exploitdb::save_exploitdb_settings(repo_url, repo_path, db_service).await
+}
+
+#[tauri::command]
+pub async fn get_exploitdb_sync_status(
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<exploitdb::ExploitDbSyncStatus, String> {
+    exploitdb::get_exploitdb_sync_status(db_service).await
+}
+
+#[tauri::command]
+pub async fn sync_exploitdb(
+    force_reindex: Option<bool>,
+    db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
+) -> Result<exploitdb::ExploitDbSyncResponse, String> {
+    exploitdb::sync_exploitdb(force_reindex, db_service).await
 }

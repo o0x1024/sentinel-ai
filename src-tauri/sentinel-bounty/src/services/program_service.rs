@@ -228,7 +228,7 @@ impl ProgramServiceTrait for ProgramService {
         // Compile pattern
         scope
             .compile_pattern()
-            .map_err(|e| BountyError::InvalidScopePattern(e))?;
+            .map_err(BountyError::InvalidScopePattern)?;
 
         let mut scopes = self.scopes.write().await;
         scopes.push(scope.clone());
@@ -255,7 +255,7 @@ impl ProgramServiceTrait for ProgramService {
                 scope.target = target;
                 scope
                     .compile_pattern()
-                    .map_err(|e| BountyError::InvalidScopePattern(e))?;
+                    .map_err(BountyError::InvalidScopePattern)?;
             }
             scope.description = request.description.or(scope.description.clone());
             if let Some(allowed_tests) = request.allowed_tests {
@@ -311,7 +311,7 @@ impl ProgramServiceTrait for ProgramService {
                     s.target.to_lowercase().contains(&search_lower)
                         || s.description
                             .as_ref()
-                            .map_or(false, |d| d.to_lowercase().contains(&search_lower))
+                            .is_some_and(|d| d.to_lowercase().contains(&search_lower))
                 });
             }
         }

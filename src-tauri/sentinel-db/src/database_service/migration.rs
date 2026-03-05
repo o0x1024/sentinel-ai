@@ -324,11 +324,9 @@ impl DatabaseMigration {
     /// Get schema SQL from source database
     #[allow(dead_code)]
     async fn get_schema_sql(&self) -> Result<Vec<String>> {
-        match &self.source_pool {
-            _ => Err(anyhow::anyhow!(
-                "Schema extraction only supported from source database"
-            )),
-        }
+        Err(anyhow::anyhow!(
+            "Schema extraction only supported from source database"
+        ))
     }
 
     /// Convert SQLite SQL to PostgreSQL SQL

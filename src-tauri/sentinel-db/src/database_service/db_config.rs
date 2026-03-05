@@ -74,9 +74,7 @@ impl DatabaseConfig {
         match self.db_type {
             DatabaseType::SQLite => {
                 let path = self
-                    .path
-                    .as_ref()
-                    .map(|p| p.clone())
+                    .path.clone()
                     .unwrap_or_else(default_sqlite_db_path);
                 format!("sqlite:{}?mode=rwc", path)
             }

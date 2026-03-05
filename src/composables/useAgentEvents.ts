@@ -115,6 +115,15 @@ interface AgentRetryEvent {
   error?: string
 }
 
+// 后端发送的 agent:completion_guard_failed 事件
+interface AgentCompletionGuardFailedEvent {
+  execution_id: string
+  reasons: string[]
+  required_artifact?: string | null
+  response_length?: number
+  tool_calls?: number
+}
+
 // 后端发送的 agent:tenth_man_critique 事件
 interface AgentTenthManCritiqueEvent {
   execution_id: string
@@ -1349,6 +1358,37 @@ export function useAgentEvents(
       })
     })
     unlisteners.push(unlistenRetry)
+
+    // 监听 agent:completion_guard_failed 事件
+    const unlistenCompletionGuardFailed = await listen<AgentCompletionGuardFailedEvent>('agent:completion_guard_failed', (event) => {
+      const payload = event.payload
+      if (!matchesTarget(payload.execution_id)) return
+
+      const reasons = Array.isArray(payload.reasons)
+        ? payload.reasons.filter(reason => typeof reason === 'string' && reason.trim().length > 0)
+        : []
+      const reasonContent = reasons.length > 0
+        ? `\nReasons:\n${reasons.map((reason, index) => `${index + 1}. ${reason}`).join('\n')}`
+        : ''
+      const artifactContent = payload.required_artifact
+        ? `\nRequired artifact: ${payload.required_artifact}`
+        : ''
+      const statsContent = (typeof payload.response_length === 'number' || typeof payload.tool_calls === 'number')
+        ? `\nStats: response_length=${payload.response_length ?? 'n/a'}, tool_calls=${payload.tool_calls ?? 'n/a'}`
+        : ''
+
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'system',
+        content: `Completion guard blocked a false completion.${artifactContent}${reasonContent}${statsContent}`,
+        timestamp: Date.now(),
+        metadata: {
+          kind: 'completion_guard_failed',
+          execution_id: payload.execution_id,
+        }
+      })
+    })
+    unlisteners.push(unlistenCompletionGuardFailed)
 
     // 监听 agent:tenth_man_critique 事件
     const unlistenTenthMan = await listen<AgentTenthManCritiqueEvent>('agent:tenth_man_critique', (event) => {

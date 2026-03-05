@@ -307,6 +307,71 @@
         </div>
       </div>
 
+      <!-- ExploitDB Sync Section -->
+      <div class="card bg-base-100 shadow-sm mb-6">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
+            <i class="fas fa-bug"></i>
+            {{ t('settings.agent.exploitdb.title') }}
+          </h3>
+          <p class="text-sm text-base-content/70 mb-4">
+            {{ t('settings.agent.exploitdb.desc') }}
+          </p>
+
+          <div class="grid grid-cols-1 gap-4">
+            <label class="form-control">
+              <span class="label-text">{{ t('settings.agent.exploitdb.repoUrl') }}</span>
+              <input
+                v-model="exploitDbSettings.repo_url"
+                type="text"
+                class="input input-bordered font-mono"
+                placeholder="https://gitlab.com/exploit-database/exploitdb"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text">{{ t('settings.agent.exploitdb.repoPath') }}</span>
+              <div class="join w-full">
+                <input
+                  v-model="exploitDbSettings.repo_path"
+                  type="text"
+                  class="input input-bordered join-item flex-1 font-mono"
+                />
+                <button class="btn btn-outline join-item" @click="selectExploitDbPath">
+                  <i class="fas fa-folder-open mr-1"></i>
+                  {{ t('settings.agent.exploitdb.selectPath') }}
+                </button>
+              </div>
+            </label>
+          </div>
+
+          <div class="flex flex-wrap gap-2 mt-4">
+            <button class="btn btn-sm btn-outline" @click="saveExploitDbSettings" :disabled="exploitDbLoading || exploitDbSyncing">
+              <i class="fas fa-save mr-1"></i>
+              {{ t('settings.agent.exploitdb.save') }}
+            </button>
+            <button class="btn btn-sm btn-primary" @click="syncExploitDb" :disabled="exploitDbSyncing || exploitDbLoading">
+              <span v-if="exploitDbSyncing" class="loading loading-spinner loading-xs mr-2"></span>
+              <i v-else class="fas fa-sync-alt mr-1"></i>
+              {{ t('settings.agent.exploitdb.syncNow') }}
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="loadExploitDbStatus" :disabled="exploitDbLoading || exploitDbSyncing">
+              <i class="fas fa-rotate mr-1"></i>
+              {{ t('settings.agent.exploitdb.refreshStatus') }}
+            </button>
+          </div>
+
+          <div class="mt-4 text-sm bg-base-200 rounded-lg p-3 space-y-1">
+            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.repoReady') }}:</span> <span class="font-mono">{{ exploitDbStatus.repo_exists ? 'yes' : 'no' }}</span></div>
+            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.indexReady') }}:</span> <span class="font-mono">{{ exploitDbStatus.index_exists ? 'yes' : 'no' }}</span></div>
+            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.indexedEntries') }}:</span> <span class="font-mono">{{ exploitDbStatus.indexed_entries }}</span></div>
+            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.lastCommit') }}:</span> <span class="font-mono break-all">{{ exploitDbStatus.last_commit || '-' }}</span></div>
+            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.lastSync') }}:</span> <span class="font-mono">{{ exploitDbStatus.last_sync_at || '-' }}</span></div>
+            <div><span class="opacity-70">{{ t('settings.agent.exploitdb.indexedAt') }}:</span> <span class="font-mono">{{ exploitDbStatus.indexed_at || '-' }}</span></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Image Attachments Section -->
       <div class="card bg-base-100 shadow-sm mb-6">
         <div class="card-body">
@@ -531,6 +596,110 @@
         </div>
       </div>
 
+      <!-- Completion Guard Settings Section -->
+      <div class="card bg-base-100 shadow-sm mb-6">
+        <div class="card-body">
+          <h3 class="card-title mb-4">
+            <i class="fas fa-shield-alt"></i>
+            {{ t('settings.agent.completionGuard.title') }}
+          </h3>
+          <p class="text-sm text-base-content/70 mb-4">
+            {{ t('settings.agent.completionGuard.desc') }}
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div class="form-control">
+              <label class="label cursor-pointer justify-start gap-4">
+                <input
+                  type="checkbox"
+                  class="toggle toggle-primary"
+                  :checked="completionGuardConfig.enabled"
+                  @change="toggleCompletionGuardEnabled"
+                />
+                <div>
+                  <span class="label-text font-medium">{{ t('settings.agent.completionGuard.enabled') }}</span>
+                  <p class="text-xs text-base-content/60 mt-1">
+                    {{ t('settings.agent.completionGuard.enabledDesc') }}
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div class="form-control">
+              <label class="label cursor-pointer justify-start gap-4">
+                <input
+                  type="checkbox"
+                  class="toggle toggle-primary"
+                  :checked="completionGuardConfig.enforce_artifact_proof"
+                  :disabled="!completionGuardConfig.enabled"
+                  @change="toggleCompletionGuardArtifactProof"
+                />
+                <div>
+                  <span class="label-text font-medium">{{ t('settings.agent.completionGuard.enforceArtifactProof') }}</span>
+                  <p class="text-xs text-base-content/60 mt-1">
+                    {{ t('settings.agent.completionGuard.enforceArtifactProofDesc') }}
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.completionGuard.toolHeavyMinToolCalls') }}</span>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                class="input input-bordered input-sm"
+                :value="completionGuardConfig.tool_heavy_min_tool_calls"
+                :disabled="!completionGuardConfig.enabled"
+                @change="updateCompletionGuardNumericField('tool_heavy_min_tool_calls', $event)"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.completionGuard.minResponseCharsToolHeavy') }}</span>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                class="input input-bordered input-sm"
+                :value="completionGuardConfig.min_response_chars_tool_heavy"
+                :disabled="!completionGuardConfig.enabled"
+                @change="updateCompletionGuardNumericField('min_response_chars_tool_heavy', $event)"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.completionGuard.minResponseCharsAfterTimeout') }}</span>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                class="input input-bordered input-sm"
+                :value="completionGuardConfig.min_response_chars_after_timeout"
+                :disabled="!completionGuardConfig.enabled"
+                @change="updateCompletionGuardNumericField('min_response_chars_after_timeout', $event)"
+              />
+            </label>
+
+            <label class="form-control">
+              <span class="label-text text-xs">{{ t('settings.agent.completionGuard.unfinishedPrefixMaxChars') }}</span>
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                class="input input-bordered input-sm"
+                :value="completionGuardConfig.unfinished_prefix_max_chars"
+                :disabled="!completionGuardConfig.enabled"
+                @change="updateCompletionGuardNumericField('unfinished_prefix_max_chars', $event)"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+
       <!-- Future sections can be added here -->
       <!-- Example: Tool Settings, Memory Settings, etc. -->
     </template>
@@ -568,11 +737,21 @@ interface SubagentConfig {
   timeout_secs: number
 }
 
+interface CompletionGuardConfig {
+  enabled: boolean
+  tool_heavy_min_tool_calls: number
+  min_response_chars_tool_heavy: number
+  min_response_chars_after_timeout: number
+  unfinished_prefix_max_chars: number
+  enforce_artifact_proof: boolean
+}
+
 interface AgentConfig {
   shell: ShellConfig
   terminal: TerminalConfig
   image_attachments?: ImageAttachmentsConfig
   subagent?: SubagentConfig
+  completion_guard?: CompletionGuardConfig
 }
 
 interface UploadedFileEntry {
@@ -589,6 +768,22 @@ interface WorkspaceSettings {
   max_file_mb: number
   max_total_mb: number
   max_files_per_conversation: number
+}
+
+interface ExploitDbSettings {
+  repo_url: string
+  repo_path: string
+}
+
+interface ExploitDbSyncStatus {
+  repo_url: string
+  repo_path: string
+  repo_exists: boolean
+  index_exists: boolean
+  indexed_entries: number
+  last_commit: string | null
+  indexed_at: string | null
+  last_sync_at: string | null
 }
 
 const { t } = useI18n()
@@ -616,6 +811,15 @@ const imageAttachments = ref<ImageAttachmentsConfig>({
 const subagentConfig = ref<SubagentConfig>({
   timeout_secs: 600 // 10 minutes default
 })
+
+const completionGuardConfig = ref<CompletionGuardConfig>({
+  enabled: true,
+  tool_heavy_min_tool_calls: 4,
+  min_response_chars_tool_heavy: 80,
+  min_response_chars_after_timeout: 280,
+  unfinished_prefix_max_chars: 320,
+  enforce_artifact_proof: true
+})
 const uploadedFiles = ref<UploadedFileEntry[]>([])
 const uploadsLoading = ref(false)
 const selectedUploadDate = ref('')
@@ -628,9 +832,44 @@ const uploadSettings = ref<WorkspaceSettings>({
   max_files_per_conversation: 100,
 })
 const workingDirectory = ref('')
+const exploitDbSettings = ref<ExploitDbSettings>({
+  repo_url: 'https://gitlab.com/exploit-database/exploitdb',
+  repo_path: ''
+})
+const exploitDbStatus = ref<ExploitDbSyncStatus>({
+  repo_url: 'https://gitlab.com/exploit-database/exploitdb',
+  repo_path: '',
+  repo_exists: false,
+  index_exists: false,
+  indexed_entries: 0,
+  last_commit: null,
+  indexed_at: null,
+  last_sync_at: null
+})
+const exploitDbLoading = ref(false)
+const exploitDbSyncing = ref(false)
 
 const newAllowCommand = ref('')
 const newDenyCommand = ref('')
+
+const normalizePositiveInt = (value: unknown, fallback: number, min = 1, max = 100000): number => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, Math.round(parsed)))
+}
+
+const normalizeCompletionGuardConfig = (
+  raw?: Partial<CompletionGuardConfig> | null
+): CompletionGuardConfig => {
+  return {
+    enabled: raw?.enabled !== undefined ? !!raw.enabled : true,
+    tool_heavy_min_tool_calls: normalizePositiveInt(raw?.tool_heavy_min_tool_calls, 4),
+    min_response_chars_tool_heavy: normalizePositiveInt(raw?.min_response_chars_tool_heavy, 80),
+    min_response_chars_after_timeout: normalizePositiveInt(raw?.min_response_chars_after_timeout, 280),
+    unfinished_prefix_max_chars: normalizePositiveInt(raw?.unfinished_prefix_max_chars, 320),
+    enforce_artifact_proof: raw?.enforce_artifact_proof !== undefined ? !!raw.enforce_artifact_proof : true,
+  }
+}
 
 // Auto-save debounce
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -682,6 +921,7 @@ async function loadConfig() {
         timeout_secs: result.subagent.timeout_secs || 600
       }
     }
+    completionGuardConfig.value = normalizeCompletionGuardConfig(result?.completion_guard)
     await loadWorkingDirectory()
   } catch (e) {
     console.error('Failed to load agent config:', e)
@@ -744,6 +984,79 @@ async function selectWorkingDirectory() {
     }
   } catch (e) {
     console.error('Failed to select directory:', e)
+  }
+}
+
+async function loadExploitDbSettings() {
+  exploitDbLoading.value = true
+  try {
+    const settings = await invoke<ExploitDbSettings>('get_exploitdb_settings')
+    exploitDbSettings.value = settings
+  } catch (e) {
+    console.error('Failed to load exploitdb settings:', e)
+  } finally {
+    exploitDbLoading.value = false
+  }
+}
+
+async function loadExploitDbStatus() {
+  exploitDbLoading.value = true
+  try {
+    const status = await invoke<ExploitDbSyncStatus>('get_exploitdb_sync_status')
+    exploitDbStatus.value = status
+  } catch (e) {
+    console.error('Failed to load exploitdb status:', e)
+    dialog.toast.error(String(e))
+  } finally {
+    exploitDbLoading.value = false
+  }
+}
+
+async function saveExploitDbSettings() {
+  exploitDbLoading.value = true
+  try {
+    const settings = await invoke<ExploitDbSettings>('save_exploitdb_settings', {
+      repo_url: exploitDbSettings.value.repo_url,
+      repo_path: exploitDbSettings.value.repo_path
+    })
+    exploitDbSettings.value = settings
+    dialog.toast.success(t('settings.saveSuccess'))
+    await loadExploitDbStatus()
+  } catch (e) {
+    console.error('Failed to save exploitdb settings:', e)
+    dialog.toast.error(String(e))
+  } finally {
+    exploitDbLoading.value = false
+  }
+}
+
+async function syncExploitDb() {
+  exploitDbSyncing.value = true
+  try {
+    await invoke('sync_exploitdb', { force_reindex: false })
+    dialog.toast.success(t('settings.agent.exploitdb.syncSuccess'))
+    await loadExploitDbStatus()
+  } catch (e) {
+    console.error('Failed to sync exploitdb:', e)
+    dialog.toast.error(String(e))
+  } finally {
+    exploitDbSyncing.value = false
+  }
+}
+
+async function selectExploitDbPath() {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: t('settings.agent.exploitdb.selectPath')
+    })
+    if (selected) {
+      exploitDbSettings.value.repo_path = selected as string
+    }
+  } catch (e) {
+    console.error('Failed to select exploitdb path:', e)
   }
 }
 
@@ -837,7 +1150,8 @@ async function autoSaveConfig() {
         shell: shellConfig.value,
         terminal: terminalConfig.value,
         image_attachments: imageAttachments.value,
-        subagent: subagentConfig.value
+        subagent: subagentConfig.value,
+        completion_guard: completionGuardConfig.value
       }
       await invoke('save_agent_config', { config: agentConfig })
       console.log('Agent config auto-saved')
@@ -901,6 +1215,37 @@ function updateSubagentTimeout(event: Event) {
   }
 }
 
+type CompletionGuardNumericField =
+  | 'tool_heavy_min_tool_calls'
+  | 'min_response_chars_tool_heavy'
+  | 'min_response_chars_after_timeout'
+  | 'unfinished_prefix_max_chars'
+
+function updateCompletionGuardNumericField(field: CompletionGuardNumericField, event: Event) {
+  const target = event.target as HTMLInputElement
+  const raw = parseInt(target.value, 10)
+  if (isNaN(raw)) return
+
+  const clamped = normalizePositiveInt(raw, completionGuardConfig.value[field])
+  completionGuardConfig.value = {
+    ...completionGuardConfig.value,
+    [field]: clamped
+  }
+  autoSaveConfig()
+}
+
+function toggleCompletionGuardEnabled(event: Event) {
+  const target = event.target as HTMLInputElement
+  completionGuardConfig.value.enabled = target.checked
+  autoSaveConfig()
+}
+
+function toggleCompletionGuardArtifactProof(event: Event) {
+  const target = event.target as HTMLInputElement
+  completionGuardConfig.value.enforce_artifact_proof = target.checked
+  autoSaveConfig()
+}
+
 // Toggle execution mode
 function toggleExecutionMode() {
   terminalConfig.value.default_execution_mode = 
@@ -948,6 +1293,8 @@ function removeDenyCommand(index: number) {
 
 onMounted(() => {
   loadConfig()
+  loadExploitDbSettings()
+  loadExploitDbStatus()
   loadUploadSettings()
   loadUploadedFiles()
 })

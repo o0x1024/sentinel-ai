@@ -558,6 +558,9 @@ pub fn run() {
                 if let Err(e) = initialize_global_proxy(&db_service).await {
                     tracing::warn!("Failed to initialize global proxy configuration: {}", e);
                 }
+                if let Err(e) = tool_commands::init_exploitdb_runtime_config(&db_service).await {
+                    tracing::warn!("Failed to initialize ExploitDB runtime configuration: {}", e);
+                }
 
                 let mcp_service = Arc::new(crate::services::mcp::McpService::new());
                 handle.manage(mcp_service.clone());
@@ -1279,6 +1282,10 @@ pub fn run() {
             tool_commands::get_tool_metadata,
             tool_commands::get_tool_usage_stats,
             tool_commands::clear_tool_usage_stats,
+            tool_commands::get_exploitdb_settings,
+            tool_commands::save_exploitdb_settings,
+            tool_commands::get_exploitdb_sync_status,
+            tool_commands::sync_exploitdb,
             // Vision Explorer V2 commands - disabled after ReAct refactoring
             // Now accessed through Rig Tool interface
             // tool_commands::vision_explorer_receive_credentials,

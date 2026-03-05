@@ -124,8 +124,16 @@ impl TerminalServer {
                     }
                 } else {
                     // Parse as config
-                    let config: TerminalSessionConfig =
-                        serde_json::from_str(&text).unwrap_or_default();
+                    let config: TerminalSessionConfig = match serde_json::from_str(&text) {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            warn!(
+                                "Failed to parse terminal session config, using defaults. raw={}, error={}",
+                                text, e
+                            );
+                            TerminalSessionConfig::default()
+                        }
+                    };
 
                     self.manager.create_session(config).await?
                 }

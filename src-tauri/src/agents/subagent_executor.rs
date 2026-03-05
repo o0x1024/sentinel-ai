@@ -716,10 +716,8 @@ async fn run_task(task_id: String) {
     let system_prompt_base = pending_data
         .system_prompt
         .unwrap_or_else(|| pending_data.parent.system_prompt.clone());
-    let system_prompt = build_subagent_system_prompt(
-        system_prompt_base,
-        pending_data.role.as_deref(),
-    );
+    let system_prompt =
+        build_subagent_system_prompt(system_prompt_base, pending_data.role.as_deref());
     let max_iterations = max_iterations_for_verification_level(pending_data.max_iterations);
     let timeout_secs = pending_data
         .timeout_secs

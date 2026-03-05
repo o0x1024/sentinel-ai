@@ -180,14 +180,12 @@ impl StreamingLlmClient {
         // CRITICAL FIX: Moonshot/DeepSeek and other picky providers REQUIRE non-empty assistant messages.
         // We add a system-level instruction to help them comply, and we'll also use placeholders in history.
         let provider_lower = provider_for_agent.to_lowercase();
-        if provider_lower.contains("moonshot")
+        if (provider_lower.contains("moonshot")
             || provider_lower.contains("deepseek")
-            || provider_lower.contains("kimi")
-        {
-            if !system_prompt_with_hack.contains("text response") {
+            || provider_lower.contains("kimi"))
+            && !system_prompt_with_hack.contains("text response") {
                 system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
             }
-        }
         let preamble = &system_prompt_with_hack;
 
         log_request(

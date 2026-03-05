@@ -14,7 +14,7 @@ use sentinel_llm::{
 use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
@@ -2320,13 +2320,12 @@ pub async fn agent_execute(
     let document_attachments_for_save = config.document_attachments.clone();
 
     // 获取工具配置：优先使用前端传递的配置，否则从数据库加载
-    let mut effective_tool_config = if config.tool_config.is_some() {
+    let effective_tool_config = if config.tool_config.is_some() {
         tracing::info!("Using tool config from frontend request");
         config.tool_config.clone()
     } else {
         load_tool_config_from_db(&app_handle).await
     };
-
 
     tracing::info!(
         "Agent execute: conv={}, msg={}, rag={}, tools={}",
@@ -2338,7 +2337,6 @@ pub async fn agent_execute(
             .map(|c| c.enabled)
             .unwrap_or(false)
     );
-
 
     // 优先使用本次请求模型覆盖（仅 AI 助手生效），否则使用全局默认模型
     let requested_override = config
@@ -2773,7 +2771,7 @@ pub async fn agent_execute(
                     max_iterations: config
                         .max_iterations
                         .unwrap_or(provider_config.max_turns.unwrap_or(50))
-                        .max(200),
+                        .max(1),
                     timeout_secs: config.timeout_secs.unwrap_or(300),
                     tool_config: effective_tool_config.clone(),
                     enable_tenth_man_rule: config.enable_tenth_man_rule.unwrap_or(false),

@@ -4,17 +4,14 @@ use uuid::Uuid;
 
 /// 数据库类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum DatabaseType {
     PostgreSQL,
     MySQL,
+    #[default]
     SQLite,
 }
 
-impl Default for DatabaseType {
-    fn default() -> Self {
-        DatabaseType::SQLite
-    }
-}
 
 /// 数据库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

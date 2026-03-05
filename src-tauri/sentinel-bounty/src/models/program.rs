@@ -8,6 +8,7 @@ use uuid::Uuid;
 /// Bug Bounty platform types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum BountyPlatform {
     /// HackerOne
     HackerOne,
@@ -22,6 +23,7 @@ pub enum BountyPlatform {
     /// Chinese SRC platforms
     Src,
     /// Private program
+    #[default]
     Private,
     /// Self-hosted
     SelfHosted,
@@ -29,11 +31,6 @@ pub enum BountyPlatform {
     Other(String),
 }
 
-impl Default for BountyPlatform {
-    fn default() -> Self {
-        BountyPlatform::Private
-    }
-}
 
 /// Program status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

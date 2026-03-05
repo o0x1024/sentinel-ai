@@ -461,11 +461,40 @@ export default {
       totalFiles: '共 {count} 个文件',
       clearedCount: '已清理 {count} 个文件'
     },
+    exploitdb: {
+      title: 'ExploitDB 同步',
+      desc: '配置并同步本地 ExploitDB 仓库，用于 PoC 检索。',
+      repoUrl: '仓库地址',
+      repoPath: '本地路径',
+      selectPath: '选择路径',
+      save: '保存',
+      syncNow: '立即同步',
+      refreshStatus: '刷新状态',
+      repoReady: '仓库就绪',
+      indexReady: '索引就绪',
+      indexedEntries: '索引条目数',
+      lastCommit: '最新提交',
+      lastSync: '上次同步',
+      indexedAt: '索引时间',
+      syncSuccess: 'ExploitDB 同步完成'
+    },
     subagent: {
       title: '子 Agent 设置',
       timeout: '任务超时时间',
       timeoutDesc: '等待子 Agent 任务完成的最大时间（60-7200 秒）',
       seconds: '秒'
+    },
+    completionGuard: {
+      title: '完成防火墙',
+      desc: '在任务标记成功前，校验最终回复质量、超时上下文以及必需产物证据，防止“假完成”。',
+      enabled: '启用完成防火墙',
+      enabledDesc: '开启后，会拦截可疑的短回复/未完成回复，并触发重试或显式失败。',
+      enforceArtifactProof: '要求产物证据',
+      enforceArtifactProofDesc: '当任务文本包含明确输出文件要求时，必须有产物存在证据才允许完成。',
+      toolHeavyMinToolCalls: '工具密集阈值（调用次数）',
+      minResponseCharsToolHeavy: '工具密集场景最小回复长度',
+      minResponseCharsAfterTimeout: '超时/失败后最小回复长度',
+      unfinishedPrefixMaxChars: '未完成前缀判定最大长度'
     }
   }
 }

@@ -183,7 +183,7 @@ impl TerminalSessionManager {
 
         // Get all sentinel-sandbox containers
         let output = Command::new("docker")
-            .args(&[
+            .args([
                 "ps",
                 "-a",
                 "--filter",
@@ -226,7 +226,7 @@ impl TerminalSessionManager {
             if !active_containers.contains(&container_id) {
                 info!("Removing unused container: {}", container_id);
                 let result = Command::new("docker")
-                    .args(&["rm", "-f", &container_id])
+                    .args(["rm", "-f", &container_id])
                     .output()
                     .await;
 

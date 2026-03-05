@@ -181,39 +181,39 @@ impl PluginValidator {
 
         #[cfg(feature = "plugin-generation")]
         {
-        log::debug!("Validating TypeScript syntax using deno_ast");
+            log::debug!("Validating TypeScript syntax using deno_ast");
 
-        // Use deno_ast to parse TypeScript code
-        let source_code: std::sync::Arc<str> = std::sync::Arc::<str>::from(code.to_string());
+            // Use deno_ast to parse TypeScript code
+            let source_code: std::sync::Arc<str> = std::sync::Arc::<str>::from(code.to_string());
 
-        let parse_params = deno_ast::ParseParams {
-            specifier: deno_ast::ModuleSpecifier::parse("file:///plugin.ts").unwrap(),
-            text: source_code,
-            media_type: deno_ast::MediaType::TypeScript,
-            capture_tokens: false,
-            scope_analysis: false,
-            maybe_syntax: None,
-        };
+            let parse_params = deno_ast::ParseParams {
+                specifier: deno_ast::ModuleSpecifier::parse("file:///plugin.ts").unwrap(),
+                text: source_code,
+                media_type: deno_ast::MediaType::TypeScript,
+                capture_tokens: false,
+                scope_analysis: false,
+                maybe_syntax: None,
+            };
 
-        // Parse the code and check for syntax errors
-        match deno_ast::parse_module(parse_params) {
-            Ok(parsed) => {
-                log::debug!("TypeScript syntax validation passed");
+            // Parse the code and check for syntax errors
+            match deno_ast::parse_module(parse_params) {
+                Ok(parsed) => {
+                    log::debug!("TypeScript syntax validation passed");
 
-                // Check for any diagnostics
-                if parsed.diagnostics().is_empty() {
-                    Ok(true)
-                } else {
-                    log::warn!("TypeScript has diagnostics: {:?}", parsed.diagnostics());
-                    // Still consider it valid if it parsed successfully
-                    Ok(true)
+                    // Check for any diagnostics
+                    if parsed.diagnostics().is_empty() {
+                        Ok(true)
+                    } else {
+                        log::warn!("TypeScript has diagnostics: {:?}", parsed.diagnostics());
+                        // Still consider it valid if it parsed successfully
+                        Ok(true)
+                    }
+                }
+                Err(e) => {
+                    log::error!("TypeScript syntax validation failed: {}", e);
+                    Err(anyhow::anyhow!("Syntax error: {}", e))
                 }
             }
-            Err(e) => {
-                log::error!("TypeScript syntax validation failed: {}", e);
-                Err(anyhow::anyhow!("Syntax error: {}", e))
-            }
-        }
         }
     }
 

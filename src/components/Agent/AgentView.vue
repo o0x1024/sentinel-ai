@@ -5141,7 +5141,6 @@ const handleSubmit = async () => {
       const result = await invoke('agent_execute', {
         task: fullTask,
         config: {
-          max_iterations: 10,
           timeout_secs: 300,
           force_todos: props.showTodos,
           enable_rag: ragEnabled.value,

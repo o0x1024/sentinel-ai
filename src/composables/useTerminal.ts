@@ -10,6 +10,7 @@ interface TerminalState {
   isActive: boolean
   sessionId: string | null
   hasHistory: boolean
+  sessionFingerprint: string | null
 }
 
 interface TerminalWriteEvent {
@@ -22,6 +23,7 @@ const terminalState = ref<TerminalState>({
   isActive: false,
   sessionId: null,
   hasHistory: false,
+  sessionFingerprint: null,
 })
 
 // Preconnection state
@@ -46,6 +48,7 @@ export function useTerminal() {
   const isTerminalActive = computed(() => terminalState.value.isActive)
   const currentSessionId = computed(() => terminalState.value.sessionId)
   const hasHistory = computed(() => terminalState.value.hasHistory)
+  const currentSessionFingerprint = computed(() => terminalState.value.sessionFingerprint)
 
   /**
    * Open terminal panel
@@ -79,7 +82,16 @@ export function useTerminal() {
     terminalState.value.sessionId = sessionId
     if (sessionId) {
       terminalState.value.hasHistory = true
+    } else {
+      terminalState.value.sessionFingerprint = null
     }
+  }
+
+  /**
+   * Set session fingerprint (used to detect config drift)
+   */
+  function setSessionFingerprint(fingerprint: string | null) {
+    terminalState.value.sessionFingerprint = fingerprint
   }
 
   /**
@@ -88,6 +100,7 @@ export function useTerminal() {
   function clearTerminal() {
     terminalState.value.sessionId = null
     terminalState.value.hasHistory = false
+    terminalState.value.sessionFingerprint = null
   }
 
   /**
@@ -97,6 +110,7 @@ export function useTerminal() {
     terminalState.value.isActive = false
     terminalState.value.sessionId = null
     terminalState.value.hasHistory = false
+    terminalState.value.sessionFingerprint = null
   }
 
   /**
@@ -172,6 +186,7 @@ export function useTerminal() {
     isTerminalActive,
     currentSessionId,
     hasHistory,
+    currentSessionFingerprint,
     isPreconnected,
     preconnectedWsUrl,
     
@@ -180,6 +195,7 @@ export function useTerminal() {
     closeTerminal,
     toggleTerminal,
     setSessionId,
+    setSessionFingerprint,
     clearTerminal,
     resetTerminal,
     writeToTerminal,

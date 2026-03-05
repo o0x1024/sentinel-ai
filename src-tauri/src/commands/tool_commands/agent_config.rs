@@ -122,6 +122,80 @@ impl Default for SubagentConfig {
     }
 }
 
+/// Completion guard configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionGuardConfig {
+    /// Whether completion guard is enabled
+    #[serde(default = "default_completion_guard_enabled")]
+    pub enabled: bool,
+    /// Minimum tool call count considered as tool-heavy execution
+    #[serde(default = "default_tool_heavy_min_tool_calls")]
+    pub tool_heavy_min_tool_calls: u64,
+    /// Minimum final response length required for tool-heavy execution
+    #[serde(default = "default_min_response_chars_tool_heavy")]
+    pub min_response_chars_tool_heavy: u64,
+    /// Minimum final response length required when timeout/tool failures occurred
+    #[serde(default = "default_min_response_chars_after_timeout")]
+    pub min_response_chars_after_timeout: u64,
+    /// Max chars threshold for unfinished-prefix detection
+    #[serde(default = "default_unfinished_prefix_max_chars")]
+    pub unfinished_prefix_max_chars: u64,
+    /// Whether artifact proof is required when task implies artifact output
+    #[serde(default = "default_enforce_artifact_proof")]
+    pub enforce_artifact_proof: bool,
+}
+
+const COMPLETION_GUARD_U64_MAX: u64 = 100_000;
+
+fn default_completion_guard_enabled() -> bool {
+    true
+}
+
+fn default_tool_heavy_min_tool_calls() -> u64 {
+    4
+}
+
+fn default_min_response_chars_tool_heavy() -> u64 {
+    80
+}
+
+fn default_min_response_chars_after_timeout() -> u64 {
+    280
+}
+
+fn default_unfinished_prefix_max_chars() -> u64 {
+    320
+}
+
+fn default_enforce_artifact_proof() -> bool {
+    true
+}
+
+fn parse_bool_config(raw: &str) -> Option<bool> {
+    match raw.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_bounded_u64_config(raw: &str, min: u64, max: u64) -> Option<u64> {
+    raw.trim().parse::<u64>().ok().map(|v| v.clamp(min, max))
+}
+
+impl Default for CompletionGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_completion_guard_enabled(),
+            tool_heavy_min_tool_calls: default_tool_heavy_min_tool_calls(),
+            min_response_chars_tool_heavy: default_min_response_chars_tool_heavy(),
+            min_response_chars_after_timeout: default_min_response_chars_after_timeout(),
+            unfinished_prefix_max_chars: default_unfinished_prefix_max_chars(),
+            enforce_artifact_proof: default_enforce_artifact_proof(),
+        }
+    }
+}
+
 /// Agent configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentConfig {
@@ -136,6 +210,9 @@ pub struct AgentConfig {
     /// Subagent configuration
     #[serde(default)]
     pub subagent: SubagentConfig,
+    /// Completion guard configuration
+    #[serde(default)]
+    pub completion_guard: CompletionGuardConfig,
 }
 
 /// Get agent configuration
@@ -150,12 +227,15 @@ pub async fn get_agent_config(
     let image_config = load_image_attachment_config_from_db(db_service.inner()).await;
     // Load subagent config from database
     let subagent_config = load_subagent_config_from_db(db_service.inner()).await;
+    // Load completion guard config from database
+    let completion_guard_config = load_completion_guard_config_from_db(db_service.inner()).await;
 
     Ok(AgentConfig {
         shell: shell_config,
         terminal: terminal_config,
         image_attachments: image_config,
         subagent: subagent_config,
+        completion_guard: completion_guard_config,
     })
 }
 
@@ -172,6 +252,8 @@ pub async fn save_agent_config(
     save_image_attachment_config_to_db(&config.image_attachments, db_service.inner()).await?;
     // Save subagent config to database
     save_subagent_config_to_db(&config.subagent, db_service.inner()).await?;
+    // Save completion guard config to database
+    save_completion_guard_config_to_db(&config.completion_guard, db_service.inner()).await?;
 
     // Update in-memory config
     // Important: frontend may omit docker_config; keep a valid docker_config so docker mode works.
@@ -200,6 +282,127 @@ pub async fn save_agent_config(
     );
 
     tracing::info!("Agent config saved successfully");
+    Ok(())
+}
+
+/// Load completion guard config from database
+pub async fn load_completion_guard_config_from_db(
+    db: &sentinel_db::DatabaseService,
+) -> CompletionGuardConfig {
+    let mut config = CompletionGuardConfig::default();
+
+    if let Ok(Some(value)) = db.get_config("agent", "completion_guard_enabled").await {
+        if let Some(v) = parse_bool_config(&value) {
+            config.enabled = v;
+        }
+    }
+    if let Ok(Some(value)) = db
+        .get_config("agent", "completion_guard_tool_heavy_min_tool_calls")
+        .await
+    {
+        if let Some(v) = parse_bounded_u64_config(&value, 1, COMPLETION_GUARD_U64_MAX) {
+            config.tool_heavy_min_tool_calls = v;
+        }
+    }
+    if let Ok(Some(value)) = db
+        .get_config("agent", "completion_guard_min_response_chars_tool_heavy")
+        .await
+    {
+        if let Some(v) = parse_bounded_u64_config(&value, 1, COMPLETION_GUARD_U64_MAX) {
+            config.min_response_chars_tool_heavy = v;
+        }
+    }
+    if let Ok(Some(value)) = db
+        .get_config("agent", "completion_guard_min_response_chars_after_timeout")
+        .await
+    {
+        if let Some(v) = parse_bounded_u64_config(&value, 1, COMPLETION_GUARD_U64_MAX) {
+            config.min_response_chars_after_timeout = v;
+        }
+    }
+    if let Ok(Some(value)) = db
+        .get_config("agent", "completion_guard_unfinished_prefix_max_chars")
+        .await
+    {
+        if let Some(v) = parse_bounded_u64_config(&value, 1, COMPLETION_GUARD_U64_MAX) {
+            config.unfinished_prefix_max_chars = v;
+        }
+    }
+    if let Ok(Some(value)) = db
+        .get_config("agent", "completion_guard_enforce_artifact_proof")
+        .await
+    {
+        if let Some(v) = parse_bool_config(&value) {
+            config.enforce_artifact_proof = v;
+        }
+    }
+
+    config
+}
+
+/// Save completion guard config to database
+async fn save_completion_guard_config_to_db(
+    config: &CompletionGuardConfig,
+    db: &sentinel_db::DatabaseService,
+) -> Result<(), String> {
+    db.set_config(
+        "agent",
+        "completion_guard_enabled",
+        if config.enabled { "true" } else { "false" },
+        Some("Whether completion guard (false-completion firewall) is enabled"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "agent",
+        "completion_guard_tool_heavy_min_tool_calls",
+        &config.tool_heavy_min_tool_calls.to_string(),
+        Some("Minimum tool calls considered as tool-heavy execution"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "agent",
+        "completion_guard_min_response_chars_tool_heavy",
+        &config.min_response_chars_tool_heavy.to_string(),
+        Some("Minimum response chars required for tool-heavy execution"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "agent",
+        "completion_guard_min_response_chars_after_timeout",
+        &config.min_response_chars_after_timeout.to_string(),
+        Some("Minimum response chars required when timeout/tool failures occurred"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "agent",
+        "completion_guard_unfinished_prefix_max_chars",
+        &config.unfinished_prefix_max_chars.to_string(),
+        Some("Max chars threshold for unfinished-prefix response detection"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    db.set_config(
+        "agent",
+        "completion_guard_enforce_artifact_proof",
+        if config.enforce_artifact_proof {
+            "true"
+        } else {
+            "false"
+        },
+        Some("Whether required artifact proof check is enforced by completion guard"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 

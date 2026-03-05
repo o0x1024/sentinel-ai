@@ -4,6 +4,7 @@ pub mod local_time;
 pub mod memory;
 pub mod ocr;
 pub mod port_scan;
+pub mod search_exploit;
 pub mod shell;
 pub mod skills;
 pub mod subagent_tool;
@@ -18,6 +19,7 @@ pub use local_time::LocalTimeTool;
 pub use memory::MemoryManagerTool;
 pub use ocr::OcrTool;
 pub use port_scan::PortScanTool;
+pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
 pub use skills::SkillsTool;
 pub use subagent_tool::{SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool};
@@ -38,6 +40,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(SubdomainBruteTool);
     toolset.add_tool(TodosTool);
     toolset.add_tool(WebSearchTool::default());
+    toolset.add_tool(SearchExploitTool);
     toolset.add_tool(MemoryManagerTool);
     toolset.add_tool(OcrTool);
     toolset.add_tool(SkillsTool);
@@ -58,6 +61,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(SubdomainBruteTool),
         Box::new(TodosTool),
         Box::new(WebSearchTool::default()),
+        Box::new(SearchExploitTool),
         Box::new(MemoryManagerTool),
         Box::new(OcrTool),
         Box::new(SkillsTool),

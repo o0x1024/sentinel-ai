@@ -114,5 +114,4 @@ impl ContextPolicy {
             },
         }
     }
-
 }

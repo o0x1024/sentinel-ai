@@ -39,8 +39,10 @@ fn get_executor() -> Result<&'static TenthManExecutorFn, TenthManToolError> {
 /// Review mode for Tenth Man
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ReviewMode {
     /// Review complete history (using sliding window summarization)
+    #[default]
     FullHistory,
     /// Review recent N messages
     RecentMessages {
@@ -52,12 +54,6 @@ pub enum ReviewMode {
         #[schemars(description = "Specific content to review")]
         content: String,
     },
-}
-
-impl Default for ReviewMode {
-    fn default() -> Self {
-        ReviewMode::FullHistory
-    }
 }
 
 /// Tenth Man tool arguments

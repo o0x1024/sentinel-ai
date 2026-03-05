@@ -17,8 +17,9 @@ use tokio::sync::RwLock;
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
     browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, MemoryManagerTool,
-    OcrTool, PortScanTool, ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool,
-    SubagentExecuteTool, SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
+    OcrTool, PortScanTool, SearchExploitTool, ShellTool, SkillsTool, SubagentAwaitTool,
+    SubagentChannelTool, SubagentExecuteTool, SubdomainBruteTool, TenthManTool, TodosTool,
+    WebSearchTool,
 };
 
 use crate::engines::web_explorer::WebExplorerTool;
@@ -308,6 +309,22 @@ impl ToolRouter {
                     "information".to_string(),
                     "research".to_string(),
                     "tavily".to_string(),
+                ],
+                cost_estimate: ToolCost::Medium,
+                always_available: false,
+            },
+            ToolMetadata {
+                id: SearchExploitTool::NAME.to_string(),
+                name: SearchExploitTool::NAME.to_string(),
+                description: SearchExploitTool::DESCRIPTION.to_string(),
+                category: ToolCategory::Exploitation,
+                tags: vec![
+                    "exploit".to_string(),
+                    "poc".to_string(),
+                    "cve".to_string(),
+                    "exploitdb".to_string(),
+                    "vulnerability".to_string(),
+                    "security".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
@@ -934,7 +951,8 @@ impl ToolRouter {
                         doc.frontmatter.description.trim().to_string()
                     };
                     let description = if description.len() > MAX_DESC_CHARS {
-                        let mut trimmed = description.chars().take(MAX_DESC_CHARS).collect::<String>();
+                        let mut trimmed =
+                            description.chars().take(MAX_DESC_CHARS).collect::<String>();
                         trimmed.push_str("...");
                         trimmed
                     } else {

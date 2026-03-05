@@ -1663,7 +1663,7 @@ async fn run_agent_execution(
         .clone()
         .unwrap_or(provider_config.provider.clone());
 
-    let mut tool_config = if tool_config_override.is_some() {
+    let tool_config = if tool_config_override.is_some() {
         tool_config_override
     } else {
         load_tool_config_from_db(state).await
@@ -1678,7 +1678,7 @@ async fn run_agent_execution(
         api_base: provider_config.api_base.clone(),
         max_iterations: max_iterations
             .unwrap_or(provider_config.max_turns.unwrap_or(50))
-            .max(10),
+            .max(1),
         timeout_secs: timeout_secs.unwrap_or(300),
         tool_config,
         enable_tenth_man_rule: enable_tenth_man_rule.unwrap_or(false),
@@ -2460,11 +2460,17 @@ async fn bridge_invoke(
                     state.db.as_ref(),
                 )
                 .await;
+            let completion_guard =
+                crate::commands::tool_commands::agent_config::load_completion_guard_config_from_db(
+                    state.db.as_ref(),
+                )
+                .await;
             Ok(json!({
                 "shell": shell,
                 "terminal": terminal,
                 "image_attachments": image_attachments,
-                "subagent": subagent
+                "subagent": subagent,
+                "completion_guard": completion_guard
             }))
         }
         "save_agent_config" => {
@@ -2545,6 +2551,92 @@ async fn bridge_invoke(
                             state
                                 .db
                                 .set_config("agent", "allow_image_upload_to_model", val, None)
+                                .await
+                                .map_err(|e| format!("save_agent_config failed: {}", e))?;
+                        }
+                    }
+                    if let Some(guard_cfg) = config.get("completion_guard") {
+                        if let Some(v) = guard_cfg.get("enabled").and_then(|v| v.as_bool()) {
+                            let val = if v { "true" } else { "false" };
+                            state
+                                .db
+                                .set_config("agent", "completion_guard_enabled", val, None)
+                                .await
+                                .map_err(|e| format!("save_agent_config failed: {}", e))?;
+                        }
+                        if let Some(v) = guard_cfg
+                            .get("tool_heavy_min_tool_calls")
+                            .and_then(|v| v.as_u64())
+                        {
+                            state
+                                .db
+                                .set_config(
+                                    "agent",
+                                    "completion_guard_tool_heavy_min_tool_calls",
+                                    &v.to_string(),
+                                    None,
+                                )
+                                .await
+                                .map_err(|e| format!("save_agent_config failed: {}", e))?;
+                        }
+                        if let Some(v) = guard_cfg
+                            .get("min_response_chars_tool_heavy")
+                            .and_then(|v| v.as_u64())
+                        {
+                            state
+                                .db
+                                .set_config(
+                                    "agent",
+                                    "completion_guard_min_response_chars_tool_heavy",
+                                    &v.to_string(),
+                                    None,
+                                )
+                                .await
+                                .map_err(|e| format!("save_agent_config failed: {}", e))?;
+                        }
+                        if let Some(v) = guard_cfg
+                            .get("min_response_chars_after_timeout")
+                            .and_then(|v| v.as_u64())
+                        {
+                            state
+                                .db
+                                .set_config(
+                                    "agent",
+                                    "completion_guard_min_response_chars_after_timeout",
+                                    &v.to_string(),
+                                    None,
+                                )
+                                .await
+                                .map_err(|e| format!("save_agent_config failed: {}", e))?;
+                        }
+                        if let Some(v) = guard_cfg
+                            .get("unfinished_prefix_max_chars")
+                            .and_then(|v| v.as_u64())
+                        {
+                            state
+                                .db
+                                .set_config(
+                                    "agent",
+                                    "completion_guard_unfinished_prefix_max_chars",
+                                    &v.to_string(),
+                                    None,
+                                )
+                                .await
+                                .map_err(|e| format!("save_agent_config failed: {}", e))?;
+                        }
+                        if let Some(v) = guard_cfg
+                            .get("enforce_artifact_proof")
+                            .and_then(|v| v.as_bool())
+                        {
+                            let val = if v { "true" } else { "false" };
+                            state
+                                .db
+                                .set_config(
+                                    "agent",
+                                    "completion_guard_enforce_artifact_proof",
+                                    val,
+                                    None,
+                                )
                                 .await
                                 .map_err(|e| format!("save_agent_config failed: {}", e))?;
                         }

@@ -19,6 +19,7 @@ pub enum ExecutionMode {
 
 /// Terminal session configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TerminalSessionConfig {
     /// Execution mode (Docker or Host)
     pub execution_mode: ExecutionMode,
@@ -333,7 +334,7 @@ impl TerminalSession {
 
     async fn probe_docker_exec_workdir(&self, container_id: &str, workdir: &str) -> bool {
         let output = Command::new("docker")
-            .args(&[
+            .args([
                 "exec",
                 "-w",
                 workdir,
@@ -494,7 +495,7 @@ impl TerminalSession {
 
         // List containers with the specified name
         let output = Command::new("docker")
-            .args(&[
+            .args([
                 "ps",
                 "-a",
                 "--filter",
@@ -517,6 +518,33 @@ impl TerminalSession {
             info!("No reusable container found");
             Ok(None)
         } else {
+            // Reuse only when container image matches the requested image.
+            // Otherwise we'll create (or recreate) a container with the configured image.
+            let inspect_output = Command::new("docker")
+                .args(["inspect", "-f", "{{.Config.Image}}", &container_id])
+                .output()
+                .await
+                .map_err(|e| format!("Failed to inspect reusable container image: {}", e))?;
+            if !inspect_output.status.success() {
+                let stderr = String::from_utf8_lossy(&inspect_output.stderr);
+                warn!(
+                    "Failed to inspect reusable container {}, skip reuse: {}",
+                    container_id, stderr
+                );
+                return Ok(None);
+            }
+            let actual_image = String::from_utf8_lossy(&inspect_output.stdout)
+                .trim()
+                .to_string();
+            if !actual_image.eq_ignore_ascii_case(self.config.docker_image.trim()) {
+                info!(
+                    "Reusable container image mismatch (container={}, actual={}, expected={}), skip reuse",
+                    container_id,
+                    actual_image,
+                    self.config.docker_image
+                );
+                return Ok(None);
+            }
             info!("Found reusable container: {}", container_id);
             Ok(Some(container_id))
         }
@@ -526,7 +554,7 @@ impl TerminalSession {
     async fn ensure_container_running(&self, container_id: &str) -> Result<(), String> {
         // Check container state
         let output = Command::new("docker")
-            .args(&["inspect", "-f", "{{.State.Running}}", container_id])
+            .args(["inspect", "-f", "{{.State.Running}}", container_id])
             .output()
             .await
             .map_err(|e| format!("Failed to inspect container: {}", e))?;
@@ -536,7 +564,7 @@ impl TerminalSession {
         if !is_running {
             info!("Container {} is not running, starting it", container_id);
             let output = Command::new("docker")
-                .args(&["start", container_id])
+                .args(["start", container_id])
                 .output()
                 .await
                 .map_err(|e| format!("Failed to start container: {}", e))?;
@@ -609,7 +637,7 @@ impl TerminalSession {
                 warn!("Container name already in use, removing old container");
                 if let Some(ref name) = self.config.container_name {
                     let _ = Command::new("docker")
-                        .args(&["rm", "-f", name])
+                        .args(["rm", "-f", name])
                         .output()
                         .await;
 
@@ -662,7 +690,7 @@ impl TerminalSession {
 
             for cmd in setup_commands {
                 let result = Command::new("docker")
-                    .args(&["exec", "--user", "root", container_id, "bash", "-c", cmd])
+                    .args(["exec", "--user", "root", container_id, "bash", "-c", cmd])
                     .output()
                     .await;
 
@@ -742,7 +770,7 @@ impl TerminalSession {
     pub async fn is_container_healthy(&self) -> bool {
         if let Some(ref container_id) = self.container_id {
             let output = Command::new("docker")
-                .args(&["inspect", "-f", "{{.State.Running}}", container_id])
+                .args(["inspect", "-f", "{{.State.Running}}", container_id])
                 .output()
                 .await;
 
@@ -773,7 +801,7 @@ impl TerminalSession {
                     container_id
                 );
                 let _ = Command::new("docker")
-                    .args(&["rm", "-f", container_id])
+                    .args(["rm", "-f", container_id])
                     .output()
                     .await;
             }

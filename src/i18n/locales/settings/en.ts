@@ -468,11 +468,40 @@ export default {
       totalFiles: '{count} files total',
       clearedCount: 'Cleared {count} files'
     },
+    exploitdb: {
+      title: 'ExploitDB Sync',
+      desc: 'Configure and sync local ExploitDB repository for PoC search.',
+      repoUrl: 'Repository URL',
+      repoPath: 'Local Path',
+      selectPath: 'Select Path',
+      save: 'Save',
+      syncNow: 'Sync Now',
+      refreshStatus: 'Refresh Status',
+      repoReady: 'Repository Ready',
+      indexReady: 'Index Ready',
+      indexedEntries: 'Indexed Entries',
+      lastCommit: 'Last Commit',
+      lastSync: 'Last Sync',
+      indexedAt: 'Indexed At',
+      syncSuccess: 'ExploitDB synced successfully'
+    },
     subagent: {
       title: 'Subagent Settings',
       timeout: 'Task Timeout',
       timeoutDesc: 'Maximum time to wait for a subagent task to complete (60-7200 seconds)',
       seconds: 'seconds'
+    },
+    completionGuard: {
+      title: 'Completion Guard',
+      desc: 'Prevent false completions by validating final response quality, timeout context, and required artifact evidence before marking a task as successful.',
+      enabled: 'Enable completion guard',
+      enabledDesc: 'If enabled, suspicious short/incomplete outputs are blocked and retried or failed explicitly.',
+      enforceArtifactProof: 'Require artifact proof',
+      enforceArtifactProofDesc: 'If task text implies a required output file, require evidence that artifact exists before completion.',
+      toolHeavyMinToolCalls: 'Tool-heavy threshold (calls)',
+      minResponseCharsToolHeavy: 'Min response chars (tool-heavy)',
+      minResponseCharsAfterTimeout: 'Min response chars (after timeout/failure)',
+      unfinishedPrefixMaxChars: 'Unfinished-prefix max chars'
     }
   }
 }

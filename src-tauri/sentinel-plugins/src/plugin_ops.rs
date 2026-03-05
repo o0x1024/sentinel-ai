@@ -655,11 +655,8 @@ fn extract_literals_from_statement(
         }
         Statement::ForStatement(for_stmt) => {
             if let Some(init) = &for_stmt.init {
-                match init {
-                    ForStatementInit::VariableDeclaration(decl) => {
-                        extract_literals_from_var_decl(decl, source, literals);
-                    }
-                    _ => {}
+                if let ForStatementInit::VariableDeclaration(decl) = init {
+                    extract_literals_from_var_decl(decl, source, literals);
                 }
             }
             if let Some(test) = &for_stmt.test {

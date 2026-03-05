@@ -53,12 +53,12 @@ impl Default for PluginPortRegistry {
 
 impl PluginPortRegistry {
     pub fn new() -> Self {
-        let registry = Self {
+        
+        // registry.register_builtin_plugins();
+        Self {
             output_specs: HashMap::new(),
             input_specs: HashMap::new(),
-        };
-        // registry.register_builtin_plugins();
-        registry
+        }
     }
 
     #[allow(dead_code)]
@@ -343,8 +343,7 @@ impl DataFlowResolver {
         let remaining = &path_parts[1..];
 
         // Handle array wildcard: "field[*].subfield"
-        if part.ends_with("[*]") {
-            let field_name = &part[..part.len() - 3];
+        if let Some(field_name) = part.strip_suffix("[*]") {
             let arr = data.get(field_name)?.as_array()?;
 
             if remaining.is_empty() {
@@ -446,6 +445,7 @@ impl Default for ArtifactSinkConfig {
 
 /// Artifact sink result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ArtifactSinkResult {
     pub findings_created: Vec<String>,
     pub evidence_created: Vec<String>,
@@ -457,20 +457,6 @@ pub struct ArtifactSinkResult {
     pub errors: Vec<String>,
 }
 
-impl Default for ArtifactSinkResult {
-    fn default() -> Self {
-        Self {
-            findings_created: vec![],
-            evidence_created: vec![],
-            assets_created: vec![],
-            assets_updated: vec![],
-            subdomains_imported: 0,
-            live_hosts_imported: 0,
-            skipped_duplicates: 0,
-            errors: vec![],
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

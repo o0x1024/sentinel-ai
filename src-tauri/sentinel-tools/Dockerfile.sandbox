@@ -1,161 +1,292 @@
-# Sentinel AI Security Sandbox (Minimal Version)
-# Lightweight version with essential tools only
-# Based on Kali Linux
-FROM kalilinux/kali-rolling
+# -----------------------------------------------------------------------------
+# Sentinel AI Security Sandbox (Optimized + PWN QEMU Edition)
+# -----------------------------------------------------------------------------
+FROM kalilinux/kali-rolling AS go-builder
 
-# Prevent interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=C.UTF-8
-
-# Configure apt sources - clear duplicates and use reliable mirrors
 RUN rm -f /etc/apt/sources.list.d/* && \
     echo "deb http://mirrors.aliyun.com/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
     echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99-retries && \
-    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries && \
-    apt-get update --fix-missing || true
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries
 
-# Install essential tools (excluding jq which may have network issues)
-RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
-    # Basic utilities
-    curl \
-    wget \
-    git \
-    ca-certificates \
-    # Network tools (most already in Kali) 
-    netcat-traditional \
-    nmap \
-    dnsutils \
-    iputils-ping \
-    # Development
-    python3 \
-    python3-pip \
-    gcc \
-    gdb \
-    # Archive tools
-    unzip \
-    zip \
-    p7zip-full \
-    unrar \
-    # CTF basic tools
-    file \
-    binutils \
-    xxd \
-    binwalk \
-    steghide \
-    exiftool \
-    bsdmainutils \
-    # Crypto and encoding
-    openssl \
-    # Image processing and steganography
-    imagemagick \
-    pngcheck \
-    # Audio processing
-    sox \
-    ffmpeg \
-    # Document processing
-    poppler-utils \
-    antiword \
-    # Forensics tools
-    foremost \
-    scalpel \
-    testdisk \
-    # OCR
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    # Password cracking
-    john \
-    hashcat \
-    # Other utilities
-    qrencode \
-    zbar-tools \
-    hexedit \
-    tree \
-    mc \
-    htop \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
-
-# Install kali forensics tools (with better error handling)
-RUN  apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends --fix-missing kali-tools-forensics && \
-    (apt-get install -y --no-install-recommends --fix-missing kali-tools-reverse-engineering || \
-     echo "Warning: kali-tools-reverse-engineering installation failed, trying alternative approach..." && \
-     apt-get install -y --no-install-recommends --fix-missing \
-         apktool binwalk bytecode-viewer dex2jar jd-gui radare2 && \
-     echo "Installed alternative reverse engineering tools") && \
-     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
-
-# Install jq separately with retry mechanism
 RUN apt-get update && \
-    (apt-get install -y --no-install-recommends jq || \
-     (sleep 5 && apt-get install -y --no-install-recommends jq) || \
-     (sleep 10 && apt-get install -y --no-install-recommends jq)) && \
-     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+    apt-get install -y --no-install-recommends --fix-missing \
+    golang-go git ca-certificates build-essential binutils libpcap-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
-# Install essential Python CTF libraries and document processing
-# Note: numpy/scipy are pre-installed by system, don't override
-RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
-    requests \
-    pwntools \
-    pycryptodome \
-    cryptography \
-    opencv-python \
-    Pillow \
-    stegano \
-    pyzbar \
-    qrcode \
-    beautifulsoup4 \
-    lxml \
-    python-docx \
-    openpyxl \
-    python-pptx \
-    oletools \
-    msoffcrypto-tool \
-    gmpy2 \
-    sympy \
-    numpy \
-    scipy \
-    scapy \
-    z3-solver \
-    tqdm \
-    colorama \
-    r2pipe
+ENV GOPATH=/tmp/go
+ENV GOBIN=/opt/go-bin
 
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+RUN mkdir -p /tmp/go /opt/go-bin && \
+    export CGO_ENABLED=1 && \
+    go install github.com/ffuf/ffuf/v2@latest && \
+    go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
+    go install github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install github.com/projectdiscovery/katana/cmd/katana@latest && \
+    go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest && \
+    go install github.com/tomnomnom/waybackurls@latest && \
+    go install github.com/tomnomnom/gf@latest && \
+    go install github.com/tomnomnom/httprobe@latest && \
+    go install github.com/lc/gau/v2/cmd/gau@latest && \
+    go install github.com/OJ/gobuster/v3@latest && \
+    strip /opt/go-bin/* 2>/dev/null || true
 
-# Install PHP for web CTF challenges (Kali default version)
-# Clean up any extra sources added by nodesource script
-RUN rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null || true && \
-    echo "deb http://mirrors.aliyun.com/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    php \
-    php-cli \
-    php-curl \
-    php-mbstring \
-    php-xml \
-    php-zip \
-    php-mysql \
-    php-gd \
-    php-sqlite3 \
-    php-intl \
-    php-bcmath \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
 
-# Create non-root user for execution
-RUN useradd -m -s /bin/bash sandbox && \
-    mkdir -p /workspace && \
-    chown sandbox:sandbox /workspace
+FROM kalilinux/kali-rolling AS native-builder
 
-# Set working directory
+RUN rm -f /etc/apt/sources.list.d/* && \
+    echo "deb http://mirrors.aliyun.com/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
+    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99-retries && \
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends --fix-missing \
+    cargo pkg-config libssl-dev \
+    liblzma-dev \
+    build-essential cmake clang git ca-certificates binutils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+
+RUN set -eux; \
+    cargo install --locked pwninit; \
+    git clone --depth 1 https://github.com/zrax/pycdc.git /tmp/pycdc; \
+    cmake -S /tmp/pycdc -B /tmp/pycdc/build; \
+    cmake --build /tmp/pycdc/build -j"$(nproc)"; \
+    mkdir -p /opt/tool-bin; \
+    cp /root/.cargo/bin/pwninit /opt/tool-bin/pwninit; \
+    cp /tmp/pycdc/build/pycdc /opt/tool-bin/pycdc; \
+    cp /tmp/pycdc/build/pycdas /opt/tool-bin/pycdas; \
+    strip /opt/tool-bin/* 2>/dev/null || true; \
+    rm -rf /tmp/pycdc
+
+
+FROM kalilinux/kali-rolling
+
+ARG ENABLE_PY2=1
+ARG ENABLE_PY_HEAVY=1
+ARG ENABLE_WEB_STACK=1
+ARG ENABLE_FORENSICS_STACK=0
+ARG ENABLE_HEAVY_CRACK_TOOLS=0
+ARG ENABLE_WINE=0
+ARG ENABLE_QEMU_CROSS_LIBC=1
+ARG ENABLE_MAVEN=1
+
+RUN rm -f /etc/apt/sources.list.d/* && \
+    echo "deb http://mirrors.aliyun.com/kali kali-rolling main non-free contrib non-free-firmware" > /etc/apt/sources.list && \
+    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99-retries && \
+    echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/99-retries
+
+# Core runtime + optional feature groups controlled by build args.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ "$arch" = "amd64" ]; then \
+      dpkg --add-architecture i386; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends --fix-missing \
+      curl wget git ca-certificates \
+      netcat-openbsd nmap dnsutils iputils-ping \
+      openssh-client openssh-server sshpass sshfs \
+      build-essential gcc gdb gdb-multiarch make \
+      python3 python3-pip python3-dev python3-venv \
+      libffi-dev libssl-dev libxml2-dev libxslt-dev libjpeg-dev zlib1g-dev \
+      unzip zip p7zip-full unrar-free \
+      file binutils binutils-multiarch xxd bsdmainutils checksec \
+      procps htop tree mc \
+      steghide exiftool foremost testdisk radare2 \
+      openssl jq upx-ucl \
+      ruby-full patchelf strace ltrace \
+      qemu-user qemu-user-binfmt binfmt-support \
+      socat rlwrap tmux ncurses-term \
+      sudo nano vim \
+      masscan \
+      net-tools iproute2 ripgrep; \
+    if [ "$ENABLE_PY2" = "1" ]; then \
+      apt-get install -y --no-install-recommends --fix-missing python2 python2-dev; \
+    fi; \
+    if [ "$ENABLE_WEB_STACK" = "1" ]; then \
+      apt-get install -y --no-install-recommends --fix-missing \
+        default-jre-headless \
+        nodejs npm \
+        php-cli php-curl php-mbstring php-xml php-zip php-mysql php-sqlite3 php-bcmath; \
+    fi; \
+    if [ "$ENABLE_FORENSICS_STACK" = "1" ]; then \
+      apt-get install -y --no-install-recommends --fix-missing \
+        apktool ffmpeg sox poppler-utils antiword \
+        tesseract-ocr tesseract-ocr-eng qrencode zbar-tools; \
+    fi; \
+    if [ "$ENABLE_HEAVY_CRACK_TOOLS" = "1" ]; then \
+      apt-get install -y --no-install-recommends --fix-missing \
+        hashcat john hydra dirb wordlists; \
+    fi; \
+    if [ "$ENABLE_MAVEN" = "1" ]; then \
+      apt-get install -y --no-install-recommends --fix-missing maven; \
+    fi; \
+    if [ "$ENABLE_WINE" = "1" ] && [ "$arch" = "amd64" ]; then \
+      apt-get install -y --no-install-recommends --fix-missing \
+        gcc-multilib g++-multilib \
+        libc6:i386 libstdc++6:i386 zlib1g:i386 \
+        wine; \
+    fi; \
+    if [ "$ENABLE_QEMU_CROSS_LIBC" = "1" ]; then \
+      for pkg in \
+        libc6-i386-cross \
+        libc6-amd64-cross \
+        libc6-armhf-cross \
+        libc6-arm64-cross \
+        libc6-riscv64-cross \
+        libc6-ppc64el-cross; do \
+        if apt-cache show "$pkg" >/dev/null 2>&1; then \
+          apt-get install -y --no-install-recommends --fix-missing "$pkg"; \
+        fi; \
+      done; \
+    fi; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*
+
+# Python2 is optional and disabled by default.
+RUN set -eux; \
+    if [ "$ENABLE_PY2" = "1" ]; then \
+      curl https://bootstrap.pypa.io/pip/2.7/get-pip.py -o /tmp/get-pip.py; \
+      python2 /tmp/get-pip.py; \
+      rm -f /tmp/get-pip.py; \
+      pip2 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple; \
+      pip2 install --no-cache-dir requests scapy; \
+    fi
+
+# PWN enhancement: GDB GEF
+RUN wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py && \
+    echo source ~/.gdbinit-gef.py >> ~/.gdbinit
+
+# Web tools (lightweight)
+RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap && \
+    ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap && \
+    rm -rf /opt/sqlmap/.git
+
+RUN git clone --depth 1 https://github.com/maurosoria/dirsearch.git /opt/dirsearch && \
+    ln -s /opt/dirsearch/dirsearch.py /usr/local/bin/dirsearch && \
+    rm -rf /opt/dirsearch/.git
+
+# Python libraries (base + optional heavy stack)
+RUN set -eux; \
+    pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple; \
+    pip3 config set global.timeout 120; \
+    pip3 install --no-cache-dir --break-system-packages \
+      requests pwntools scapy tqdm colorama pycryptodome cryptography \
+      Pillow stegano pyzbar qrcode beautifulsoup4 lxml \
+      python-docx openpyxl python-pptx oletools msoffcrypto-tool \
+      gmpy2 z3-solver r2pipe ROPgadget one_gadget ropper \
+      uncompyle6 decompyle3 xdis; \
+    if [ "$ENABLE_PY_HEAVY" = "1" ]; then \
+      pip3 install --no-cache-dir --break-system-packages \
+        opencv-python-headless numpy scipy sympy; \
+    fi
+
+# pyinstxtractor is not published as a pip package.
+RUN git clone --depth 1 https://github.com/extremecoders-re/pyinstxtractor.git /opt/pyinstxtractor && \
+    cp /opt/pyinstxtractor/pyinstxtractor.py /usr/local/bin/pyinstxtractor && \
+    chmod +x /usr/local/bin/pyinstxtractor && \
+    rm -rf /opt/pyinstxtractor/.git
+
+RUN gem install --no-document one_gadget seccomp-tools && \
+    gem cleanup 2>/dev/null || true
+
+# libc resolver corpus for leak-based exploitation workflows
+RUN git clone --depth 1 https://github.com/niklasb/libc-database.git /opt/libc-database
+
+COPY --from=go-builder /opt/go-bin/ /usr/local/bin/
+COPY --from=native-builder /opt/tool-bin/ /usr/local/bin/
+
+# qemu-binfmt compatibility for pwn scripts and legacy expectations.
+RUN set -eux; \
+    mkdir -p /etc/qemu-binfmt; \
+    if [ -d /usr/i686-linux-gnu ] && [ ! -e /usr/i386-linux-gnu ]; then ln -s /usr/i686-linux-gnu /usr/i386-linux-gnu; fi; \
+    if [ -d /usr/lib/i386-linux-gnu ] && [ ! -e /usr/i386-linux-gnu ]; then ln -s /usr/lib/i386-linux-gnu /usr/i386-linux-gnu; fi; \
+    if [ -d /usr/lib/x86_64-linux-gnu ] && [ ! -e /usr/x86_64-linux-gnu ]; then ln -s /usr/lib/x86_64-linux-gnu /usr/x86_64-linux-gnu; fi; \
+    if [ -d /usr/lib/aarch64-linux-gnu ] && [ ! -e /usr/aarch64-linux-gnu ]; then ln -s /usr/lib/aarch64-linux-gnu /usr/aarch64-linux-gnu; fi; \
+    if [ -d /usr/lib/arm-linux-gnueabihf ] && [ ! -e /usr/arm-linux-gnueabihf ]; then ln -s /usr/lib/arm-linux-gnueabihf /usr/arm-linux-gnueabihf; fi; \
+    if [ -d /usr/lib/riscv64-linux-gnu ] && [ ! -e /usr/riscv64-linux-gnu ]; then ln -s /usr/lib/riscv64-linux-gnu /usr/riscv64-linux-gnu; fi; \
+    if [ -d /usr/lib/powerpc64le-linux-gnu ] && [ ! -e /usr/powerpc64le-linux-gnu ]; then ln -s /usr/lib/powerpc64le-linux-gnu /usr/powerpc64le-linux-gnu; fi; \
+    for prefix in /usr/i386-linux-gnu /usr/i686-linux-gnu /usr/lib/i386-linux-gnu; do [ -d "$prefix" ] && ln -sfn "$prefix" /etc/qemu-binfmt/i386 && break; done; \
+    for prefix in /usr/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu; do [ -d "$prefix" ] && ln -sfn "$prefix" /etc/qemu-binfmt/x86_64 && break; done; \
+    for prefix in /usr/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu; do [ -d "$prefix" ] && ln -sfn "$prefix" /etc/qemu-binfmt/aarch64 && break; done; \
+    for prefix in /usr/arm-linux-gnueabihf /usr/lib/arm-linux-gnueabihf; do [ -d "$prefix" ] && ln -sfn "$prefix" /etc/qemu-binfmt/arm && break; done; \
+    for prefix in /usr/riscv64-linux-gnu /usr/lib/riscv64-linux-gnu; do [ -d "$prefix" ] && ln -sfn "$prefix" /etc/qemu-binfmt/riscv64 && break; done; \
+    for prefix in /usr/powerpc64le-linux-gnu /usr/lib/powerpc64le-linux-gnu; do [ -d "$prefix" ] && ln -sfn "$prefix" /etc/qemu-binfmt/ppc64le && break; done
+
+# Unified helper for running foreign-arch binaries with qemu user-mode.
+RUN cat >/usr/local/bin/qemu-run <<'EOF' && chmod +x /usr/local/bin/qemu-run
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: qemu-run <binary> [args...]" >&2
+  exit 2
+fi
+
+bin="$1"
+shift
+
+if [ ! -f "$bin" ]; then
+  echo "qemu-run: binary not found: $bin" >&2
+  exit 1
+fi
+
+machine="$(LC_ALL=C readelf -h "$bin" 2>/dev/null | awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2; exit}')"
+qemu_bin=""
+prefix=""
+
+case "$machine" in
+  "Intel 80386")
+    qemu_bin="qemu-i386"
+    prefix="/etc/qemu-binfmt/i386"
+    ;;
+  "Advanced Micro Devices X86-64")
+    qemu_bin="qemu-x86_64"
+    prefix="/etc/qemu-binfmt/x86_64"
+    ;;
+  "AArch64")
+    qemu_bin="qemu-aarch64"
+    prefix="/etc/qemu-binfmt/aarch64"
+    ;;
+  "ARM")
+    qemu_bin="qemu-arm"
+    prefix="/etc/qemu-binfmt/arm"
+    ;;
+  "RISC-V")
+    qemu_bin="qemu-riscv64"
+    prefix="/etc/qemu-binfmt/riscv64"
+    ;;
+  "PowerPC64")
+    qemu_bin="qemu-ppc64le"
+    prefix="/etc/qemu-binfmt/ppc64le"
+    ;;
+  *)
+    echo "qemu-run: unsupported ELF machine: ${machine:-unknown}" >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "${QEMU_LD_PREFIX:-}" ]; then
+  prefix="$QEMU_LD_PREFIX"
+fi
+
+if [ -n "$prefix" ] && [ -d "$prefix" ]; then
+  exec "$qemu_bin" -L "$prefix" "$bin" "$@"
+fi
+exec "$qemu_bin" "$bin" "$@"
+EOF
+
+RUN rm -rf /usr/share/doc /usr/share/man /usr/share/locale /usr/share/info /usr/share/lintian /usr/share/linda
+RUN rm -rf /root/.cache /root/.gem /root/.npm /root/.cargo
+RUN find /usr/lib/python* /usr/local/lib/python* -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+RUN find /usr/lib/python* /usr/local/lib/python* -name "*.py[co]" -delete 2>/dev/null || true
+
+RUN mkdir -p /workspace /workspace/script
+
+ENV TERM=xterm-256color
+
 WORKDIR /workspace
-
-# Switch to non-root user
-USER sandbox
-
-# Set PATH to include user-installed Python packages
-ENV PATH="/home/sandbox/.local/bin:$PATH"
-
-# Default command
+USER root
 CMD ["/bin/bash"]

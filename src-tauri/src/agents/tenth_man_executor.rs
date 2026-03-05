@@ -169,7 +169,11 @@ async fn build_history_context(
             }
 
             // Format conversation history
-            if !append_with_budget(&mut history, "=== Conversation History ===\n", &mut remaining) {
+            if !append_with_budget(
+                &mut history,
+                "=== Conversation History ===\n",
+                &mut remaining,
+            ) {
                 truncated = true;
             }
             for (idx, msg) in context_messages
@@ -182,14 +186,11 @@ async fn build_history_context(
                     truncated = true;
                     break;
                 }
-                let content = truncate_utf8_at_boundary(&msg.content, FULL_HISTORY_PER_MESSAGE_MAX_CHARS);
+                let content =
+                    truncate_utf8_at_boundary(&msg.content, FULL_HISTORY_PER_MESSAGE_MAX_CHARS);
                 if !append_with_budget(
                     &mut history,
-                    &format!(
-                    "\n[Message #{}] {}:\n",
-                    idx,
-                    msg.role.to_uppercase()
-                ),
+                    &format!("\n[Message #{}] {}:\n", idx, msg.role.to_uppercase()),
                     &mut remaining,
                 ) {
                     truncated = true;

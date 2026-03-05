@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::commands::team_v3_artifact_store::{
-    persist_team_v3_task_output_artifact, TeamV3ArtifactFileRef,
-};
 use crate::agents::executor::{execute_agent as execute_team_agent, AgentExecuteParams};
 use crate::agents::tool_router::{ToolConfig, ToolSelectionStrategy};
 use crate::agents::ContextPolicy;
+use crate::commands::team_v3_artifact_store::{
+    persist_team_v3_task_output_artifact, TeamV3ArtifactFileRef,
+};
 use crate::services::ai::AiServiceManager;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -26,8 +26,9 @@ type AiState<'r> = State<'r, Arc<AiServiceManager>>;
 static TEAM_EXECUTION_CANCELLATIONS: LazyLock<Mutex<HashMap<String, (u64, CancellationToken)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static TEAM_EXECUTION_GENERATION: AtomicU64 = AtomicU64::new(0);
-static TEAM_V3_BLACKBOARD_SESSION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static TEAM_V3_BLACKBOARD_SESSION_LOCKS: LazyLock<
+    Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const TEAM_V3_BLACKBOARD_INLINE_CHAR_LIMIT: usize = 2_000;
 const TEAM_V3_STRUCTURED_BACKFILL_SCAN_LIMIT: i64 = 2_000;
@@ -2660,8 +2661,10 @@ fn format_blackboard_entry(entry: &TeamV3BlackboardEntry, max_chars: usize) -> S
             .and_then(Value::as_u64)
             .unwrap_or(0);
         let revision = blackboard_revision_from_metadata_value(&entry.metadata).unwrap_or(0);
-        let summary_content =
-            truncate_chars(collapse_whitespace(summary).as_str(), max_chars.saturating_sub(40));
+        let summary_content = truncate_chars(
+            collapse_whitespace(summary).as_str(),
+            max_chars.saturating_sub(40),
+        );
         let path_content = truncate_chars(file_path, 140);
         return format!(
             "- [{}][rev={}][agent={}][task={}][bytes={}] {} | file={}",
@@ -2737,9 +2740,7 @@ struct TeamV3CheckpointFacts {
     highlights: Vec<String>,
 }
 
-fn parse_checkpoint_content_fields(
-    content: &str,
-) -> (Option<String>, Option<String>, Vec<String>) {
+fn parse_checkpoint_content_fields(content: &str) -> (Option<String>, Option<String>, Vec<String>) {
     let mut task_key = None;
     let mut title = None;
     let mut points = Vec::new();
@@ -2771,7 +2772,12 @@ fn parse_checkpoint_content_fields(
 
 fn infer_checkpoint_structured_fields(
     points: &[String],
-) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     let mut conclusion = None;
     let mut evidence = None;
     let mut risk = None;
@@ -2820,8 +2826,18 @@ fn is_placeholder_fact(input: &str) -> bool {
         .to_string();
     matches!(
         normalized.as_str(),
-        "结论" | "依据" | "证据" | "风险" | "下一步" | "建议" | "行动" | "Conclusion"
-            | "Evidence" | "Risk" | "Next" | "Recommendation"
+        "结论"
+            | "依据"
+            | "证据"
+            | "风险"
+            | "下一步"
+            | "建议"
+            | "行动"
+            | "Conclusion"
+            | "Evidence"
+            | "Risk"
+            | "Next"
+            | "Recommendation"
     )
 }
 
@@ -2870,31 +2886,31 @@ fn extract_checkpoint_facts(entry: &TeamV3BlackboardEntry) -> TeamV3CheckpointFa
 
     let mut conclusion = sanitize_structured_fact_value(
         metadata_facts
-        .and_then(|facts| facts.get("conclusion"))
-        .and_then(Value::as_str)
-        .map(collapse_whitespace)
-        .filter(|value| !value.is_empty()),
+            .and_then(|facts| facts.get("conclusion"))
+            .and_then(Value::as_str)
+            .map(collapse_whitespace)
+            .filter(|value| !value.is_empty()),
     );
     let mut evidence = sanitize_structured_fact_value(
         metadata_facts
-        .and_then(|facts| facts.get("evidence"))
-        .and_then(Value::as_str)
-        .map(collapse_whitespace)
-        .filter(|value| !value.is_empty()),
+            .and_then(|facts| facts.get("evidence"))
+            .and_then(Value::as_str)
+            .map(collapse_whitespace)
+            .filter(|value| !value.is_empty()),
     );
     let mut risk = sanitize_structured_fact_value(
         metadata_facts
-        .and_then(|facts| facts.get("risk"))
-        .and_then(Value::as_str)
-        .map(collapse_whitespace)
-        .filter(|value| !value.is_empty()),
+            .and_then(|facts| facts.get("risk"))
+            .and_then(Value::as_str)
+            .map(collapse_whitespace)
+            .filter(|value| !value.is_empty()),
     );
     let mut next_step = sanitize_structured_fact_value(
         metadata_facts
-        .and_then(|facts| facts.get("next_step"))
-        .and_then(Value::as_str)
-        .map(collapse_whitespace)
-        .filter(|value| !value.is_empty()),
+            .and_then(|facts| facts.get("next_step"))
+            .and_then(Value::as_str)
+            .map(collapse_whitespace)
+            .filter(|value| !value.is_empty()),
     );
 
     let (inferred_conclusion, inferred_evidence, inferred_risk, inferred_next_step) =
@@ -2956,7 +2972,10 @@ fn format_checkpoint_entry_for_prompt(entry: &TeamV3BlackboardEntry) -> String {
         .unwrap_or("-");
     let facts = extract_checkpoint_facts(entry);
     let mut fields = vec![
-        format!("- [checkpoint][rev={}][agent={}][task={}]", revision, agent, task),
+        format!(
+            "- [checkpoint][rev={}][agent={}][task={}]",
+            revision, agent, task
+        ),
         format!("task_key={}", facts.task_key),
         format!("title={}", facts.title),
     ];
@@ -3072,7 +3091,10 @@ fn format_structured_memory_entry_for_prompt(entry: &TeamV3BlackboardEntry) -> S
         .filter(|value| !value.is_empty());
 
     let mut fields = vec![
-        format!("- [structured_fact][rev={}][agent={}][task={}]", revision, agent, task),
+        format!(
+            "- [structured_fact][rev={}][agent={}][task={}]",
+            revision, agent, task
+        ),
         format!("task_key={}", task_key),
         format!("title={}", title),
     ];
@@ -3386,7 +3408,13 @@ struct TeamV3StructuredFactPayload {
 
 fn parse_fact_fields_from_value(
     facts: &Value,
-) -> (Option<String>, Option<String>, Option<String>, Option<String>, Vec<String>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Vec<String>,
+) {
     let conclusion = sanitize_structured_fact_value(
         facts
             .get("conclusion")
@@ -3457,8 +3485,7 @@ fn derive_security_tags_from_texts(texts: &[&str]) -> Vec<String> {
     if tags.is_empty() {
         tags.push("general");
     }
-    tags
-        .into_iter()
+    tags.into_iter()
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
 }
@@ -3681,7 +3708,8 @@ async fn backfill_team_v3_structured_memory_from_checkpoints(
         if existing_source_checkpoint_ids.contains(checkpoint.id.as_str()) {
             continue;
         }
-        let Some(structured) = build_structured_fact_payload_from_checkpoint_entry(checkpoint) else {
+        let Some(structured) = build_structured_fact_payload_from_checkpoint_entry(checkpoint)
+        else {
             continue;
         };
         let task_id_for_key = checkpoint
@@ -3695,7 +3723,8 @@ async fn backfill_team_v3_structured_memory_from_checkpoints(
         if existing_structured_task_keys.contains(dedupe_key.as_str()) {
             continue;
         }
-        let source_revision = blackboard_revision_from_metadata_value(&checkpoint.metadata).unwrap_or(0);
+        let source_revision =
+            blackboard_revision_from_metadata_value(&checkpoint.metadata).unwrap_or(0);
         let structured_meta = json!({
             "task_key": task_key,
             "task_title": structured.task_title,
@@ -4793,7 +4822,9 @@ async fn run_team_v3_execution_orchestrator(
         }
 
         let mut join_set = JoinSet::new();
-        for (index, (task, dependencies, dependency_task_keys)) in ready_tasks.into_iter().enumerate() {
+        for (index, (task, dependencies, dependency_task_keys)) in
+            ready_tasks.into_iter().enumerate()
+        {
             let member_id = select_team_member_for_task(&task, &members, index);
             let member_system_prompt = build_team_member_execution_system_prompt(
                 member_id.as_str(),
@@ -4847,14 +4878,13 @@ async fn run_team_v3_execution_orchestrator(
                 if is_summary_task { 96 } else { 48 },
             )
             .await?;
-            let task_query =
-                TeamV3PromptQuery::for_task(
-                    goal_text.as_str(),
-                    user_input.as_str(),
-                    &task,
-                    dependencies.as_slice(),
-                    dependency_task_keys.as_slice(),
-                );
+            let task_query = TeamV3PromptQuery::for_task(
+                goal_text.as_str(),
+                user_input.as_str(),
+                &task,
+                dependencies.as_slice(),
+                dependency_task_keys.as_slice(),
+            );
             let blackboard_context_result = if is_summary_task {
                 build_blackboard_checkpoint_context(&blackboard_entries, &task_query)
             } else {
@@ -4991,16 +5021,15 @@ async fn run_team_v3_execution_orchestrator(
                 member_id,
                 is_summary_task,
                 execution_result,
-            ) =
-                match joined {
-                    Ok(result) => result,
-                    Err(e) => {
-                        if wave_error.is_none() {
-                            wave_error = Some(format!("Team 并行执行任务失败: {}", e));
-                        }
-                        continue;
+            ) = match joined {
+                Ok(result) => result,
+                Err(e) => {
+                    if wave_error.is_none() {
+                        wave_error = Some(format!("Team 并行执行任务失败: {}", e));
                     }
-                };
+                    continue;
+                }
+            };
 
             match execution_result {
                 Ok(output) => {
@@ -6561,22 +6590,18 @@ mod tests {
                 .unwrap_or_default(),
             "结论: 已发现 338 个 Controller，可生成全量路由映射。"
         );
-        assert!(
-            payload
-                .facts
-                .get("risk")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .contains("风险:")
-        );
-        assert!(
-            payload
-                .facts
-                .get("next_step")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .contains("下一步:")
-        );
+        assert!(payload
+            .facts
+            .get("risk")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("风险:"));
+        assert!(payload
+            .facts
+            .get("next_step")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("下一步:"));
     }
 
     #[test]
@@ -6652,7 +6677,10 @@ mod tests {
             ],
         );
         let structured = build_structured_fact_payload_from_checkpoint_entry(&checkpoint);
-        assert!(structured.is_some(), "meaningful checkpoint should be backfilled");
+        assert!(
+            structured.is_some(),
+            "meaningful checkpoint should be backfilled"
+        );
         let structured = structured.unwrap();
         assert!(structured.content.contains("router-security-audit"));
         assert!(structured.tags.iter().any(|tag| tag == "sql-injection"));

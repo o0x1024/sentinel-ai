@@ -163,8 +163,8 @@ impl DictionaryService {
                     .bind(&dictionary.source_url)
                     .bind(&dictionary.tags)
                     .bind(&dictionary.metadata)
-                    .bind(&dictionary.created_at)
-                    .bind(&dictionary.updated_at)
+                    .bind(dictionary.created_at)
+                    .bind(dictionary.updated_at)
             }
         );
 
@@ -295,7 +295,7 @@ impl DictionaryService {
                     .bind(&dictionary.source_url)
                     .bind(&dictionary.tags)
                     .bind(&dictionary.metadata)
-                    .bind(&dictionary.updated_at)
+                    .bind(dictionary.updated_at)
                     .bind(&dictionary.id)
             }
         );
@@ -345,7 +345,7 @@ impl DictionaryService {
                         .bind(dict_word.weight)
                         .bind(&dict_word.category)
                         .bind(&dict_word.metadata)
-                        .bind(&dict_word.created_at)
+                        .bind(dict_word.created_at)
                 }
             );
 
@@ -677,8 +677,8 @@ impl DictionaryService {
                     .bind(&set.service_type)
                     .bind(&set.scenario)
                     .bind(set.is_active)
-                    .bind(&set.created_at)
-                    .bind(&set.updated_at)
+                    .bind(set.created_at)
+                    .bind(set.updated_at)
             }
         );
 
@@ -706,7 +706,7 @@ impl DictionaryService {
                     .bind(&relation.dictionary_id)
                     .bind(relation.priority)
                     .bind(relation.is_enabled)
-                    .bind(&relation.created_at)
+                    .bind(relation.created_at)
             }
         );
 
