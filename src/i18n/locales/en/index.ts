@@ -453,7 +453,6 @@ export default {
     tabs: {
       vulnerabilities: 'Vulnerabilities',
       scanTasks: 'Scan Tasks',
-      codeAudit: 'Code Audit',
       llmSecurity: 'LLM Security',
       assets: 'Assets'
     }

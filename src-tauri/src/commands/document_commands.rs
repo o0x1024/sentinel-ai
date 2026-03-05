@@ -306,7 +306,7 @@ async fn maybe_auto_cleanup(app_handle: &AppHandle, index: &mut UploadIndex) -> 
     });
 
     if removed > 0 {
-        tracing::info!("[upload-audit] auto-cleanup removed {} files", removed);
+        tracing::info!("[upload-log] auto-cleanup removed {} files", removed);
     }
     Ok(())
 }
@@ -527,7 +527,7 @@ pub async fn upload_document_attachment(
     {
         let virtual_path = format!("file://{}", existing.file_id);
         tracing::info!(
-            "[upload-audit] dedup hit file_id={} source={} conv={}",
+            "[upload-log] dedup hit file_id={} source={} conv={}",
             existing.file_id,
             file_path,
             conversation_id.clone().unwrap_or_else(|| "-".to_string())
@@ -600,7 +600,7 @@ pub async fn upload_document_attachment(
     write_upload_index(&root, &index).await?;
 
     tracing::info!(
-        "[upload-audit] stored file_id={} path={} size={} conv={}",
+        "[upload-log] stored file_id={} path={} size={} conv={}",
         file_id,
         stored_host_path_str,
         file_size,
@@ -754,13 +754,13 @@ pub async fn clear_uploaded_files(
         clear_host_context_cache()?;
         if let Err(e) = clear_container_workspace_cache().await {
             tracing::warn!(
-                "[upload-audit] failed to clear container workspace cache: {}",
+                "[upload-log] failed to clear container workspace cache: {}",
                 e
             );
         }
 
         tracing::info!(
-            "[upload-audit] full clear completed, removed files count={}",
+            "[upload-log] full clear completed, removed files count={}",
             removed_count
         );
         return Ok(removed_count);
@@ -789,7 +789,7 @@ pub async fn clear_uploaded_files(
     cleanup_empty_date_dirs(&root);
 
     tracing::info!(
-        "[upload-audit] cleared files count={} date={:?} conv={:?}",
+        "[upload-log] cleared files count={} date={:?} conv={:?}",
         removed_count,
         date,
         conversation_id

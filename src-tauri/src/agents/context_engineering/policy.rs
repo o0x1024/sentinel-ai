@@ -53,6 +53,7 @@ pub struct ContextPolicy {
     pub include_run_state: bool,
     pub include_document_attachments: bool,
     pub include_skill_instructions: bool,
+    pub include_stuck_resolution_rule: bool,
     pub run_state_max_digests: usize,
     pub run_state_max_chars: usize,
     pub task_brief_max_chars: usize,
@@ -71,6 +72,7 @@ impl Default for ContextPolicy {
             include_run_state: true,
             include_document_attachments: true,
             include_skill_instructions: true,
+            include_stuck_resolution_rule: true,
             run_state_max_digests: 6,
             run_state_max_chars: 2400,
             task_brief_max_chars: 600,
@@ -97,6 +99,7 @@ impl ContextPolicy {
             include_run_state: true,
             include_document_attachments: false,
             include_skill_instructions: false,
+            include_stuck_resolution_rule: true,
             run_state_max_digests: 4,
             run_state_max_chars: 1600,
             task_brief_max_chars: 400,
@@ -112,58 +115,4 @@ impl ContextPolicy {
         }
     }
 
-    /// Subagent in audit mode: keep subagent scope isolation, but provide
-    /// larger budgets and more run-state context for evidence-heavy analysis.
-    pub fn subagent_audit() -> Self {
-        Self {
-            scope: ContextScope::Subagent,
-            include_working_dir: false,
-            include_context_storage: false,
-            include_task_mainline: false,
-            include_run_state: true,
-            include_document_attachments: false,
-            include_skill_instructions: false,
-            run_state_max_digests: 8,
-            run_state_max_chars: 3200,
-            task_brief_max_chars: 600,
-            layer_max_chars: 14000,
-            feature_context_packet_v2: true,
-            budget: ContextBudgetPolicy {
-                system_max_tokens: 4200,
-                run_state_max_tokens: 2200,
-                window_max_tokens: 12000,
-                retrieval_max_tokens: 2200,
-                tool_digest_max_tokens: 1800,
-            },
-        }
-    }
-
-    /// Audit mode: larger budgets to accommodate long multi-phase code analysis.
-    /// - More tool digests (many audit tools active simultaneously)
-    /// - Larger run state (tracks phase progress, coverage, found patterns)
-    /// - Larger context window (long code snippets and file content)
-    /// - Larger system budget (three-phase audit instruction is verbose)
-    pub fn audit() -> Self {
-        Self {
-            scope: ContextScope::Agent,
-            include_working_dir: true,
-            include_context_storage: true,
-            include_task_mainline: true,
-            include_run_state: true,
-            include_document_attachments: true,
-            include_skill_instructions: true,
-            run_state_max_digests: 12,
-            run_state_max_chars: 4800,
-            task_brief_max_chars: 800,
-            layer_max_chars: 20000,
-            feature_context_packet_v2: true,
-            budget: ContextBudgetPolicy {
-                system_max_tokens: 7000,
-                run_state_max_tokens: 3600,
-                window_max_tokens: 20000,
-                retrieval_max_tokens: 3600,
-                tool_digest_max_tokens: 3200,
-            },
-        }
-    }
 }

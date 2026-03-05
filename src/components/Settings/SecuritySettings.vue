@@ -34,15 +34,6 @@
         </div>
         <div class="stat-desc">{{ t('settings.security.authMethod') }}: {{ getAuthMethodText() }}</div>
       </div>
-      
-      <div class="stat bg-base-100 rounded-lg">
-        <div class="stat-figure text-2xl">
-          <i class="fas fa-history"></i>
-        </div>
-        <div class="stat-title">{{ t('settings.security.lastAudit') }}</div>
-        <div class="stat-value text-sm">{{ formatDate(securityStatus.lastAudit) }}</div>
-        <div class="stat-desc">{{ securityStatus.auditIssues || 0 }} {{ t('settings.security.issues') }}</div>
-      </div>
     </div>
 
     <!-- 身份验证设置 -->
@@ -466,74 +457,18 @@
       </div>
     </div>
 
-    <!-- 审计和日志 -->
+    <!-- 日志设置 -->
     <div class="card bg-base-100 shadow-sm mb-6">
       <div class="card-body">
         <h3 class="card-title mb-4">
           <i class="fas fa-clipboard-list"></i>
-          {{ t('settings.security.auditLogging') }}
+          {{ t('settings.security.logSettings') }}
         </h3>
         
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <!-- 审计设置 -->
-          <div class="space-y-4">
-            <h4 class="font-semibold border-b pb-2">{{ t('settings.security.auditSettings') }}</h4>
-            
-            <!-- 启用审计 -->
-            <div class="form-control">
-              <label class="label cursor-pointer">
-                <span class="label-text">{{ t('settings.security.enableAudit') }}</span>
-                <input type="checkbox" class="toggle toggle-primary" 
-                       v-model="settings.security.enableAudit">
-              </label>
-            </div>
-            
-            <!-- 审计级别 -->
-            <div v-if="settings.security.enableAudit" class="form-control">
-              <label class="label">
-                <span class="label-text">{{ t('settings.security.auditLevel') }}</span>
-              </label>
-              <select class="select select-bordered" v-model="settings.security.auditLevel">
-                <option value="basic">{{ t('settings.security.auditLevels.basic') }}</option>
-                <option value="detailed">{{ t('settings.security.auditLevels.detailed') }}</option>
-                <option value="comprehensive">{{ t('settings.security.auditLevels.comprehensive') }}</option>
-              </select>
-            </div>
-            
-            <!-- 审计事件 -->
-            <div v-if="settings.security.enableAudit" class="form-control">
-              <label class="label">
-                <span class="label-text">{{ t('settings.security.auditEvents') }}</span>
-              </label>
-              <div class="space-y-2">
-                <label class="label cursor-pointer">
-                  <span class="label-text">{{ t('settings.security.auditLogin') }}</span>
-                  <input type="checkbox" class="checkbox checkbox-primary" 
-                         v-model="settings.security.auditLogin">
-                </label>
-                <label class="label cursor-pointer">
-                  <span class="label-text">{{ t('settings.security.auditConfigChanges') }}</span>
-                  <input type="checkbox" class="checkbox checkbox-primary" 
-                         v-model="settings.security.auditConfigChanges">
-                </label>
-                <label class="label cursor-pointer">
-                  <span class="label-text">{{ t('settings.security.auditDataAccess') }}</span>
-                  <input type="checkbox" class="checkbox checkbox-primary" 
-                         v-model="settings.security.auditDataAccess">
-                </label>
-                <label class="label cursor-pointer">
-                  <span class="label-text">{{ t('settings.security.auditErrors') }}</span>
-                  <input type="checkbox" class="checkbox checkbox-primary" 
-                         v-model="settings.security.auditErrors">
-                </label>
-              </div>
-            </div>
-          </div>
-          
-          <!-- 日志设置 -->
           <div class="space-y-4">
             <h4 class="font-semibold border-b pb-2">{{ t('settings.security.logSettings') }}</h4>
-            
+
             <!-- 日志保留期 -->
             <div class="form-control">
               <label class="label">
@@ -605,13 +540,6 @@
             <h4 class="font-semibold border-b pb-2">{{ t('settings.security.securityCheck') }}</h4>
             
             <div class="form-control">
-              <button class="btn btn-primary" @click="runSecurityAudit">
-                <i class="fas fa-search"></i>
-                {{ t('settings.security.runSecurityAudit') }}
-              </button>
-            </div>
-            
-            <div class="form-control">
               <button class="btn btn-info" @click="checkVulnerabilities">
                 <i class="fas fa-bug"></i>
                 {{ t('settings.security.checkVulnerabilities') }}
@@ -676,7 +604,6 @@ const { t } = useI18n()
 
 // Props
 interface Props {
-  securityStatus: any
   settings: any
   saving: boolean
 }
@@ -687,7 +614,6 @@ const props = defineProps<Props>()
 interface Emits {
   'update:settings': [value: any]
   'changePassword': [passwordForm: any]
-  'runSecurityAudit': []
   'checkVulnerabilities': []
   'generateSecurityReport': []
   'lockApplication': []
@@ -712,11 +638,6 @@ const settings = computed({
 })
 
 // Methods
-const formatDate = (date: string | null) => {
-  if (!date) return t('settings.security.never')
-  return new Date(date).toLocaleDateString()
-}
-
 const getSecurityStatusColor = () => {
   const score = getSecurityScore()
   if (score >= 80) return 'text-success'
@@ -738,7 +659,6 @@ const getSecurityScore = () => {
   if (props.settings.security.requireAuth) score += 20
   if (props.settings.security.encryption) score += 25
   if (props.settings.security.twoFactorAuth) score += 15
-  if (props.settings.security.enableAudit) score += 10
   if (props.settings.security.forceHTTPS) score += 10
   if (props.settings.security.verifyCertificates) score += 5
   if (props.settings.security.enableIPWhitelist) score += 5
@@ -764,10 +684,6 @@ const changePassword = () => {
   passwordForm.current = ''
   passwordForm.new = ''
   passwordForm.confirm = ''
-}
-
-const runSecurityAudit = () => {
-  emit('runSecurityAudit')
 }
 
 const checkVulnerabilities = () => {

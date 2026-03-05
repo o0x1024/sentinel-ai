@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 use crate::config::LlmConfig;
-use crate::log::{log_request, log_response};
+use crate::log::{build_log_session_id, log_error_response, log_request, log_response};
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
 use sentinel_tools::DynamicTool;
 
@@ -159,7 +159,8 @@ impl StreamingLlmClient {
         let provider = self.config.provider.to_lowercase();
         let provider_for_agent = self.config.get_effective_rig_provider();
         let model = &self.config.model;
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let conversation_id = self.config.conversation_id.as_deref();
+        let session_id = build_log_session_id(conversation_id);
         let tool_names: Vec<String> = dynamic_tools.iter().map(|t| t.name().to_string()).collect();
 
         info!(
@@ -191,7 +192,7 @@ impl StreamingLlmClient {
 
         log_request(
             &session_id,
-            self.config.conversation_id.as_deref(),
+            conversation_id,
             &provider,
             model,
             Some(preamble),
@@ -238,7 +239,7 @@ impl StreamingLlmClient {
             Self::is_bigmodel_compatible_base_url(self.config.base_url.as_deref());
 
         // 根据 provider 创建带动态工具的 agent
-        let content = match provider_for_agent.as_str() {
+        let content_result: Result<String> = match provider_for_agent.as_str() {
             "openai" => {
                 let tool_count = dynamic_tools.len();
                 info!(
@@ -264,7 +265,7 @@ impl StreamingLlmClient {
                     )
                     .await
                 {
-                    Ok(content) => content,
+                    Ok(content) => Ok(content),
                     Err(e) if is_bigmodel_compat && Self::is_bigmodel_1210_error(&e) => {
                         warn!(
                             "BigModel returned 1210 (parameter error). Retrying once in minimal compatibility mode: no tools, no generation overrides."
@@ -277,9 +278,9 @@ impl StreamingLlmClient {
                             timeout,
                             &mut on_content,
                         )
-                        .await?
+                        .await
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 }
             }
             "moonshot" => {
@@ -292,7 +293,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "anthropic" => {
                 self.stream_with_anthropic(
@@ -304,7 +305,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "gemini" | "google" => {
                 self.stream_with_gemini(
@@ -316,7 +317,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "deepseek" => {
                 self.stream_with_deepseek(
@@ -328,7 +329,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "ollama" => {
                 self.stream_with_ollama(
@@ -340,7 +341,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "openrouter" => {
                 self.stream_with_openrouter(
@@ -352,7 +353,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "xai" => {
                 self.stream_with_xai(
@@ -364,7 +365,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             "groq" => {
                 self.stream_with_groq(
@@ -376,7 +377,7 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
             }
             _ => {
                 info!(
@@ -392,13 +393,44 @@ impl StreamingLlmClient {
                     dynamic_tools,
                     &mut on_content,
                 )
-                .await?
+                .await
+            }
+        };
+        let content = match content_result {
+            Ok(content) => content,
+            Err(err) => {
+                log_error_response(
+                    &session_id,
+                    conversation_id,
+                    &provider_for_agent,
+                    model,
+                    "provider_error",
+                    &err.to_string(),
+                );
+                return Err(err);
             }
         };
 
+        if content.trim().is_empty() {
+            let err = anyhow!(
+                "LLM stream returned empty response (provider={}, model={})",
+                provider_for_agent,
+                model
+            );
+            log_error_response(
+                &session_id,
+                conversation_id,
+                &provider_for_agent,
+                model,
+                "empty_response",
+                &err.to_string(),
+            );
+            return Err(err);
+        }
+
         log_response(
             &session_id,
-            self.config.conversation_id.as_deref(),
+            conversation_id,
             &provider,
             model,
             &content,

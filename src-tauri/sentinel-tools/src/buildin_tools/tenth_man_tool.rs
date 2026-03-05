@@ -80,7 +80,7 @@ pub struct TenthManToolArgs {
 }
 
 fn default_review_type() -> String {
-    "quick".to_string()
+    "full".to_string()
 }
 
 /// Tenth Man tool output

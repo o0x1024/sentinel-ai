@@ -2,8 +2,15 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL_LOG_MAX_CHARS: usize = 8000;
+const LLM_REQUEST_LOG_MAX_CHARS: usize = 12000;
+const LLM_RESPONSE_LOG_MAX_CHARS: usize = 12000;
+const LLM_ERROR_LOG_MAX_CHARS: usize = 6000;
+const LLM_JSONL_PREVIEW_MAX_CHARS: usize = 800;
+static LLM_TURN_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
@@ -16,6 +23,77 @@ fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
     }
 
     input[..safe_len].to_string()
+}
+
+fn truncate_with_marker(input: &str, max_bytes: usize) -> String {
+    let mut trimmed = truncate_utf8_at_boundary(input, max_bytes);
+    if trimmed.len() < input.len() {
+        trimmed.push_str("\n...[truncated]");
+    }
+    trimmed
+}
+
+fn content_hash_u64(input: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn write_llm_jsonl_log(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    log_type: &str,
+    content: &str,
+) {
+    let timestamp = chrono::Utc::now();
+    let normalized_content = content.trim();
+    let preview = truncate_with_marker(normalized_content, LLM_JSONL_PREVIEW_MAX_CHARS);
+    let event = serde_json::json!({
+        "timestamp": timestamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "log_type": log_type,
+        "session_id": session_id,
+        "conversation_id": conversation_id.unwrap_or("N/A"),
+        "provider": provider,
+        "model": model,
+        "content_length": normalized_content.len(),
+        "content_hash_u64": content_hash_u64(normalized_content),
+        "content_preview": preview,
+        "truncated": normalized_content.len() > LLM_JSONL_PREVIEW_MAX_CHARS || normalized_content.contains("[truncated]"),
+    });
+
+    let jsonl_file_path = format!(
+        "logs/llm-http-requests-{}.jsonl",
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&jsonl_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", event) {
+                tracing::error!("Failed to write to LLM JSONL log file {}: {}", jsonl_file_path, e);
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to open LLM JSONL log file {}: {}", jsonl_file_path, e);
+        }
+    }
+}
+
+/// Build stable session id using conversation id + turn id.
+/// This helps correlate retries and turns in a single execution.
+pub fn build_log_session_id(conversation_id: Option<&str>) -> String {
+    let turn_id = LLM_TURN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let conv = conversation_id
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("session");
+    format!("{}::turn-{}", conv, turn_id)
 }
 
 /// 写入 LLM 日志
@@ -67,6 +145,8 @@ pub fn write_llm_log(
             tracing::error!("Failed to open LLM log file {}: {}", log_file_path, e);
         }
     }
+
+    write_llm_jsonl_log(session_id, conversation_id, provider, model, log_type, content);
 }
 
 /// 写入工具调用日志
@@ -204,25 +284,27 @@ pub fn log_request_with_image(
     has_image: bool,
 ) {
     // 记录 system prompt（如果存在）
-    if let Some(_sp) = system_prompt {
+    if let Some(system_prompt) = system_prompt {
+        let system_trimmed = truncate_with_marker(system_prompt, LLM_REQUEST_LOG_MAX_CHARS);
         write_llm_log(
             session_id,
             conversation_id,
             provider,
             model,
             "SYSTEM REQUEST",
-            &format!("\n{}\n", _sp),
+            &format!("\n{}\n", system_trimmed),
         );
     }
     // 记录 user prompt（含图片标记）
     let image_tag = if has_image { " [WITH IMAGE]" } else { "" };
+    let user_trimmed = truncate_with_marker(user_prompt, LLM_REQUEST_LOG_MAX_CHARS);
     write_llm_log(
         session_id,
         conversation_id,
         provider,
         model,
         &format!("USER REQUEST{}", image_tag),
-        &format!("\n{}\n", user_prompt),
+        &format!("\n{}\n", user_trimmed),
     );
 }
 
@@ -234,13 +316,34 @@ pub fn log_response(
     model: &str,
     response: &str,
 ) {
+    let response_trimmed = truncate_with_marker(response, LLM_RESPONSE_LOG_MAX_CHARS);
     write_llm_log(
         session_id,
         conversation_id,
         provider,
         model,
         "OUTPUT RESPONSE",
-        &format!("\n{}\n", response),
+        &format!("\n{}\n", response_trimmed),
+    );
+}
+
+/// 记录 LLM 错误响应
+pub fn log_error_response(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    error_type: &str,
+    error_message: &str,
+) {
+    let error_trimmed = truncate_with_marker(error_message, LLM_ERROR_LOG_MAX_CHARS);
+    write_llm_log(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        "ERROR RESPONSE",
+        &format!("\nType: {}\nMessage: {}\n", error_type, error_trimmed),
     );
 }
 

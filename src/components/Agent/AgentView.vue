@@ -77,8 +77,8 @@
             v-if="webExplorerEvents.hasHistory.value"
             @click="handleToggleWebExplorer()"
             class="btn btn-sm gap-1"
-            :class="isWebExplorerActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isWebExplorerActive ? t('agent.webExplorerPanelOpen') : t('agent.viewWebExplorerHistory')"
+            :class="activeRightPanel === 'web' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="activeRightPanel === 'web' ? t('agent.webExplorerPanelOpen') : t('agent.viewWebExplorerHistory')"
           >
             <i class="fas fa-globe"></i>
             <span>{{ t('agent.explore') }}</span>
@@ -88,8 +88,8 @@
           <button 
             @click="handleToggleTodos()"
             class="btn btn-sm gap-1"
-            :class="isTodosPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isTodosPanelActive ? t('agent.todosPanelOpen') : t('agent.viewTodos')"
+            :class="activeRightPanel === 'todos' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="activeRightPanel === 'todos' ? t('agent.todosPanelOpen') : t('agent.viewTodos')"
           >
             <i class="fas fa-tasks"></i>
             <span>{{ t('agent.todos') }}</span>
@@ -100,8 +100,8 @@
             v-if="hasHtmlPanelContent"
             @click="handleToggleHtmlPanel()"
             class="btn btn-sm gap-1"
-            :class="isHtmlPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isHtmlPanelActive ? t('agent.htmlPanelOpen') : t('agent.viewHtmlPanel')"
+            :class="activeRightPanel === 'html' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="activeRightPanel === 'html' ? t('agent.htmlPanelOpen') : t('agent.viewHtmlPanel')"
           >
             <i class="fas fa-code"></i>
             <span>{{ t('agent.htmlPanel') }}</span>
@@ -110,28 +110,17 @@
           <button 
             @click="handleToggleTerminal()"
             class="btn btn-sm gap-1"
-            :class="isTerminalActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isTerminalActive ? t('agent.terminalPanelOpen') : t('agent.viewTerminal')"
+            :class="activeRightPanel === 'terminal' ? 'btn-primary' : 'btn-ghost text-primary'"
+            :title="activeRightPanel === 'terminal' ? t('agent.terminalPanelOpen') : t('agent.viewTerminal')"
           >
             <i class="fas fa-terminal"></i>
             <span>{{ t('agent.terminal') }}</span>
           </button>
           <button
-            v-if="toolConfig.audit_mode"
-            @click="handleToggleAuditFindings()"
-            class="btn btn-sm gap-1"
-            :class="isAuditFindingsPanelActive ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="isAuditFindingsPanelActive ? t('agent.auditFindingsPanelOpen') : t('agent.viewAuditFindings')"
-          >
-            <i class="fas fa-shield-halved"></i>
-            <span>{{ t('agent.auditFindings') }}</span>
-            <span v-if="auditFindings.length > 0" class="badge badge-xs badge-primary">{{ auditFindings.length }}</span>
-          </button>
-          <button
             v-if="teamModeEnabled"
             @click="handleToggleTeamWorkspace()"
             class="btn btn-sm gap-1"
-            :class="isTeamWorkspaceActive ? 'btn-primary' : 'btn-ghost text-primary'"
+            :class="activeRightPanel === 'team' ? 'btn-primary' : 'btn-ghost text-primary'"
             title="Team 工作台"
           >
             <i class="fas fa-users"></i>
@@ -214,7 +203,7 @@
         
         <!-- Right: Side Panel (WebExplorer, Todo, HTML, or Terminal) -->
         <div 
-          v-if="isWebExplorerActive || isTodosPanelActive || isHtmlPanelActive || isTerminalActive || isAuditFindingsPanelActive || isTeamWorkspaceActive"
+          v-if="activeRightPanel"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
           :style="{ width: sidebarWidth + 'px' }"
         >
@@ -225,7 +214,7 @@
             ></div>
             
             <TeamWorkspacePanel
-              v-if="isTeamWorkspaceActive"
+              v-if="activeRightPanel === 'team'"
               v-model:tab="teamWorkspaceTab"
               :loading="teamWorkspaceLoading"
               :tasks="teamTasks"
@@ -240,11 +229,11 @@
             />
 
             <WebExplorerPanel 
-               v-else-if="isWebExplorerActive"
+               v-else-if="activeRightPanel === 'web'"
                :steps="webExplorerEvents.steps.value" 
                :coverage="webExplorerEvents.coverage.value"
                :discovered-apis="webExplorerEvents.discoveredApis.value"
-               :is-active="isWebExplorerActive"
+               :is-active="activeRightPanel === 'web'"
                :current-url="webExplorerEvents.currentUrl.value"
                :current-plan="webExplorerEvents.currentPlan.value"
                :current-progress="webExplorerEvents.currentProgress.value"
@@ -257,12 +246,12 @@
                :login-timeout-seconds="webExplorerEvents.loginTimeoutSeconds.value"
                :execution-id="webExplorerEvents.currentExecutionId.value"
                class="h-full border-0 rounded-none bg-transparent"
-               @close="webExplorerEvents.close()"
+               @close="handleCloseWebExplorer"
             />
             <TodoPanel 
-              v-else-if="isTodosPanelActive" 
+              v-else-if="activeRightPanel === 'todos'" 
               :todos="todos"
-              :is-active="isTodosPanelActive"
+              :is-active="activeRightPanel === 'todos'"
               :source-options="todoSourceOptions"
               :selected-source-key="selectedTodoSourceKey"
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
@@ -270,23 +259,16 @@
               @source-change="handleTodoSourceChange"
             />
             <HtmlPanel
-              v-else-if="isHtmlPanelActive"
+              v-else-if="activeRightPanel === 'html'"
               :html-content="htmlPanelContent"
-              :is-active="isHtmlPanelActive"
+              :is-active="activeRightPanel === 'html'"
               class="h-full p-4 overflow-y-auto border-0 bg-transparent"
               @close="handleCloseHtmlPanel"
             />
             <InteractiveTerminal
-              v-else-if="isTerminalActive"
+              v-else-if="activeRightPanel === 'terminal'"
               class="h-full border-0 rounded-none bg-transparent"
               @close="handleCloseTerminal"
-            />
-            <AuditFindingsPanel
-              v-else-if="isAuditFindingsPanelActive"
-              :findings="auditFindings"
-              :policy-gate="auditPolicyGate"
-              class="h-full border-0 rounded-none bg-transparent"
-              @close="handleCloseAuditFindings"
             />
         </div>
       </div>
@@ -340,7 +322,6 @@ import HtmlPanel from './HtmlPanel.vue'
 import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
-import AuditFindingsPanel from './AuditFindingsPanel.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'
@@ -362,18 +343,6 @@ interface ReferencedTraffic {
   sendType?: TrafficSendType
 }
 
-type AuditScope = 'repo' | 'git_diff' | 'paths'
-type VerificationLevel = 'low' | 'medium' | 'high'
-type PolicyProfile = 'balanced' | 'prod_strict'
-
-interface AuditConfig {
-  enabled: boolean
-  scope: AuditScope
-  verification_level: VerificationLevel
-  policy_profile: PolicyProfile
-  required_tools: string[]
-}
-
 interface UiToolConfigPayload {
   enabled: boolean
   selection_strategy: any
@@ -382,39 +351,6 @@ interface UiToolConfigPayload {
   disabled_tools: string[]
   manual_tools?: string[]
   skills?: string[]
-  audit_mode?: boolean
-  audit_config?: Partial<AuditConfig>
-}
-
-interface AuditFinding {
-  id: string
-  title?: string
-  severity?: string
-  severity_raw?: string
-  confidence?: number
-  files?: string[]
-  fix?: string
-  status?: string
-  cwe?: string
-  description?: string
-  source?: Record<string, any>
-  sink?: Record<string, any>
-  hits?: Array<Record<string, any>>
-  sources?: Array<Record<string, any>>
-  sinks?: Array<Record<string, any>>
-  source_sinks?: Array<Record<string, any>>
-  trace_path?: Array<Record<string, any>>
-  evidence?: string[]
-}
-
-interface PolicyGateResult {
-  passed: boolean
-  reason?: string
-}
-
-interface ParsedAuditPayload {
-  findings: AuditFinding[]
-  policyGate?: PolicyGateResult
 }
 
 interface AssistantModelOption {
@@ -439,6 +375,8 @@ interface AgentAssistantMessageSavedEvent {
   content: string
   timestamp: number
 }
+
+type RightPanelKey = 'web' | 'todos' | 'html' | 'terminal' | 'team'
 
 type TeamOrchestrationStepType = 'agent' | 'serial' | 'parallel'
 
@@ -490,7 +428,6 @@ interface TeamRuntimeFailureMode {
 
 type TeamOrchestrationPresetId =
   | 'product_delivery_chain'
-  | 'security_audit_matrix'
   | 'incident_response_flow'
 
 type TeamRecoveryPresetId = 'conservative' | 'balanced' | 'aggressive'
@@ -772,11 +709,6 @@ const TEAM_ORCHESTRATION_PRESET_METAS: TeamOrchestrationPresetMeta[] = [
     description: '产品 -> 架构 -> 研发/测试并行 -> 发布决策，适合 idea 到落地全链路。',
   },
   {
-    id: 'security_audit_matrix',
-    label: '安全审计矩阵',
-    description: '多维安全审计并行 -> 风险收敛 -> 修复验证，适合代码/系统安全评估。',
-  },
-  {
     id: 'incident_response_flow',
     label: '故障处置链路',
     description: '故障接管 -> 并行根因分析 -> 处置方案 -> 验证复盘，适合线上异常场景。',
@@ -839,70 +771,11 @@ const toolConfig = ref({
   max_tools: 5,
   fixed_tools: ['interactive_shell'],
   disabled_tools: [],
-  audit_mode: false,
-  audit_config: {
-    enabled: false,
-    scope: 'git_diff' as AuditScope,
-    verification_level: 'high' as VerificationLevel,
-    policy_profile: 'balanced' as PolicyProfile,
-    required_tools: [],
-  },
 })
-
-const AUDIT_CONFIG_STORAGE_KEY = 'sentinel:agent:audit-config'
-
-const defaultAuditConfig = (): AuditConfig => ({
-  enabled: false,
-  scope: 'git_diff',
-  verification_level: 'high',
-  policy_profile: 'balanced',
-  required_tools: [],
-})
-
-const normalizeAuditConfig = (raw?: Partial<AuditConfig> | null): AuditConfig => {
-  const base = defaultAuditConfig()
-  const scope = raw?.scope === 'repo' || raw?.scope === 'paths' || raw?.scope === 'git_diff'
-    ? raw.scope
-    : base.scope
-  const verificationLevel = raw?.verification_level === 'low' || raw?.verification_level === 'medium' || raw?.verification_level === 'high'
-    ? raw.verification_level
-    : base.verification_level
-  const policyProfile = raw?.policy_profile === 'balanced' || raw?.policy_profile === 'prod_strict'
-    ? raw.policy_profile
-    : base.policy_profile
-  const requiredTools = Array.isArray(raw?.required_tools)
-    ? raw.required_tools.filter((item) => typeof item === 'string' && item.trim().length > 0)
-    : base.required_tools
-  return {
-    enabled: raw?.enabled ?? base.enabled,
-    scope,
-    verification_level: verificationLevel,
-    policy_profile: policyProfile,
-    required_tools: requiredTools,
-  }
-}
-
-const saveAuditConfigToLocal = (config: AuditConfig) => {
-  try {
-    localStorage.setItem(AUDIT_CONFIG_STORAGE_KEY, JSON.stringify(config))
-  } catch (e) {
-    console.warn('[AgentView] Failed to persist audit config:', e)
-  }
-}
-
-const loadAuditConfigFromLocal = (): AuditConfig => {
-  try {
-    const raw = localStorage.getItem(AUDIT_CONFIG_STORAGE_KEY)
-    if (!raw) return defaultAuditConfig()
-    const parsed = JSON.parse(raw)
-    return normalizeAuditConfig(parsed)
-  } catch (e) {
-    console.warn('[AgentView] Failed to load audit config, using defaults:', e)
-    return defaultAuditConfig()
-  }
-}
 
 const ASSISTANT_MODEL_STORAGE_KEY = 'sentinel:agent:assistant-model'
+const TEAM_ACTIVE_SESSION_MAP_STORAGE_KEY = 'sentinel:agent:team-active-session-map'
+const TEAM_BLACKBOARD_FETCH_LIMIT = 1000
 let unlistenAiConfigUpdated: UnlistenFn | null = null
 let unlistenTeamStateChanged: UnlistenFn | null = null
 let unlistenTeamMessageStreamStart: UnlistenFn | null = null
@@ -930,6 +803,55 @@ const TEAM_STREAM_DELTA_FLUSH_INTERVAL_MS = 80
 let teamStreamDeltaFlushTimer: ReturnType<typeof setTimeout> | null = null
 let isSyncingTeamMessages = false
 let pendingTeamMessageSyncSessionId: string | null = null
+
+const loadTeamActiveSessionMap = (): Record<string, string> => {
+  try {
+    const raw = localStorage.getItem(TEAM_ACTIVE_SESSION_MAP_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return {}
+    const out: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof key !== 'string' || typeof value !== 'string') continue
+      const convId = key.trim()
+      const sessionId = value.trim()
+      if (!convId || !sessionId) continue
+      out[convId] = sessionId
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+const persistTeamActiveSessionMap = (next: Record<string, string>) => {
+  try {
+    localStorage.setItem(TEAM_ACTIVE_SESSION_MAP_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // ignore storage errors
+  }
+}
+
+const getPersistedTeamSessionId = (conversationId?: string | null): string | null => {
+  const convId = String(conversationId || '').trim()
+  if (!convId) return null
+  const mapped = loadTeamActiveSessionMap()[convId]
+  const sessionId = String(mapped || '').trim()
+  return sessionId || null
+}
+
+const setPersistedTeamSessionId = (conversationId?: string | null, sessionId?: string | null) => {
+  const convId = String(conversationId || '').trim()
+  if (!convId) return
+  const next = loadTeamActiveSessionMap()
+  const sid = String(sessionId || '').trim()
+  if (sid) {
+    next[convId] = sid
+  } else {
+    delete next[convId]
+  }
+  persistTeamActiveSessionMap(next)
+}
 
 const pruneTeamLocalHumanInputReconcileQueue = (sessionId?: string | null) => {
   const keepSessionId = String(sessionId || '').trim()
@@ -1089,28 +1011,12 @@ const handleAssistantModelChange = (value: string) => {
 }
 
 const buildEffectiveToolConfigForExecution = () => {
-  const baseConfig = {
+  return {
     enabled: toolConfig.value.enabled,
     selection_strategy: toolConfig.value.selection_strategy,
     max_tools: toolConfig.value.max_tools,
     fixed_tools: [...toolConfig.value.fixed_tools],
     disabled_tools: [...toolConfig.value.disabled_tools],
-  }
-
-  if (!toolConfig.value.audit_mode) {
-    return baseConfig
-  }
-
-  const requiredTools = (toolConfig.value.audit_config?.required_tools || [])
-    .filter((item) => typeof item === 'string' && item.trim().length > 0)
-
-  const fixedSet = new Set([...baseConfig.fixed_tools, ...requiredTools])
-  const disabledSet = new Set(baseConfig.disabled_tools.filter((item) => !fixedSet.has(item)))
-
-  return {
-    ...baseConfig,
-    fixed_tools: [...fixedSet],
-    disabled_tools: [...disabledSet],
   }
 }
 
@@ -1199,9 +1105,20 @@ const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
 }
 
 // Agent events
+const matchesCurrentTeamSubagentParent = (parentExecutionId: string) => {
+  const sessionId = String(activeTeamSessionId.value || '').trim()
+  const parentId = String(parentExecutionId || '').trim()
+  if (!sessionId || !parentId) return false
+  return (
+    parentId.startsWith(`team-v3:${sessionId}:`) ||
+    parentId.startsWith(`team-v3-planner:${sessionId}:`)
+  )
+}
+
 const agentEvents = useAgentEvents(computed(() => conversationId.value || ''), {
   suppressUserMessages: computed(() => teamModeEnabled.value),
   defaultMaxContextTokens: assistantDefaultMaxContextTokens,
+  subagentParentExecutionMatcher: matchesCurrentTeamSubagentParent,
 })
 const messages = computed(() => agentEvents.messages.value)
 const TEAM_SPLIT_ALL_MEMBER_KEY = '__all__'
@@ -1917,340 +1834,168 @@ const clearTodosForCurrentContext = () => {
 // HTML panel - user manually triggers rendering
 const isHtmlPanelActive = ref(false)
 const htmlPanelContent = ref('')
-const isAuditFindingsPanelActive = ref(false)
-const lastPersistedPolicyGateSignature = ref('')
-
-// Handle render HTML from code block
-const handleRenderHtml = (htmlContent: string) => {
-  htmlPanelContent.value = htmlContent
-  // Close other panels and open HTML panel
-  webExplorerEvents.close()
-  terminalComposable.closeTerminal()
-  todosComposable.close()
-  isAuditFindingsPanelActive.value = false
-  isTeamWorkspaceActive.value = false
-  isHtmlPanelActive.value = true
-}
-
-const hasHtmlPanelContent = computed(() => !!htmlPanelContent.value)
-
-// Handle close todos panel
-const handleCloseTodos = () => {
-  todosComposable.close()
-}
-
-const handleCloseHtmlPanel = () => {
-  isHtmlPanelActive.value = false
-}
-
-const handleCloseAuditFindings = () => {
-  isAuditFindingsPanelActive.value = false
-}
 
 // Terminal management
 const terminalComposable = useTerminal()
 const isTerminalActive = computed(() => terminalComposable.isTerminalActive.value)
 const hasTerminalHistory = computed(() => terminalComposable.hasHistory.value)
 
+const activeRightPanel = ref<RightPanelKey | null>(null)
+let isSyncingRightPanel = false
+
+const closeRightPanelByKey = (panel: RightPanelKey) => {
+  if (panel === 'web') {
+    webExplorerEvents.close()
+    return
+  }
+  if (panel === 'todos') {
+    todosComposable.close()
+    return
+  }
+  if (panel === 'html') {
+    isHtmlPanelActive.value = false
+    return
+  }
+  if (panel === 'terminal') {
+    terminalComposable.closeTerminal()
+    return
+  }
+  isTeamWorkspaceActive.value = false
+}
+
+const closeOtherRightPanels = (activePanel: RightPanelKey) => {
+  if (activePanel !== 'web') {
+    webExplorerEvents.close()
+  }
+  if (activePanel !== 'todos') {
+    todosComposable.close()
+  }
+  if (activePanel !== 'html') {
+    isHtmlPanelActive.value = false
+  }
+  if (activePanel !== 'terminal') {
+    terminalComposable.closeTerminal()
+  }
+  if (activePanel !== 'team') {
+    isTeamWorkspaceActive.value = false
+  }
+}
+
+const syncRightPanelState = (panel: RightPanelKey, isActive: boolean) => {
+  if (isSyncingRightPanel) return
+  isSyncingRightPanel = true
+  try {
+    if (!isActive) {
+      if (activeRightPanel.value === panel) {
+        activeRightPanel.value = null
+      }
+      return
+    }
+    if (activeRightPanel.value && activeRightPanel.value !== panel) {
+      closeRightPanelByKey(panel)
+      return
+    }
+    activeRightPanel.value = panel
+    closeOtherRightPanels(panel)
+  } finally {
+    isSyncingRightPanel = false
+  }
+}
+
+watch(isWebExplorerActive, (active) => {
+  syncRightPanelState('web', active)
+}, { immediate: true })
+
+watch(isTodosPanelActive, (active) => {
+  syncRightPanelState('todos', active)
+}, { immediate: true })
+
+watch(isHtmlPanelActive, (active) => {
+  syncRightPanelState('html', active)
+}, { immediate: true })
+
+watch(isTerminalActive, (active) => {
+  syncRightPanelState('terminal', active)
+}, { immediate: true })
+
+watch(isTeamWorkspaceActive, (active) => {
+  syncRightPanelState('team', active)
+}, { immediate: true })
+
+const activateRightPanel = (panel: RightPanelKey) => {
+  activeRightPanel.value = panel
+  closeOtherRightPanels(panel)
+}
+
+const deactivateRightPanel = (panel: RightPanelKey) => {
+  if (activeRightPanel.value === panel) {
+    activeRightPanel.value = null
+  }
+  closeRightPanelByKey(panel)
+}
+
+// Handle render HTML from code block
+const handleRenderHtml = (htmlContent: string) => {
+  htmlPanelContent.value = htmlContent
+  activateRightPanel('html')
+  isHtmlPanelActive.value = true
+}
+
+const hasHtmlPanelContent = computed(() => !!htmlPanelContent.value)
+
+const handleCloseWebExplorer = () => {
+  deactivateRightPanel('web')
+}
+
+// Handle close todos panel
+const handleCloseTodos = () => {
+  deactivateRightPanel('todos')
+}
+
+const handleCloseHtmlPanel = () => {
+  deactivateRightPanel('html')
+}
+
 // Handle close terminal panel
 const handleCloseTerminal = () => {
-  terminalComposable.closeTerminal()
+  deactivateRightPanel('terminal')
 }
 
 // Handle toggle panel functions - ensure only one panel is active at a time
 const handleToggleWebExplorer = () => {
-  if (isWebExplorerActive.value) {
-    webExplorerEvents.close()
-  } else {
-    // Close other panels
-    todosComposable.close()
-    terminalComposable.closeTerminal()
-    isHtmlPanelActive.value = false
-    isAuditFindingsPanelActive.value = false
-    isTeamWorkspaceActive.value = false
-    webExplorerEvents.open()
+  if (activeRightPanel.value === 'web') {
+    deactivateRightPanel('web')
+    return
   }
+  activateRightPanel('web')
+  webExplorerEvents.open()
 }
 
 const handleToggleTodos = () => {
-  if (isTodosPanelActive.value) {
-    todosComposable.close()
-  } else {
-    // Close other panels
-    webExplorerEvents.close()
-    terminalComposable.closeTerminal()
-    isHtmlPanelActive.value = false
-    isAuditFindingsPanelActive.value = false
-    isTeamWorkspaceActive.value = false
-    todosComposable.open()
+  if (activeRightPanel.value === 'todos') {
+    deactivateRightPanel('todos')
+    return
   }
+  activateRightPanel('todos')
+  todosComposable.open()
 }
 
 const handleToggleHtmlPanel = () => {
-  if (isHtmlPanelActive.value) {
-    isHtmlPanelActive.value = false
-  } else {
-    webExplorerEvents.close()
-    terminalComposable.closeTerminal()
-    todosComposable.close()
-    isAuditFindingsPanelActive.value = false
-    isTeamWorkspaceActive.value = false
-    isHtmlPanelActive.value = true
+  if (activeRightPanel.value === 'html') {
+    deactivateRightPanel('html')
+    return
   }
-}
-
-const handleToggleAuditFindings = () => {
-  if (isAuditFindingsPanelActive.value) {
-    isAuditFindingsPanelActive.value = false
-  } else {
-    webExplorerEvents.close()
-    terminalComposable.closeTerminal()
-    todosComposable.close()
-    isHtmlPanelActive.value = false
-    isTeamWorkspaceActive.value = false
-    isAuditFindingsPanelActive.value = true
-  }
+  activateRightPanel('html')
+  isHtmlPanelActive.value = true
 }
 
 const handleToggleTerminal = () => {
-  if (isTerminalActive.value) {
-    terminalComposable.closeTerminal()
-  } else {
-    // Close other panels
-    webExplorerEvents.close()
-    todosComposable.close()
-    isHtmlPanelActive.value = false
-    isAuditFindingsPanelActive.value = false
-    isTeamWorkspaceActive.value = false
-    terminalComposable.openTerminal()
-  }
-}
-
-const parseAuditFindingsFromText = (content: string): AuditFinding[] => {
-  return parseAuditPayloadFromText(content).findings
-}
-
-const extractFilePaths = (text: string): string[] => {
-  if (!text) return []
-  const pathRegex = /(?:^|[\s"'`(])((?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9]+)(?=$|[\s"'`):,])/g
-  const found: string[] = []
-  let match: RegExpExecArray | null
-  while ((match = pathRegex.exec(text)) !== null) {
-    if (match[1]) found.push(match[1])
-  }
-  return Array.from(new Set(found))
-}
-
-const parseAuditPayloadFromText = (content: string): ParsedAuditPayload => {
-  if (!content) return { findings: [] }
-  const candidates: string[] = []
-  const direct = content.trim()
-  if (direct.startsWith('{') || direct.startsWith('[')) {
-    candidates.push(direct)
-  }
-  const blockRegex = /```json\s*([\s\S]*?)\s*```/gi
-  let match: RegExpExecArray | null
-  while ((match = blockRegex.exec(content)) !== null) {
-    if (match[1]) candidates.push(match[1].trim())
-  }
-
-  for (const raw of candidates) {
-    try {
-      const parsed = JSON.parse(raw)
-      const findings = Array.isArray(parsed?.findings) ? parsed.findings : Array.isArray(parsed) ? parsed : null
-      if (!findings) continue
-      const normalizedFindings = findings
-        .filter((item: any) => item && typeof item === 'object')
-        .map((item: any, index: number) => ({
-          id: String(item.id || `F-${index + 1}`),
-          title: item.title ? String(item.title) : undefined,
-          severity: item.severity ? String(item.severity) : undefined,
-          severity_raw: item.severity_raw ? String(item.severity_raw) : (item.severity ? String(item.severity) : undefined),
-          confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
-          files: Array.isArray(item.files) ? item.files.map((v: any) => String(v)) : undefined,
-          fix: item.fix ? String(item.fix) : undefined,
-          status: item.status ? String(item.status) : undefined,
-          cwe: item.cwe ? String(item.cwe) : undefined,
-          description: item.description ? String(item.description) : undefined,
-          source: item.source && typeof item.source === 'object' ? item.source : undefined,
-          sink: item.sink && typeof item.sink === 'object' ? item.sink : undefined,
-          hits: Array.isArray(item.hits) ? item.hits.filter((v: any) => v && typeof v === 'object') : undefined,
-          sources: Array.isArray(item.sources) ? item.sources.filter((v: any) => v && typeof v === 'object') : undefined,
-          sinks: Array.isArray(item.sinks) ? item.sinks.filter((v: any) => v && typeof v === 'object') : undefined,
-          source_sinks: Array.isArray(item.source_sinks) ? item.source_sinks.filter((v: any) => v && typeof v === 'object') : undefined,
-          trace_path: Array.isArray(item.trace_path) ? item.trace_path.filter((v: any) => v && typeof v === 'object') : undefined,
-          evidence: Array.isArray(item.evidence) ? item.evidence.map((v: any) => String(v)) : undefined,
-        }))
-      const rawGate = parsed?.policy_gate
-      const policyGate = rawGate && typeof rawGate === 'object'
-        ? {
-            passed: !!rawGate.passed,
-            reason: rawGate.reason ? String(rawGate.reason) : undefined,
-          }
-        : undefined
-      return {
-        findings: normalizedFindings,
-        policyGate,
-      }
-    } catch {
-      // Continue trying next candidate payload.
-    }
-  }
-
-  // Fallback: parse markdown-style audit report sections (e.g. "1. SQL注入漏洞")
-  const fallbackFindings: AuditFinding[] = []
-  const sectionRegex = /^\s*(\d+)\.\s+([^\n]+)\n([\s\S]*?)(?=^\s*\d+\.\s+|\s*$)/gm
-  let sectionMatch: RegExpExecArray | null
-  while ((sectionMatch = sectionRegex.exec(content)) !== null) {
-    const index = sectionMatch[1]
-    const rawTitle = (sectionMatch[2] || '').trim()
-    const body = sectionMatch[3] || ''
-    const lowered = `${rawTitle}\n${body}`.toLowerCase()
-
-    let severity: string | undefined
-    if (/(critical|严重)/.test(lowered)) severity = 'critical'
-    else if (/(high|高危)/.test(lowered)) severity = 'high'
-    else if (/(medium|中危)/.test(lowered)) severity = 'medium'
-    else if (/(low|低危)/.test(lowered)) severity = 'low'
-
-    const rawLocations = Array.from(body.matchAll(/位置[:：]\s*([^\n]+)/g))
-      .map((m) => (m[1] || '').trim())
-      .filter((v) => !!v)
-    const files = Array.from(
-      new Set(
-        rawLocations.flatMap((item) => {
-          const extracted = extractFilePaths(item)
-          return extracted.length > 0 ? extracted : [item]
-        }),
-      ),
-    )
-
-    const description =
-      body.match(/风险[:：]\s*([^\n]+)/)?.[1]?.trim() ||
-      body.match(/详情[:：]\s*([^\n]+)/)?.[1]?.trim() ||
-      undefined
-    const fix =
-      body.match(/修复建议[:：]\s*([^\n]+)/)?.[1]?.trim() ||
-      body.match(/建议修复[:：]\s*([^\n]+)/)?.[1]?.trim() ||
-      undefined
-
-    fallbackFindings.push({
-      id: `F-${index}`,
-      title: rawTitle || `Finding ${index}`,
-      severity,
-      severity_raw: severity,
-      files: files.length > 0 ? files : undefined,
-      description,
-      fix,
-      evidence: description ? [description] : undefined,
-    })
-  }
-
-  if (fallbackFindings.length > 0) {
-    return { findings: fallbackFindings }
-  }
-
-  return { findings: [] }
-}
-
-const auditFindings = computed<AuditFinding[]>(() => {
-  if (!toolConfig.value.audit_mode) return []
-  const findings: AuditFinding[] = []
-  for (const message of messages.value) {
-    if (message.type !== 'final') continue
-    const parsed = parseAuditFindingsFromText(message.content || '')
-    if (parsed.length > 0) {
-      findings.splice(0, findings.length, ...parsed)
-    }
-  }
-  return findings
-})
-
-const evaluatePolicyGate = (
-  findings: AuditFinding[],
-  profile: PolicyProfile,
-): PolicyGateResult => {
-  const active = findings.filter((item) => {
-    const status = (item.status || '').toLowerCase()
-    return !['rejected', 'false_positive', 'fixed'].includes(status)
-  })
-  const critical = active.filter((item) => (item.severity || '').toLowerCase() === 'critical').length
-  const high = active.filter((item) => (item.severity || '').toLowerCase() === 'high').length
-
-  if (profile === 'prod_strict') {
-    const blocked = critical + high > 0
-    return {
-      passed: !blocked,
-      reason: blocked
-        ? `Blocked by prod_strict policy: critical=${critical}, high=${high}`
-        : `Passed prod_strict policy: no active high/critical findings`,
-    }
-  }
-
-  const blocked = critical > 0
-  return {
-    passed: !blocked,
-    reason: blocked
-      ? `Blocked by balanced policy: critical=${critical}`
-      : `Passed balanced policy: no active critical findings`,
-  }
-}
-
-const auditPolicyGate = computed<PolicyGateResult | null>(() => {
-  if (!toolConfig.value.audit_mode) return null
-  let parsedPolicyGate: PolicyGateResult | undefined
-  for (const message of messages.value) {
-    if (message.type !== 'final') continue
-    const payload = parseAuditPayloadFromText(message.content || '')
-    if (payload.findings.length > 0 && payload.policyGate) {
-      parsedPolicyGate = payload.policyGate
-    }
-  }
-  if (parsedPolicyGate) return parsedPolicyGate
-  const profile = toolConfig.value.audit_config?.policy_profile || 'balanced'
-  return evaluatePolicyGate(auditFindings.value, profile)
-})
-
-const persistAuditPolicyGate = async (gate: PolicyGateResult | null) => {
-  if (!conversationId.value || !gate || !toolConfig.value.audit_mode) return
-  const active = auditFindings.value.filter((item) => {
-    const status = (item.status || '').toLowerCase()
-    return !['rejected', 'false_positive', 'fixed'].includes(status)
-  })
-  const summary = {
-    total: auditFindings.value.length,
-    active: active.length,
-    critical: active.filter((item) => (item.severity || '').toLowerCase() === 'critical').length,
-    high: active.filter((item) => (item.severity || '').toLowerCase() === 'high').length,
-    medium: active.filter((item) => (item.severity || '').toLowerCase() === 'medium').length,
-    low: active.filter((item) => (item.severity || '').toLowerCase() === 'low').length,
-  }
-  const profile = toolConfig.value.audit_config?.policy_profile || 'balanced'
-  const signature = JSON.stringify({
-    conversationId: conversationId.value,
-    passed: gate.passed,
-    reason: gate.reason,
-    profile,
-    summary,
-  })
-  if (signature === lastPersistedPolicyGateSignature.value) {
+  if (activeRightPanel.value === 'terminal') {
+    deactivateRightPanel('terminal')
     return
   }
-
-  try {
-    await invoke('save_audit_policy_gate', {
-      conversationId: conversationId.value,
-      gate: {
-        passed: gate.passed,
-        reason: gate.reason,
-        profile,
-        summary,
-      },
-    })
-    lastPersistedPolicyGateSignature.value = signature
-  } catch (e) {
-    console.warn('[AgentView] Persist policy gate failed:', e)
-  }
+  activateRightPanel('terminal')
+  terminalComposable.openTerminal()
 }
 
 // Sidebar resize
@@ -2577,24 +2322,36 @@ const buildTeamToolCallCompositeKey = (
   const normalizedMemberName = String(memberName || '').trim()
   const normalizedStreamId = String(streamId || '').trim()
   const sessionId = String(activeTeamSessionId.value || '').trim()
-  const ownerKey = normalizedMemberId || normalizedMemberName || normalizedStreamId || 'unknown'
-  return `team:${sessionId}:${ownerKey}:${normalizedCallId}`
+  if (normalizedStreamId) {
+    // Stream-scoped key prevents cross-run collisions when tool_call_id is reused.
+    return `team:${sessionId}:stream:${normalizedStreamId}:call:${normalizedCallId}`
+  }
+  const ownerKey = normalizedMemberId || normalizedMemberName || 'unknown'
+  return `team:${sessionId}:owner:${ownerKey}:call:${normalizedCallId}`
 }
 
 const findTeamToolCallMessage = (
   compositeKey?: string | null,
   legacyToolCallId?: string | null,
+  options?: {
+    allowLegacyFallback?: boolean
+  },
 ): AgentMessage | null => {
   const normalizedComposite = String(compositeKey || '').trim()
   const normalizedLegacyId = String(legacyToolCallId || '').trim()
+  const allowLegacyFallback = options?.allowLegacyFallback !== false
   if (!normalizedComposite && !normalizedLegacyId) return null
+  if (normalizedComposite) {
+    const byComposite = agentEvents.messages.value.find((item) => {
+      if (item.id === normalizedComposite) return true
+      const existingComposite = String(item.metadata?.team_tool_call_key || '').trim()
+      return existingComposite.length > 0 && existingComposite === normalizedComposite
+    }) || null
+    if (byComposite) return byComposite
+    if (!allowLegacyFallback) return null
+  }
+  if (!normalizedLegacyId) return null
   return agentEvents.messages.value.find((item) => {
-    if (normalizedComposite && item.id === normalizedComposite) return true
-    const existingComposite = String(item.metadata?.team_tool_call_key || '').trim()
-    if (normalizedComposite && existingComposite.length > 0 && existingComposite === normalizedComposite) {
-      return true
-    }
-    if (!normalizedLegacyId) return false
     if (item.id === normalizedLegacyId) return true
     const existingCallId = String(item.metadata?.tool_call_id || '').trim()
     return existingCallId.length > 0 && existingCallId === normalizedLegacyId
@@ -2622,8 +2379,13 @@ const upsertTeamToolCallToMainFlow = (params: {
     params.memberName,
     params.streamId,
   )
+  const hasStreamScope = String(params.streamId || '').trim().length > 0
   const stableId = compositeKey || normalizedId || `team-toolcall:${crypto.randomUUID()}`
-  const existing = findTeamToolCallMessage(compositeKey || stableId, normalizedId)
+  const existing = findTeamToolCallMessage(compositeKey || stableId, normalizedId, {
+    // Never fallback to bare tool_call_id when stream scope exists, otherwise
+    // events from a new run can mutate an old tool block with same call id.
+    allowLegacyFallback: !hasStreamScope,
+  })
   const existingMeta = (existing?.metadata || {}) as Record<string, any>
   const toolName = (params.toolName || existingMeta.tool_name || 'unknown').trim() || 'unknown'
   const nextArgs =
@@ -3105,7 +2867,7 @@ const buildTeamMirroredConversationRole = (role: string): string | null => {
   return null
 }
 
-const TEAM_MIRROR_PREFIX_RE = /^\[Team\/[^\]]+\]\s*/u
+const TEAM_MIRROR_PREFIX_RE = /^(?:\[Team\/[^\]]+\]\s*)+/u
 const TEAM_NOISE_MESSAGE_PATTERNS = [
   /^已触发 Team 执行[：:]/u,
   /^主 agent 已拆解任务，共 \d+ 项[。.]?/u,
@@ -3117,6 +2879,11 @@ const TEAM_NOISE_MESSAGE_PATTERNS = [
 const normalizeTeamMirrorContent = (content: unknown): string => {
   if (typeof content !== 'string') return ''
   return content.replace(TEAM_MIRROR_PREFIX_RE, '').trim()
+}
+
+const normalizeTeamHumanInputContent = (content: unknown): string => {
+  if (typeof content !== 'string') return ''
+  return normalizeTeamMirrorContent(content)
 }
 
 const shouldSuppressTeamMirrorNoiseMessage = (content: unknown): boolean => {
@@ -3235,6 +3002,9 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           const tc = toolCalls[i]
           if (!tc || typeof tc !== 'object') continue
           const hasResult = (tc as any).result !== undefined
+          const persistedStreamId = typeof (tc as any).stream_id === 'string'
+            ? (tc as any).stream_id
+            : msg.stream_id
           upsertTeamToolCallToMainFlow({
             toolCallId: typeof (tc as any).id === 'string' ? (tc as any).id : `team:${msg.id}:tool:${i}`,
             toolName: typeof (tc as any).name === 'string' ? (tc as any).name : 'unknown',
@@ -3245,6 +3015,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
             teamSequence: msg.sequence,
             memberId: msg.member_id,
             memberName: msg.member_name,
+            streamId: persistedStreamId,
             mode: msg.role === 'tool_result' || hasResult ? 'result' : 'start',
           })
         }
@@ -3258,6 +3029,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           teamSequence: msg.sequence,
           memberId: msg.member_id,
           memberName: msg.member_name,
+          streamId: msg.stream_id,
           mode: msg.role === 'tool_result' ? 'result' : 'start',
         })
       }
@@ -3301,6 +3073,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           team_member_id: msg.member_id,
           team_member_name: msg.member_name,
           team_member_role: msg.role,
+          team_stream_id: msg.stream_id,
           team_session_id: msg.session_id,
           team_sequence: normalizeTeamSequence(msg.sequence),
         },
@@ -3323,6 +3096,7 @@ const appendTeamMessagesToMainFlow = (messagesResp: AgentTeamMessage[]) => {
           teamSequence: msg.sequence,
           memberId: msg.member_id,
           memberName: msg.member_name,
+          streamId: typeof (tc as any).stream_id === 'string' ? (tc as any).stream_id : msg.stream_id,
           mode: hasResult ? 'result' : 'start',
         })
       }
@@ -3493,7 +3267,7 @@ const refreshTeamRuntimeData = async (sessionId: string) => {
     agentTeamApi.getSession(sessionId),
     agentTeamApi.listTasks(sessionId),
     isTeamWorkspaceActive.value
-      ? agentTeamApi.listBlackboardEntries(sessionId, 200)
+      ? agentTeamApi.listBlackboardEntries(sessionId, TEAM_BLACKBOARD_FETCH_LIMIT)
       : Promise.resolve(null),
   ])
   if (activeTeamSessionId.value !== sessionId) return
@@ -3589,7 +3363,11 @@ const syncActiveTeamSession = async () => {
   try {
     await agentTeamApi.ensureSchema()
     const sessions = await agentTeamApi.listSessions(conversationId.value, 20, 0)
-    const candidate = sessions.find((item) => item.state !== 'ARCHIVED') || null
+    const preferredSessionId = getPersistedTeamSessionId(conversationId.value)
+    const preferred = preferredSessionId
+      ? (sessions.find((item) => item.id === preferredSessionId && item.state !== 'ARCHIVED') || null)
+      : null
+    const candidate = preferred || sessions.find((item) => item.state !== 'ARCHIVED') || null
     activeTeamSessionId.value = candidate?.id || null
     teamSessionState.value = candidate?.state || 'PENDING'
     ensureTeamRunStatusPolling()
@@ -3646,17 +3424,21 @@ const buildTeamSessionName = (goal: string) => {
 }
 
 const createAndStartTeamSession = async (goal: string) => {
+  const normalizedGoal = normalizeTeamHumanInputContent(goal)
+  if (!normalizedGoal) {
+    throw new Error('Team 输入不能为空。')
+  }
   const session = await agentTeamApi.createSession({
-    name: buildTeamSessionName(goal),
-    goal,
+    name: buildTeamSessionName(normalizedGoal),
+    goal: normalizedGoal,
     conversation_id: conversationId.value || undefined,
   })
   activeTeamSessionId.value = session.id
   teamSessionState.value = session.state
-  pushTeamHumanInputLocalEcho(session.id, goal)
+  pushTeamHumanInputLocalEcho(session.id, normalizedGoal)
   await agentTeamApi.submitMessage({
     session_id: session.id,
-    content: goal,
+    content: normalizedGoal,
     resume: false,
   })
   await syncTeamMessagesToMainFlow(session.id)
@@ -3667,24 +3449,25 @@ const createAndStartTeamSession = async (goal: string) => {
 }
 
 const routeTeamMessage = async (content: string) => {
-  let currentSession = activeTeamSessionId.value
+  const normalizedContent = normalizeTeamHumanInputContent(content)
+  if (!normalizedContent) return
+
+  const currentSession = activeTeamSessionId.value
     ? await agentTeamApi.getSession(activeTeamSessionId.value)
     : null
 
   if (
     !currentSession ||
-    currentSession.state === 'COMPLETED' ||
-    currentSession.state === 'FAILED' ||
     currentSession.state === 'ARCHIVED'
   ) {
-    await createAndStartTeamSession(content)
+    await createAndStartTeamSession(normalizedContent)
     return
   }
 
-  pushTeamHumanInputLocalEcho(currentSession.id, content)
+  pushTeamHumanInputLocalEcho(currentSession.id, normalizedContent)
   await agentTeamApi.submitMessage({
     session_id: currentSession.id,
-    content,
+    content: normalizedContent,
     resume: currentSession.state === 'SUSPENDED_FOR_HUMAN',
   })
   await syncTeamMessagesToMainFlow(currentSession.id)
@@ -3710,6 +3493,7 @@ const runTeamExecutionFromWorkspace = async (bridgeMessage: string) => {
   ensureTeamRunStatusPolling()
   await persistTeamSessionState(activeTeamSessionId.value, 'EXECUTING')
   appendTeamBridgeMessage(bridgeMessage)
+  await flushPendingToolConfigSave()
   await agentTeamApi.startRun(
     activeTeamSessionId.value,
     conversationId.value || undefined,
@@ -3811,72 +3595,6 @@ const buildOrchestrationPresetPlan = (presetId: TeamOrchestrationPresetId): Team
           member: architect || pm || engineer,
           instruction: '综合风险、质量与收益做最终发布建议，并给出发布后观测指标。',
         }),
-      ],
-    }
-  }
-
-  if (presetId === 'security_audit_matrix') {
-    return {
-      version,
-      steps: [
-        {
-          id: generateTeamStepId('audit'),
-          type: 'parallel',
-          name: '安全审计并行分析',
-          phase: 'security_audit',
-          children: [
-            createPresetAgentStep({
-              prefix: 'auth',
-              name: '鉴权与会话审计',
-              phase: 'auth_security',
-              member: security || engineer || architect,
-              instruction: '检查认证、授权、会话管理缺陷并给出风险等级。',
-            }),
-            createPresetAgentStep({
-              prefix: 'deps',
-              name: '依赖与供应链审计',
-              phase: 'supply_chain_security',
-              member: security || engineer || architect,
-              instruction: '识别依赖漏洞、供应链风险与版本治理建议。',
-            }),
-            createPresetAgentStep({
-              prefix: 'code',
-              name: '代码与配置审计',
-              phase: 'code_security',
-              member: engineer || security || architect,
-              instruction: '检查注入、越权、敏感配置与日志暴露等高风险问题。',
-            }),
-          ],
-        },
-        {
-          id: generateTeamStepId('remediate'),
-          type: 'serial',
-          name: '风险收敛与修复',
-          phase: 'remediation',
-          children: [
-            createPresetAgentStep({
-              prefix: 'triage',
-              name: '风险分级与排期',
-              phase: 'triage',
-              member: security || pm || architect,
-              instruction: '汇总审计发现，按风险与业务影响排序并输出修复优先级。',
-            }),
-            createPresetAgentStep({
-              prefix: 'fix',
-              name: '修复方案设计',
-              phase: 'fix_plan',
-              member: engineer || architect || security,
-              instruction: '为高优先问题提供可落地修复策略、代码改造点与回滚方案。',
-            }),
-            createPresetAgentStep({
-              prefix: 'verify',
-              name: '修复验证',
-              phase: 'retest',
-              member: qa || security || engineer,
-              instruction: '验证修复有效性并确认未引入回归风险，形成闭环结论。',
-            }),
-          ],
-        },
       ],
     }
   }
@@ -4407,7 +4125,7 @@ const loadTeamWorkspaceData = async () => {
       agentTeamApi.getSession(activeTeamSessionId.value),
       agentTeamApi.getMessages(activeTeamSessionId.value),
       agentTeamApi.listTasks(activeTeamSessionId.value),
-      agentTeamApi.listBlackboardEntries(activeTeamSessionId.value, 200),
+      agentTeamApi.listBlackboardEntries(activeTeamSessionId.value, TEAM_BLACKBOARD_FETCH_LIMIT),
     ])
     if (activeTeamSessionId.value !== sessionId) return
     if (sessionResp.status === 'fulfilled') {
@@ -4440,15 +4158,11 @@ const loadTeamWorkspaceData = async () => {
 
 const handleToggleTeamWorkspace = async () => {
   if (!teamModeEnabled.value) return
-  if (isTeamWorkspaceActive.value) {
-    isTeamWorkspaceActive.value = false
+  if (activeRightPanel.value === 'team') {
+    deactivateRightPanel('team')
     return
   }
-  webExplorerEvents.close()
-  todosComposable.close()
-  terminalComposable.closeTerminal()
-  isHtmlPanelActive.value = false
-  isAuditFindingsPanelActive.value = false
+  activateRightPanel('team')
   isTeamWorkspaceActive.value = true
   if (!activeTeamSessionId.value) {
     teamWorkspaceTab.value = 'tasks'
@@ -4500,26 +4214,41 @@ const schedulePersistToolConfig = (config: UiToolConfigPayload) => {
   }, TOOL_CONFIG_SAVE_DEBOUNCE_MS)
 }
 
+const flushPendingToolConfigSave = async () => {
+  const persistableToolConfig = buildPersistableToolConfig(toolConfig.value as unknown as UiToolConfigPayload)
+  const signature = JSON.stringify(persistableToolConfig)
+
+  if (toolConfigSaveTimer) {
+    clearTimeout(toolConfigSaveTimer)
+    toolConfigSaveTimer = null
+  }
+
+  if (signature === lastPersistedToolConfigSignature.value) {
+    pendingToolConfigSignature = ''
+    return
+  }
+
+  try {
+    await invoke('save_tool_config', {
+      toolConfig: persistableToolConfig,
+    })
+    lastPersistedToolConfigSignature.value = signature
+    pendingToolConfigSignature = ''
+    console.log('[AgentView] Tool config flushed before execution')
+  } catch (e) {
+    console.error('[AgentView] Failed to flush tool config:', e)
+    localError.value = t('agent.failedToSaveToolConfig') + ': ' + e
+    throw e
+  }
+}
+
 // Handle Tool Config update
 const handleToolConfigUpdate = (config: UiToolConfigPayload) => {
-  const normalizedAuditConfig = normalizeAuditConfig(config.audit_config)
-  const auditModeEnabled = !!config.audit_mode
-  const runtimeConfig = {
-    ...config,
-    audit_mode: auditModeEnabled,
-    audit_config: normalizedAuditConfig,
-  }
-  toolConfig.value = runtimeConfig as any
+  toolConfig.value = { ...config } as any
   toolsEnabled.value = config.enabled
   console.log('[AgentView] Tool config updated:', config)
 
-  saveAuditConfigToLocal({
-    ...normalizedAuditConfig,
-    enabled: auditModeEnabled,
-  })
-
   // Save tool config to database (global config, not bound to conversation)
-  // Audit fields are frontend-owned for now and are stored in localStorage.
   schedulePersistToolConfig(config)
 }
 
@@ -4865,7 +4594,9 @@ const handleResendMessage = async (message: AgentMessage) => {
   clearTodosForCurrentContext()
 
   // Set user message content to input box
-  inputValue.value = message.content
+  inputValue.value = teamModeEnabled.value
+    ? normalizeTeamHumanInputContent(message.content)
+    : message.content
 
   // Auto trigger send
   await handleSubmit()
@@ -4934,7 +4665,9 @@ const handleEditMessage = async (message: AgentMessage, newContent: string) => {
   clearTodosForCurrentContext()
 
   // Set edited content to input box
-  inputValue.value = newContent
+  inputValue.value = teamModeEnabled.value
+    ? normalizeTeamHumanInputContent(newContent)
+    : newContent
 
   // Auto trigger send with edited content
   await handleSubmit()
@@ -5283,6 +5016,7 @@ const handleSubmit = async () => {
           teamSessionState.value = 'EXECUTING'
           ensureTeamRunStatusPolling()
           await persistTeamSessionState(activeTeamSessionId.value, 'EXECUTING')
+          await flushPendingToolConfigSave()
           await agentTeamApi.startRun(
             activeTeamSessionId.value,
             conversationId.value || undefined,
@@ -5417,12 +5151,6 @@ const handleSubmit = async () => {
           attachments: usedAttachments.length > 0 ? usedAttachments : undefined,
           document_attachments: usedDocuments.length > 0 ? usedDocuments : undefined,
           tool_config: buildEffectiveToolConfigForExecution(),
-          audit_config: toolConfig.value.audit_mode
-            ? {
-                ...(toolConfig.value.audit_config || defaultAuditConfig()),
-                enabled: true,
-              }
-            : undefined,
           display_content: displayContent,
           model_override: modelOverrideValue,
         }
@@ -5444,25 +5172,18 @@ const handleSubmit = async () => {
 const loadToolConfig = async () => {
   try {
     const savedConfig = await invoke<any>('get_tool_config')
-    const localAuditConfig = loadAuditConfigFromLocal()
     if (savedConfig) {
       toolConfig.value = {
         ...savedConfig,
-        audit_mode: localAuditConfig.enabled,
-        audit_config: localAuditConfig,
       }
       toolsEnabled.value = savedConfig.enabled
       lastPersistedToolConfigSignature.value = JSON.stringify(
         buildPersistableToolConfig({
           ...(savedConfig as any),
-          audit_mode: localAuditConfig.enabled,
-          audit_config: localAuditConfig,
         }),
       )
       console.log('[AgentView] Loaded tool config from database:', savedConfig)
     } else {
-      toolConfig.value.audit_mode = localAuditConfig.enabled
-      toolConfig.value.audit_config = localAuditConfig
       console.log('[AgentView] No saved tool config found, using defaults')
     }
   } catch (e) {
@@ -5622,7 +5343,7 @@ onActivated(() => {
 
 // Watch for conversation changes to update title
 watch(conversationId, async (newId) => {
-  lastPersistedPolicyGateSignature.value = ''
+  lastPersistedToolConfigSignature.value = ''
   teamMirroredConversationMessageIds = new Set<string>()
   if (newId) {
     try {
@@ -5653,6 +5374,9 @@ watch(activeTeamSessionId, async (newId, oldId) => {
     teamPersistedAssistantSuppressionKeys.clear()
     clearTeamStreamDeltaFlushTimer()
     pendingTeamMessageSyncSessionId = null
+  }
+  if (conversationId.value) {
+    setPersistedTeamSessionId(conversationId.value, newId || null)
   }
   ensureTeamRunStatusPolling()
   if (newId) {
@@ -5689,11 +5413,6 @@ watch(selectedTaskTodoSourceKey, (nextKey) => {
   }
   selectedTodoSourceKey.value = TODO_SOURCE_ALL_KEY
 }, { immediate: true })
-
-watch(auditPolicyGate, async (newGate) => {
-  if (!toolConfig.value.audit_mode) return
-  await persistAuditPolicyGate(newGate)
-}, { deep: true })
 
 // Update session title in manager
 const { updateSessionTitle } = useAgentSessionManager()

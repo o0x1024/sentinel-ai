@@ -13,7 +13,7 @@ use serde_json::json;
 use tracing::{debug, error, info};
 
 use crate::config::LlmConfig;
-use crate::log::{log_request_with_image, log_response};
+use crate::log::{build_log_session_id, log_error_response, log_request_with_image, log_response};
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
 
 /// 基础 LLM 客户端
@@ -129,7 +129,8 @@ impl LlmClient {
         // 使用 rig_provider（如果设置了）来选择正确的 client
         let provider_for_agent = self.config.get_effective_rig_provider();
         let model = &self.config.model;
-        let session_id = uuid::Uuid::new_v4().to_string();
+        let conversation_id = self.config.conversation_id.as_deref();
+        let session_id = build_log_session_id(conversation_id);
 
         info!(
             "LlmClient chat - Provider: {}, rig_provider: {}, Model: {}, History: {} messages, Image: {}",
@@ -159,7 +160,7 @@ impl LlmClient {
         // 记录请求日志（含图片标记）
         log_request_with_image(
             &session_id,
-            self.config.conversation_id.as_deref(),
+            conversation_id,
             &provider,
             model,
             Some(preamble),
@@ -179,42 +180,42 @@ impl LlmClient {
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
 
         // 根据 rig_provider 创建 agent 并执行
-        let content = match provider_for_agent.as_str() {
+        let content_result: Result<String> = match provider_for_agent.as_str() {
             "openai" | "lm studio" | "lmstudio" | "lm_studio" => {
                 self.chat_with_openai(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "moonshot" => {
                 self.chat_with_moonshot(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "anthropic" => {
                 self.chat_with_anthropic(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "gemini" | "google" => {
                 self.chat_with_gemini(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "ollama" => {
                 self.chat_with_ollama(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "deepseek" => {
                 self.chat_with_deepseek(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "openrouter" => {
                 self.chat_with_openrouter(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "xai" => {
                 self.chat_with_xai(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             "groq" => {
                 self.chat_with_groq(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
             _ => {
                 // 未知 provider 尝试使用 openai 兼容方式
@@ -223,14 +224,45 @@ impl LlmClient {
                     provider_for_agent
                 );
                 self.chat_with_generic_openai(model, preamble, user_message, chat_history, timeout)
-                    .await?
+                    .await
             }
         };
+        let content = match content_result {
+            Ok(content) => content,
+            Err(err) => {
+                log_error_response(
+                    &session_id,
+                    conversation_id,
+                    &provider_for_agent,
+                    model,
+                    "provider_error",
+                    &err.to_string(),
+                );
+                return Err(err);
+            }
+        };
+
+        if content.trim().is_empty() {
+            let err = anyhow!(
+                "LLM returned empty response (provider={}, model={})",
+                provider_for_agent,
+                model
+            );
+            log_error_response(
+                &session_id,
+                conversation_id,
+                &provider_for_agent,
+                model,
+                "empty_response",
+                &err.to_string(),
+            );
+            return Err(err);
+        }
 
         // 记录响应日志
         log_response(
             &session_id,
-            self.config.conversation_id.as_deref(),
+            conversation_id,
             &provider_for_agent,
             model,
             &content,
@@ -562,6 +594,10 @@ impl LlmClient {
                     return Err(anyhow!("LLM stream error: {}", e));
                 }
             }
+        }
+
+        if content.trim().is_empty() {
+            return Err(anyhow!("LLM stream finished without textual response"));
         }
 
         Ok(content)

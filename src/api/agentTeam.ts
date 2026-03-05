@@ -130,12 +130,14 @@ function mapV3MessageToLegacy(row: TeamV3MessageRow): AgentTeamMessage {
       arguments: payload.arguments ?? payload.tool_args,
       result: payload.result ?? payload.tool_result,
       success: payload.success !== false,
+      stream_id: typeof payload.stream_id === 'string' ? payload.stream_id : undefined,
     }]
     : payload.tool_calls
   return {
     id: row.id,
     session_id: row.session_id,
     round_id: undefined,
+    stream_id: typeof payload.stream_id === 'string' ? payload.stream_id : undefined,
     member_id: row.from_agent_id || undefined,
     member_name: row.from_agent_id || undefined,
     role,

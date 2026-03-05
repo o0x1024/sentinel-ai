@@ -23,9 +23,6 @@ use crate::agents::executor::utils::{cleanup_container_context_async, truncate_f
 use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, TriggerReason};
 use crate::agents::tool_router::ToolRouter;
 use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
-use crate::commands::code_audit_commands::{
-    upsert_agent_audit_findings_with_db, AgentAuditFindingInput, UpsertAgentAuditFindingsRequest,
-};
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
 
 async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
@@ -138,77 +135,6 @@ fn apply_allowed_tools_policy(mut tool_ids: Vec<String>, allowed_tools: &[String
     tool_ids
 }
 
-const AUDIT_FINDING_UPSERT_TOOL: &str = "audit_finding_upsert";
-
-fn enforce_audit_required_tools(mut tool_ids: Vec<String>) -> Vec<String> {
-    const REQUIRED: &[&str] = &[
-        "todos",
-        "skills",
-        "read_file",
-        "project_overview",
-        "audit_coverage",
-        "git_clone_repo",
-        "code_search",
-        "git_diff_scope",
-        "call_graph_lite",
-        "cross_file_taint",
-        "dependency_audit",
-        "tenth_man_review",
-        "audit_report",
-        AUDIT_FINDING_UPSERT_TOOL,
-        "build_cpg",
-        "query_cpg",
-        "cpg_taint_analysis",
-        "cpg_security_scan",
-    ];
-    let mut seen = tool_ids
-        .iter()
-        .cloned()
-        .collect::<std::collections::HashSet<_>>();
-    for tool in REQUIRED {
-        if seen.insert((*tool).to_string()) {
-            tool_ids.push((*tool).to_string());
-        }
-    }
-    tool_ids
-}
-
-async fn ensure_audit_tools_available(
-    tool_server: &ToolServer,
-    selected_tool_ids: &[String],
-) -> Result<()> {
-    let registered_names = tool_server
-        .list_tools()
-        .await
-        .into_iter()
-        .map(|tool| tool.name)
-        .collect::<std::collections::HashSet<_>>();
-
-    // This tool is injected at runtime and does not need to exist in ToolServer registry.
-    let missing = selected_tool_ids
-        .iter()
-        .filter(|name| name.as_str() != AUDIT_FINDING_UPSERT_TOOL)
-        .filter(|name| !registered_names.contains(name.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "Audit mode required tools missing from ToolServer registry: {}",
-            missing.join(", ")
-        );
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct AuditFindingUpsertToolArgs {
-    #[serde(default)]
-    conversation_id: Option<String>,
-    findings: Vec<AgentAuditFindingInput>,
-}
-
 fn infer_tool_result_success(raw: &str) -> bool {
     fn visit(value: &serde_json::Value) -> bool {
         match value {
@@ -261,6 +187,24 @@ fn infer_tool_result_success(raw: &str) -> bool {
             !lower.contains(" no such file or directory")
         }
     }
+}
+
+fn shorten_for_fingerprint(raw: &str, max_chars: usize) -> String {
+    if raw.chars().count() <= max_chars {
+        return raw.trim().to_string();
+    }
+    raw.chars().take(max_chars).collect::<String>().trim().to_string()
+}
+
+fn tool_loop_fingerprint(tool_name: &str, arguments: &str, result: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    tool_name.hash(&mut hasher);
+    shorten_for_fingerprint(arguments, 320).hash(&mut hasher);
+    shorten_for_fingerprint(result, 320).hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Debug, Clone)]
@@ -433,18 +377,12 @@ pub async fn execute_agent_with_tools(
     let mut selected_tool_ids =
         apply_allowed_tools_policy(selection_plan.tool_ids.clone(), &tool_config.allowed_tools);
 
-    if params.audit_mode {
-        selected_tool_ids = enforce_audit_required_tools(selected_tool_ids);
-        ensure_audit_tools_available(tool_server, &selected_tool_ids).await?;
-    }
-
     tracing::info!(
-        "Selected {} tools for execution_id {}: {:?} (strategy={:?}, audit_mode={})",
+        "Selected {} tools for execution_id {}: {:?} (strategy={:?})",
         selected_tool_ids.len(),
         params.execution_id,
         selected_tool_ids,
-        tool_config.selection_strategy,
-        params.audit_mode
+        tool_config.selection_strategy
     );
 
     // Emit skill_selected event if applicable
@@ -472,14 +410,10 @@ pub async fn execute_agent_with_tools(
     let mut current_tool_ids = selected_tool_ids.clone();
 
     // 4. Build context via Context Engineering
-    // Audit mode needs larger budgets for multi-phase analysis with many active tools.
-    let context_policy = params.context_policy.clone().unwrap_or_else(|| {
-        if params.audit_mode {
-            crate::agents::ContextPolicy::audit()
-        } else {
-            crate::agents::ContextPolicy::default()
-        }
-    });
+    let context_policy = params
+        .context_policy
+        .clone()
+        .unwrap_or_else(crate::agents::ContextPolicy::default);
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
@@ -494,41 +428,7 @@ pub async fn execute_agent_with_tools(
     })
     .await?;
 
-    let mut final_system_prompt = context_result.system_prompt;
-    if params.audit_mode {
-        final_system_prompt.push_str(
-            "\n\n<audit_persistence_rules>\n\
-             - Do NOT output full findings JSON in assistant final message.\n\
-             - When you confirm a vulnerability, call `audit_finding_upsert` immediately.\n\
-             - Use `findings` array in the tool args; single finding is still an array with one item.\n\
-             - Final assistant message must contain only a concise summary and instruct users to view details in Security Center > Code Audit.\n\
-             </audit_persistence_rules>\n",
-        );
-
-        // Phase 3: Auto-inject CPG code structure context
-        // If a CPG is already cached, inject the project briefing into the system prompt.
-        // This gives the AI a "bird's eye view" of the project from turn 1.
-        if let Some(cpg_context) = sentinel_tools::buildin_tools::try_get_cpg_audit_context().await
-        {
-            final_system_prompt.push_str("\n\n");
-            final_system_prompt.push_str(&cpg_context);
-            tracing::info!(
-                "Injected CPG audit context into system prompt ({} chars)",
-                cpg_context.len()
-            );
-        } else {
-            // No cached CPG — add a hint so the AI knows to build one
-            final_system_prompt.push_str(
-                "\n\n<cpg_hint>\n\
-                 No Code Property Graph is cached yet. For structural code analysis, \
-                 call `build_cpg` first to build the project structure graph, then use \
-                 `cpg_security_scan` for baseline assessment and `cpg_taint_analysis` \
-                 for targeted vulnerability tracing.\n\
-                 </cpg_hint>\n",
-            );
-        }
-    }
-    let final_system_prompt_content = Some(final_system_prompt);
+    let final_system_prompt_content = Some(context_result.system_prompt);
     let mut history_chat_messages = context_result.history_messages;
 
     // 移除历史记录中最后一条用户消息，避免与当前任务重复发送
@@ -574,6 +474,10 @@ pub async fn execute_agent_with_tools(
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     let tool_seq: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
     let tool_call_counter: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    let loop_break_requested: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let loop_guard_prompt_needed: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let last_tool_fingerprint: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+    let repeated_tool_fingerprint_count: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     let assistant_segment_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     // Track how many assistant text segments have been flushed (persisted) to the database
     // at tool-call boundaries. When > 0, the final save_assistant_message should only save
@@ -588,6 +492,10 @@ pub async fn execute_agent_with_tools(
     let pending = pending_calls.clone();
     let seq_counter = tool_seq.clone();
     let tool_counter = tool_call_counter.clone();
+    let loop_break_flag = loop_break_requested.clone();
+    let loop_prompt_flag = loop_guard_prompt_needed.clone();
+    let last_tool_fp = last_tool_fingerprint.clone();
+    let repeated_tool_fp_count = repeated_tool_fingerprint_count.clone();
     let segment_buf = assistant_segment_buf.clone();
     let reasoning_buf = reasoning_content_buf.clone();
     let pending_digests = pending_tool_digests.clone();
@@ -697,99 +605,6 @@ pub async fn execute_agent_with_tools(
         }
 
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
-
-        if current_tool_ids
-            .iter()
-            .any(|id| id == AUDIT_FINDING_UPSERT_TOOL)
-        {
-            let db_for_audit_tool = db_service.inner().clone();
-            let execution_id_for_audit_tool = params.execution_id.clone();
-            let audit_finding_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-                let db_for_audit_tool = db_for_audit_tool.clone();
-                let execution_id_for_audit_tool = execution_id_for_audit_tool.clone();
-                Box::pin(async move {
-                    let tool_args: AuditFindingUpsertToolArgs = serde_json::from_value(args)
-                        .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-                    if tool_args.findings.is_empty() {
-                        return Err("findings must contain at least one item".to_string());
-                    }
-
-                    let conversation_id = tool_args
-                        .conversation_id
-                        .filter(|v| !v.trim().is_empty())
-                        .unwrap_or(execution_id_for_audit_tool);
-
-                    let request = UpsertAgentAuditFindingsRequest {
-                        conversation_id,
-                        findings: tool_args.findings,
-                    };
-                    let result = upsert_agent_audit_findings_with_db(&db_for_audit_tool, request)
-                        .await
-                        .map_err(|e| format!("Audit finding upsert failed: {}", e))?;
-
-                    serde_json::to_value(result).map_err(|e| {
-                        format!("Failed to serialize audit finding upsert result: {}", e)
-                    })
-                })
-            });
-
-            let audit_finding_def = DynamicToolDef {
-                name: AUDIT_FINDING_UPSERT_TOOL.to_string(),
-                description: "Persist code audit findings into Security Center immediately. Supports single or batch save via `findings` array.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "conversation_id": {
-                            "type": "string",
-                            "description": "Optional conversation id. Defaults to current execution id."
-                        },
-                        "findings": {
-                            "type": "array",
-                            "description": "One or more structured audit findings to upsert",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": { "type": "string" },
-                                    "title": { "type": "string" },
-                                    "severity": { "type": "string" },
-                                    "severity_raw": { "type": "string" },
-                                    "lifecycle_stage": {
-                                        "type": "string",
-                                        "description": "candidate|triaged|verified|confirmed|rejected|archived"
-                                    },
-                                    "verification_status": {
-                                        "type": "string",
-                                        "description": "unverified|pending|passed|failed|needs_more_evidence"
-                                    },
-                                    "confidence": { "type": "number" },
-                                    "status": { "type": "string" },
-                                    "cwe": { "type": "string" },
-                                    "files": { "type": "array", "items": { "type": "string" } },
-                                    "source": { "type": "object" },
-                                    "sink": { "type": "object" },
-                                    "trace_path": { "type": "array", "items": { "type": "object" } },
-                                    "evidence": { "type": "array", "items": { "type": "string" } },
-                                    "required_evidence": { "type": "array", "items": { "type": "string" } },
-                                    "verifier": { "type": "object" },
-                                    "judge": { "type": "object" },
-                                    "provenance": { "type": "object" },
-                                    "fix": { "type": "string" },
-                                    "description": { "type": "string" }
-                                },
-                                "required": ["id"]
-                            }
-                        }
-                    },
-                    "required": ["findings"]
-                }),
-                output_schema: None,
-                source: ToolSource::Builtin,
-                category: "security".to_string(),
-                executor: audit_finding_executor,
-            };
-            dynamic_tools.push(DynamicTool::new(audit_finding_def));
-        }
 
         if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
             if let Some(shell_info) = tool_server.get_tool(ShellTool::NAME).await {
@@ -959,7 +774,12 @@ pub async fn execute_agent_with_tools(
         }
 
         let include_accumulated = retries > 0 || force_history_with_tools;
-        let history_for_retry = build_retry_history(retries, include_accumulated);
+        let mut history_for_retry = build_retry_history(retries, include_accumulated);
+        if loop_guard_prompt_needed.swap(false, Ordering::SeqCst) {
+            history_for_retry.push(ChatMessage::user(
+                "[LoopGuard] You are repeating the same tool call arguments and getting the same result. Do not repeat identical probes. First summarize what has been learned, then change strategy (different endpoint/input/query) or explicitly conclude insufficient evidence.",
+            ));
+        }
         force_history_with_tools = false;
         let result = client
             .stream_chat_with_dynamic_tools(
@@ -1387,6 +1207,47 @@ pub async fn execute_agent_with_tools(
                                     if let Ok(mut queue) = pending_digests.lock() {
                                         queue.push(digest);
                                     }
+
+                                    let fingerprint =
+                                        tool_loop_fingerprint(&name_for_meta, &args_for_meta, &result);
+                                    let mut loop_triggered = false;
+                                    let mut repeat_hits = 0usize;
+                                    if let Ok(mut last_slot) = last_tool_fp.lock() {
+                                        let same_as_last = last_slot
+                                            .as_ref()
+                                            .map(|prev| *prev == fingerprint)
+                                            .unwrap_or(false);
+                                        if same_as_last {
+                                            repeat_hits =
+                                                repeated_tool_fp_count.fetch_add(1, Ordering::SeqCst) + 1;
+                                            if repeat_hits >= 2 {
+                                                loop_triggered = true;
+                                            }
+                                        } else {
+                                            *last_slot = Some(fingerprint);
+                                            repeated_tool_fp_count.store(0, Ordering::SeqCst);
+                                        }
+                                    }
+
+                                    if loop_triggered {
+                                        loop_break_flag.store(true, Ordering::SeqCst);
+                                        loop_prompt_flag.store(true, Ordering::SeqCst);
+                                        tracing::warn!(
+                                            "Detected repeated tool loop - execution_id: {}, tool: {}, repeats: {}",
+                                            execution_id,
+                                            name_for_meta,
+                                            repeat_hits
+                                        );
+                                        let _ = app.emit(
+                                            "agent:loop_detected",
+                                            &json!({
+                                                "execution_id": execution_id,
+                                                "tool_name": name_for_meta,
+                                                "repeat_count": repeat_hits,
+                                                "reason": "repeated identical tool arguments and result"
+                                            }),
+                                        );
+                                    }
                                 }
                             }
 
@@ -1489,6 +1350,9 @@ pub async fn execute_agent_with_tools(
                                 .unwrap_or_default();
                         }
                     }
+                    if loop_break_flag.load(Ordering::SeqCst) {
+                        return false;
+                    }
                     if skill_reload_requested.load(Ordering::SeqCst) {
                         return false;
                     }
@@ -1579,10 +1443,6 @@ pub async fn execute_agent_with_tools(
                                 next_tools.clone(),
                                 &tool_config.allowed_tools,
                             );
-                            if params.audit_mode {
-                                current_tool_ids = enforce_audit_required_tools(current_tool_ids);
-                            }
-
                             let _ = app_handle.emit(
                                 "agent:tools_selected",
                                 &json!({
@@ -1657,6 +1517,46 @@ pub async fn execute_agent_with_tools(
                 force_history_with_tools = true;
                 continue;
             }
+        }
+
+        if loop_break_requested.load(Ordering::SeqCst) {
+            loop_break_requested.store(false, Ordering::SeqCst);
+            let loop_err = anyhow::anyhow!(
+                "Detected repeated identical tool loop; retrying with loop-guard context"
+            );
+            if retries < max_retries {
+                retries += 1;
+                last_error = Some(loop_err);
+
+                if let Ok(current_calls) = tool_calls_collector.lock() {
+                    if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                        acc.extend(current_calls.clone());
+                    }
+                }
+                if let Ok(current_output) = assistant_segment_buf.lock() {
+                    if !current_output.is_empty() {
+                        if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                            if !acc.is_empty() {
+                                acc.push_str("\n\n");
+                            }
+                            acc.push_str(current_output.as_str());
+                        }
+                    }
+                }
+                if let Ok(mut p) = pending.lock() {
+                    p.clear();
+                }
+                if let Ok(mut tc) = tool_calls_collector.lock() {
+                    tc.clear();
+                }
+                if let Ok(mut fp) = last_tool_fingerprint.lock() {
+                    *fp = None;
+                }
+                repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+                force_history_with_tools = true;
+                continue;
+            }
+            return Err(loop_err);
         }
 
         match result {
@@ -2053,6 +1953,9 @@ pub async fn execute_agent_with_tools(
 
 fn is_retryable_error(err_msg: &str) -> bool {
     let err_lower = err_msg.to_lowercase();
+    if err_lower.contains("empty response") || err_lower.contains("without textual response") {
+        return true;
+    }
     if err_lower.contains("error decoding response body") {
         return true;
     }

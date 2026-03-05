@@ -132,10 +132,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         ));
     }
 
-    system_prompt.push_str(
-        "\n\n[Stuck Resolution Rule]\n\
-        If you have tried multiple approaches and failed, or if you feel you are stuck in a loop, you MUST immediately call the `tenth_man_review` tool with `mode: 'full_history'` to break your cognitive bias and get an adversarial critique of your current approach. Do NOT continue guessing if you are stuck."
-    );
+    if policy.include_stuck_resolution_rule {
+        system_prompt.push_str(
+            "\n\n[Stuck Resolution Rule]\n\
+            If you have tried multiple approaches and failed, or if you feel you are stuck in a loop, you MUST immediately call the `tenth_man_review` tool with `mode: 'full_history'` to break your cognitive bias and get an adversarial critique of your current approach. Do NOT continue guessing if you are stuck."
+        );
+    }
 
     if policy.include_task_mainline {
         system_prompt = inject_task_mainline_summary(system_prompt, &input.task);

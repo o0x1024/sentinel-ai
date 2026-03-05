@@ -1,6 +1,6 @@
 use crate::agents::tool_router::{clear_tool_usage_records, get_tool_usage_statistics};
 use crate::agents::AgentExecuteParams;
-use crate::agents::{ToolConfig, ToolSelectionStrategy};
+use crate::agents::ToolConfig;
 use crate::commands::tool_commands::PendingPermissionRequest;
 use crate::models::database::{AiConversation, AiMessage};
 use crate::services::ai::AiServiceManager;
@@ -193,8 +193,6 @@ struct ChatRequest {
     #[serde(default)]
     tool_config: Option<ToolConfig>,
     #[serde(default)]
-    audit_config: Option<GatewayAuditExecuteConfig>,
-    #[serde(default)]
     max_iterations: Option<usize>,
     #[serde(default)]
     timeout_secs: Option<u64>,
@@ -325,23 +323,11 @@ struct SessionChatRequest {
     #[serde(default)]
     tool_config: Option<ToolConfig>,
     #[serde(default)]
-    audit_config: Option<GatewayAuditExecuteConfig>,
-    #[serde(default)]
     max_iterations: Option<usize>,
     #[serde(default)]
     timeout_secs: Option<u64>,
     #[serde(default)]
     enable_tenth_man_rule: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct GatewayAuditExecuteConfig {
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    verification_level: Option<String>,
-    #[serde(default)]
-    required_tools: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -992,7 +978,6 @@ window.__TAURI_INTERNALS__.invoke = async (cmd, payload) => {
         request_id: msgId,
         mode: "agent",
         tool_config: p?.config?.tool_config,
-        audit_config: p?.config?.audit_config,
         max_iterations: p?.config?.max_iterations,
         timeout_secs: p?.config?.timeout_secs,
         enable_tenth_man_rule: p?.config?.enable_tenth_man_rule,
@@ -1448,57 +1433,6 @@ fn parse_mode(raw: Option<&str>) -> Result<GatewayMode, String> {
     }
 }
 
-fn build_audit_allowed_tools(audit_config: &GatewayAuditExecuteConfig) -> Vec<String> {
-    let mut allowed = vec![
-        "skills".to_string(),
-        "git_clone_repo".to_string(),
-        "code_search".to_string(),
-        "git_diff_scope".to_string(),
-        "tenth_man_review".to_string(),
-        "todos".to_string(),
-        "audit_finding_upsert".to_string(),
-    ];
-
-    if let Some(required) = &audit_config.required_tools {
-        allowed.extend(
-            required
-                .iter()
-                .map(|v| v.trim())
-                .filter(|v| !v.is_empty())
-                .map(|v| v.to_string()),
-        );
-    }
-
-    let mut seen = HashSet::new();
-    allowed.retain(|tool| seen.insert(tool.clone()));
-    allowed
-}
-
-fn enforce_audit_tool_whitelist(
-    config: Option<ToolConfig>,
-    audit_config: &GatewayAuditExecuteConfig,
-) -> ToolConfig {
-    let mut tool_config = config.unwrap_or_default();
-    let allowed_tools = build_audit_allowed_tools(audit_config);
-    let allowed_set = allowed_tools.iter().cloned().collect::<HashSet<_>>();
-
-    tool_config.enabled = true;
-    tool_config.allowed_tools = allowed_tools.clone();
-    tool_config.selection_strategy = ToolSelectionStrategy::Manual(allowed_tools.clone());
-    tool_config
-        .fixed_tools
-        .retain(|tool| allowed_set.contains(tool));
-    for tool in &allowed_tools {
-        if !tool_config.fixed_tools.contains(tool) {
-            tool_config.fixed_tools.push(tool.clone());
-        }
-    }
-    tool_config
-        .disabled_tools
-        .retain(|tool| allowed_set.contains(tool));
-    tool_config
-}
-
 fn resolve_stream_cursor(
     payload_since_message_id: Option<String>,
     headers: &HeaderMap,
@@ -1706,7 +1640,6 @@ async fn run_agent_execution(
     task: &str,
     system_prompt: Option<&str>,
     tool_config_override: Option<ToolConfig>,
-    audit_config: Option<GatewayAuditExecuteConfig>,
     max_iterations: Option<usize>,
     timeout_secs: Option<u64>,
     enable_tenth_man_rule: Option<bool>,
@@ -1735,12 +1668,6 @@ async fn run_agent_execution(
     } else {
         load_tool_config_from_db(state).await
     };
-    let audit_mode = audit_config.as_ref().map(|v| v.enabled).unwrap_or(false);
-    if let Some(ref audit_cfg) = audit_config {
-        if audit_cfg.enabled {
-            tool_config = Some(enforce_audit_tool_whitelist(tool_config.clone(), audit_cfg));
-        }
-    }
     let params = AgentExecuteParams {
         execution_id: session_id.to_string(),
         model: model_name,
@@ -1762,10 +1689,6 @@ async fn run_agent_execution(
         subagent_run_id: None,
         context_policy: None,
         recursion_depth: 0,
-        audit_mode,
-        audit_verification_level: audit_config
-            .as_ref()
-            .and_then(|v| v.verification_level.clone()),
     };
 
     crate::agents::execute_agent(&state.app_handle, params)
@@ -2635,138 +2558,6 @@ async fn bridge_invoke(
                 Err(e) => Err(e),
             }
         }
-        "save_audit_policy_gate" => {
-            let conversation_id = req
-                .payload
-                .get("conversationId")
-                .or_else(|| req.payload.get("conversation_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let gate = req.payload.get("gate").cloned().unwrap_or_default();
-            if conversation_id.is_empty() {
-                Err("save_audit_policy_gate missing conversation_id".to_string())
-            } else {
-                let payload = serde_json::json!({
-                    "conversation_id": conversation_id,
-                    "passed": gate.get("passed").and_then(|v| v.as_bool()).unwrap_or(false),
-                    "reason": gate.get("reason"),
-                    "profile": gate.get("profile"),
-                    "summary": gate.get("summary"),
-                    "generated_at": gate
-                        .get("generated_at")
-                        .and_then(|v| v.as_str())
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| Utc::now().to_rfc3339()),
-                });
-                match state
-                    .db
-                    .set_config(
-                        "agent_audit_policy_gate",
-                        &conversation_id,
-                        &payload.to_string(),
-                        Some("Conversation level policy gate state for audit mode"),
-                    )
-                    .await
-                {
-                    Ok(_) => Ok(json!(null)),
-                    Err(e) => Err(format!("save_audit_policy_gate failed: {}", e)),
-                }
-            }
-        }
-        "get_agent_audit_quality_gate_thresholds" => {
-            let conversation_id = req
-                .payload
-                .get("conversationId")
-                .or_else(|| req.payload.get("conversation_id"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string());
-            let (category, key) =
-                if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
-                    ("agent_audit_quality_gate_conversation", cid.as_str())
-                } else {
-                    ("agent_audit_quality_gate", "thresholds")
-                };
-            match state.db.get_config(category, key).await {
-                Ok(raw) => {
-                    let defaults = serde_json::json!({
-                        "min_evidence_rate": 0.7,
-                        "max_uncertain_rate": 0.3,
-                        "max_false_positive_rate": 0.2
-                    });
-                    match raw {
-                        Some(v) => {
-                            let parsed: serde_json::Value =
-                                serde_json::from_str(&v).unwrap_or(defaults);
-                            Ok(parsed)
-                        }
-                        None => Ok(defaults),
-                    }
-                }
-                Err(e) => Err(format!(
-                    "get_agent_audit_quality_gate_thresholds failed: {}",
-                    e
-                )),
-            }
-        }
-        "save_agent_audit_quality_gate_thresholds" => {
-            let conversation_id = req
-                .payload
-                .get("conversationId")
-                .or_else(|| req.payload.get("conversation_id"))
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string());
-            let thresholds = req
-                .payload
-                .get("thresholds")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-            let min_evidence_rate = thresholds
-                .get("min_evidence_rate")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.7)
-                .clamp(0.0, 1.0);
-            let max_uncertain_rate = thresholds
-                .get("max_uncertain_rate")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.3)
-                .clamp(0.0, 1.0);
-            let max_false_positive_rate = thresholds
-                .get("max_false_positive_rate")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.2)
-                .clamp(0.0, 1.0);
-            let normalized = serde_json::json!({
-                "min_evidence_rate": min_evidence_rate,
-                "max_uncertain_rate": max_uncertain_rate,
-                "max_false_positive_rate": max_false_positive_rate
-            });
-            let (category, key, description) =
-                if let Some(cid) = conversation_id.as_ref().filter(|v| !v.trim().is_empty()) {
-                    (
-                        "agent_audit_quality_gate_conversation",
-                        cid.as_str(),
-                        "Conversation scoped audit quality gate thresholds",
-                    )
-                } else {
-                    (
-                        "agent_audit_quality_gate",
-                        "thresholds",
-                        "Audit quality gate thresholds",
-                    )
-                };
-            match state
-                .db
-                .set_config(category, key, &normalized.to_string(), Some(description))
-                .await
-            {
-                Ok(_) => Ok(normalized),
-                Err(e) => Err(format!(
-                    "save_agent_audit_quality_gate_thresholds failed: {}",
-                    e
-                )),
-            }
-        }
         "get_subagent_runs" => {
             let parent_id = req
                 .payload
@@ -3303,13 +3094,6 @@ async fn bridge_invoke(
                         .as_ref()
                         .and_then(|c| c.get("tool_config"))
                         .and_then(|x| serde_json::from_value::<ToolConfig>(x.clone()).ok());
-                    let audit_config = v
-                        .config
-                        .as_ref()
-                        .and_then(|c| c.get("audit_config"))
-                        .and_then(|x| {
-                            serde_json::from_value::<GatewayAuditExecuteConfig>(x.clone()).ok()
-                        });
                     let max_iterations = v
                         .config
                         .as_ref()
@@ -3334,7 +3118,6 @@ async fn bridge_invoke(
                             &v.task,
                             system_prompt.as_deref(),
                             tool_config,
-                            audit_config,
                             max_iterations,
                             timeout_secs,
                             enable_tenth_man_rule,
@@ -3543,7 +3326,6 @@ async fn chat(State(state): State<GatewayAppState>, Json(payload): Json<ChatRequ
             &payload.message,
             payload.system_prompt.as_deref(),
             payload.tool_config.clone(),
-            payload.audit_config.clone(),
             payload.max_iterations,
             payload.timeout_secs,
             payload.enable_tenth_man_rule,
@@ -3656,7 +3438,6 @@ async fn session_chat(
         system_prompt: payload.system_prompt,
         mode: payload.mode,
         tool_config: payload.tool_config,
-        audit_config: payload.audit_config,
         max_iterations: payload.max_iterations,
         timeout_secs: payload.timeout_secs,
         enable_tenth_man_rule: payload.enable_tenth_man_rule,
@@ -3735,7 +3516,6 @@ async fn chat_stream(
     let service_name = payload.service_name.clone();
     let system_prompt = payload.system_prompt.clone();
     let tool_config = payload.tool_config.clone();
-    let audit_config = payload.audit_config.clone();
     let max_iterations = payload.max_iterations;
     let timeout_secs = payload.timeout_secs;
     let enable_tenth_man_rule = payload.enable_tenth_man_rule;
@@ -3861,7 +3641,6 @@ async fn chat_stream(
                 &user_message,
                 system_prompt.as_deref(),
                 tool_config.clone(),
-                audit_config.clone(),
                 max_iterations,
                 timeout_secs,
                 enable_tenth_man_rule,

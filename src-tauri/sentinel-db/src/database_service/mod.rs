@@ -16,7 +16,6 @@ pub mod rag;
 pub mod repeater;
 pub mod scan;
 pub mod scan_session;
-pub mod security_rules;
 pub mod service;
 pub mod skills;
 pub mod sliding_window;
@@ -61,7 +60,6 @@ pub use scan::*;
 #[allow(unused_imports)]
 pub use scan_session::*;
 #[allow(unused_imports)]
-pub use security_rules::*;
 #[allow(unused_imports)]
 pub use service::*;
 #[allow(unused_imports)]

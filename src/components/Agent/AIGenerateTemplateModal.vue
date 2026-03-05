@@ -70,7 +70,6 @@
                   <option value="">自动推断</option>
                   <option value="product">产品研发</option>
                   <option value="security">安全运营</option>
-                  <option value="audit">代码审计</option>
                   <option value="redblue">红蓝对抗</option>
                   <option value="ops">运维变更</option>
                   <option value="custom">自定义</option>
@@ -331,9 +330,9 @@ const memberColors = [
 
 const quickExamples = [
   {
-    label: '🔍 代码安全审计',
-    description: '我需要一个专注于 Web 应用安全审计的团队，涵盖 SQL 注入、XSS、逻辑漏洞等维度，同时考虑业务影响和修复可行性。',
-    domain: 'audit',
+    label: '🔍 代码安全评估',
+    description: '我需要一个专注于 Web 应用安全评估的团队，涵盖 SQL 注入、XSS、逻辑漏洞等维度，同时考虑业务影响和修复可行性。',
+    domain: 'security',
     roleCount: 3,
   },
   {
@@ -351,7 +350,7 @@ const quickExamples = [
   {
     label: '📋 合规风险评估',
     description: '针对 GDPR/等保三级合规场景，设计一个评审团队，包含法律合规、技术实现、风险评估和业务影响四个维度。',
-    domain: 'audit',
+    domain: 'security',
     roleCount: 4,
   },
   {
@@ -448,7 +447,7 @@ function closeModal() {
 
 function domainLabel(d: string): string {
   const map: Record<string, string> = {
-    product: '产品研发', security: '安全运营', audit: '代码审计',
+    product: '产品研发', security: '安全运营',
     redblue: '红蓝对抗', ops: '运维变更', custom: '自定义',
   }
   return map[d] ?? d

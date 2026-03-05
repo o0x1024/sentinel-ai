@@ -10,16 +10,14 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 #[allow(unused_imports)]
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    browser::constants as browser_constants, AuditCoverageTool, AuditReportTool, BuildCpgTool,
-    CallGraphLiteTool, CodeSearchTool, CpgSecurityScanTool, CpgTaintAnalysisTool,
-    CrossFileTaintTool, DependencyAuditTool, GitCloneRepoTool, GitDiffScopeTool, HttpRequestTool,
-    LocalTimeTool, MemoryManagerTool, OcrTool, PortScanTool, ProjectOverviewTool, QueryCpgTool,
-    ReadFileTool, ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool,
+    browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, MemoryManagerTool,
+    OcrTool, PortScanTool, ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool,
     SubagentExecuteTool, SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
 };
 
@@ -310,245 +308,6 @@ impl ToolRouter {
                     "information".to_string(),
                     "research".to_string(),
                     "tavily".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: CodeSearchTool::NAME.to_string(),
-                name: CodeSearchTool::NAME.to_string(),
-                description: CodeSearchTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "code".to_string(),
-                    "search".to_string(),
-                    "evidence".to_string(),
-                    "source".to_string(),
-                    "sink".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: GitDiffScopeTool::NAME.to_string(),
-                name: GitDiffScopeTool::NAME.to_string(),
-                description: GitDiffScopeTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "git".to_string(),
-                    "diff".to_string(),
-                    "scope".to_string(),
-                    "pr".to_string(),
-                    "review".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: GitCloneRepoTool::NAME.to_string(),
-                name: GitCloneRepoTool::NAME.to_string(),
-                description: GitCloneRepoTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "git".to_string(),
-                    "clone".to_string(),
-                    "repository".to_string(),
-                    "bootstrap".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: CallGraphLiteTool::NAME.to_string(),
-                name: CallGraphLiteTool::NAME.to_string(),
-                description: CallGraphLiteTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "callgraph".to_string(),
-                    "function".to_string(),
-                    "graph".to_string(),
-                    "trace".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: "audit_finding_upsert".to_string(),
-                name: "audit_finding_upsert".to_string(),
-                description:
-                    "Persist one or many structured code audit findings into Security Center."
-                        .to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "audit".to_string(),
-                    "finding".to_string(),
-                    "upsert".to_string(),
-                    "security-center".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: ReadFileTool::NAME.to_string(),
-                name: ReadFileTool::NAME.to_string(),
-                description: ReadFileTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "read".to_string(),
-                    "file".to_string(),
-                    "code".to_string(),
-                    "audit".to_string(),
-                    "directory".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: ProjectOverviewTool::NAME.to_string(),
-                name: ProjectOverviewTool::NAME.to_string(),
-                description: ProjectOverviewTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "project".to_string(),
-                    "overview".to_string(),
-                    "framework".to_string(),
-                    "language".to_string(),
-                    "audit".to_string(),
-                    "entry-point".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: AuditCoverageTool::NAME.to_string(),
-                name: AuditCoverageTool::NAME.to_string(),
-                description: AuditCoverageTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "audit".to_string(),
-                    "coverage".to_string(),
-                    "tracking".to_string(),
-                    "progress".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: DependencyAuditTool::NAME.to_string(),
-                name: DependencyAuditTool::NAME.to_string(),
-                description: DependencyAuditTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "dependency".to_string(),
-                    "vulnerability".to_string(),
-                    "cve".to_string(),
-                    "supply-chain".to_string(),
-                    "audit".to_string(),
-                    "npm".to_string(),
-                    "cargo".to_string(),
-                    "pip".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: CrossFileTaintTool::NAME.to_string(),
-                name: CrossFileTaintTool::NAME.to_string(),
-                description: CrossFileTaintTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "taint".to_string(),
-                    "cross-file".to_string(),
-                    "dataflow".to_string(),
-                    "source".to_string(),
-                    "sink".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: AuditReportTool::NAME.to_string(),
-                name: AuditReportTool::NAME.to_string(),
-                description: AuditReportTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "report".to_string(),
-                    "export".to_string(),
-                    "markdown".to_string(),
-                    "sarif".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            // Code Property Graph (CPG) tools
-            ToolMetadata {
-                id: BuildCpgTool::NAME.to_string(),
-                name: BuildCpgTool::NAME.to_string(),
-                description: BuildCpgTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "cpg".to_string(),
-                    "build".to_string(),
-                    "ast".to_string(),
-                    "code-structure".to_string(),
-                    "audit".to_string(),
-                    "tree-sitter".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: QueryCpgTool::NAME.to_string(),
-                name: QueryCpgTool::NAME.to_string(),
-                description: QueryCpgTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "cpg".to_string(),
-                    "query".to_string(),
-                    "callgraph".to_string(),
-                    "function".to_string(),
-                    "class".to_string(),
-                    "audit".to_string(),
-                    "code-structure".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: CpgTaintAnalysisTool::NAME.to_string(),
-                name: CpgTaintAnalysisTool::NAME.to_string(),
-                description: CpgTaintAnalysisTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "cpg".to_string(),
-                    "taint".to_string(),
-                    "source".to_string(),
-                    "sink".to_string(),
-                    "dataflow".to_string(),
-                    "vulnerability".to_string(),
-                    "audit".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: CpgSecurityScanTool::NAME.to_string(),
-                name: CpgSecurityScanTool::NAME.to_string(),
-                description: CpgSecurityScanTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Security,
-                tags: vec![
-                    "cpg".to_string(),
-                    "scan".to_string(),
-                    "security".to_string(),
-                    "baseline".to_string(),
-                    "vulnerability".to_string(),
-                    "audit".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
                 always_available: false,
@@ -1096,7 +855,7 @@ impl ToolRouter {
                 if !config.disabled_tools.contains(&TodosTool::NAME.to_string()) {
                     all.push(TodosTool::NAME.to_string());
                 }
-                let injected = self.build_skills_prompt_injection().await;
+                let injected = self.build_skills_prompt_injection(Some(task)).await;
                 Ok(ToolSelectionPlan {
                     tool_ids: self.merge_always_available_tools(all),
                     injected_system_prompt: injected,
@@ -1109,7 +868,7 @@ impl ToolRouter {
                 let injected_system_prompt = if tool_ids.iter().any(|id| id == SkillsTool::NAME)
                     && self.is_skills_enabled().await
                 {
-                    self.build_skills_prompt_injection().await
+                    self.build_skills_prompt_injection(Some(task)).await
                 } else {
                     None
                 };
@@ -1122,10 +881,13 @@ impl ToolRouter {
         }
     }
 
-    async fn build_skills_prompt_injection(&self) -> Option<String> {
+    async fn build_skills_prompt_injection(&self, task: Option<&str>) -> Option<String> {
+        const MAX_SKILLS_INJECTION: usize = 8;
+        const MAX_DESC_CHARS: usize = 220;
+
         if let Some(db_service) = &self.db_service {
             let root = db_service.get_skills_root_dir();
-            let mut summaries = Vec::new();
+            let mut summaries: Vec<(String, String)> = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&root) {
                 for entry in entries.flatten() {
                     if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -1171,14 +933,42 @@ impl ToolRouter {
                     } else {
                         doc.frontmatter.description.trim().to_string()
                     };
-                    summaries.push(format!("\"{}\": {}", name, description));
+                    let description = if description.len() > MAX_DESC_CHARS {
+                        let mut trimmed = description.chars().take(MAX_DESC_CHARS).collect::<String>();
+                        trimmed.push_str("...");
+                        trimmed
+                    } else {
+                        description
+                    };
+                    summaries.push((name, description));
                 }
             }
-            summaries.sort();
-            let skills_block = if summaries.is_empty() {
+            let total_count = summaries.len();
+            let task_text = task.unwrap_or_default().to_lowercase();
+            summaries.sort_by(|(name_a, desc_a), (name_b, desc_b)| {
+                let score_a = score_skill_match(&task_text, name_a, desc_a);
+                let score_b = score_skill_match(&task_text, name_b, desc_b);
+                score_b
+                    .cmp(&score_a)
+                    .then_with(|| name_a.to_lowercase().cmp(&name_b.to_lowercase()))
+            });
+            if summaries.len() > MAX_SKILLS_INJECTION {
+                summaries.truncate(MAX_SKILLS_INJECTION);
+            }
+            let mut rendered = summaries
+                .into_iter()
+                .map(|(name, description)| format!("\"{}\": {}", name, description))
+                .collect::<Vec<_>>();
+            if total_count > rendered.len() {
+                rendered.push(format!(
+                    "... {} more skills omitted for brevity. Use `skills` tool action=list to enumerate all.",
+                    total_count - rendered.len()
+                ));
+            }
+            let skills_block = if rendered.is_empty() {
                 "No skills available.".to_string()
             } else {
-                summaries.join("\n")
+                rendered.join("\n")
             };
             Some(format!(
                 "<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
@@ -2238,6 +2028,42 @@ Return ONLY:
             }),
         })
     }
+}
+
+fn score_skill_match(task_lower: &str, skill_name: &str, description: &str) -> usize {
+    if task_lower.trim().is_empty() {
+        return 0;
+    }
+
+    let mut score = 0usize;
+    let name_lower = skill_name.to_lowercase();
+    let desc_lower = description.to_lowercase();
+
+    if task_lower.contains(&name_lower) {
+        score += 8;
+    }
+
+    let mut keywords = HashSet::new();
+    for part in name_lower
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+        .chain(desc_lower.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-'))
+    {
+        let token = part.trim();
+        if token.len() >= 3 && token.len() <= 32 {
+            keywords.insert(token.to_string());
+        }
+        if keywords.len() >= 36 {
+            break;
+        }
+    }
+
+    for token in keywords {
+        if task_lower.contains(&token) {
+            score += 1;
+        }
+    }
+
+    score
 }
 
 impl Default for ToolRouter {

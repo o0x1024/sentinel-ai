@@ -119,10 +119,8 @@
         <!-- 安全设置 -->
         <SecuritySettings v-if="activeCategory === 'security'" 
                           v-model:settings="settings"
-                          :security-status="securityStatus"
                           :saving="saving"
                           @change-password="changePassword"
-                          @run-security-audit="runSecurityAudit"
                           @check-vulnerabilities="checkVulnerabilities"
                           @generate-security-report="generateSecurityReport"
                           @lock-application="lockApplication"
@@ -305,12 +303,6 @@ const settings = ref({
     enableRateLimit: false,
     requestsPerMinute: 60,
     burstLimit: 10,
-    enableAudit: true,
-    auditLevel: 'detailed',
-    auditLogin: true,
-    auditConfigChanges: true,
-    auditDataAccess: false,
-    auditErrors: true,
     logRetention: 90,
     compressLogs: true,
     remoteLogging: false,
@@ -429,12 +421,6 @@ const databaseStatus = ref({
   backupCount: 0
 })
 
-
-// 安全状态
-const securityStatus = ref({
-  lastAudit: null,
-  auditIssues: 0
-})
 
 // 计算属性
 const availableModels = computed(() => {
@@ -1633,10 +1619,6 @@ const applyUIScale = (scale: number) => {
 // 安全相关方法
 const changePassword = async (passwordForm: any) => {
   dialog.toast.success('密码已更改')
-}
-
-const runSecurityAudit = async () => {
-  dialog.toast.info('正在运行安全审计...')
 }
 
 const checkVulnerabilities = async () => {

@@ -33,15 +33,13 @@ use services::{ai::AiServiceManager, database::DatabaseService};
 
 use crate::skills::scan_and_upsert_skills;
 use commands::{
-    ai, aisettings, asset, cleanup_expired_cache, code_audit_commands, config,
-    database as db_commands, delete_cache, dictionary, get_all_cache_keys, get_cache,
-    llm_test_commands,
+    ai, aisettings, asset, cleanup_expired_cache, config, database as db_commands, delete_cache,
+    dictionary, get_all_cache_keys, get_cache, llm_test_commands,
     monitor_commands::MonitorSchedulerState,
     packet_capture_commands::{self, PacketCaptureState},
     performance,
     proxifier_commands::{self, ProxifierState},
-    rag_commands, scan_session_commands, scan_task_commands, security_rule_commands, set_cache,
-    tool_commands,
+    rag_commands, scan_session_commands, scan_task_commands, set_cache, tool_commands,
     traffic_analysis_commands::{self, TrafficAnalysisState},
     window,
 };
@@ -434,22 +432,6 @@ pub fn run() {
                     tracing::warn!("Skills scan warning: {}", e);
                 }
 
-                // Auto-seed built-in CPG security rules
-                match db_service.has_cpg_security_rules().await {
-                    Ok(false) => {
-                        tracing::info!("Seeding built-in CPG security rules...");
-                        if let Err(e) = security_rule_commands::seed_builtin_rules_impl(&db_service).await {
-                            tracing::warn!("Failed to seed CPG security rules: {}", e);
-                        }
-                    }
-                    Ok(true) => {
-                        tracing::debug!("CPG security rules already exist, skipping seed");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to check CPG security rules: {}", e);
-                    }
-                }
-
                 if let Err(e) =
                     crate::commands::rag_commands::initialize_global_rag_service(db_service.clone())
                         .await
@@ -813,9 +795,6 @@ pub fn run() {
             ai::clear_conversation_messages,
             ai::save_tool_config,
             ai::get_tool_config,
-            ai::save_audit_policy_gate,
-            ai::get_audit_policy_gate,
-            ai::get_audit_gate_for_ci,
             ai::get_ai_conversation_history,
             ai::delete_ai_conversation,
             ai::update_ai_conversation_title,
@@ -1140,27 +1119,7 @@ pub fn run() {
             rag_commands::delete_rag_document,
             rag_commands::ensure_default_rag_collection,
             rag_commands::test_embedding_connection,
-            // Code audit commands
-            code_audit_commands::upsert_agent_audit_findings,
-            code_audit_commands::list_agent_audit_findings,
-            code_audit_commands::count_agent_audit_findings,
-            code_audit_commands::get_agent_audit_quality_gate_metrics,
-            code_audit_commands::get_agent_audit_quality_gate_thresholds,
-            code_audit_commands::save_agent_audit_quality_gate_thresholds,
-            code_audit_commands::get_agent_audit_finding,
-            code_audit_commands::update_agent_audit_finding_status,
-            code_audit_commands::transition_agent_audit_finding_lifecycle,
-            code_audit_commands::delete_agent_audit_finding,
-            code_audit_commands::delete_agent_audit_findings_batch,
-            code_audit_commands::delete_all_agent_audit_findings,
             // CPG security rule commands
-            security_rule_commands::list_cpg_security_rules,
-            security_rule_commands::count_cpg_security_rules,
-            security_rule_commands::get_cpg_security_rule,
-            security_rule_commands::save_cpg_security_rule,
-            security_rule_commands::toggle_cpg_security_rule,
-            security_rule_commands::delete_cpg_security_rule,
-            security_rule_commands::seed_builtin_cpg_rules,
             // Traffic scan commands
             traffic_analysis_commands::start_traffic_analysis,
             traffic_analysis_commands::stop_traffic_analysis,

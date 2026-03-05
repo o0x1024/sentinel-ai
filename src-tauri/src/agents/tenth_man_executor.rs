@@ -23,6 +23,12 @@ static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, String>>>> =
 
 /// Global AppHandle storage (for accessing database and sliding window)
 static APP_HANDLE: once_cell::sync::OnceCell<tauri::AppHandle> = once_cell::sync::OnceCell::new();
+const FULL_HISTORY_MAX_MESSAGES: usize = 64;
+const FULL_HISTORY_MAX_CHARS: usize = 40_000;
+const FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS: usize = 8_000;
+const FULL_HISTORY_PER_MESSAGE_MAX_CHARS: usize = 1_500;
+const FULL_HISTORY_TOOL_SECTION_MAX_CHARS: usize = 1_200;
+const FULL_HISTORY_REASONING_MAX_CHARS: usize = 900;
 
 /// System prompt for quick review
 const TENTH_MAN_QUICK_REVIEW_PROMPT: &str = r#"You are the "Tenth Man" performing a rapid risk assessment.
@@ -61,6 +67,34 @@ Structure your response as:
 
 **IMPORTANT**: You must answer in Chinese (Simplified Chinese).
 "#;
+
+fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+    let mut safe_len = max_bytes;
+    while safe_len > 0 && !input.is_char_boundary(safe_len) {
+        safe_len -= 1;
+    }
+    input[..safe_len].to_string()
+}
+
+fn append_with_budget(target: &mut String, chunk: &str, remaining: &mut usize) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    if chunk.len() <= *remaining {
+        target.push_str(chunk);
+        *remaining -= chunk.len();
+        return true;
+    }
+    let cut = truncate_utf8_at_boundary(chunk, *remaining);
+    if !cut.is_empty() {
+        target.push_str(&cut);
+        *remaining = (*remaining).saturating_sub(cut.len());
+    }
+    false
+}
 
 /// Set LLM config for a specific execution
 pub async fn set_tenth_man_config(execution_id: String, config: LlmConfig) {
@@ -113,40 +147,103 @@ async fn build_history_context(
             // Build context (includes global summary, segment summaries, recent messages)
             let context_messages = sw.build_context("");
 
-            // Format as text
             let mut history = String::new();
+            let mut remaining = FULL_HISTORY_MAX_CHARS;
+            let mut truncated = false;
 
             // Extract global summary from first system message
             if let Some(first) = context_messages.first() {
                 if first.role == "system" {
-                    history.push_str("=== Global Context Summary ===\n");
-                    history.push_str(&first.content);
-                    history.push_str("\n\n");
+                    let global = truncate_utf8_at_boundary(
+                        &first.content,
+                        FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS,
+                    );
+                    if !append_with_budget(
+                        &mut history,
+                        &format!("=== Global Context Summary ===\n{}\n\n", global),
+                        &mut remaining,
+                    ) {
+                        truncated = true;
+                    }
                 }
             }
 
             // Format conversation history
-            history.push_str("=== Conversation History ===\n");
-            for (idx, msg) in context_messages.iter().enumerate().skip(1) {
-                history.push_str(&format!(
+            if !append_with_budget(&mut history, "=== Conversation History ===\n", &mut remaining) {
+                truncated = true;
+            }
+            for (idx, msg) in context_messages
+                .iter()
+                .enumerate()
+                .skip(1)
+                .take(FULL_HISTORY_MAX_MESSAGES)
+            {
+                if remaining < 128 {
+                    truncated = true;
+                    break;
+                }
+                let content = truncate_utf8_at_boundary(&msg.content, FULL_HISTORY_PER_MESSAGE_MAX_CHARS);
+                if !append_with_budget(
+                    &mut history,
+                    &format!(
                     "\n[Message #{}] {}:\n",
                     idx,
                     msg.role.to_uppercase()
-                ));
-                history.push_str(&msg.content);
+                ),
+                    &mut remaining,
+                ) {
+                    truncated = true;
+                    break;
+                }
+                if !append_with_budget(&mut history, &content, &mut remaining) {
+                    truncated = true;
+                    break;
+                }
 
                 if let Some(ref tool_calls) = msg.tool_calls {
-                    history.push_str(&format!("\n[Tool Calls]: {}", tool_calls));
+                    let tool_calls =
+                        truncate_utf8_at_boundary(tool_calls, FULL_HISTORY_TOOL_SECTION_MAX_CHARS);
+                    if !append_with_budget(
+                        &mut history,
+                        &format!("\n[Tool Calls]: {}", tool_calls),
+                        &mut remaining,
+                    ) {
+                        truncated = true;
+                        break;
+                    }
                 }
 
                 if let Some(ref reasoning) = msg.reasoning_content {
                     let reasoning_str: &str = reasoning;
                     if !reasoning_str.trim().is_empty() {
-                        history.push_str(&format!("\n[Reasoning]: {}", reasoning));
+                        let reasoning =
+                            truncate_utf8_at_boundary(reasoning, FULL_HISTORY_REASONING_MAX_CHARS);
+                        if !append_with_budget(
+                            &mut history,
+                            &format!("\n[Reasoning]: {}", reasoning),
+                            &mut remaining,
+                        ) {
+                            truncated = true;
+                            break;
+                        }
                     }
                 }
 
-                history.push_str("\n");
+                if !append_with_budget(&mut history, "\n", &mut remaining) {
+                    truncated = true;
+                    break;
+                }
+            }
+
+            if context_messages.len().saturating_sub(1) > FULL_HISTORY_MAX_MESSAGES {
+                truncated = true;
+            }
+            if truncated {
+                let _ = append_with_budget(
+                    &mut history,
+                    "\n...[history truncated for review budget]",
+                    &mut remaining,
+                );
             }
 
             Ok(history)
@@ -280,7 +377,21 @@ pub async fn execute_tenth_man_review(
         .as_deref()
         .unwrap_or("overall approach and execution process");
 
-    let review_prompt = match args.review_type.as_str() {
+    let normalized_review_type = if matches!(args.review_mode, ReviewMode::FullHistory)
+        && args.review_type.eq_ignore_ascii_case("quick")
+    {
+        tracing::warn!(
+            "Tenth Man review_type=quick with full_history is too lossy; promoting to full (execution_id={})",
+            args.execution_id
+        );
+        "full".to_string()
+    } else if args.review_type.eq_ignore_ascii_case("quick") {
+        "quick".to_string()
+    } else {
+        "full".to_string()
+    };
+
+    let review_prompt = match normalized_review_type.as_str() {
         "quick" => {
             format!(
                 "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### History Context:\n{}\n\n---\n\nPerform quick risk assessment:",
@@ -295,7 +406,7 @@ pub async fn execute_tenth_man_review(
         }
     };
 
-    let system_prompt = match args.review_type.as_str() {
+    let system_prompt = match normalized_review_type.as_str() {
         "quick" => TENTH_MAN_QUICK_REVIEW_PROMPT,
         "full" | _ => TENTH_MAN_FULL_REVIEW_PROMPT,
     };

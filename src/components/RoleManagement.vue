@@ -193,12 +193,12 @@
                     <input
                       v-model="formData.capabilitiesText"
                       type="text"
-                      placeholder="例如: audit.lifecycle.transition, audit.findings.write"
+                      placeholder="例如: team.manage, security.rules.manage"
                       class="input input-bordered w-full focus:input-primary transition-all"
                     />
                     <label class="label">
                       <span class="label-text-alt text-base-content/60">
-                        逗号分隔的能力标识。建议为审计角色添加 `audit.lifecycle.transition`。
+                        逗号分隔的能力标识。
                       </span>
                     </label>
                     <div class="flex flex-wrap gap-2 mt-2">
@@ -388,12 +388,7 @@ const formData = reactive({
   capabilitiesText: '',
 })
 
-const CAPABILITY_TEMPLATES = [
-  'audit.lifecycle.transition',
-  'audit.findings.write',
-  'audit.report.read',
-  'audit.rules.manage',
-]
+const CAPABILITY_TEMPLATES: string[] = []
 
 // 表单错误
 const formErrors = reactive({

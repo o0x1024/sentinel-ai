@@ -56,10 +56,11 @@
       
       <div class="flex-1 relative overflow-hidden">
         <AgentView
-          v-if="activeSessionId"
-          :key="activeSessionId"
-          ref="activeAgentViewRef"
-          :execution-id="activeSessionId"
+          v-for="session in sessions"
+          :key="session.id"
+          :ref="(el) => setAgentViewRef(session.id, el)"
+          v-show="activeSessionId === session.id"
+          :execution-id="session.id"
           :show-todos="true"
           :selected-role="selectedRole"
           class="absolute inset-0"
@@ -128,7 +129,20 @@ const showRoleManagement = ref(false)
 
 // --- 会话管理 ---
 const { sessions, activeSessionId, addSession } = useAgentSessionManager()
-const activeAgentViewRef = ref<any>(null)
+const agentViewRefs = ref<Record<string, any>>({})
+
+const setAgentViewRef = (sessionId: string, el: any | null) => {
+  if (el) {
+    agentViewRefs.value[sessionId] = el
+    return
+  }
+  delete agentViewRefs.value[sessionId]
+}
+
+const getActiveAgentViewRef = () => {
+  if (!activeSessionId.value) return null
+  return agentViewRefs.value[activeSessionId.value] ?? null
+}
 
 const handleNewTab = async () => {
   try {
@@ -190,9 +204,10 @@ onMounted(async () => {
     // 监听流量发送到助手事件
     unlistenTraffic = await listen<{ requests: ReferencedTraffic[], type?: 'request' | 'response' | 'both' }>('traffic:send-to-assistant', (event) => {
       console.log('AIAssistant: Received traffic data:', event.payload)
-      if (event.payload?.requests && activeAgentViewRef.value?.addReferencedTraffic) {
+      const activeAgentViewRef = getActiveAgentViewRef()
+      if (event.payload?.requests && activeAgentViewRef?.addReferencedTraffic) {
         const type = event.payload.type || 'both'
-        activeAgentViewRef.value.addReferencedTraffic(event.payload.requests, type)
+        activeAgentViewRef.addReferencedTraffic(event.payload.requests, type)
       }
     })
   } catch (error) {
@@ -211,7 +226,7 @@ onUnmounted(() => {
 // 激活时聚焦
 onActivated(() => {
   nextTick(() => {
-    activeAgentViewRef.value?.focusInput()
+    getActiveAgentViewRef()?.focusInput()
   })
 })
 </script>

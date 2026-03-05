@@ -216,6 +216,7 @@ export interface UseAgentEventsReturn {
 interface UseAgentEventsOptions {
   suppressUserMessages?: Ref<boolean> | ComputedRef<boolean> | boolean
   defaultMaxContextTokens?: Ref<number> | ComputedRef<number> | number
+  subagentParentExecutionMatcher?: (parentExecutionId: string) => boolean
 }
 
 /**
@@ -287,6 +288,18 @@ export function useAgentEvents(
     // reject all events to avoid cross-session message bleed.
     if (hasExplicitTarget && !targetId) return false
     return !targetId || eventExecId === targetId
+  }
+
+  const matchesSubagentParent = (parentExecutionId: string): boolean => {
+    if (matchesTarget(parentExecutionId)) return true
+    const matcher = options?.subagentParentExecutionMatcher
+    if (!matcher) return false
+    try {
+      return matcher(parentExecutionId) === true
+    } catch (e) {
+      console.warn('[useAgentEvents] subagent parent matcher failed:', e)
+      return false
+    }
   }
 
   const inferToolSuccess = (raw: any): boolean => {
@@ -580,7 +593,7 @@ export function useAgentEvents(
 
     const unlistenSubagentStart = await listen<SubagentStartEvent>('subagent:start', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.parent_execution_id)) return
+      if (!matchesSubagentParent(payload.parent_execution_id)) return
 
       const existing = subagents.value.find(s => s.id === payload.execution_id)
       if (!existing) {
@@ -1197,7 +1210,7 @@ export function useAgentEvents(
 
     const unlistenSubagentDone = await listen<SubagentDoneEvent>('subagent:done', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.parent_execution_id)) return
+      if (!matchesSubagentParent(payload.parent_execution_id)) return
 
       const now = Date.now()
       const existing = subagents.value.find(s => s.id === payload.execution_id)
@@ -1237,7 +1250,7 @@ export function useAgentEvents(
 
     const unlistenSubagentError = await listen<SubagentErrorEvent>('subagent:error', (event) => {
       const payload = event.payload
-      if (!matchesTarget(payload.parent_execution_id)) return
+      if (!matchesSubagentParent(payload.parent_execution_id)) return
 
       const now = Date.now()
       const existing = subagents.value.find(s => s.id === payload.execution_id)

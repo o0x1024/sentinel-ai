@@ -18,7 +18,7 @@ use tracing::{debug, error, info};
 
 use crate::agent::validate_config;
 use crate::config::LlmConfig;
-use crate::log::{log_request, log_response};
+use crate::log::{build_log_session_id, log_error_response, log_request, log_response};
 use crate::message::{ChatMessage, ImageAttachment};
 use crate::types::AiConfig;
 use crate::usage::TokenUsage;
@@ -149,6 +149,8 @@ impl AiService {
         F: FnMut(StreamChunk) -> bool,
     {
         info!("发送流式消息请求 - 模型: {}", self.config.model);
+        let effective_conversation_id = conversation_id.or(Some(execution_id));
+        let session_id = build_log_session_id(effective_conversation_id);
 
         // 验证配置
         let llm_config = self.to_llm_config();
@@ -238,16 +240,16 @@ impl AiService {
             user_prompt.len()
         );
         log_request(
-            execution_id,
-            conversation_id,
+            &session_id,
+            effective_conversation_id,
             &provider,
             &model,
-            system_prompt,
+            Some(preamble),
             user_prompt,
         );
 
         // 根据 provider 创建 agent 并执行流式调用
-        let content = match provider_for_agent.as_str() {
+        let content_result: Result<String> = match provider_for_agent.as_str() {
             "openai" => {
                 self.stream_with_openai(
                     &model,
@@ -257,7 +259,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "moonshot" => {
                 self.stream_with_moonshot(
@@ -268,7 +270,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "anthropic" => {
                 self.stream_with_anthropic(
@@ -279,7 +281,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "gemini" | "google" => {
                 self.stream_with_gemini(
@@ -290,7 +292,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "ollama" => {
                 self.stream_with_ollama(
@@ -301,7 +303,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "deepseek" => {
                 self.stream_with_deepseek(
@@ -312,7 +314,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "openrouter" => {
                 self.stream_with_openrouter(
@@ -323,7 +325,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "xai" => {
                 self.stream_with_xai(
@@ -334,7 +336,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             "groq" => {
                 self.stream_with_groq(
@@ -345,7 +347,7 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
             _ => {
                 info!(
@@ -360,9 +362,40 @@ impl AiService {
                     timeout,
                     &mut on_chunk,
                 )
-                .await?
+                .await
             }
         };
+        let content = match content_result {
+            Ok(content) => content,
+            Err(err) => {
+                log_error_response(
+                    &session_id,
+                    effective_conversation_id,
+                    &provider_for_agent,
+                    &model,
+                    "provider_error",
+                    &err.to_string(),
+                );
+                return Err(err);
+            }
+        };
+
+        if content.trim().is_empty() {
+            let err = anyhow!(
+                "AI service returned empty response (provider={}, model={})",
+                provider_for_agent,
+                model
+            );
+            log_error_response(
+                &session_id,
+                effective_conversation_id,
+                &provider_for_agent,
+                &model,
+                "empty_response",
+                &err.to_string(),
+            );
+            return Err(err);
+        }
 
         // 记录响应日志
         info!(
@@ -371,7 +404,13 @@ impl AiService {
             model,
             content.len()
         );
-        log_response(execution_id, conversation_id, &provider, &model, &content);
+        log_response(
+            &session_id,
+            effective_conversation_id,
+            &provider,
+            &model,
+            &content,
+        );
 
         Ok(content)
     }
@@ -716,6 +755,12 @@ impl AiService {
                     return Err(anyhow!("Stream error: {}", e));
                 }
             }
+        }
+
+        if content.trim().is_empty() {
+            return Err(anyhow!(
+                "AI service stream completed without textual response"
+            ));
         }
 
         Ok(content)

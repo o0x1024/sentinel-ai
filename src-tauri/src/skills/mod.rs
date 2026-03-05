@@ -126,7 +126,7 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
     fs::create_dir_all(&root)
         .with_context(|| format!("Failed to create skills root: {}", root.display()))?;
 
-    // Install built-in skills (Phase 4: CPG audit workflow)
+// Install built-in skills
     install_builtin_skills(&root);
 
     let mut count = 0usize;
@@ -222,10 +222,7 @@ pub async fn scan_and_upsert_skills(db_service: &DatabaseService) -> Result<usiz
 // ── Built-in Skills ─────────────────────────────────────────────────────────
 
 /// Embedded built-in skills that ship with the binary.
-const BUILTIN_SKILLS: &[(&str, &str)] = &[(
-    "code-audit",
-    include_str!("../../skills/code-audit/SKILL.md"),
-)];
+const BUILTIN_SKILLS: &[(&str, &str)] = &[];
 
 /// Install built-in skills to the skills directory if not already present.
 fn install_builtin_skills(skills_root: &Path) {

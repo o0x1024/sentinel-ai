@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use crate::commands::team_v3_artifact_store::persist_team_v3_task_output_artifact;
+use crate::commands::team_v3_artifact_store::{
+    persist_team_v3_task_output_artifact, TeamV3ArtifactFileRef,
+};
 use crate::agents::executor::{execute_agent as execute_team_agent, AgentExecuteParams};
 use crate::agents::tool_router::{ToolConfig, ToolSelectionStrategy};
 use crate::agents::ContextPolicy;
@@ -28,6 +30,7 @@ static TEAM_V3_BLACKBOARD_SESSION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<toki
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const TEAM_V3_BLACKBOARD_INLINE_CHAR_LIMIT: usize = 2_000;
+const TEAM_V3_STRUCTURED_BACKFILL_SCAN_LIMIT: i64 = 2_000;
 
 fn create_team_execution_cancellation(session_id: &str) -> (u64, CancellationToken) {
     let generation = TEAM_EXECUTION_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1231,12 +1234,67 @@ fn extract_json_candidate(raw: &str) -> Option<String> {
         return Some(trimmed.to_string());
     }
 
-    let fence_start = trimmed.find("```json").or_else(|| trimmed.find("```"))?;
-    let after_start = &trimmed[fence_start..];
-    let first_line_end = after_start.find('\n')?;
-    let body = &after_start[first_line_end + 1..];
-    let fence_end = body.find("```")?;
-    Some(body[..fence_end].trim().to_string())
+    if let Some(fence_start) = trimmed.find("```json").or_else(|| trimmed.find("```")) {
+        let after_start = &trimmed[fence_start..];
+        if let Some(first_line_end) = after_start.find('\n') {
+            let body = &after_start[first_line_end + 1..];
+            if let Some(fence_end) = body.find("```") {
+                let fenced = body[..fence_end].trim();
+                if fenced.starts_with('{') && fenced.ends_with('}') {
+                    return Some(fenced.to_string());
+                }
+                if let Some(candidate) = extract_first_json_object(fenced) {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    extract_first_json_object(trimmed)
+}
+
+fn extract_first_json_object(raw: &str) -> Option<String> {
+    let mut start_index: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, ch) in raw.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start_index = Some(index);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    continue;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = start_index {
+                        return Some(raw[start..=index].trim().to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn normalize_task_key(input: &str, fallback_index: usize) -> String {
@@ -1831,34 +1889,6 @@ async fn set_team_v3_session_conversation_id(
     Ok(())
 }
 
-async fn clear_team_v3_blackboard_entries(
-    runtime_pool: &DatabasePool,
-    session_id: &str,
-) -> Result<()> {
-    match runtime_pool {
-        DatabasePool::SQLite(pool) => {
-            sqlx::query(
-                r#"DELETE FROM team_v3_blackboard_entries
-                   WHERE session_id = ?"#,
-            )
-            .bind(session_id)
-            .execute(pool)
-            .await?;
-        }
-        DatabasePool::PostgreSQL(pool) => {
-            sqlx::query(
-                r#"DELETE FROM team_v3_blackboard_entries
-                   WHERE session_id = $1"#,
-            )
-            .bind(session_id)
-            .execute(pool)
-            .await?;
-        }
-        DatabasePool::MySQL(_) => return Err(anyhow!("Team V3 does not support MySQL")),
-    }
-    Ok(())
-}
-
 fn blackboard_revision_from_metadata_value(metadata: &Value) -> Option<i64> {
     let raw = metadata.get("revision")?;
     if let Some(value) = raw.as_i64() {
@@ -1871,6 +1901,100 @@ fn blackboard_revision_from_metadata_value(metadata: &Value) -> Option<i64> {
         return text.trim().parse::<i64>().ok();
     }
     None
+}
+
+fn normalize_blackboard_dedupe_content(content: &str) -> String {
+    collapse_whitespace(content).to_lowercase()
+}
+
+fn should_dedupe_blackboard_entry_type(entry_type: &str) -> bool {
+    matches!(entry_type, "goal" | "plan")
+}
+
+async fn has_recent_duplicate_blackboard_entry(
+    runtime_pool: &DatabasePool,
+    session_id: &str,
+    entry_type: &str,
+    task_id: Option<&str>,
+    agent_id: Option<&str>,
+    content: &str,
+    scan_limit: i64,
+) -> Result<bool> {
+    let safe_limit = scan_limit.max(1);
+    let rows = match runtime_pool {
+        DatabasePool::SQLite(pool) => {
+            sqlx::query(
+                r#"SELECT task_id, agent_id, content
+                   FROM team_v3_blackboard_entries
+                   WHERE session_id = ? AND entry_type = ?
+                   ORDER BY created_at DESC
+                   LIMIT ?"#,
+            )
+            .bind(session_id)
+            .bind(entry_type)
+            .bind(safe_limit)
+            .fetch_all(pool)
+            .await?
+        }
+        DatabasePool::PostgreSQL(pool) => {
+            sqlx::query(
+                r#"SELECT task_id, agent_id, content
+                   FROM team_v3_blackboard_entries
+                   WHERE session_id = $1 AND entry_type = $2
+                   ORDER BY created_at DESC
+                   LIMIT $3"#,
+            )
+            .bind(session_id)
+            .bind(entry_type)
+            .bind(safe_limit)
+            .fetch_all(pool)
+            .await?
+        }
+        DatabasePool::MySQL(_) => return Err(anyhow!("Team V3 does not support MySQL")),
+    };
+
+    let normalized_input = normalize_blackboard_dedupe_content(content);
+    let normalized_task_id = task_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+    let normalized_agent_id = agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+
+    for row in rows {
+        let row_task_id = row
+            .try_get::<Option<String>, _>("task_id")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let row_agent_id = row
+            .try_get::<Option<String>, _>("agent_id")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let row_content = row.try_get::<String, _>("content").unwrap_or_default();
+        let normalized_row_task_id = row_task_id.trim();
+        let normalized_row_agent_id = row_agent_id.trim();
+        if normalized_row_task_id.is_empty() && normalized_task_id != "-" {
+            continue;
+        }
+        if normalized_row_task_id != normalized_task_id && normalized_task_id != "-" {
+            continue;
+        }
+        if normalized_row_agent_id.is_empty() && normalized_agent_id != "-" {
+            continue;
+        }
+        if normalized_row_agent_id != normalized_agent_id && normalized_agent_id != "-" {
+            continue;
+        }
+        if normalize_blackboard_dedupe_content(row_content.as_str()) == normalized_input {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 async fn get_team_v3_latest_blackboard_revision(
@@ -1925,6 +2049,33 @@ async fn append_team_v3_blackboard_entry(
 ) -> Result<()> {
     let blackboard_lock = team_v3_blackboard_session_lock(session_id);
     let _guard = blackboard_lock.lock().await;
+    if should_dedupe_blackboard_entry_type(entry_type)
+        && has_recent_duplicate_blackboard_entry(
+            runtime_pool,
+            session_id,
+            entry_type,
+            task_id,
+            agent_id,
+            content,
+            12,
+        )
+        .await?
+    {
+        tracing::info!(
+            "Team V3 blackboard duplicate skipped: session={} type={} agent={} task={}",
+            session_id,
+            entry_type,
+            agent_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("-"),
+            task_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("-"),
+        );
+        return Ok(());
+    }
     let next_revision = get_team_v3_latest_blackboard_revision(runtime_pool, session_id).await? + 1;
 
     let mut metadata_json = metadata.cloned().unwrap_or_else(|| json!({}));
@@ -2052,12 +2203,75 @@ async fn list_team_v3_blackboard_entries(
     }
 }
 
-fn build_blackboard_context(entries: &[TeamV3BlackboardEntry]) -> String {
-    build_blackboard_context_with_mode(entries, TeamV3BlackboardContextMode::Standard)
+#[derive(Debug, Clone, Default)]
+struct TeamV3PromptQuery {
+    goal: String,
+    user_input: String,
+    task_title: String,
+    task_instruction: String,
+    dependency_task_ids: Vec<String>,
+    dependency_task_keys: Vec<String>,
 }
 
-fn build_blackboard_checkpoint_context(entries: &[TeamV3BlackboardEntry]) -> String {
-    build_blackboard_context_with_mode(entries, TeamV3BlackboardContextMode::CheckpointOnly)
+impl TeamV3PromptQuery {
+    fn for_planner(goal: &str, user_input: &str) -> Self {
+        Self {
+            goal: collapse_whitespace(goal),
+            user_input: collapse_whitespace(user_input),
+            task_title: String::new(),
+            task_instruction: String::new(),
+            dependency_task_ids: Vec::new(),
+            dependency_task_keys: Vec::new(),
+        }
+    }
+
+    fn for_task(
+        goal: &str,
+        user_input: &str,
+        task: &TeamV3Task,
+        dependency_task_ids: &[String],
+        dependency_task_keys: &[String],
+    ) -> Self {
+        Self {
+            goal: collapse_whitespace(goal),
+            user_input: collapse_whitespace(user_input),
+            task_title: collapse_whitespace(task.title.as_str()),
+            task_instruction: collapse_whitespace(task.instruction.as_str()),
+            dependency_task_ids: dependency_task_ids.to_vec(),
+            dependency_task_keys: dependency_task_keys.to_vec(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TeamV3BlackboardSectionDiagnostics {
+    total: usize,
+    selected: usize,
+}
+
+impl TeamV3BlackboardSectionDiagnostics {
+    fn dropped(&self) -> usize {
+        self.total.saturating_sub(self.selected)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TeamV3BlackboardContextDiagnostics {
+    mode: String,
+    query_terms: usize,
+    structured_memory: TeamV3BlackboardSectionDiagnostics,
+    task_outputs: TeamV3BlackboardSectionDiagnostics,
+    raw_events: TeamV3BlackboardSectionDiagnostics,
+    raw_log: TeamV3BlackboardSectionDiagnostics,
+    artifacts: TeamV3BlackboardSectionDiagnostics,
+    checkpoints: TeamV3BlackboardSectionDiagnostics,
+    context_chars: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TeamV3BlackboardContextBuildResult {
+    context: String,
+    diagnostics: TeamV3BlackboardContextDiagnostics,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2068,17 +2282,26 @@ enum TeamV3BlackboardContextMode {
 
 #[derive(Default)]
 struct TeamV3BlackboardLayers<'a> {
+    structured_memory: Vec<&'a TeamV3BlackboardEntry>,
+    task_outputs: Vec<&'a TeamV3BlackboardEntry>,
+    raw_events: Vec<&'a TeamV3BlackboardEntry>,
     raw_log: Vec<&'a TeamV3BlackboardEntry>,
-    working_memory: Vec<&'a TeamV3BlackboardEntry>,
     checkpoints: Vec<&'a TeamV3BlackboardEntry>,
+    artifacts: Vec<&'a TeamV3BlackboardEntry>,
 }
 
 fn split_blackboard_layers<'a>(entries: &'a [TeamV3BlackboardEntry]) -> TeamV3BlackboardLayers<'a> {
     let mut layers = TeamV3BlackboardLayers::default();
-    for entry in entries.iter().rev() {
+    for entry in entries {
         match entry.entry_type.as_str() {
-            "working_memory" => layers.working_memory.push(entry),
+            "structured_fact" => layers.structured_memory.push(entry),
+            "task_output" => layers.task_outputs.push(entry),
+            "working_memory" => layers.raw_events.push(entry),
             "checkpoint" => layers.checkpoints.push(entry),
+            "artifact_ref" => layers.artifacts.push(entry),
+            "goal" | "plan" | "task_start" | "task_error" | "plan_fallback" => {
+                layers.raw_events.push(entry)
+            }
             _ => layers.raw_log.push(entry),
         }
     }
@@ -2112,6 +2335,295 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 
 fn collapse_whitespace(input: &str) -> String {
     input.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn clip_to_sentence_boundary(input: &str, max_chars: usize) -> Option<String> {
+    if max_chars == 0 {
+        return None;
+    }
+    let collapsed = collapse_whitespace(input);
+    if collapsed.is_empty() {
+        return None;
+    }
+    if collapsed.chars().count() <= max_chars {
+        return Some(collapsed);
+    }
+    let mut count = 0usize;
+    let mut best_end: Option<usize> = None;
+    for (index, ch) in collapsed.char_indices() {
+        count += 1;
+        if count > max_chars {
+            break;
+        }
+        if matches!(ch, '。' | '！' | '？' | '.' | '!' | '?' | ';' | '；' | '\n') {
+            best_end = Some(index + ch.len_utf8());
+        }
+    }
+    best_end
+        .and_then(|end| collapsed.get(..end))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+}
+
+fn normalize_fact_for_prompt(input: &str, max_chars: usize) -> Option<String> {
+    let collapsed = collapse_whitespace(input);
+    if collapsed.is_empty() {
+        return None;
+    }
+    if collapsed.chars().count() <= max_chars {
+        return Some(collapsed);
+    }
+    clip_to_sentence_boundary(collapsed.as_str(), max_chars)
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x4E00..=0x9FFF
+            | 0x3400..=0x4DBF
+            | 0x20000..=0x2A6DF
+            | 0x2A700..=0x2B73F
+            | 0x2B740..=0x2B81F
+            | 0x2B820..=0x2CEAF
+            | 0xF900..=0xFAFF
+    )
+}
+
+fn extract_query_terms(text: &str) -> Vec<String> {
+    const MAX_TERMS: usize = 36;
+    let stop_words = [
+        "the", "and", "for", "with", "that", "this", "from", "into", "then", "have", "need",
+        "task", "team", "用户", "针对", "进行", "继续", "然后", "主要", "关注", "所有", "一个",
+    ];
+    let mut terms = Vec::new();
+    let mut seen = HashSet::new();
+    for token in text
+        .to_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && !is_cjk(ch))
+    {
+        let normalized = token.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        let token_len = normalized.chars().count();
+        if token_len < 2 {
+            continue;
+        }
+        if token_len < 4 && normalized.chars().all(|ch| ch.is_ascii()) {
+            continue;
+        }
+        if stop_words.contains(&normalized) {
+            continue;
+        }
+        if seen.insert(normalized.to_string()) {
+            terms.push(normalized.to_string());
+            if terms.len() >= MAX_TERMS {
+                break;
+            }
+        }
+    }
+    terms
+}
+
+fn build_query_terms(query: &TeamV3PromptQuery) -> Vec<String> {
+    let mut raw = Vec::new();
+    if !query.goal.trim().is_empty() {
+        raw.push(query.goal.as_str());
+    }
+    if !query.user_input.trim().is_empty() {
+        raw.push(query.user_input.as_str());
+    }
+    if !query.task_title.trim().is_empty() {
+        raw.push(query.task_title.as_str());
+    }
+    if !query.task_instruction.trim().is_empty() {
+        raw.push(query.task_instruction.as_str());
+    }
+    for dep in query.dependency_task_keys.iter().take(24) {
+        raw.push(dep.as_str());
+    }
+    extract_query_terms(raw.join(" ").as_str())
+}
+
+fn entry_search_text(entry: &TeamV3BlackboardEntry) -> String {
+    let mut segments = vec![
+        entry.entry_type.as_str().to_string(),
+        entry.content.as_str().to_string(),
+    ];
+    if let Some(task_key) = entry.metadata.get("task_key").and_then(Value::as_str) {
+        segments.push(task_key.to_string());
+    }
+    if let Some(task_title) = entry.metadata.get("task_title").and_then(Value::as_str) {
+        segments.push(task_title.to_string());
+    }
+    if let Some(facts) = entry.metadata.get("facts").and_then(Value::as_object) {
+        for value in facts.values() {
+            match value {
+                Value::String(text) => segments.push(text.clone()),
+                Value::Array(items) => {
+                    for item in items {
+                        if let Some(text) = item.as_str() {
+                            segments.push(text.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    collapse_whitespace(segments.join(" ").as_str()).to_lowercase()
+}
+
+fn entry_base_weight(entry_type: &str) -> i64 {
+    match entry_type {
+        "structured_fact" => 70,
+        "checkpoint" => 55,
+        "artifact_ref" => 36,
+        "task_output" => 30,
+        "working_memory" => 26,
+        "plan" => 20,
+        "goal" => 12,
+        _ => 8,
+    }
+}
+
+fn score_blackboard_entry(
+    entry: &TeamV3BlackboardEntry,
+    terms: &[String],
+    query: &TeamV3PromptQuery,
+    recency_index: usize,
+) -> i64 {
+    let search_text = entry_search_text(entry);
+    let mut score = entry_base_weight(entry.entry_type.as_str());
+    for term in terms {
+        if search_text.contains(term) {
+            score += (term.chars().count().min(18) as i64) * 2;
+        }
+    }
+    let task_id_match = entry
+        .task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| query.dependency_task_ids.iter().any(|dep| dep == value))
+        .unwrap_or(false);
+    let task_key_match = entry
+        .metadata
+        .get("task_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| query.dependency_task_keys.iter().any(|dep| dep == value))
+        .unwrap_or(false);
+    if task_id_match || task_key_match {
+        score += 95;
+    }
+    if search_text.contains("sql注入")
+        || search_text.contains("rce")
+        || search_text.contains("未授权")
+        || search_text.contains("source-sink")
+        || search_text.contains("风险")
+        || search_text.contains("漏洞")
+    {
+        score += 22;
+    }
+    if search_text.contains("最终结论")
+        || search_text.contains("汇总")
+        || search_text.contains("清单")
+        || search_text.contains("基线")
+    {
+        score += 14;
+    }
+    score + ((120usize.saturating_sub(recency_index)) as i64 / 6)
+}
+
+fn select_blackboard_entries<'a>(
+    entries: &[&'a TeamV3BlackboardEntry],
+    limit: usize,
+    always_keep_recent: usize,
+    terms: &[String],
+    query: &TeamV3PromptQuery,
+) -> Vec<&'a TeamV3BlackboardEntry> {
+    if entries.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let mut selected = HashSet::new();
+    for index in 0..entries.len().min(always_keep_recent) {
+        selected.insert(index);
+    }
+
+    let mut scored = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (index, score_blackboard_entry(entry, terms, query, index)))
+        .collect::<Vec<_>>();
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    for (index, _) in scored {
+        if selected.len() >= limit {
+            break;
+        }
+        selected.insert(index);
+    }
+
+    if selected.len() < limit {
+        for index in 0..entries.len() {
+            if selected.len() >= limit {
+                break;
+            }
+            selected.insert(index);
+        }
+    }
+
+    let mut selected_entries = selected
+        .into_iter()
+        .map(|index| entries[index])
+        .collect::<Vec<_>>();
+    selected_entries.sort_by(|a, b| {
+        let a_revision = blackboard_revision_from_metadata_value(&a.metadata).unwrap_or(0);
+        let b_revision = blackboard_revision_from_metadata_value(&b.metadata).unwrap_or(0);
+        a_revision
+            .cmp(&b_revision)
+            .then_with(|| a.created_at.cmp(&b.created_at))
+    });
+    selected_entries
+}
+
+fn dedupe_event_entries_for_prompt<'a>(
+    entries: &[&'a TeamV3BlackboardEntry],
+) -> Vec<&'a TeamV3BlackboardEntry> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for entry in entries {
+        let task = entry
+            .task_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-");
+        let agent = entry
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-");
+        let signature = format!(
+            "{}|{}|{}|{}",
+            entry.entry_type,
+            agent,
+            task,
+            normalize_blackboard_dedupe_content(entry.content.as_str())
+        );
+        if seen.insert(signature) {
+            deduped.push(*entry);
+        }
+    }
+    deduped
 }
 
 fn format_blackboard_entry(entry: &TeamV3BlackboardEntry, max_chars: usize) -> String {
@@ -2175,62 +2687,597 @@ fn latest_blackboard_revision(entries: &[TeamV3BlackboardEntry]) -> i64 {
         .unwrap_or(0)
 }
 
-fn build_blackboard_section(
+fn build_blackboard_section_with_formatter<'a, F>(
     title: &str,
-    entries: &[&TeamV3BlackboardEntry],
+    entries: &[&'a TeamV3BlackboardEntry],
     limit: usize,
-    max_chars: usize,
-) -> Option<String> {
-    if entries.is_empty() || limit == 0 {
-        return None;
+    always_keep_recent: usize,
+    terms: &[String],
+    query: &TeamV3PromptQuery,
+    formatter: F,
+) -> (Option<String>, TeamV3BlackboardSectionDiagnostics)
+where
+    F: Fn(&TeamV3BlackboardEntry) -> String,
+{
+    let total = entries.len();
+    if total == 0 || limit == 0 {
+        return (
+            None,
+            TeamV3BlackboardSectionDiagnostics { total, selected: 0 },
+        );
     }
-    let start = entries.len().saturating_sub(limit);
-    let rows = entries[start..]
+    let selected = select_blackboard_entries(entries, limit, always_keep_recent, terms, query);
+    if selected.is_empty() {
+        return (
+            None,
+            TeamV3BlackboardSectionDiagnostics { total, selected: 0 },
+        );
+    }
+    let rows = selected
         .iter()
-        .map(|entry| format_blackboard_entry(entry, max_chars))
+        .map(|entry| formatter(entry))
         .collect::<Vec<_>>();
-    Some(format!("{}\n{}", title, rows.join("\n")))
+    (
+        Some(format!("{}\n{}", title, rows.join("\n"))),
+        TeamV3BlackboardSectionDiagnostics {
+            total,
+            selected: selected.len(),
+        },
+    )
+}
+
+#[derive(Debug, Clone, Default)]
+struct TeamV3CheckpointFacts {
+    task_key: String,
+    title: String,
+    conclusion: Option<String>,
+    evidence: Option<String>,
+    risk: Option<String>,
+    next_step: Option<String>,
+    highlights: Vec<String>,
+}
+
+fn parse_checkpoint_content_fields(
+    content: &str,
+) -> (Option<String>, Option<String>, Vec<String>) {
+    let mut task_key = None;
+    let mut title = None;
+    let mut points = Vec::new();
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if let Some(value) = line.strip_prefix("task_key=") {
+            let normalized = collapse_whitespace(value);
+            if !normalized.is_empty() {
+                task_key = Some(normalized);
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("title=") {
+            let normalized = collapse_whitespace(value);
+            if !normalized.is_empty() {
+                title = Some(normalized);
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("- ") {
+            let normalized = collapse_whitespace(value);
+            if !normalized.is_empty() {
+                points.push(normalized);
+            }
+        }
+    }
+    (task_key, title, points)
+}
+
+fn infer_checkpoint_structured_fields(
+    points: &[String],
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+    let mut conclusion = None;
+    let mut evidence = None;
+    let mut risk = None;
+    let mut next_step = None;
+    for point in points {
+        let lower = point.to_lowercase();
+        let is_conclusion = point.contains("结论")
+            || point.contains("总结")
+            || lower.contains("conclusion")
+            || lower.contains("summary");
+        let is_evidence =
+            point.contains("依据") || point.contains("证据") || lower.contains("evidence");
+        let is_risk = point.contains("风险")
+            || point.contains("漏洞")
+            || point.contains("隐患")
+            || lower.contains("risk")
+            || lower.contains("impact");
+        let is_next = point.contains("下一步")
+            || point.contains("建议")
+            || point.contains("行动")
+            || lower.contains("next")
+            || lower.contains("recommend");
+        if conclusion.is_none() && is_conclusion {
+            conclusion = Some(point.clone());
+            continue;
+        }
+        if evidence.is_none() && is_evidence {
+            evidence = Some(point.clone());
+            continue;
+        }
+        if risk.is_none() && is_risk {
+            risk = Some(point.clone());
+            continue;
+        }
+        if next_step.is_none() && is_next {
+            next_step = Some(point.clone());
+            continue;
+        }
+    }
+    (conclusion, evidence, risk, next_step)
+}
+
+fn is_placeholder_fact(input: &str) -> bool {
+    let normalized = collapse_whitespace(input)
+        .trim_matches(|ch: char| matches!(ch, ':' | '：' | '-' | '|' | '*' | '#' | '。'))
+        .to_string();
+    matches!(
+        normalized.as_str(),
+        "结论" | "依据" | "证据" | "风险" | "下一步" | "建议" | "行动" | "Conclusion"
+            | "Evidence" | "Risk" | "Next" | "Recommendation"
+    )
+}
+
+fn sanitize_structured_fact_value(value: Option<String>) -> Option<String> {
+    value
+        .map(|item| collapse_whitespace(item.as_str()))
+        .filter(|item| !item.is_empty())
+        .filter(|item| !is_placeholder_fact(item.as_str()))
+}
+
+fn extract_checkpoint_facts(entry: &TeamV3BlackboardEntry) -> TeamV3CheckpointFacts {
+    let (content_task_key, content_title, content_points) =
+        parse_checkpoint_content_fields(entry.content.as_str());
+    let metadata_task_key = entry
+        .metadata
+        .get("task_key")
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty());
+    let metadata_title = entry
+        .metadata
+        .get("task_title")
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty());
+    let metadata_facts = entry.metadata.get("facts");
+
+    let metadata_points = metadata_facts
+        .and_then(|facts| facts.get("highlights"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(collapse_whitespace)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let points = if metadata_points.is_empty() {
+        content_points
+    } else {
+        metadata_points
+    };
+
+    let mut conclusion = sanitize_structured_fact_value(
+        metadata_facts
+        .and_then(|facts| facts.get("conclusion"))
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty()),
+    );
+    let mut evidence = sanitize_structured_fact_value(
+        metadata_facts
+        .and_then(|facts| facts.get("evidence"))
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty()),
+    );
+    let mut risk = sanitize_structured_fact_value(
+        metadata_facts
+        .and_then(|facts| facts.get("risk"))
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty()),
+    );
+    let mut next_step = sanitize_structured_fact_value(
+        metadata_facts
+        .and_then(|facts| facts.get("next_step"))
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty()),
+    );
+
+    let (inferred_conclusion, inferred_evidence, inferred_risk, inferred_next_step) =
+        infer_checkpoint_structured_fields(&points);
+    if conclusion.is_none() {
+        conclusion = sanitize_structured_fact_value(inferred_conclusion);
+    }
+    if evidence.is_none() {
+        evidence = sanitize_structured_fact_value(inferred_evidence);
+    }
+    if risk.is_none() {
+        risk = sanitize_structured_fact_value(inferred_risk);
+    }
+    if next_step.is_none() {
+        next_step = sanitize_structured_fact_value(inferred_next_step);
+    }
+
+    let mut highlights = points
+        .iter()
+        .filter(|point| {
+            Some(*point) != conclusion.as_ref()
+                && Some(*point) != evidence.as_ref()
+                && Some(*point) != risk.as_ref()
+                && Some(*point) != next_step.as_ref()
+        })
+        .take(4)
+        .cloned()
+        .collect::<Vec<_>>();
+    if highlights.is_empty() && conclusion.is_none() && evidence.is_none() && risk.is_none() {
+        highlights = points.into_iter().take(4).collect::<Vec<_>>();
+    }
+
+    TeamV3CheckpointFacts {
+        task_key: metadata_task_key
+            .or(content_task_key)
+            .unwrap_or_else(|| "-".to_string()),
+        title: metadata_title
+            .or(content_title)
+            .unwrap_or_else(|| "未命名任务".to_string()),
+        conclusion,
+        evidence,
+        risk,
+        next_step,
+        highlights,
+    }
+}
+
+fn format_checkpoint_entry_for_prompt(entry: &TeamV3BlackboardEntry) -> String {
+    let revision = blackboard_revision_from_metadata_value(&entry.metadata).unwrap_or(0);
+    let agent = entry
+        .agent_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("unknown-agent");
+    let task = entry
+        .task_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("-");
+    let facts = extract_checkpoint_facts(entry);
+    let mut fields = vec![
+        format!("- [checkpoint][rev={}][agent={}][task={}]", revision, agent, task),
+        format!("task_key={}", facts.task_key),
+        format!("title={}", facts.title),
+    ];
+
+    if let Some(value) = facts
+        .conclusion
+        .and_then(|value| normalize_fact_for_prompt(value.as_str(), 260))
+    {
+        fields.push(format!("结论={}", value));
+    }
+    if let Some(value) = facts
+        .evidence
+        .and_then(|value| normalize_fact_for_prompt(value.as_str(), 260))
+    {
+        fields.push(format!("依据={}", value));
+    }
+    if let Some(value) = facts
+        .risk
+        .and_then(|value| normalize_fact_for_prompt(value.as_str(), 260))
+    {
+        fields.push(format!("风险={}", value));
+    }
+    if let Some(value) = facts
+        .next_step
+        .and_then(|value| normalize_fact_for_prompt(value.as_str(), 260))
+    {
+        fields.push(format!("下一步={}", value));
+    }
+
+    if !facts.highlights.is_empty() {
+        let highlights = facts
+            .highlights
+            .iter()
+            .filter_map(|value| normalize_fact_for_prompt(value.as_str(), 220))
+            .collect::<Vec<_>>();
+        if !highlights.is_empty() {
+            fields.push(format!("要点={}", highlights.join(" | ")));
+        }
+    }
+    fields.join(" | ")
+}
+
+fn format_structured_memory_entry_for_prompt(entry: &TeamV3BlackboardEntry) -> String {
+    let revision = blackboard_revision_from_metadata_value(&entry.metadata).unwrap_or(0);
+    let agent = entry
+        .agent_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("unknown-agent");
+    let task = entry
+        .task_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("-");
+    let task_key = entry
+        .metadata
+        .get("task_key")
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "-".to_string());
+    let title = entry
+        .metadata
+        .get("task_title")
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "未命名任务".to_string());
+    let conclusion = entry
+        .metadata
+        .get("facts")
+        .and_then(|value| value.get("conclusion"))
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_fact_for_prompt(value, 260));
+    let evidence = entry
+        .metadata
+        .get("facts")
+        .and_then(|value| value.get("evidence"))
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_fact_for_prompt(value, 260));
+    let risk = entry
+        .metadata
+        .get("facts")
+        .and_then(|value| value.get("risk"))
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_fact_for_prompt(value, 260));
+    let next_step = entry
+        .metadata
+        .get("facts")
+        .and_then(|value| value.get("next_step"))
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_fact_for_prompt(value, 260));
+    let tags = entry
+        .metadata
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(collapse_whitespace)
+                .filter(|value| !value.is_empty())
+                .take(6)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let artifact_path = entry
+        .metadata
+        .get("artifact")
+        .and_then(|value| value.get("path"))
+        .and_then(Value::as_str)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty());
+
+    let mut fields = vec![
+        format!("- [structured_fact][rev={}][agent={}][task={}]", revision, agent, task),
+        format!("task_key={}", task_key),
+        format!("title={}", title),
+    ];
+    if let Some(value) = conclusion {
+        fields.push(format!("结论={}", value));
+    }
+    if let Some(value) = evidence {
+        fields.push(format!("依据={}", value));
+    }
+    if let Some(value) = risk {
+        fields.push(format!("风险={}", value));
+    }
+    if let Some(value) = next_step {
+        fields.push(format!("下一步={}", value));
+    }
+    if !tags.is_empty() {
+        fields.push(format!("tags={}", tags.join(",")));
+    }
+    if let Some(path) = artifact_path {
+        fields.push(format!("artifact={}", path));
+    }
+    if fields.len() <= 3 {
+        fields.push(format!(
+            "摘要={}",
+            normalize_fact_for_prompt(entry.content.as_str(), 220)
+                .unwrap_or_else(|| "暂无结构化摘要".to_string())
+        ));
+    }
+    fields.join(" | ")
+}
+
+fn build_blackboard_context(
+    entries: &[TeamV3BlackboardEntry],
+    query: &TeamV3PromptQuery,
+) -> TeamV3BlackboardContextBuildResult {
+    build_blackboard_context_with_mode(entries, TeamV3BlackboardContextMode::Standard, query)
+}
+
+fn build_blackboard_checkpoint_context(
+    entries: &[TeamV3BlackboardEntry],
+    query: &TeamV3PromptQuery,
+) -> TeamV3BlackboardContextBuildResult {
+    build_blackboard_context_with_mode(entries, TeamV3BlackboardContextMode::CheckpointOnly, query)
 }
 
 fn build_blackboard_context_with_mode(
     entries: &[TeamV3BlackboardEntry],
     mode: TeamV3BlackboardContextMode,
-) -> String {
+    query: &TeamV3PromptQuery,
+) -> TeamV3BlackboardContextBuildResult {
+    let mut diagnostics = TeamV3BlackboardContextDiagnostics {
+        mode: if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            "checkpoint_only".to_string()
+        } else {
+            "standard".to_string()
+        },
+        ..TeamV3BlackboardContextDiagnostics::default()
+    };
     if entries.is_empty() {
-        return String::new();
-    }
-    let layers = split_blackboard_layers(entries);
-    let mut sections: Vec<String> = Vec::new();
-    if mode == TeamV3BlackboardContextMode::Standard {
-        if let Some(raw) =
-            build_blackboard_section("Raw Log（全量事件节选）:", &layers.raw_log, 10, 220)
-        {
-            sections.push(raw);
-        }
-        if let Some(working) = build_blackboard_section(
-            "Working Memory（当前工作记忆）:",
-            &layers.working_memory,
-            12,
-            240,
-        ) {
-            sections.push(working);
-        }
-    }
-    if let Some(checkpoints) =
-        build_blackboard_section("Checkpoint（阶段总结）:", &layers.checkpoints, 12, 280)
-    {
-        sections.push(checkpoints);
-    } else if mode == TeamV3BlackboardContextMode::CheckpointOnly {
-        sections.push(
-            "Checkpoint（阶段总结）:\n- 暂无 checkpoint，可基于已知依赖先产出汇总草稿。"
-                .to_string(),
-        );
+        return TeamV3BlackboardContextBuildResult {
+            context: String::new(),
+            diagnostics,
+        };
     }
 
-    if sections.is_empty() {
+    let query_terms = build_query_terms(query);
+    diagnostics.query_terms = query_terms.len();
+    let layers = split_blackboard_layers(entries);
+    let mut sections: Vec<String> = Vec::new();
+
+    let (structured, structured_diag) = build_blackboard_section_with_formatter(
+        "Structured Memory（结构化记忆）:",
+        &layers.structured_memory,
+        if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            18
+        } else {
+            14
+        },
+        if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            8
+        } else {
+            5
+        },
+        &query_terms,
+        query,
+        format_structured_memory_entry_for_prompt,
+    );
+    diagnostics.structured_memory = structured_diag;
+    if let Some(structured) = structured {
+        sections.push(structured);
+    }
+
+    let (task_outputs, task_output_diag) = build_blackboard_section_with_formatter(
+        "Task Output Evidence（关键执行证据）:",
+        &layers.task_outputs,
+        if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            5
+        } else {
+            8
+        },
+        2,
+        &query_terms,
+        query,
+        |entry| format_blackboard_entry(entry, 320),
+    );
+    diagnostics.task_outputs = task_output_diag;
+    if let Some(task_outputs) = task_outputs {
+        sections.push(task_outputs);
+    }
+
+    let (artifacts, artifacts_diag) = build_blackboard_section_with_formatter(
+        "Artifacts（关键产物摘要）:",
+        &layers.artifacts,
+        if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            6
+        } else {
+            8
+        },
+        2,
+        &query_terms,
+        query,
+        |entry| format_blackboard_entry(entry, 280),
+    );
+    diagnostics.artifacts = artifacts_diag;
+    if let Some(artifacts) = artifacts {
+        sections.push(artifacts);
+    }
+
+    let deduped_events = dedupe_event_entries_for_prompt(&layers.raw_events);
+    if deduped_events.len() < layers.raw_events.len() {
+        tracing::info!(
+            "Team V3 prompt event dedupe applied: total={} deduped={}",
+            layers.raw_events.len(),
+            deduped_events.len()
+        );
+    }
+    let (events, events_diag) = build_blackboard_section_with_formatter(
+        "Team Events（关键事件）:",
+        &deduped_events,
+        6,
+        2,
+        &query_terms,
+        query,
+        |entry| format_blackboard_entry(entry, 220),
+    );
+    diagnostics.raw_events = events_diag;
+    if let Some(events) = events {
+        sections.push(events);
+    }
+
+    if mode == TeamV3BlackboardContextMode::Standard {
+        let (raw, raw_diag) = build_blackboard_section_with_formatter(
+            "Raw Log（全量事件节选）:",
+            &layers.raw_log,
+            4,
+            1,
+            &query_terms,
+            query,
+            |entry| format_blackboard_entry(entry, 220),
+        );
+        diagnostics.raw_log = raw_diag;
+        if let Some(raw) = raw {
+            sections.push(raw);
+        }
+    }
+
+    let (checkpoints, checkpoints_diag) = build_blackboard_section_with_formatter(
+        "Checkpoint（阶段总结）:",
+        &layers.checkpoints,
+        if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            16
+        } else {
+            12
+        },
+        if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            6
+        } else {
+            3
+        },
+        &query_terms,
+        query,
+        format_checkpoint_entry_for_prompt,
+    );
+    diagnostics.checkpoints = checkpoints_diag;
+    if diagnostics.structured_memory.selected == 0 {
+        if let Some(checkpoints) = checkpoints {
+            sections.push(checkpoints);
+        } else if mode == TeamV3BlackboardContextMode::CheckpointOnly {
+            sections.push(
+                "Checkpoint（阶段总结）:\n- 暂无 checkpoint，可基于已知依赖先产出汇总草稿。"
+                    .to_string(),
+            );
+        }
+    }
+
+    let context = if sections.is_empty() {
         String::new()
     } else {
-        format!("Team 白板（分层共享）:\n{}", sections.join("\n\n"))
+        format!("Team 黑板（分层共享）:\n{}", sections.join("\n\n"))
+    };
+    diagnostics.context_chars = context.chars().count();
+
+    TeamV3BlackboardContextBuildResult {
+        context,
+        diagnostics,
     }
 }
 
@@ -2284,7 +3331,9 @@ fn collect_checkpoint_points(
         if !seen.insert(line.clone()) {
             continue;
         }
-        let clipped = truncate_chars(line.as_str(), max_chars_per_point);
+        let Some(clipped) = normalize_fact_for_prompt(line.as_str(), max_chars_per_point) else {
+            continue;
+        };
         let lower = clipped.to_lowercase();
         let has_priority = priority_terms.iter().any(|term| {
             if term.chars().all(|ch| ch.is_ascii()) {
@@ -2305,10 +3354,9 @@ fn collect_checkpoint_points(
         points.extend(fallback.into_iter().take(max_points - points.len()));
     }
     if points.is_empty() {
-        points.push(truncate_chars(
-            collapse_whitespace(output).as_str(),
-            max_chars_per_point,
-        ));
+        let fallback_point = clip_to_sentence_boundary(output, max_chars_per_point)
+            .unwrap_or_else(|| "任务完成，待进一步提炼。".to_string());
+        points.push(fallback_point);
     }
     points
 }
@@ -2321,15 +3369,211 @@ fn build_task_working_memory_content(task_key: &str, output: &str) -> String {
     format!("task_key={}: {}", task_key, first_point)
 }
 
-fn build_task_checkpoint_content(task_key: &str, task_title: &str, output: &str) -> String {
-    let points = collect_checkpoint_points(output, 6, 220);
+#[derive(Debug, Clone)]
+struct TeamV3TaskCheckpointPayload {
+    content: String,
+    facts: Value,
+}
+
+#[derive(Debug, Clone)]
+struct TeamV3StructuredFactPayload {
+    task_key: String,
+    task_title: String,
+    content: String,
+    facts: Value,
+    tags: Vec<String>,
+}
+
+fn parse_fact_fields_from_value(
+    facts: &Value,
+) -> (Option<String>, Option<String>, Option<String>, Option<String>, Vec<String>) {
+    let conclusion = sanitize_structured_fact_value(
+        facts
+            .get("conclusion")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string()),
+    );
+    let evidence = sanitize_structured_fact_value(
+        facts
+            .get("evidence")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string()),
+    );
+    let risk = sanitize_structured_fact_value(
+        facts
+            .get("risk")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string()),
+    );
+    let next_step = sanitize_structured_fact_value(
+        facts
+            .get("next_step")
+            .and_then(Value::as_str)
+            .map(|value| value.to_string()),
+    );
+    let highlights = facts
+        .get("highlights")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|value| collapse_whitespace(value))
+                .filter(|value| !value.is_empty())
+                .filter(|value| !is_placeholder_fact(value.as_str()))
+                .take(5)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    (conclusion, evidence, risk, next_step, highlights)
+}
+
+fn derive_security_tags_from_texts(texts: &[&str]) -> Vec<String> {
+    let merged = texts
+        .iter()
+        .map(|value| value.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut tags = Vec::new();
+    if merged.contains("sql") || merged.contains("注入") {
+        tags.push("sql-injection");
+    }
+    if merged.contains("rce") || merged.contains("远程代码执行") {
+        tags.push("rce");
+    }
+    if merged.contains("未授权")
+        || merged.contains("越权")
+        || merged.contains("unauthor")
+        || merged.contains("privilege")
+    {
+        tags.push("unauthorized-access");
+    }
+    if merged.contains("source-sink") || merged.contains("source sink") {
+        tags.push("source-sink");
+    }
+    if merged.contains("csrf") {
+        tags.push("csrf");
+    }
+    if tags.is_empty() {
+        tags.push("general");
+    }
+    tags
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+}
+
+fn build_structured_fact_content(
+    task_key: &str,
+    task_title: &str,
+    facts: &Value,
+    fallback: &str,
+) -> Option<String> {
+    let (conclusion, evidence, risk, next_step, highlights) = parse_fact_fields_from_value(facts);
+    if conclusion.is_none()
+        && evidence.is_none()
+        && risk.is_none()
+        && next_step.is_none()
+        && highlights.is_empty()
+    {
+        let fallback_line = normalize_fact_for_prompt(fallback, 220)?;
+        if is_placeholder_fact(fallback_line.as_str()) {
+            return None;
+        }
+        return Some(format!(
+            "task_key={}\ntitle={}\nkey_points:\n- {}",
+            task_key,
+            collapse_whitespace(task_title),
+            fallback_line
+        ));
+    }
+
     let mut lines = vec![
         format!("task_key={}", task_key),
         format!("title={}", collapse_whitespace(task_title)),
         "key_points:".to_string(),
     ];
-    lines.extend(points.into_iter().map(|point| format!("- {}", point)));
-    lines.join("\n")
+    if let Some(value) = conclusion {
+        lines.push(format!("- 结论: {}", value));
+    }
+    if let Some(value) = evidence {
+        lines.push(format!("- 依据: {}", value));
+    }
+    if let Some(value) = risk {
+        lines.push(format!("- 风险: {}", value));
+    }
+    if let Some(value) = next_step {
+        lines.push(format!("- 下一步: {}", value));
+    }
+    lines.extend(highlights.into_iter().map(|value| format!("- {}", value)));
+    Some(lines.join("\n"))
+}
+
+fn build_structured_fact_payload(
+    task_key: &str,
+    task_title: &str,
+    facts: &Value,
+    fallback: &str,
+) -> Option<TeamV3StructuredFactPayload> {
+    let content = build_structured_fact_content(task_key, task_title, facts, fallback)?;
+    let (conclusion, evidence, risk, next_step, highlights) = parse_fact_fields_from_value(facts);
+    let facts_value = json!({
+        "conclusion": conclusion,
+        "evidence": evidence,
+        "risk": risk,
+        "next_step": next_step,
+        "highlights": highlights,
+    });
+    let tags = derive_security_tags_from_texts(&[content.as_str(), fallback]);
+    Some(TeamV3StructuredFactPayload {
+        task_key: task_key.to_string(),
+        task_title: collapse_whitespace(task_title),
+        content,
+        facts: facts_value,
+        tags,
+    })
+}
+
+fn build_task_checkpoint_payload(
+    task_key: &str,
+    task_title: &str,
+    output: &str,
+) -> TeamV3TaskCheckpointPayload {
+    let points = collect_checkpoint_points(output, 6, 220);
+    let (raw_conclusion, raw_evidence, raw_risk, raw_next_step) =
+        infer_checkpoint_structured_fields(&points);
+    let conclusion = sanitize_structured_fact_value(raw_conclusion);
+    let evidence = sanitize_structured_fact_value(raw_evidence);
+    let risk = sanitize_structured_fact_value(raw_risk);
+    let next_step = sanitize_structured_fact_value(raw_next_step);
+    let highlights = points
+        .iter()
+        .filter(|point| {
+            Some(*point) != conclusion.as_ref()
+                && Some(*point) != evidence.as_ref()
+                && Some(*point) != risk.as_ref()
+                && Some(*point) != next_step.as_ref()
+                && !is_placeholder_fact(point.as_str())
+        })
+        .take(4)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut lines = vec![
+        format!("task_key={}", task_key),
+        format!("title={}", collapse_whitespace(task_title)),
+        "key_points:".to_string(),
+    ];
+    lines.extend(points.iter().map(|point| format!("- {}", point)));
+    TeamV3TaskCheckpointPayload {
+        content: lines.join("\n"),
+        facts: json!({
+            "conclusion": conclusion,
+            "evidence": evidence,
+            "risk": risk,
+            "next_step": next_step,
+            "highlights": highlights,
+        }),
+    }
 }
 
 fn build_task_artifact_summary(output: &str) -> String {
@@ -2351,6 +3595,133 @@ fn build_task_artifact_ref_content(summary: &str, path: &str, bytes: usize) -> S
     )
 }
 
+fn build_structured_fact_payload_from_checkpoint_entry(
+    checkpoint: &TeamV3BlackboardEntry,
+) -> Option<TeamV3StructuredFactPayload> {
+    let facts = extract_checkpoint_facts(checkpoint);
+    let (_, _, point_candidates) = parse_checkpoint_content_fields(checkpoint.content.as_str());
+    let fallback = point_candidates
+        .into_iter()
+        .map(|value| collapse_whitespace(value.as_str()))
+        .find(|value| !value.is_empty() && !is_placeholder_fact(value.as_str()))
+        .unwrap_or_default();
+    let facts_value = json!({
+        "conclusion": facts.conclusion,
+        "evidence": facts.evidence,
+        "risk": facts.risk,
+        "next_step": facts.next_step,
+        "highlights": facts.highlights,
+    });
+    build_structured_fact_payload(
+        facts.task_key.as_str(),
+        facts.title.as_str(),
+        &facts_value,
+        fallback.as_str(),
+    )
+}
+
+async fn backfill_team_v3_structured_memory_from_checkpoints(
+    runtime_pool: &DatabasePool,
+    session_id: &str,
+    scan_limit: i64,
+) -> Result<usize> {
+    let entries = list_team_v3_blackboard_entries(runtime_pool, session_id, scan_limit).await?;
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let mut existing_source_checkpoint_ids = entries
+        .iter()
+        .filter(|entry| entry.entry_type == "structured_fact")
+        .filter_map(|entry| {
+            entry
+                .metadata
+                .get("source_checkpoint_entry_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string())
+        })
+        .collect::<HashSet<_>>();
+    let mut existing_structured_task_keys = entries
+        .iter()
+        .filter(|entry| entry.entry_type == "structured_fact")
+        .filter_map(|entry| {
+            let source_type = entry
+                .metadata
+                .get("source_type")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default();
+            if source_type != "task_output" {
+                return None;
+            }
+            let task_key = entry
+                .metadata
+                .get("task_key")
+                .and_then(Value::as_str)
+                .map(collapse_whitespace)
+                .filter(|value| !value.is_empty())?;
+            let task_id = entry
+                .task_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("-");
+            Some(format!("{}::{}", task_id, task_key))
+        })
+        .collect::<HashSet<_>>();
+
+    let mut appended = 0usize;
+    for checkpoint in entries
+        .iter()
+        .rev()
+        .filter(|entry| entry.entry_type == "checkpoint")
+    {
+        if existing_source_checkpoint_ids.contains(checkpoint.id.as_str()) {
+            continue;
+        }
+        let Some(structured) = build_structured_fact_payload_from_checkpoint_entry(checkpoint) else {
+            continue;
+        };
+        let task_id_for_key = checkpoint
+            .task_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-");
+        let task_key = structured.task_key.clone();
+        let dedupe_key = format!("{}::{}", task_id_for_key, task_key);
+        if existing_structured_task_keys.contains(dedupe_key.as_str()) {
+            continue;
+        }
+        let source_revision = blackboard_revision_from_metadata_value(&checkpoint.metadata).unwrap_or(0);
+        let structured_meta = json!({
+            "task_key": task_key,
+            "task_title": structured.task_title,
+            "source_type": "checkpoint_backfill",
+            "source_checkpoint_entry_id": checkpoint.id,
+            "source_checkpoint_revision": source_revision,
+            "facts": structured.facts,
+            "tags": structured.tags,
+        });
+        append_team_v3_blackboard_entry(
+            runtime_pool,
+            session_id,
+            checkpoint.task_id.as_deref(),
+            checkpoint.agent_id.as_deref(),
+            "structured_fact",
+            structured.content.as_str(),
+            Some(&structured_meta),
+        )
+        .await?;
+        existing_source_checkpoint_ids.insert(checkpoint.id.clone());
+        existing_structured_task_keys.insert(dedupe_key);
+        appended += 1;
+    }
+    Ok(appended)
+}
+
 async fn append_team_v3_task_memory_layers(
     runtime_pool: &DatabasePool,
     session_id: &str,
@@ -2359,6 +3730,9 @@ async fn append_team_v3_task_memory_layers(
     task_key: &str,
     task_title: &str,
     output: &str,
+    dependency_task_ids: &[String],
+    dependency_task_keys: &[String],
+    artifact_ref: Option<&TeamV3ArtifactFileRef>,
 ) -> Result<()> {
     let working_memory = build_task_working_memory_content(task_key, output);
     let working_meta = json!({
@@ -2376,11 +3750,12 @@ async fn append_team_v3_task_memory_layers(
     )
     .await?;
 
-    let checkpoint = build_task_checkpoint_content(task_key, task_title, output);
+    let checkpoint = build_task_checkpoint_payload(task_key, task_title, output);
     let checkpoint_meta = json!({
         "task_key": task_key,
         "task_title": task_title,
         "source_type": "task_output",
+        "facts": checkpoint.facts,
     });
     append_team_v3_blackboard_entry(
         runtime_pool,
@@ -2388,10 +3763,46 @@ async fn append_team_v3_task_memory_layers(
         Some(task_id),
         Some(member_id),
         "checkpoint",
-        checkpoint.as_str(),
+        checkpoint.content.as_str(),
         Some(&checkpoint_meta),
     )
     .await?;
+    if let Some(structured) =
+        build_structured_fact_payload(task_key, task_title, &checkpoint.facts, output)
+    {
+        let mut structured_meta = json!({
+            "task_key": task_key,
+            "task_title": task_title,
+            "source_type": "task_output",
+            "facts": structured.facts,
+            "depends_on_task_ids": dependency_task_ids,
+            "depends_on_task_keys": dependency_task_keys,
+            "tags": structured.tags,
+        });
+        if let Some(artifact) = artifact_ref {
+            if let Some(obj) = structured_meta.as_object_mut() {
+                obj.insert(
+                    "artifact".to_string(),
+                    json!({
+                        "path": artifact.path.as_str(),
+                        "bytes": artifact.bytes,
+                        "host_path": artifact.host_path.as_deref(),
+                        "container_path": artifact.container_path.as_deref(),
+                    }),
+                );
+            }
+        }
+        append_team_v3_blackboard_entry(
+            runtime_pool,
+            session_id,
+            Some(task_id),
+            Some(member_id),
+            "structured_fact",
+            structured.content.as_str(),
+            Some(&structured_meta),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -2875,7 +4286,7 @@ fn build_team_v3_task_prompt(
 
     if context_sections.is_empty() {
         format!(
-            "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n请直接执行该子任务，并输出结构化结论（结论、依据、风险、下一步）。",
+            "Team 总目标：{}\n用户输入：{}\nTeam 黑板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n请直接执行该子任务，并输出结构化结论（结论、依据、风险、下一步）。",
             goal,
             user_input,
             blackboard_snapshot_revision,
@@ -2885,7 +4296,7 @@ fn build_team_v3_task_prompt(
     } else {
         if checkpoint_only {
             format!(
-                "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n你必须只基于 Checkpoint（阶段总结）完成收敛，不要重新展开全量分析日志。输出结构化结论（最终结论、关键证据、风险、下一步行动）。",
+                "Team 总目标：{}\n用户输入：{}\nTeam 黑板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n你必须优先基于 Structured Memory（结构化记忆）完成收敛，必要时再参考 Task Output Evidence 与 Artifact 摘要。输出结构化结论（最终结论、关键证据、风险、下一步行动）。",
                 goal,
                 user_input,
                 blackboard_snapshot_revision,
@@ -2895,7 +4306,7 @@ fn build_team_v3_task_prompt(
             )
         } else {
             format!(
-                "Team 总目标：{}\n用户输入：{}\nTeam 白板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n请基于共享信息继续执行，并输出结构化结论（结论、依据、风险、下一步）。",
+                "Team 总目标：{}\n用户输入：{}\nTeam 黑板快照版本：{}\n\n当前子任务：{}\n任务说明：{}\n\n{}\n\n请优先基于 Structured Memory（结构化记忆）继续执行，必要时引用 Task Output Evidence 与 Artifact 摘要，并输出结构化结论（结论、依据、风险、下一步）。",
                 goal,
                 user_input,
                 blackboard_snapshot_revision,
@@ -2933,7 +4344,7 @@ fn build_team_v3_planner_prompt(
         sections.push(blackboard_context.to_string());
     }
     sections.push(
-        "请基于当前目标生成 Team 执行计划，并仅输出合法 JSON。字段要求：\
+        "请基于当前目标生成 Team 执行计划，并仅输出合法 JSON 不要输出 Markdown、解释文字或代码块围栏。字段要求：\
         summary: 简短拆解说明；\
         agents: 成员数组（每个成员包含 id/name/responsibility/system_prompt/decision_style/risk_preference/weight）；\
         id: 稳定成员标识，建议使用小写英文和连字符；\
@@ -3068,6 +4479,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
     let planner_prompt =
         build_team_v3_planner_prompt(goal_text, user_input, member_catalog, blackboard_context);
     let execution_id = format!("team-v3-planner:{}:{}", session_id, Uuid::new_v4());
+    let planner_tool_config = load_team_v3_tool_config(app_handle).await;
     let planner_params = AgentExecuteParams {
         execution_id,
         model: model.to_string(),
@@ -3078,30 +4490,35 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         api_base: provider_config.api_base.clone(),
         max_iterations: 8,
         timeout_secs: 180,
-        tool_config: Some(ToolConfig {
-            selection_strategy: ToolSelectionStrategy::None,
-            max_tools: 0,
-            fixed_tools: Vec::new(),
-            disabled_tools: Vec::new(),
-            allowed_tools: Vec::new(),
-            enabled: false,
-        }),
+        tool_config: Some(planner_tool_config),
         enable_tenth_man_rule: false,
         tenth_man_config: None,
         document_attachments: None,
         image_attachments: None,
         persist_messages: false,
         subagent_run_id: None,
-        context_policy: None,
+        context_policy: Some(ContextPolicy {
+            include_working_dir: false,
+            include_context_storage: false,
+            include_task_mainline: false,
+            include_run_state: false,
+            include_skill_instructions: false,
+            include_stuck_resolution_rule: false,
+            ..ContextPolicy::default()
+        }),
         recursion_depth: 0,
-        audit_mode: false,
-        audit_verification_level: None,
     };
     let planner_output = tokio::select! {
         _ = cancellation_token.cancelled() => Err(anyhow!("Team execution cancelled")),
         result = execute_team_agent(app_handle, planner_params) => result,
     }?;
     let Some(plan) = parse_execution_plan(&planner_output) else {
+        let preview = truncate_chars(collapse_whitespace(planner_output.as_str()).as_str(), 320);
+        tracing::warn!(
+            "Team V3 planner output is not valid JSON-only payload (session={}): {}",
+            session_id,
+            preview
+        );
         return Ok(None);
     };
     if !validate_execution_plan(&plan) {
@@ -3127,7 +4544,6 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
         .first()
         .cloned()
         .unwrap_or_else(|| "agent-1".to_string());
-    clear_team_v3_blackboard_entries(runtime_pool, session_id).await?;
     let goal_meta = json!({ "goal": goal_text });
     append_team_v3_blackboard_entry(
         runtime_pool,
@@ -3139,8 +4555,48 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
         Some(&goal_meta),
     )
     .await?;
-    let historical_board = list_team_v3_blackboard_entries(runtime_pool, session_id, 20).await?;
-    let blackboard_context = build_blackboard_context(&historical_board);
+    let backfilled = backfill_team_v3_structured_memory_from_checkpoints(
+        runtime_pool,
+        session_id,
+        TEAM_V3_STRUCTURED_BACKFILL_SCAN_LIMIT,
+    )
+    .await?;
+    if backfilled > 0 {
+        tracing::info!(
+            "Team V3 backfilled structured memory from historical checkpoints: session={} appended={}",
+            session_id,
+            backfilled
+        );
+    }
+    let historical_board = list_team_v3_blackboard_entries(runtime_pool, session_id, 200).await?;
+    let planner_query = TeamV3PromptQuery::for_planner(goal_text, user_input);
+    let blackboard_context_result = build_blackboard_context(&historical_board, &planner_query);
+    tracing::info!(
+        "Team V3 planner blackboard context: session={} mode={} terms={} chars={} structured={}/{} task_outputs={}/{} artifacts={}/{} events={}/{} checkpoints={}/{} dropped_total={}",
+        session_id,
+        blackboard_context_result.diagnostics.mode,
+        blackboard_context_result.diagnostics.query_terms,
+        blackboard_context_result.diagnostics.context_chars,
+        blackboard_context_result.diagnostics.structured_memory.selected,
+        blackboard_context_result.diagnostics.structured_memory.total,
+        blackboard_context_result.diagnostics.task_outputs.selected,
+        blackboard_context_result.diagnostics.task_outputs.total,
+        blackboard_context_result.diagnostics.artifacts.selected,
+        blackboard_context_result.diagnostics.artifacts.total,
+        blackboard_context_result.diagnostics.raw_events.selected,
+        blackboard_context_result.diagnostics.raw_events.total,
+        blackboard_context_result.diagnostics.checkpoints.selected,
+        blackboard_context_result.diagnostics.checkpoints.total,
+        blackboard_context_result
+            .diagnostics
+            .structured_memory
+            .dropped()
+            + blackboard_context_result.diagnostics.task_outputs.dropped()
+            + blackboard_context_result.diagnostics.artifacts.dropped()
+            + blackboard_context_result.diagnostics.raw_events.dropped()
+            + blackboard_context_result.diagnostics.checkpoints.dropped(),
+    );
+    let blackboard_context = blackboard_context_result.context;
     let member_catalog = team_member_catalog_lines(state_data);
 
     let plan_opt = generate_team_v3_execution_plan_with_main_agent(
@@ -3278,9 +4734,11 @@ async fn run_team_v3_execution_orchestrator(
 
         let mut status_by_id: HashMap<String, String> = HashMap::new();
         let mut id_by_task_key: HashMap<String, String> = HashMap::new();
+        let mut task_key_by_id: HashMap<String, String> = HashMap::new();
         for task in tasks.iter() {
             status_by_id.insert(task.id.clone(), task.status.clone());
             id_by_task_key.insert(task.task_key.clone(), task.id.clone());
+            task_key_by_id.insert(task.id.clone(), task.task_key.clone());
         }
 
         let runnable_tasks = tasks
@@ -3297,9 +4755,19 @@ async fn run_team_v3_execution_orchestrator(
             break;
         }
 
-        let mut ready_tasks: Vec<(TeamV3Task, Vec<String>)> = Vec::new();
+        let mut ready_tasks: Vec<(TeamV3Task, Vec<String>, Vec<String>)> = Vec::new();
         for task in runnable_tasks {
-            let dependencies = parse_task_dependencies(&task.metadata)
+            let raw_dependencies = parse_task_dependencies(&task.metadata);
+            let dependency_task_keys = raw_dependencies
+                .iter()
+                .filter_map(|dependency| {
+                    if id_by_task_key.contains_key(dependency) {
+                        return Some(dependency.clone());
+                    }
+                    task_key_by_id.get(dependency).cloned()
+                })
+                .collect::<Vec<_>>();
+            let dependencies = raw_dependencies
                 .into_iter()
                 .filter_map(|dependency| {
                     if status_by_id.contains_key(&dependency) {
@@ -3316,7 +4784,7 @@ async fn run_team_v3_execution_orchestrator(
                     .unwrap_or(false)
             });
             if all_dependencies_done {
-                ready_tasks.push((task, dependencies));
+                ready_tasks.push((task, dependencies, dependency_task_keys));
             }
         }
 
@@ -3325,7 +4793,7 @@ async fn run_team_v3_execution_orchestrator(
         }
 
         let mut join_set = JoinSet::new();
-        for (index, (task, dependencies)) in ready_tasks.into_iter().enumerate() {
+        for (index, (task, dependencies, dependency_task_keys)) in ready_tasks.into_iter().enumerate() {
             let member_id = select_team_member_for_task(&task, &members, index);
             let member_system_prompt = build_team_member_execution_system_prompt(
                 member_id.as_str(),
@@ -3379,11 +4847,46 @@ async fn run_team_v3_execution_orchestrator(
                 if is_summary_task { 96 } else { 48 },
             )
             .await?;
-            let blackboard_context = if is_summary_task {
-                build_blackboard_checkpoint_context(&blackboard_entries)
+            let task_query =
+                TeamV3PromptQuery::for_task(
+                    goal_text.as_str(),
+                    user_input.as_str(),
+                    &task,
+                    dependencies.as_slice(),
+                    dependency_task_keys.as_slice(),
+                );
+            let blackboard_context_result = if is_summary_task {
+                build_blackboard_checkpoint_context(&blackboard_entries, &task_query)
             } else {
-                build_blackboard_context(&blackboard_entries)
+                build_blackboard_context(&blackboard_entries, &task_query)
             };
+            tracing::info!(
+                "Team V3 task blackboard context: session={} task_key={} mode={} terms={} chars={} structured={}/{} task_outputs={}/{} artifacts={}/{} events={}/{} checkpoints={}/{} dropped_total={}",
+                session_id,
+                task.task_key,
+                blackboard_context_result.diagnostics.mode,
+                blackboard_context_result.diagnostics.query_terms,
+                blackboard_context_result.diagnostics.context_chars,
+                blackboard_context_result.diagnostics.structured_memory.selected,
+                blackboard_context_result.diagnostics.structured_memory.total,
+                blackboard_context_result.diagnostics.task_outputs.selected,
+                blackboard_context_result.diagnostics.task_outputs.total,
+                blackboard_context_result.diagnostics.artifacts.selected,
+                blackboard_context_result.diagnostics.artifacts.total,
+                blackboard_context_result.diagnostics.raw_events.selected,
+                blackboard_context_result.diagnostics.raw_events.total,
+                blackboard_context_result.diagnostics.checkpoints.selected,
+                blackboard_context_result.diagnostics.checkpoints.total,
+                blackboard_context_result
+                    .diagnostics
+                    .structured_memory
+                    .dropped()
+                    + blackboard_context_result.diagnostics.task_outputs.dropped()
+                    + blackboard_context_result.diagnostics.artifacts.dropped()
+                    + blackboard_context_result.diagnostics.raw_events.dropped()
+                    + blackboard_context_result.diagnostics.checkpoints.dropped(),
+            );
+            let blackboard_context = blackboard_context_result.context;
             let blackboard_snapshot_revision = latest_blackboard_revision(&blackboard_entries);
             let prompt = build_team_v3_task_prompt(
                 goal_text.as_str(),
@@ -3407,6 +4910,8 @@ async fn run_team_v3_execution_orchestrator(
             let task_id = task.id.clone();
             let task_key = task.task_key.clone();
             let task_title = task.title.clone();
+            let dependency_task_ids_for_task = dependencies.clone();
+            let dependency_task_keys_for_task = dependency_task_keys.clone();
             let task_key_for_timeout = task.task_key.clone();
             let is_summary_task_for_task = is_summary_task;
             let rag_enabled_for_task = rag_enabled;
@@ -3447,8 +4952,6 @@ async fn run_team_v3_execution_orchestrator(
                         ..ContextPolicy::default()
                     }),
                     recursion_depth: 0,
-                    audit_mode: false,
-                    audit_verification_level: None,
                 };
                 let execution_result = tokio::select! {
                     _ = cancel_token.cancelled() => Err(anyhow!("Team execution cancelled")),
@@ -3468,6 +4971,8 @@ async fn run_team_v3_execution_orchestrator(
                     task_id,
                     task_key,
                     task_title,
+                    dependency_task_ids_for_task,
+                    dependency_task_keys_for_task,
                     member_id_for_task,
                     is_summary_task_for_task,
                     execution_result,
@@ -3477,7 +4982,16 @@ async fn run_team_v3_execution_orchestrator(
 
         let mut wave_error: Option<String> = None;
         while let Some(joined) = join_set.join_next().await {
-            let (task_id, task_key, task_title, member_id, is_summary_task, execution_result) =
+            let (
+                task_id,
+                task_key,
+                task_title,
+                dependency_task_ids,
+                dependency_task_keys,
+                member_id,
+                is_summary_task,
+                execution_result,
+            ) =
                 match joined {
                     Ok(result) => result,
                     Err(e) => {
@@ -3496,6 +5010,7 @@ async fn run_team_v3_execution_orchestrator(
                     } else {
                         content
                     };
+                    let mut output_artifact: Option<TeamV3ArtifactFileRef> = None;
                     output_by_task_id.insert(task_id.clone(), normalized_content.clone());
                     set_team_v3_task_execution_state(
                         &runtime_pool,
@@ -3527,6 +5042,7 @@ async fn run_team_v3_execution_orchestrator(
                         .await;
                         match artifact_result {
                             Ok(artifact_ref) => {
+                                output_artifact = Some(artifact_ref.clone());
                                 let summary_text =
                                     build_task_artifact_summary(normalized_content.as_str());
                                 let artifact_content = build_task_artifact_ref_content(
@@ -3599,6 +5115,9 @@ async fn run_team_v3_execution_orchestrator(
                         task_key.as_str(),
                         task_title.as_str(),
                         normalized_content.as_str(),
+                        dependency_task_ids.as_slice(),
+                        dependency_task_keys.as_slice(),
+                        output_artifact.as_ref(),
                     )
                     .await?;
                     if is_summary_task || summary.is_none() {
@@ -4954,4 +6473,235 @@ pub async fn team_v3_review_plan_revision(
         DatabasePool::MySQL(_) => return Err("Team V3 does not support MySQL".to_string()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_checkpoint_entry(
+        revision: i64,
+        task_key: &str,
+        title: &str,
+        highlights: Vec<&str>,
+    ) -> TeamV3BlackboardEntry {
+        TeamV3BlackboardEntry {
+            id: format!("entry-{}", revision),
+            session_id: "session-1".to_string(),
+            task_id: Some(format!("task-{}", revision)),
+            agent_id: Some("agent-a".to_string()),
+            entry_type: "checkpoint".to_string(),
+            content: format!(
+                "task_key={}\ntitle={}\nkey_points:\n{}",
+                task_key,
+                title,
+                highlights
+                    .iter()
+                    .map(|item| format!("- {}", item))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+            metadata: json!({
+                "revision": revision,
+                "task_key": task_key,
+                "task_title": title,
+                "facts": {
+                    "highlights": highlights,
+                }
+            }),
+            created_at: format!("2026-03-04T00:00:{:02}Z", revision.min(59)),
+            updated_at: format!("2026-03-04T00:00:{:02}Z", revision.min(59)),
+        }
+    }
+
+    #[test]
+    fn parse_execution_plan_accepts_wrapped_json_text() {
+        let raw = r#"
+分析说明：先给出简短描述。
+{
+  "summary": "router 审计",
+  "agents": [
+    {
+      "id": "security-engineer",
+      "name": "安全工程师"
+    }
+  ],
+  "tasks": [
+    {
+      "task_key": "audit-router",
+      "title": "审计 router",
+      "instruction": "检查 source-sink"
+    }
+  ]
+}
+补充说明：以上为计划。
+"#;
+        let plan = parse_execution_plan(raw);
+        assert!(plan.is_some(), "planner wrapped JSON should be parsed");
+        let plan = plan.unwrap();
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(plan.tasks[0].task_key, "audit-router");
+    }
+
+    #[test]
+    fn build_task_checkpoint_payload_keeps_structured_facts() {
+        let output = r#"
+- 结论: 已发现 338 个 Controller，可生成全量路由映射。
+- 依据: 通过批量解析 public 方法并关联模块命名空间。
+- 风险: 多数路由未限制 HTTP 方法，存在 CSRF 与未授权访问风险。
+- 下一步: 对高危路由执行 source-sink 审计，重点检查 SQL 注入和 RCE。
+"#;
+        let payload = build_task_checkpoint_payload("analyze-router", "分析路由", output);
+        assert!(payload.content.contains("task_key=analyze-router"));
+        assert_eq!(
+            payload
+                .facts
+                .get("conclusion")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "结论: 已发现 338 个 Controller，可生成全量路由映射。"
+        );
+        assert!(
+            payload
+                .facts
+                .get("risk")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("风险:")
+        );
+        assert!(
+            payload
+                .facts
+                .get("next_step")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("下一步:")
+        );
+    }
+
+    #[test]
+    fn blackboard_context_prioritizes_relevant_checkpoint() {
+        let mut entries = (1..=18)
+            .map(|rev| {
+                build_checkpoint_entry(
+                    rev,
+                    format!("checkpoint-{}", rev).as_str(),
+                    "常规阶段总结",
+                    vec!["结论: 常规检查完成。", "下一步: 继续扫描。"],
+                )
+            })
+            .collect::<Vec<_>>();
+        entries.push(build_checkpoint_entry(
+            19,
+            "router-source-sink-audit",
+            "router source-sink 安全审计",
+            vec![
+                "结论: 已完成 router path source-sink 建模。",
+                "风险: 发现 SQL 注入与 RCE 风险点。",
+                "下一步: 对未授权访问风险做 PoC 验证。",
+            ],
+        ));
+
+        let query = TeamV3PromptQuery {
+            goal: "针对 router path 做安全审计".to_string(),
+            user_input: "关注 source-sink、sql注入、rce、未授权访问".to_string(),
+            task_title: "审计 router".to_string(),
+            task_instruction: "复用已有 router 清单，不要重复扫描".to_string(),
+            dependency_task_ids: Vec::new(),
+            dependency_task_keys: vec!["router-source-sink-audit".to_string()],
+        };
+        let context = build_blackboard_context(&entries, &query);
+        assert!(context.context.contains("router-source-sink-audit"));
+        assert!(context.context.contains("SQL 注入与 RCE 风险点"));
+        assert!(
+            context.diagnostics.checkpoints.selected <= 12,
+            "checkpoint selection should keep bounded prompt size"
+        );
+        assert!(
+            context.diagnostics.checkpoints.dropped() > 0,
+            "when entries exceed limit, diagnostics should report dropped checkpoints"
+        );
+    }
+
+    #[test]
+    fn structured_backfill_skips_placeholder_only_checkpoint() {
+        let checkpoint = build_checkpoint_entry(
+            21,
+            "placeholder-checkpoint",
+            "空摘要",
+            vec!["结论", "依据", "风险", "下一步"],
+        );
+        let structured = build_structured_fact_payload_from_checkpoint_entry(&checkpoint);
+        assert!(
+            structured.is_none(),
+            "placeholder-only checkpoint should not be backfilled into structured memory"
+        );
+    }
+
+    #[test]
+    fn structured_backfill_extracts_meaningful_checkpoint() {
+        let checkpoint = build_checkpoint_entry(
+            22,
+            "router-security-audit",
+            "router 安全审计",
+            vec![
+                "结论: 已梳理关键 router path 与调用链。",
+                "依据: 基于 Controller public 方法与路由映射关系。",
+                "风险: 存在 SQL 注入与未授权访问风险点。",
+                "下一步: 对高危路径进行 source-sink 深度验证。",
+            ],
+        );
+        let structured = build_structured_fact_payload_from_checkpoint_entry(&checkpoint);
+        assert!(structured.is_some(), "meaningful checkpoint should be backfilled");
+        let structured = structured.unwrap();
+        assert!(structured.content.contains("router-security-audit"));
+        assert!(structured.tags.iter().any(|tag| tag == "sql-injection"));
+    }
+
+    #[test]
+    fn team_events_dedupe_removes_resend_duplicate_goal() {
+        let duplicate_text = "针对所有router进行安全审计，关注router path 的source-sink";
+        let entries = vec![
+            TeamV3BlackboardEntry {
+                id: "goal-1".to_string(),
+                session_id: "session-1".to_string(),
+                task_id: None,
+                agent_id: Some("human".to_string()),
+                entry_type: "goal".to_string(),
+                content: duplicate_text.to_string(),
+                metadata: json!({ "revision": 19 }),
+                created_at: "2026-03-04T00:00:19Z".to_string(),
+                updated_at: "2026-03-04T00:00:19Z".to_string(),
+            },
+            TeamV3BlackboardEntry {
+                id: "goal-2".to_string(),
+                session_id: "session-1".to_string(),
+                task_id: None,
+                agent_id: Some("human".to_string()),
+                entry_type: "goal".to_string(),
+                content: duplicate_text.to_string(),
+                metadata: json!({ "revision": 23 }),
+                created_at: "2026-03-04T00:00:23Z".to_string(),
+                updated_at: "2026-03-04T00:00:23Z".to_string(),
+            },
+            TeamV3BlackboardEntry {
+                id: "plan-1".to_string(),
+                session_id: "session-1".to_string(),
+                task_id: None,
+                agent_id: Some("planner".to_string()),
+                entry_type: "plan".to_string(),
+                content: "基于已扫描路由清单执行安全审计".to_string(),
+                metadata: json!({ "revision": 24 }),
+                created_at: "2026-03-04T00:00:24Z".to_string(),
+                updated_at: "2026-03-04T00:00:24Z".to_string(),
+            },
+        ];
+        let layers = split_blackboard_layers(&entries);
+        let deduped = dedupe_event_entries_for_prompt(&layers.raw_events);
+        let goal_count = deduped
+            .iter()
+            .filter(|entry| entry.entry_type == "goal")
+            .count();
+        assert_eq!(goal_count, 1, "duplicated resend goals should be deduped");
+    }
 }

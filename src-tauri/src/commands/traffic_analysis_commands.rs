@@ -998,7 +998,6 @@ pub async fn list_findings(
 ) -> Result<CommandResponse<Vec<sentinel_traffic::VulnerabilityWithEvidence>>, String> {
     let filters = VulnerabilityFilters {
         severity: severity_filter,
-        exclude_plugin_id: Some("agent_audit".to_string()),
         limit: Some(limit.unwrap_or(10)), // 默认每页10条
         offset,
         ..Default::default()
@@ -1031,7 +1030,6 @@ pub async fn count_findings(
 ) -> Result<CommandResponse<i64>, String> {
     let filters = VulnerabilityFilters {
         severity: severity_filter,
-        exclude_plugin_id: Some("agent_audit".to_string()),
         ..Default::default()
     };
 

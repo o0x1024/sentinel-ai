@@ -50,8 +50,6 @@ pub struct AgentExecuteParams {
     pub subagent_run_id: Option<String>,
     pub context_policy: Option<ContextPolicy>,
     pub recursion_depth: usize,
-    pub audit_mode: bool,
-    pub audit_verification_level: Option<String>,
 }
 
 /// Execute agent task.
@@ -83,8 +81,6 @@ pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -
         timeout_secs: params.timeout_secs,
         task_context: params.task.clone(),
         recursion_depth: params.recursion_depth,
-        audit_mode: params.audit_mode,
-        audit_verification_level: params.audit_verification_level.clone(),
     };
     crate::agents::subagent_executor::set_parent_context(execution_id.clone(), parent_context)
         .await;

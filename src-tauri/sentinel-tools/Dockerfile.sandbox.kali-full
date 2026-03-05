@@ -189,7 +189,6 @@ RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed ruame
     volatility3 \
     frida \
     frida-tools \
-    # Code audit tools for vulnerability fixing
     semgrep \
     bandit \
     safety \
@@ -268,7 +267,6 @@ RUN mkdir -p /opt/payloads && \
     git clone --depth 1 https://github.com/danielmiessler/SecLists /opt/SecLists 2>/dev/null || true && \
     # Binary analysis tools
     git clone --depth 1 https://github.com/sashs/Ropper /opt/Ropper 2>/dev/null || true && \
-    # Vulnerability fixing and code audit tools
     git clone --depth 1 https://github.com/securecodewarrior/secure-coding-exercises /opt/secure-coding 2>/dev/null || true && \
     # Emergency response tools
     git clone --depth 1 https://github.com/volatilityfoundation/volatility /opt/volatility-legacy 2>/dev/null || true && \

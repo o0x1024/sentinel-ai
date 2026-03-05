@@ -1110,74 +1110,6 @@ const wrapHtmlAsCodeBlock = (text: string, cursor: string) => {
   return `\`\`\`html\n${text}${cursor}\n\`\`\``
 }
 
-interface ParsedAuditSummary {
-  total: number
-  critical: number
-  high: number
-  medium: number
-  low: number
-}
-
-const parseAuditSummary = (content: string): ParsedAuditSummary | null => {
-  if (!content) return null
-  const candidates: string[] = []
-  const trimmed = content.trim()
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    candidates.push(trimmed)
-  }
-  const blockRegex = /```json\s*([\s\S]*?)\s*```/gi
-  let match: RegExpExecArray | null
-  while ((match = blockRegex.exec(content)) !== null) {
-    if (match[1]) candidates.push(match[1].trim())
-  }
-
-  for (const raw of candidates) {
-    try {
-      const parsed = JSON.parse(raw)
-      const findings = Array.isArray(parsed?.findings) ? parsed.findings : Array.isArray(parsed) ? parsed : null
-      if (!findings || findings.length === 0) continue
-      let critical = 0
-      let high = 0
-      let medium = 0
-      let low = 0
-      for (const item of findings) {
-        const sev = String(item?.severity || '').toLowerCase()
-        if (sev === 'critical') critical += 1
-        else if (sev === 'high') high += 1
-        else if (sev === 'medium') medium += 1
-        else if (sev === 'low') low += 1
-      }
-      return {
-        total: findings.length,
-        critical,
-        high,
-        medium,
-        low,
-      }
-    } catch {
-      // continue
-    }
-  }
-  return null
-}
-
-const auditSummaryContent = computed(() => {
-  if (props.message.type !== 'final') return null
-  const summary = parseAuditSummary(props.message.content || '')
-  if (!summary) return null
-  return [
-    `## ${t('agent.auditSummaryTitle')}`,
-    '',
-    `${t('agent.auditSummaryTotal')}: **${summary.total}**`,
-    `- ${t('agent.auditSummaryCritical')}: **${summary.critical}**`,
-    `- ${t('agent.auditSummaryHigh')}: **${summary.high}**`,
-    `- ${t('agent.auditSummaryMedium')}: **${summary.medium}**`,
-    `- ${t('agent.auditSummaryLow')}: **${summary.low}**`,
-    '',
-    `> ${t('agent.auditSummaryViewDetails')}`,
-  ].join('\n')
-})
-
 // Format content based on message type
 const formattedContent = computed(() => {
   const { type, metadata } = props.message
@@ -1210,9 +1142,6 @@ const formattedContent = computed(() => {
       return `> **Error**\n>\n> ${content}`
     
     case 'final':
-      if (auditSummaryContent.value) {
-        return `${auditSummaryContent.value}${cursor}`
-      }
       return wrapHtmlAsCodeBlock(content, cursor)
     
     default:

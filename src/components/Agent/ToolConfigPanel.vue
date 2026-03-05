@@ -71,85 +71,6 @@
           </label>
         </div>
 
-        <!-- Audit Mode -->
-        <div class="form-control border border-base-300 rounded-lg p-3 bg-base-100/60">
-          <label class="label cursor-pointer justify-start gap-3">
-            <input
-              type="checkbox"
-              v-model="localConfig.audit_mode"
-              class="checkbox checkbox-warning"
-              @change="emitUpdate"
-            />
-            <div>
-              <span class="label-text font-medium">{{ t('agent.auditMode') }}</span>
-              <p class="text-xs text-base-content/60 mt-1">{{ t('agent.auditModeHint') }}</p>
-            </div>
-          </label>
-
-          <div v-if="localConfig.audit_mode" class="space-y-3 mt-2">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-sm">{{ t('agent.auditScope') }}</span>
-              </label>
-              <select
-                v-model="localConfig.audit_config.scope"
-                class="select select-bordered select-sm w-full"
-                @change="emitUpdate"
-              >
-                <option value="repo">{{ t('agent.auditScopeRepo') }}</option>
-                <option value="git_diff">{{ t('agent.auditScopeGitDiff') }}</option>
-                <option value="paths">{{ t('agent.auditScopePaths') }}</option>
-              </select>
-            </div>
-
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-sm">{{ t('agent.verificationLevel') }}</span>
-              </label>
-              <select
-                v-model="localConfig.audit_config.verification_level"
-                class="select select-bordered select-sm w-full"
-                @change="emitUpdate"
-              >
-                <option value="low">{{ t('agent.verificationLow') }}</option>
-                <option value="medium">{{ t('agent.verificationMedium') }}</option>
-                <option value="high">{{ t('agent.verificationHigh') }}</option>
-              </select>
-            </div>
-
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-sm">{{ t('agent.policyProfile') }}</span>
-              </label>
-              <select
-                v-model="localConfig.audit_config.policy_profile"
-                class="select select-bordered select-sm w-full"
-                @change="emitUpdate"
-              >
-                <option value="balanced">{{ t('agent.policyBalanced') }}</option>
-                <option value="prod_strict">{{ t('agent.policyStrict') }}</option>
-              </select>
-            </div>
-
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-sm">{{ t('agent.auditMandatoryTools') }}</span>
-              </label>
-              <div class="flex flex-wrap gap-2">
-                <span
-                  v-for="tool in mandatoryAuditTools"
-                  :key="tool"
-                  class="badge badge-warning badge-outline"
-                >
-                  {{ tool }}
-                </span>
-              </div>
-              <p class="text-xs text-base-content/60 mt-1">{{ t('agent.auditMandatoryToolsHint') }}</p>
-            </div>
-
-          </div>
-        </div>
-
         <!-- Skills Mode: Auto Selection -->
         <div v-if="localConfig.selection_strategy === 'Skills'" class="form-control">
           <label class="label">
@@ -183,7 +104,7 @@
         </div>
 
         <!-- Tool Management -->
-        <div v-if="localConfig.audit_mode || localConfig.selection_strategy !== 'Skills'" class="form-control">
+        <div v-if="localConfig.selection_strategy !== 'Skills'" class="form-control">
           <label class="label">
             <span class="label-text font-medium">
               {{ shouldUseCheckboxSelection ? t('agent.selectTools') : t('agent.toolManagement') }}
@@ -501,16 +422,6 @@ interface ToolConfig {
   disabled_tools: string[]
   manual_tools?: string[]
   skills?: string[]
-  audit_mode?: boolean
-  audit_config?: AuditConfig
-}
-
-interface AuditConfig {
-  enabled: boolean
-  scope: 'repo' | 'git_diff' | 'paths'
-  verification_level: 'low' | 'medium' | 'high'
-  policy_profile: 'balanced' | 'prod_strict'
-  required_tools: string[]
 }
 
 interface ToolStatistics {
@@ -561,14 +472,6 @@ const emit = defineEmits<{
   'close': []
 }>()
 
-const defaultAuditConfig = (): AuditConfig => ({
-  enabled: false,
-  scope: 'git_diff',
-  verification_level: 'high',
-  policy_profile: 'balanced',
-  required_tools: [],
-})
-
 // 初始化 localConfig，处理 Manual/Skills 枚举格式
 const initLocalConfig = () => {
   let manualTools: string[] = []
@@ -599,11 +502,6 @@ const initLocalConfig = () => {
     selection_strategy: strategy,
     manual_tools: manualTools,
     skills: skillIds,
-    audit_mode: props.config.audit_mode ?? false,
-    audit_config: {
-      ...defaultAuditConfig(),
-      ...(props.config.audit_config || {}),
-    },
   }
 }
 
@@ -639,51 +537,18 @@ const hasPluginTools = computed(() => {
   return allTools.value.some(t => t.category === 'Plugin')
 })
 
-const mandatoryAuditTools = [
-  'todos',
-  'skills',
-  'read_file',
-  'project_overview',
-  'audit_coverage',
-  'git_clone_repo',
-  'code_search',
-  'git_diff_scope',
-  'call_graph_lite',
-  'cross_file_taint',
-  'dependency_audit',
-  'audit_report',
-  'tenth_man_review',
-  'audit_finding_upsert',
-  'build_cpg',
-  'query_cpg',
-  'cpg_taint_analysis',
-  'cpg_security_scan',
-]
-
-const selectedAuditExtraTools = computed(() => {
-  const required = localConfig.value.audit_config?.required_tools || []
-  return required.filter((id) => !mandatoryAuditTools.includes(id))
-})
-
 const shouldUseCheckboxSelection = computed(() => {
-  return localConfig.value.audit_mode || localConfig.value.selection_strategy === 'Manual'
+  return localConfig.value.selection_strategy === 'Manual'
 })
 
 const currentSelectionIds = computed(() => {
-  if (localConfig.value.audit_mode) {
-    return selectedAuditExtraTools.value
-  }
   return localConfig.value.manual_tools || []
 })
 
 const currentSelectionCount = computed(() => currentSelectionIds.value.length)
 
-const filteredAuditExtraTools = computed(() => {
-  return allTools.value.filter((tool) => !mandatoryAuditTools.includes(tool.id))
-})
-
 const filteredTools = computed(() => {
-  let tools = localConfig.value.audit_mode ? filteredAuditExtraTools.value : allTools.value
+  let tools = allTools.value
 
   // Filter by search query
   if (searchQuery.value.trim()) {
@@ -784,22 +649,6 @@ const getCategoryIcon = (category: string) => {
 
 // 全选当前筛选的工具
 const selectAllFilteredTools = () => {
-  if (localConfig.value.audit_mode) {
-    if (!localConfig.value.audit_config) {
-      localConfig.value.audit_config = defaultAuditConfig()
-    }
-    const current = localConfig.value.audit_config.required_tools || []
-    const extras = current.filter((id) => !mandatoryAuditTools.includes(id))
-    for (const tool of filteredTools.value) {
-      if (!extras.includes(tool.id)) {
-        extras.push(tool.id)
-      }
-    }
-    localConfig.value.audit_config.required_tools = extras
-    emitUpdate()
-    return
-  }
-
   if (!localConfig.value.manual_tools) {
     localConfig.value.manual_tools = []
   }
@@ -814,18 +663,6 @@ const selectAllFilteredTools = () => {
 // 取消选择当前筛选的工具
 const deselectAllFilteredTools = () => {
   const filteredIds = new Set(filteredTools.value.map(t => t.id))
-  if (localConfig.value.audit_mode) {
-    if (!localConfig.value.audit_config) {
-      localConfig.value.audit_config = defaultAuditConfig()
-    }
-    const current = localConfig.value.audit_config.required_tools || []
-    localConfig.value.audit_config.required_tools = current
-      .filter((id) => !mandatoryAuditTools.includes(id))
-      .filter((id) => !filteredIds.has(id))
-    emitUpdate()
-    return
-  }
-
   if (!localConfig.value.manual_tools) return
   localConfig.value.manual_tools = localConfig.value.manual_tools.filter(id => !filteredIds.has(id))
   emitUpdate()
@@ -945,46 +782,24 @@ const resetToDefault = () => {
     disabled_tools: [],
     manual_tools: [],
     skills: [],
-    audit_mode: false,
-    audit_config: defaultAuditConfig(),
   }
   emitUpdate()
 }
 
 const isToolSelected = (toolId: string) => {
-  if (localConfig.value.audit_mode) {
-    return selectedAuditExtraTools.value.includes(toolId)
-  }
   return (localConfig.value.manual_tools || []).includes(toolId)
 }
 
 const toggleToolSelection = (toolId: string) => {
-  if (!localConfig.value.audit_mode) {
-    if (!localConfig.value.manual_tools) {
-      localConfig.value.manual_tools = []
-    }
-    const index = localConfig.value.manual_tools.indexOf(toolId)
-    if (index >= 0) {
-      localConfig.value.manual_tools.splice(index, 1)
-    } else {
-      localConfig.value.manual_tools.push(toolId)
-    }
-    emitUpdate()
-    return
+  if (!localConfig.value.manual_tools) {
+    localConfig.value.manual_tools = []
   }
-
-  if (!localConfig.value.audit_config) {
-    localConfig.value.audit_config = defaultAuditConfig()
-  }
-  const current = localConfig.value.audit_config.required_tools || []
-  const extras = current.filter((id) => !mandatoryAuditTools.includes(id))
-  const index = extras.indexOf(toolId)
+  const index = localConfig.value.manual_tools.indexOf(toolId)
   if (index >= 0) {
-    extras.splice(index, 1)
+    localConfig.value.manual_tools.splice(index, 1)
   } else {
-    extras.push(toolId)
+    localConfig.value.manual_tools.push(toolId)
   }
-  localConfig.value.audit_config.required_tools = extras
   emitUpdate()
 }
 
@@ -1039,11 +854,6 @@ watch(() => props.config, (newConfig) => {
     selection_strategy: strategy,
     manual_tools: manualTools,
     skills: skillIds,
-    audit_mode: newConfig.audit_mode ?? false,
-    audit_config: {
-      ...defaultAuditConfig(),
-      ...(newConfig.audit_config || {}),
-    },
   }
 }, { deep: true })
 

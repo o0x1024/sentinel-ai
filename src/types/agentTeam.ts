@@ -127,6 +127,7 @@ export interface AgentTeamMessage {
     id: string
     session_id: string
     round_id?: string
+    stream_id?: string
     member_id?: string
     member_name?: string
     role: string
