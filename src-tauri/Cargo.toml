@@ -144,7 +144,7 @@ tauri-plugin-fs = "2"
 # 文件系统监控
 notify = "6.1"
 
-rig-core = { version = "0.31.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
+rig-core = { version = "0.32.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
 
 
 # 针对非 Windows 平台使用 rustls
@@ -269,5 +269,5 @@ rmcp = { version = "0.9.1", features = [
     "uuid",
     "base64",
 ] }
-rig-core = { version = "0.31.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
-rig-sqlite = "0.1.34"
+rig-core = { version = "0.32.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
+rig-sqlite = "0.2.1"

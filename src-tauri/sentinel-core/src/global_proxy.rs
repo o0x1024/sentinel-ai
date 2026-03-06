@@ -62,10 +62,23 @@ impl GlobalProxyConfig {
 static GLOBAL_PROXY: Lazy<Arc<RwLock<GlobalProxyConfig>>> =
     Lazy::new(|| Arc::new(RwLock::new(GlobalProxyConfig::default())));
 
+const PROXY_ENV_KEYS: [&str; 6] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+];
+
+const NO_PROXY_ENV_KEYS: [&str; 2] = ["NO_PROXY", "no_proxy"];
+const LOCAL_NO_PROXY_DEFAULTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+
 /// 设置全局代理配置
 pub async fn set_global_proxy(config: GlobalProxyConfig) {
     let mut proxy = GLOBAL_PROXY.write().await;
     *proxy = config;
+    apply_proxy_env_vars(&proxy);
 }
 
 /// 获取全局代理配置
@@ -77,6 +90,7 @@ pub async fn get_global_proxy() -> GlobalProxyConfig {
 pub async fn clear_global_proxy() {
     let mut proxy = GLOBAL_PROXY.write().await;
     *proxy = GlobalProxyConfig::default();
+    clear_proxy_env_vars();
 }
 
 /// 创建一个应用了全局代理的 HTTP 客户端
@@ -137,4 +151,58 @@ pub async fn apply_proxy_to_client(builder: reqwest::ClientBuilder) -> reqwest::
         debug!("No valid proxy URL, returning client builder with sentinel headers");
         builder
     }
+}
+
+fn apply_proxy_env_vars(config: &GlobalProxyConfig) {
+    if !config.enabled {
+        clear_proxy_env_vars();
+        return;
+    }
+
+    let Some(proxy_url) = config.build_proxy_url() else {
+        clear_proxy_env_vars();
+        return;
+    };
+
+    for key in PROXY_ENV_KEYS {
+        std::env::set_var(key, &proxy_url);
+    }
+
+    let no_proxy = merged_no_proxy(config.no_proxy.as_deref());
+    if no_proxy.is_empty() {
+        for key in NO_PROXY_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+    } else {
+        for key in NO_PROXY_ENV_KEYS {
+            std::env::set_var(key, &no_proxy);
+        }
+    }
+}
+
+fn clear_proxy_env_vars() {
+    for key in PROXY_ENV_KEYS {
+        std::env::remove_var(key);
+    }
+    for key in NO_PROXY_ENV_KEYS {
+        std::env::remove_var(key);
+    }
+}
+
+fn merged_no_proxy(custom: Option<&str>) -> String {
+    let mut entries: Vec<String> = custom
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    for local in LOCAL_NO_PROXY_DEFAULTS {
+        if !entries.iter().any(|e| e.eq_ignore_ascii_case(local)) {
+            entries.push(local.to_string());
+        }
+    }
+
+    entries.join(",")
 }

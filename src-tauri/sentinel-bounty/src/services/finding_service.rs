@@ -281,9 +281,7 @@ fn calculate_finding_fingerprint(
     description: &str,
     asset_id: Option<&str>,
 ) -> String {
-    let url_key = affected_url
-        .and_then(canonicalize_url)
-        .unwrap_or_default();
+    let url_key = affected_url.and_then(canonicalize_url).unwrap_or_default();
     let param_key = affected_parameter.unwrap_or("").trim().to_lowercase();
     let title_key = title.trim().to_lowercase();
     let desc_key = description.trim().to_lowercase();

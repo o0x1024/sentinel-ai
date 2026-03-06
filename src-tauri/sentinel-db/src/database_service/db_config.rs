@@ -73,9 +73,7 @@ impl DatabaseConfig {
     pub fn build_connection_string(&self) -> String {
         match self.db_type {
             DatabaseType::SQLite => {
-                let path = self
-                    .path.clone()
-                    .unwrap_or_else(default_sqlite_db_path);
+                let path = self.path.clone().unwrap_or_else(default_sqlite_db_path);
                 format!("sqlite:{}?mode=rwc", path)
             }
             DatabaseType::PostgreSQL => {

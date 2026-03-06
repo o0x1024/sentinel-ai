@@ -4,11 +4,11 @@ use std::time::Duration;
 use tracing::info;
 
 use super::db_config::{DatabaseConfig, DatabaseType};
-use super::sqlx_compat::{MySqlPool, PgPool};
 #[cfg(feature = "db-mysql")]
 use super::sqlx_compat::MySqlPoolOptions;
 #[cfg(feature = "db-postgres")]
 use super::sqlx_compat::PgPoolOptions;
+use super::sqlx_compat::{MySqlPool, PgPool};
 
 #[derive(Debug, Clone)]
 pub enum DatabasePool {

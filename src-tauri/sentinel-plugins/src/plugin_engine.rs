@@ -84,9 +84,8 @@ fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String
         return Ok(source.to_string());
     }
 
-    let is_ts_like = specifier.ends_with(".ts")
-        || specifier.ends_with(".tsx")
-        || specifier.ends_with(".jsx");
+    let is_ts_like =
+        specifier.ends_with(".ts") || specifier.ends_with(".tsx") || specifier.ends_with(".jsx");
     if !is_ts_like {
         return Ok(source.to_string());
     }
@@ -183,20 +182,20 @@ impl ModuleLoader for PluginModuleLoader {
                 hasher.update(url.as_bytes());
                 let hash = format!("{:x}", hasher.finalize());
 
-                    let ext = ModuleSpecifier::parse(&url)
-                        .ok()
-                        .and_then(|u| {
-                            u.path_segments()
-                                .and_then(|mut segs| segs.next_back())
-                                .and_then(|s| s.rsplit_once('.').map(|(_, e)| format!(".{}", e)))
-                        })
-                        .unwrap_or_else(|| {
-                            if cfg!(feature = "plugin-ts-transpile") {
-                                ".ts".to_string()
-                            } else {
-                                ".js".to_string()
-                            }
-                        });
+                let ext = ModuleSpecifier::parse(&url)
+                    .ok()
+                    .and_then(|u| {
+                        u.path_segments()
+                            .and_then(|mut segs| segs.next_back())
+                            .and_then(|s| s.rsplit_once('.').map(|(_, e)| format!(".{}", e)))
+                    })
+                    .unwrap_or_else(|| {
+                        if cfg!(feature = "plugin-ts-transpile") {
+                            ".ts".to_string()
+                        } else {
+                            ".js".to_string()
+                        }
+                    });
 
                 let cache_path = cache_dir.join(format!("{}{}", hash, ext));
 

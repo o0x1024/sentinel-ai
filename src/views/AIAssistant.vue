@@ -8,8 +8,24 @@
           <AgentTabs @new-tab="handleNewTab" />
         </div>
         
-        <!-- Role Selector -->
-        <div class="flex-shrink-0 pb-2">
+        <!-- Forced Rules + Role Selector -->
+        <div class="flex-shrink-0 pb-2 flex items-center gap-2">
+          <button
+            class="btn btn-sm btn-outline gap-2"
+            :title="t('aiAssistant.turnLogsTitle', 'Turn 日志')"
+            @click="showTurnLogsModal = true"
+          >
+            <i class="fas fa-scroll"></i>
+            <span class="hidden md:inline">{{ t('aiAssistant.turnLogsButton', 'Turn 日志') }}</span>
+          </button>
+          <button
+            class="btn btn-sm btn-outline gap-2"
+            :title="t('aiAssistant.manageForcedRules', '管理强制规则')"
+            @click="showForcedRulesModal = true"
+          >
+            <i class="fas fa-file-signature"></i>
+            <span class="hidden md:inline">{{ t('aiAssistant.forcedRules', '强制规则') }}</span>
+          </button>
           <div class="dropdown dropdown-end">
             <div tabindex="0" role="button" class="btn btn-sm btn-outline gap-2">
               <i class="fas fa-user-tie"></i>
@@ -83,6 +99,17 @@
 
     <!-- {{ t('aiAssistant.roleManagementModal') }} -->
     <RoleManagement v-if="showRoleManagement" @close="showRoleManagement = false" />
+    <UserForcedRulesModal
+      v-if="showForcedRulesModal"
+      @close="showForcedRulesModal = false"
+      @saved="handleForcedRulesSaved"
+    />
+    <TurnLogsModal
+      v-model="showTurnLogsModal"
+      :active-session-id="activeSessionId"
+      :conversation-options="sessions"
+      @open-conversation="handleOpenConversationFromLog"
+    />
   </div>
 </template>
 
@@ -92,9 +119,13 @@ import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import RoleManagement from '@/components/RoleManagement.vue'
+import UserForcedRulesModal from '@/components/UserForcedRulesModal.vue'
+import TurnLogsModal from '@/components/Agent/TurnLogsModal.vue'
 import { AgentView, AgentTabs } from '@/components/Agent'
+import type { AiTurnLogSummaryEntry } from '@/api/aiLogs'
 import { useRoleManagement } from '@/composables/useRoleManagement'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
+import { dialog } from '@/composables/useDialog'
 
 // {{ t('aiAssistant.trafficReferenceType') }}
 interface ReferencedTraffic {
@@ -126,6 +157,8 @@ const {
 
 // 角色管理状态
 const showRoleManagement = ref(false)
+const showForcedRulesModal = ref(false)
+const showTurnLogsModal = ref(false)
 
 // --- 会话管理 ---
 const { sessions, activeSessionId, addSession } = useAgentSessionManager()
@@ -166,6 +199,43 @@ const handleSelectRole = async (role: any) => {
     await selectRole(role)
   } catch (error) {
     console.error('Failed to select role:', error)
+  }
+}
+
+const handleForcedRulesSaved = () => {
+  dialog.toast.success(t('aiAssistant.forcedRulesSaved', '强制规则已保存'))
+}
+
+const handleOpenConversationFromLog = async (entry: AiTurnLogSummaryEntry) => {
+  const conversationId = String(entry.conversation_id || '').trim()
+  if (!conversationId) return
+
+  const existing = sessions.value.find(session => session.id === conversationId)
+  if (existing) {
+    addSession(existing.id, existing.title)
+    await nextTick()
+    getActiveAgentViewRef()?.focusInput?.()
+    return
+  }
+
+  try {
+    const conversations = await invoke<any[]>('get_ai_conversations')
+    const matched = Array.isArray(conversations)
+      ? conversations.find(item => String(item?.id || '').trim() === conversationId)
+      : null
+    const fallbackTitle = String(entry.user_request_preview || '').trim().slice(0, 40)
+    addSession(
+      conversationId,
+      matched?.title || fallbackTitle || t('agent.unnamedConversation'),
+    )
+    await nextTick()
+    getActiveAgentViewRef()?.focusInput?.()
+  } catch (error) {
+    console.error('Failed to open conversation from turn log:', error)
+    addSession(
+      conversationId,
+      String(entry.user_request_preview || '').trim().slice(0, 40) || t('agent.unnamedConversation'),
+    )
   }
 }
 

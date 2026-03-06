@@ -1,5 +1,5 @@
 <template>
-  <div class="shell-message-block rounded-lg overflow-hidden border border-base-300 my-3 bg-[#1e1e1e]">
+  <div class="shell-message-block rounded-lg overflow-hidden border border-base-300 bg-[#1e1e1e]">
     <!-- Pending Confirmation Bar -->
     <div v-if="needsConfirmation" class="confirmation-bar flex items-center justify-between px-3 py-2 bg-[#2d2d2d] border-b border-[#404040]">
       <span class="text-sm text-[#a0a0a0]">{{ $t('tools.shell.runCommand') }}</span>

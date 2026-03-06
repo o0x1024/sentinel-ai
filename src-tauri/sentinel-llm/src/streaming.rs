@@ -14,7 +14,10 @@ use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 use crate::config::LlmConfig;
-use crate::log::{build_log_session_id, log_error_response, log_request, log_response};
+use crate::log::{
+    build_log_session_id, log_error_response, log_request, log_response, log_stream_event,
+    log_turn_summary,
+};
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
 use sentinel_tools::DynamicTool;
 
@@ -49,6 +52,118 @@ pub enum StreamContent {
 /// 流式 LLM 客户端
 pub struct StreamingLlmClient {
     config: LlmConfig,
+}
+
+fn parse_embedded_json_value(value: serde_json::Value, depth: usize) -> serde_json::Value {
+    if depth >= 4 {
+        return value;
+    }
+
+    match value {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return serde_json::Value::String(s);
+            }
+
+            let looks_like_json =
+                matches!(trimmed.chars().next(), Some('{') | Some('[') | Some('"'));
+            if !looks_like_json {
+                return serde_json::Value::String(s);
+            }
+
+            match serde_json::from_str::<serde_json::Value>(trimmed) {
+                Ok(parsed) => parse_embedded_json_value(parsed, depth + 1),
+                Err(_) => serde_json::Value::String(s),
+            }
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|item| parse_embedded_json_value(item, depth + 1))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, parse_embedded_json_value(v, depth + 1)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn normalize_jsonish_string(raw: &str) -> serde_json::Value {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(parsed) => parse_embedded_json_value(parsed, 0),
+        Err(_) => serde_json::Value::String(raw.to_string()),
+    }
+}
+
+fn infer_tool_result_success_for_turn(value: &serde_json::Value) -> bool {
+    fn has_hard_error(text: &str) -> bool {
+        let lower = text.trim().to_lowercase();
+        if lower.is_empty() {
+            return false;
+        }
+        if lower.contains("toolset error")
+            || lower.contains("tool execution failed")
+            || lower.contains("shell execution failed")
+            || lower.contains("command timeout after")
+            || lower.contains("llm request timeout")
+            || lower.contains("traceback (most recent call last)")
+            || lower.contains("fatal error:")
+        {
+            return true;
+        }
+        (lower.contains("timed out") || lower.contains("timeout after"))
+            && (lower.contains("error") || lower.contains("failed"))
+    }
+
+    fn visit(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Null => true,
+            serde_json::Value::Bool(v) => *v,
+            serde_json::Value::Number(n) => n.as_i64().map(|v| v == 0).unwrap_or(true),
+            serde_json::Value::String(s) => {
+                let lower = s.trim().to_lowercase();
+                if has_hard_error(&lower) {
+                    return false;
+                }
+                if lower.starts_with("error:") || lower.starts_with("failed:") {
+                    return false;
+                }
+                !lower.contains(" no such file or directory")
+            }
+            serde_json::Value::Array(arr) => arr.iter().all(visit),
+            serde_json::Value::Object(map) => {
+                if let Some(v) = map.get("success").and_then(|v| v.as_bool()) {
+                    return v;
+                }
+                if let Some(v) = map.get("ok").and_then(|v| v.as_bool()) {
+                    return v;
+                }
+                if let Some(v) = map.get("completed").and_then(|v| v.as_bool()) {
+                    if !v {
+                        return false;
+                    }
+                }
+                if let Some(v) = map.get("exit_code").and_then(|v| v.as_i64()) {
+                    return v == 0;
+                }
+                if let Some(v) = map.get("code").and_then(|v| v.as_i64()) {
+                    return v == 0;
+                }
+                if let Some(v) = map.get("error").and_then(|v| v.as_str()) {
+                    if !v.trim().is_empty() {
+                        return false;
+                    }
+                }
+                map.values().all(visit)
+            }
+        }
+    }
+
+    visit(value)
 }
 
 impl StreamingLlmClient {
@@ -162,6 +277,8 @@ impl StreamingLlmClient {
         let conversation_id = self.config.conversation_id.as_deref();
         let session_id = build_log_session_id(conversation_id);
         let tool_names: Vec<String> = dynamic_tools.iter().map(|t| t.name().to_string()).collect();
+        let tool_count = dynamic_tools.len();
+        let history_count = history.len();
 
         info!(
             "StreamingLlmClient - Provider: {}, Model: {}, Tools: {:?}, History: {} messages",
@@ -183,9 +300,10 @@ impl StreamingLlmClient {
         if (provider_lower.contains("moonshot")
             || provider_lower.contains("deepseek")
             || provider_lower.contains("kimi"))
-            && !system_prompt_with_hack.contains("text response") {
-                system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
-            }
+            && !system_prompt_with_hack.contains("text response")
+        {
+            system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
+        }
         let preamble = &system_prompt_with_hack;
 
         log_request(
@@ -235,6 +353,144 @@ impl StreamingLlmClient {
         let timeout = std::time::Duration::from_secs(self.config.timeout_secs);
         let is_bigmodel_compat =
             Self::is_bigmodel_compatible_base_url(self.config.base_url.as_deref());
+        let provider_for_stream = provider_for_agent.clone();
+        let model_for_stream = model.to_string();
+        let conversation_id_for_stream = conversation_id.map(str::to_string);
+        let session_id_for_stream = session_id.clone();
+        let turn_started_at = chrono::Utc::now();
+        let mut assistant_text_full = String::new();
+        let mut reasoning_text_full = String::new();
+        let mut last_usage: Option<(u32, u32)> = None;
+        let mut stream_completed = false;
+        let mut tool_calls_by_id: HashMap<String, serde_json::Map<String, serde_json::Value>> =
+            HashMap::new();
+
+        let mut emit_content = |chunk: StreamContent| {
+            let (event_type, payload) = match &chunk {
+                StreamContent::Text(text) => (
+                    "assistant_text_delta",
+                    json!({
+                        "content": text,
+                        "content_length": text.len(),
+                    }),
+                ),
+                StreamContent::Reasoning(text) => (
+                    "reasoning_delta",
+                    json!({
+                        "content": text,
+                        "content_length": text.len(),
+                    }),
+                ),
+                StreamContent::ToolCallStart { id, name } => (
+                    "tool_call_start",
+                    json!({
+                        "tool_call_id": id,
+                        "tool_name": name,
+                    }),
+                ),
+                StreamContent::ToolCallDelta { id, delta } => (
+                    "tool_call_delta",
+                    json!({
+                        "tool_call_id": id,
+                        "delta": delta,
+                        "delta_length": delta.len(),
+                    }),
+                ),
+                StreamContent::ToolCallComplete {
+                    id,
+                    name,
+                    arguments,
+                } => (
+                    "tool_call_complete",
+                    json!({
+                        "tool_call_id": id,
+                        "tool_name": name,
+                        "arguments": arguments,
+                    }),
+                ),
+                StreamContent::ToolResult { id, result } => (
+                    "tool_result",
+                    json!({
+                        "tool_call_id": id,
+                        "result": result,
+                    }),
+                ),
+                StreamContent::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => (
+                    "usage",
+                    json!({
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                    }),
+                ),
+                StreamContent::Done => ("done", json!({})),
+            };
+            match &chunk {
+                StreamContent::Text(text) => assistant_text_full.push_str(text),
+                StreamContent::Reasoning(text) => reasoning_text_full.push_str(text),
+                StreamContent::ToolCallStart { id, name } => {
+                    let entry = tool_calls_by_id.entry(id.clone()).or_default();
+                    entry.insert("tool_call_id".to_string(), json!(id));
+                    entry.insert("tool_name".to_string(), json!(name));
+                    entry.insert("status".to_string(), json!("started"));
+                }
+                StreamContent::ToolCallDelta { id, delta } => {
+                    let entry = tool_calls_by_id.entry(id.clone()).or_default();
+                    entry.insert("tool_call_id".to_string(), json!(id));
+                    let current = entry
+                        .get("arguments_delta")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    entry.insert(
+                        "arguments_delta".to_string(),
+                        json!(format!("{}{}", current, delta)),
+                    );
+                    entry.insert("status".to_string(), json!("streaming"));
+                }
+                StreamContent::ToolCallComplete {
+                    id,
+                    name,
+                    arguments,
+                } => {
+                    let entry = tool_calls_by_id.entry(id.clone()).or_default();
+                    entry.insert("tool_call_id".to_string(), json!(id));
+                    entry.insert("tool_name".to_string(), json!(name));
+                    entry.insert("arguments".to_string(), normalize_jsonish_string(arguments));
+                    entry.insert("arguments_raw".to_string(), json!(arguments));
+                    entry.insert("status".to_string(), json!("called"));
+                }
+                StreamContent::ToolResult { id, result } => {
+                    let entry = tool_calls_by_id.entry(id.clone()).or_default();
+                    entry.insert("tool_call_id".to_string(), json!(id));
+                    let normalized_result = normalize_jsonish_string(result);
+                    let success = infer_tool_result_success_for_turn(&normalized_result);
+                    entry.insert("result".to_string(), normalized_result);
+                    entry.insert("result_raw".to_string(), json!(result));
+                    entry.insert("success".to_string(), json!(success));
+                    entry.insert("status".to_string(), json!("completed"));
+                }
+                StreamContent::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => {
+                    last_usage = Some((*input_tokens, *output_tokens));
+                }
+                StreamContent::Done => {
+                    stream_completed = true;
+                }
+            }
+            log_stream_event(
+                &session_id_for_stream,
+                conversation_id_for_stream.as_deref(),
+                &provider_for_stream,
+                &model_for_stream,
+                event_type,
+                &payload,
+            );
+            on_content(chunk)
+        };
 
         // 根据 provider 创建带动态工具的 agent
         let content_result: Result<String> = match provider_for_agent.as_str() {
@@ -259,7 +515,7 @@ impl StreamingLlmClient {
                         chat_history,
                         timeout,
                         dynamic_tools,
-                        &mut on_content,
+                        &mut emit_content,
                     )
                     .await
                 {
@@ -274,7 +530,7 @@ impl StreamingLlmClient {
                             retry_user_message,
                             retry_chat_history,
                             timeout,
-                            &mut on_content,
+                            &mut emit_content,
                         )
                         .await
                     }
@@ -289,7 +545,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -301,7 +557,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -313,7 +569,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -325,7 +581,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -337,7 +593,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -349,7 +605,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -361,7 +617,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -373,7 +629,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -389,7 +645,7 @@ impl StreamingLlmClient {
                     chat_history,
                     timeout,
                     dynamic_tools,
-                    &mut on_content,
+                    &mut emit_content,
                 )
                 .await
             }
@@ -397,6 +653,34 @@ impl StreamingLlmClient {
         let content = match content_result {
             Ok(content) => content,
             Err(err) => {
+                let tool_calls: Vec<serde_json::Value> = tool_calls_by_id
+                    .into_values()
+                    .map(serde_json::Value::Object)
+                    .collect();
+                let (input_tokens, output_tokens) = last_usage.unwrap_or((0, 0));
+                log_turn_summary(
+                    &session_id,
+                    conversation_id,
+                    &provider_for_agent,
+                    model,
+                    &json!({
+                        "status": "error",
+                        "started_at": turn_started_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                        "completed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                        "duration_ms": (chrono::Utc::now() - turn_started_at).num_milliseconds(),
+                        "user_request": user_prompt,
+                        "system_prompt": preamble,
+                        "assistant_response": assistant_text_full,
+                        "reasoning": reasoning_text_full,
+                        "tool_calls": tool_calls,
+                        "usage": {
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                        },
+                        "stream_completed": stream_completed,
+                        "error": err.to_string(),
+                    }),
+                );
                 log_error_response(
                     &session_id,
                     conversation_id,
@@ -415,6 +699,34 @@ impl StreamingLlmClient {
                 provider_for_agent,
                 model
             );
+            let tool_calls: Vec<serde_json::Value> = tool_calls_by_id
+                .into_values()
+                .map(serde_json::Value::Object)
+                .collect();
+            let (input_tokens, output_tokens) = last_usage.unwrap_or((0, 0));
+            log_turn_summary(
+                &session_id,
+                conversation_id,
+                &provider_for_agent,
+                model,
+                &json!({
+                    "status": "empty_response",
+                    "started_at": turn_started_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "completed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "duration_ms": (chrono::Utc::now() - turn_started_at).num_milliseconds(),
+                    "user_request": user_prompt,
+                    "system_prompt": preamble,
+                    "assistant_response": assistant_text_full,
+                    "reasoning": reasoning_text_full,
+                    "tool_calls": tool_calls,
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                    },
+                    "stream_completed": stream_completed,
+                    "error": err.to_string(),
+                }),
+            );
             log_error_response(
                 &session_id,
                 conversation_id,
@@ -426,12 +738,35 @@ impl StreamingLlmClient {
             return Err(err);
         }
 
-        log_response(
+        log_response(&session_id, conversation_id, &provider, model, &content);
+        let tool_calls: Vec<serde_json::Value> = tool_calls_by_id
+            .into_values()
+            .map(serde_json::Value::Object)
+            .collect();
+        let (input_tokens, output_tokens) = last_usage.unwrap_or((0, 0));
+        log_turn_summary(
             &session_id,
             conversation_id,
-            &provider,
+            &provider_for_agent,
             model,
-            &content,
+            &json!({
+                "status": if stream_completed { "completed" } else { "interrupted" },
+                "started_at": turn_started_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                "completed_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                "duration_ms": (chrono::Utc::now() - turn_started_at).num_milliseconds(),
+                "user_request": user_prompt,
+                "system_prompt": preamble,
+                "assistant_response": content.clone(),
+                "reasoning": reasoning_text_full,
+                "tool_calls": tool_calls,
+                "usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+                "stream_completed": stream_completed,
+                "tool_count": tool_count,
+                "history_count": history_count,
+            }),
         );
         info!(
             "StreamingLlmClient: Response length: {} chars",
@@ -459,7 +794,8 @@ impl StreamingLlmClient {
 
         let api_key = self.config.api_key.clone().unwrap_or_default();
 
-        let mut builder = deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -595,7 +931,8 @@ impl StreamingLlmClient {
             .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
             .ok_or_else(|| anyhow::anyhow!("MOONSHOT_API_KEY not set"))?;
 
-        let mut builder = moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -637,7 +974,8 @@ impl StreamingLlmClient {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
 
-        let mut builder = anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
             if !base_url.is_empty() {
@@ -714,7 +1052,8 @@ impl StreamingLlmClient {
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
 
-        let mut builder = deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);

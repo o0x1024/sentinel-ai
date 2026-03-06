@@ -989,7 +989,7 @@ impl ToolRouter {
                 rendered.join("\n")
             };
             Some(format!(
-                "<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
+                "\n<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the `skills` tool. If <available_skills> already lists relevant skills, you can call action=load directly without calling action=list. Use action=read_file for referenced files as needed. Do not assume skill details without loading.",
                 skills_block
             ))
         } else {

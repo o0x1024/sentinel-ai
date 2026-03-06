@@ -2072,6 +2072,7 @@ const error = computed(() => localError.value || agentEvents.error.value)
 // Clear error
 const clearError = () => {
   localError.value = null
+  agentEvents.resetError()
 }
 
 // Handle RAG toggle

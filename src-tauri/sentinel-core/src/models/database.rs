@@ -3,15 +3,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// 数据库类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum DatabaseType {
     PostgreSQL,
     MySQL,
     #[default]
     SQLite,
 }
-
 
 /// 数据库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

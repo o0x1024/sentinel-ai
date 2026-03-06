@@ -5,5 +5,5 @@ pub mod database_service;
 pub mod models;
 
 pub use client::DatabaseClient;
-pub use database_service::*;
 pub use database_service::sqlx_compat;
+pub use database_service::*;

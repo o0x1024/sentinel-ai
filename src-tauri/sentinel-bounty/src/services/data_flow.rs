@@ -53,7 +53,6 @@ impl Default for PluginPortRegistry {
 
 impl PluginPortRegistry {
     pub fn new() -> Self {
-        
         // registry.register_builtin_plugins();
         Self {
             output_specs: HashMap::new(),
@@ -444,8 +443,7 @@ impl Default for ArtifactSinkConfig {
 }
 
 /// Artifact sink result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArtifactSinkResult {
     pub findings_created: Vec<String>,
     pub evidence_created: Vec<String>,
@@ -456,7 +454,6 @@ pub struct ArtifactSinkResult {
     pub skipped_duplicates: usize,
     pub errors: Vec<String>,
 }
-
 
 #[cfg(test)]
 mod tests {

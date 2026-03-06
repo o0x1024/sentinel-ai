@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use log::{error, info, warn};
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -25,7 +27,29 @@ pub struct RagService<D: RagDatabase> {
     reranker: Option<RerankingManager>,
 }
 
+const SQLITE_VECTOR_DB_FILENAME: &str = "rag_vectors.db";
+const LEGACY_LANCEDB_DIR_NAME: &str = "lancedb";
+
 impl<D: RagDatabase> RagService<D> {
+    fn normalize_sqlite_database_path(path: &Path) -> PathBuf {
+        if path.as_os_str().is_empty() {
+            return PathBuf::from(SQLITE_VECTOR_DB_FILENAME);
+        }
+
+        if path.file_name() == Some(OsStr::new(LEGACY_LANCEDB_DIR_NAME)) {
+            return path
+                .parent()
+                .map(|parent| parent.join(SQLITE_VECTOR_DB_FILENAME))
+                .unwrap_or_else(|| PathBuf::from(SQLITE_VECTOR_DB_FILENAME));
+        }
+
+        if path.is_dir() {
+            return path.join(SQLITE_VECTOR_DB_FILENAME);
+        }
+
+        path.to_path_buf()
+    }
+
     /// 创建新的RAG服务实例
     pub async fn new(config: RagConfig, database: Arc<D>) -> Result<Self> {
         info!("初始化RAG服务 (使用 Rig + SQLite)");
@@ -57,6 +81,15 @@ impl<D: RagDatabase> RagService<D> {
                     .to_string_lossy()
                     .to_string()
             });
+        let normalized_db_path = Self::normalize_sqlite_database_path(Path::new(&db_path));
+
+        if normalized_db_path != Path::new(&db_path) {
+            warn!(
+                "Normalized RAG sqlite path from '{}' to '{}'",
+                db_path,
+                normalized_db_path.display()
+            );
+        }
 
         // Build embedding config for vector store
         let embedding_config = EmbeddingConfig {
@@ -67,9 +100,12 @@ impl<D: RagDatabase> RagService<D> {
             dimensions: config.embedding_dimensions,
         };
 
-        info!("RAG服务使用SQLite路径: {}", db_path);
+        info!("RAG服务使用SQLite路径: {}", normalized_db_path.display());
 
-        let vector_store = Arc::new(SqliteVectorManager::new(db_path, embedding_config));
+        let vector_store = Arc::new(SqliteVectorManager::new(
+            normalized_db_path.to_string_lossy().to_string(),
+            embedding_config,
+        ));
         vector_store.initialize().await?;
 
         let mut reranker: Option<RerankingManager> = None;

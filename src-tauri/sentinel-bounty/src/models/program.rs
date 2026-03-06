@@ -31,7 +31,6 @@ pub enum BountyPlatform {
     Other(String),
 }
 
-
 /// Program status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]

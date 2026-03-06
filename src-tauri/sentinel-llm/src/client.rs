@@ -150,9 +150,10 @@ impl LlmClient {
         if (provider_lower.contains("moonshot")
             || provider_lower.contains("deepseek")
             || provider_lower.contains("kimi"))
-            && !system_prompt_with_hack.contains("text response") {
-                system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
-            }
+            && !system_prompt_with_hack.contains("text response")
+        {
+            system_prompt_with_hack.push_str("\n\nIMPORTANT: You must always provide a brief text response alongside any tool calls. Do not output empty text messages.");
+        }
         let preamble = &system_prompt_with_hack;
 
         // 记录请求日志（含图片标记）
@@ -284,7 +285,8 @@ impl LlmClient {
 
         let api_key = self.config.api_key.clone().unwrap_or_default();
 
-        let mut builder = deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -362,7 +364,8 @@ impl LlmClient {
             .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
             .ok_or_else(|| anyhow::anyhow!("MOONSHOT_API_KEY not set"))?;
 
-        let mut builder = moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            moonshot::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         if let Some(base_url) = &self.config.base_url {
             builder = builder.base_url(base_url);
@@ -394,7 +397,8 @@ impl LlmClient {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| anyhow::anyhow!("ANTHROPIC_API_KEY not set"))?;
 
-        let mut builder = anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            anthropic::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         // 检查是否设置了自定义 base_url
         if let Ok(base_url) = std::env::var("ANTHROPIC_API_BASE") {
@@ -468,7 +472,8 @@ impl LlmClient {
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
 
-        let mut builder = deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
+        let mut builder =
+            deepseek::Client::<rig::http_client::ReqwestClient>::builder().api_key(api_key);
 
         // Use custom base_url if configured
         if let Some(base_url) = &self.config.base_url {

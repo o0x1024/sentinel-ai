@@ -76,7 +76,7 @@
           </div>
         </div>
 
-        <!-- Right Content: Editor & Preview -->
+        <!-- Right Content -->
         <div class="flex-1 flex flex-col overflow-hidden bg-base-200/20">
           <!-- AI Generation Form -->
           <div v-if="showAiGenerateForm" class="flex-1 flex flex-col items-center justify-center p-8">
@@ -151,9 +151,8 @@
 
             <!-- Content Area -->
             <div class="flex-1 overflow-y-auto p-6">
-              <div class="grid grid-cols-1 xl:grid-cols-2 gap-8 h-full min-h-[500px]">
-                <!-- Editor -->
-                <div class="flex flex-col gap-6">
+              <div class="mx-auto w-full max-w-4xl">
+                <div class="flex flex-col gap-5">
                   <div class="form-control">
                     <label class="label pt-0">
                       <span class="label-text font-bold text-base-content/70">{{ t('roles.roleTitle') }} <span class="text-error">*</span></span>
@@ -186,7 +185,7 @@
                     </label>
                   </div>
                   
-                  <div class="form-control flex-1 flex flex-col min-h-[300px]">
+                  <div class="form-control">
                     <label class="label">
                       <span class="label-text font-bold text-base-content/70">Capabilities</span>
                     </label>
@@ -227,62 +226,20 @@
                     </div>
                   </div>
 
-                  <div class="form-control flex-1 flex flex-col min-h-[300px]">
+                  <div class="form-control">
                     <label class="label">
                       <span class="label-text font-bold text-base-content/70">{{ t('roles.rolePrompt') }} <span class="text-error">*</span></span>
                     </label>
                     <textarea 
                       v-model="formData.prompt"
                       :placeholder="t('roles.rolePrompt')"
-                      class="textarea textarea-bordered flex-1 w-full font-mono text-sm leading-relaxed focus:textarea-primary transition-all"
+                      class="textarea textarea-bordered w-full min-h-[360px] font-mono text-sm leading-relaxed focus:textarea-primary transition-all"
                       :class="{ 'textarea-error': formErrors.prompt }"
                       required
                     ></textarea>
                     <label v-if="formErrors.prompt" class="label">
                       <span class="label-text-alt text-error">{{ formErrors.prompt }}</span>
                     </label>
-                  </div>
-                </div>
-
-                <!-- Preview -->
-                <div class="flex flex-col h-full">
-                  <label class="label pt-0">
-                    <span class="label-text font-bold text-base-content/40 uppercase text-xs tracking-widest">{{ t('common.actionsMap.preview') }}</span>
-                  </label>
-                  <div class="flex-1 rounded-2xl border border-base-300 bg-base-100 shadow-inner p-6 overflow-y-auto">
-                    <div class="prose prose-sm max-w-none">
-                      <div class="flex items-center gap-4 mb-8">
-                        <div class="avatar placeholder">
-                          <div class="bg-primary/10 text-primary rounded-full w-12 h-12">
-                            <i class="fas fa-robot text-2xl"></i>
-                          </div>
-                        </div>
-                        <div>
-                          <div class="font-black text-lg">{{ formData.title || 'Untitled Role' }}</div>
-                          <div class="text-xs text-base-content/40 italic">{{ formData.description || 'No description provided' }}</div>
-                        </div>
-                      </div>
-                      
-                      <div class="space-y-6">
-                        <div class="chat chat-start">
-                          <div class="chat-header opacity-50 text-[10px] mb-1">AI Assistant</div>
-                          <div class="chat-bubble bg-base-200 text-base-content border-none shadow-sm text-sm">
-                            Hello! I am ready to assist you as <span class="font-bold text-primary">{{ formData.title || 'a professional assistant' }}</span>. How can I help today?
-                          </div>
-                        </div>
-                        
-                        <div class="divider text-[10px] opacity-20 uppercase tracking-widest">System Prompt Reference</div>
-
-                        <div v-if="formData.prompt" class="p-5 rounded-xl bg-base-200/30 border border-base-300/50 relative">
-                          <i class="fas fa-quote-left absolute -top-2 -left-2 text-base-content/10 text-3xl"></i>
-                          <div class="text-xs whitespace-pre-wrap leading-relaxed text-base-content/70">{{ formData.prompt }}</div>
-                        </div>
-                        <div v-else class="flex flex-col items-center justify-center py-12 text-base-content/20 border-2 border-dashed border-base-300 rounded-xl">
-                          <i class="fas fa-terminal text-2xl mb-2"></i>
-                          <p class="text-xs">Prompt text will appear here</p>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>

@@ -216,6 +216,7 @@ export interface UseAgentEventsReturn {
   ragMetaInfo: Ref<RagMetaInfo | null>
   contextUsage: Ref<ContextUsageInfo | null>
   clearMessages: () => void
+  resetError: () => void
   stopExecution: () => void
   startListening: () => Promise<void>
   stopListening: () => void
@@ -423,6 +424,10 @@ export function useAgentEvents(
     ragMetaInfo.value = null
     subagents.value = []
     contextUsage.value = null
+  }
+
+  const resetError = () => {
+    error.value = null
   }
 
   // 停止执行：清空流式内容并更新状态
@@ -635,6 +640,7 @@ export function useAgentEvents(
         isExecuting.value = true
         currentExecutionId.value = payload.execution_id
       }
+      error.value = null
 
       messages.value.push({
         id: crypto.randomUUID(),
@@ -660,6 +666,7 @@ export function useAgentEvents(
         isExecuting.value = true
         currentExecutionId.value = payload.execution_id
       }
+      error.value = null
 
       if (payload.chunk_type === 'text') {
         // Text content: reset thinking state and accumulate text
@@ -1329,6 +1336,7 @@ export function useAgentEvents(
       if (!matchesTarget(payload.execution_id)) return
 
       console.warn('[useAgentEvents] Agent retry event received:', payload)
+      error.value = null
       
       // 保留已完成的工具调用和助手消息，只清理流式状态
       // 不再清空 messages 数组，让用户看到已完成的进度
@@ -1638,6 +1646,7 @@ export function useAgentEvents(
     ragMetaInfo,
     contextUsage,
     clearMessages,
+    resetError,
     stopExecution,
     startListening,
     stopListening,

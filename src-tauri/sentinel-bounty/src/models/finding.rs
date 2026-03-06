@@ -81,7 +81,6 @@ pub enum FindingSource {
     Import,
 }
 
-
 /// Vulnerability finding
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {

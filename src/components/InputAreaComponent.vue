@@ -264,147 +264,152 @@
         @change="onFilesSelected"
       />
 
-      <dialog class="modal" :class="{ 'modal-open': showSlashManager }">
-        <div class="modal-box max-w-3xl">
-          <h3 class="font-bold text-lg">Slash Commands</h3>
-          <p class="text-sm text-base-content/70 mt-1">输入框中键入 <code>/</code> 可调用命令</p>
-          <div class="mt-3 flex flex-wrap items-center gap-2">
-            <select v-model="slashManagerScope" class="select select-bordered select-sm w-40">
-              <option value="global">全局命令</option>
-              <option value="conversation" :disabled="!conversationScopeEnabled">会话命令</option>
-            </select>
-            <button type="button" class="btn btn-outline btn-sm" @click="exportSlashCommands">导出 JSON</button>
-            <button type="button" class="btn btn-outline btn-sm" @click="triggerImportSlashCommands">导入 JSON</button>
-            <span v-if="slashManagerScope === 'conversation' && conversationScopeEnabled" class="text-xs text-base-content/70">
-              当前会话：{{ conversationScopeKey }}
-            </span>
-          </div>
+      <Teleport to="body">
+        <dialog
+          v-if="showSlashManager"
+          class="modal modal-open slash-manager-modal"
+        >
+          <div class="modal-box max-w-3xl">
+            <h3 class="font-bold text-lg">Slash Commands</h3>
+            <p class="text-sm text-base-content/70 mt-1">输入框中键入 <code>/</code> 可调用命令</p>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <select v-model="slashManagerScope" class="select select-bordered select-sm w-40">
+                <option value="global">全局命令</option>
+                <option value="conversation" :disabled="!conversationScopeEnabled">会话命令</option>
+              </select>
+              <button type="button" class="btn btn-outline btn-sm" @click="exportSlashCommands">导出 JSON</button>
+              <button type="button" class="btn btn-outline btn-sm" @click="triggerImportSlashCommands">导入 JSON</button>
+              <span v-if="slashManagerScope === 'conversation' && conversationScopeEnabled" class="text-xs text-base-content/70">
+                当前会话：{{ conversationScopeKey }}
+              </span>
+            </div>
 
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-            <div class="border border-base-300 rounded-lg p-3 max-h-80 overflow-y-auto">
-              <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">命令列表</div>
-              <div v-if="managerBuiltinCommands.length > 0" class="space-y-2 mb-2">
-                <div
-                  v-for="cmd in managerBuiltinCommands"
-                  :key="cmd.id"
-                  class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <div>
-                      <div class="font-medium">/{{ cmd.name }} <span class="text-xs opacity-60">(内置)</span></div>
-                      <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+              <div class="border border-base-300 rounded-lg p-3 max-h-80 overflow-y-auto">
+                <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">命令列表</div>
+                <div v-if="managerBuiltinCommands.length > 0" class="space-y-2 mb-2">
+                  <div
+                    v-for="cmd in managerBuiltinCommands"
+                    :key="cmd.id"
+                    class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <div>
+                        <div class="font-medium">/{{ cmd.name }} <span class="text-xs opacity-60">(内置)</span></div>
+                        <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+                      </div>
+                      <span class="badge badge-ghost badge-sm">只读</span>
                     </div>
-                    <span class="badge badge-ghost badge-sm">只读</span>
                   </div>
                 </div>
-              </div>
 
-              <draggable
-                v-model="managerCustomCommands"
-                item-key="id"
-                handle=".drag-handle"
-                :animation="150"
-                class="space-y-2"
-                @end="onDragSortEnd"
-              >
-                <template #item="{ element: cmd }">
-                  <div class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="flex items-center gap-2 min-w-0">
-                        <button type="button" class="btn btn-ghost btn-xs drag-handle cursor-grab" title="拖拽排序">
-                          <i class="fas fa-grip-vertical"></i>
-                        </button>
-                        <div class="min-w-0">
-                          <div class="font-medium">/{{ cmd.name }} <span v-if="cmd.scope" class="text-xs opacity-60">({{ getScopeLabel(cmd.scope) }})</span></div>
-                          <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+                <draggable
+                  v-model="managerCustomCommands"
+                  item-key="id"
+                  handle=".drag-handle"
+                  :animation="150"
+                  class="space-y-2"
+                  @end="onDragSortEnd"
+                >
+                  <template #item="{ element: cmd }">
+                    <div class="rounded-lg border border-base-300/70 px-3 py-2 bg-base-100">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <button type="button" class="btn btn-ghost btn-xs drag-handle cursor-grab" title="拖拽排序">
+                            <i class="fas fa-grip-vertical"></i>
+                          </button>
+                          <div class="min-w-0">
+                            <div class="font-medium">/{{ cmd.name }} <span v-if="cmd.scope" class="text-xs opacity-60">({{ getScopeLabel(cmd.scope) }})</span></div>
+                            <div class="text-xs opacity-70 truncate">{{ cmd.description || '-' }}</div>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-1">
+                          <button type="button" class="btn btn-ghost btn-xs" @click="startEditCommand(cmd)" title="编辑">编辑</button>
+                          <button type="button" class="btn btn-ghost btn-xs text-error" @click="deleteSlashCommand(cmd.id)">删除</button>
                         </div>
                       </div>
-                      <div class="flex items-center gap-1">
-                        <button type="button" class="btn btn-ghost btn-xs" @click="startEditCommand(cmd)" title="编辑">编辑</button>
-                        <button type="button" class="btn btn-ghost btn-xs text-error" @click="deleteSlashCommand(cmd.id)">删除</button>
-                      </div>
+                      <label class="label py-1">
+                        <span class="label-text text-xs">启用</span>
+                        <input
+                          type="checkbox"
+                          class="toggle toggle-xs"
+                          :checked="cmd.enabled"
+                          @change="onCommandEnabledChange(cmd, $event)"
+                        />
+                      </label>
                     </div>
-                    <label class="label py-1">
-                      <span class="label-text text-xs">启用</span>
-                      <input
-                        type="checkbox"
-                        class="toggle toggle-xs"
-                        :checked="cmd.enabled"
-                        @change="onCommandEnabledChange(cmd, $event)"
-                      />
-                    </label>
-                  </div>
-                </template>
-              </draggable>
-              <div v-if="managerCustomCommands.length === 0" class="text-xs text-base-content/60 px-1 py-2">
-                当前作用域暂无自定义命令
-              </div>
-            </div>
-
-            <div class="border border-base-300 rounded-lg p-3">
-              <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">
-                {{ editingSlashId ? '编辑命令' : '新增自定义命令' }}
-              </div>
-              <div class="space-y-3">
-                <label class="form-control">
-                  <span class="label-text text-xs">命令名</span>
-                  <input v-model.trim="newSlashCommand.name" class="input input-bordered input-sm" placeholder="review" />
-                </label>
-                <label class="form-control">
-                  <span class="label-text text-xs">描述</span>
-                  <input v-model.trim="newSlashCommand.description" class="input input-bordered input-sm" placeholder="审查当前改动" />
-                </label>
-                <label class="form-control">
-                  <span class="label-text text-xs">类型</span>
-                  <select v-model="newSlashCommand.type" class="select select-bordered select-sm">
-                    <option value="prompt">提示词</option>
-                    <option value="action">功能</option>
-                  </select>
-                </label>
-                <label class="form-control">
-                  <span class="label-text text-xs">作用域</span>
-                  <select v-model="newSlashCommand.scope" class="select select-bordered select-sm">
-                    <option value="global">全局</option>
-                    <option value="conversation" :disabled="!conversationScopeEnabled">会话</option>
-                  </select>
-                </label>
-                <label v-if="newSlashCommand.type === 'prompt'" class="form-control">
-                  <span class="label-text text-xs">提示词模板</span>
-                  <textarea v-model="newSlashCommand.template" class="textarea textarea-bordered textarea-sm h-24" placeholder="请审查当前改动：{{input}}"></textarea>
-                </label>
-                <label v-else class="form-control">
-                  <span class="label-text text-xs">功能</span>
-                  <select v-model="newSlashCommand.action" class="select select-bordered select-sm">
-                    <option value="new_conversation">新建会话</option>
-                    <option value="clear_conversation">清空会话</option>
-                    <option value="toggle_rag">切换 RAG</option>
-                    <option value="toggle_tools">切换 Tools</option>
-                    <option value="open_tool_config">打开工具配置</option>
-                  </select>
-                </label>
-                <label v-if="newSlashCommand.type === 'prompt'" class="label cursor-pointer justify-start gap-2">
-                  <input type="checkbox" class="checkbox checkbox-sm" v-model="newSlashCommand.auto_send" />
-                  <span class="label-text text-xs">执行后立即发送</span>
-                </label>
-                <div v-if="slashFormError" class="text-xs text-error bg-error/10 border border-error/20 rounded px-2 py-1">
-                  {{ slashFormError }}
+                  </template>
+                </draggable>
+                <div v-if="managerCustomCommands.length === 0" class="text-xs text-base-content/60 px-1 py-2">
+                  当前作用域暂无自定义命令
                 </div>
-                <button type="button" class="btn btn-primary btn-sm w-full" @click="editingSlashId ? saveEditedSlashCommand() : addCustomSlashCommand()">
-                  {{ editingSlashId ? '保存修改' : '添加命令' }}
-                </button>
-                <button v-if="editingSlashId" type="button" class="btn btn-ghost btn-sm w-full" @click="cancelEditCommand">取消编辑</button>
+              </div>
+
+              <div class="border border-base-300 rounded-lg p-3">
+                <div class="text-xs uppercase tracking-wide text-base-content/60 mb-2">
+                  {{ editingSlashId ? '编辑命令' : '新增自定义命令' }}
+                </div>
+                <div class="space-y-3">
+                  <label class="form-control">
+                    <span class="label-text text-xs">命令名</span>
+                    <input v-model.trim="newSlashCommand.name" class="input input-bordered input-sm" placeholder="review" />
+                  </label>
+                  <label class="form-control">
+                    <span class="label-text text-xs">描述</span>
+                    <input v-model.trim="newSlashCommand.description" class="input input-bordered input-sm" placeholder="审查当前改动" />
+                  </label>
+                  <label class="form-control">
+                    <span class="label-text text-xs">类型</span>
+                    <select v-model="newSlashCommand.type" class="select select-bordered select-sm">
+                      <option value="prompt">提示词</option>
+                      <option value="action">功能</option>
+                    </select>
+                  </label>
+                  <label class="form-control">
+                    <span class="label-text text-xs">作用域</span>
+                    <select v-model="newSlashCommand.scope" class="select select-bordered select-sm">
+                      <option value="global">全局</option>
+                      <option value="conversation" :disabled="!conversationScopeEnabled">会话</option>
+                    </select>
+                  </label>
+                  <label v-if="newSlashCommand.type === 'prompt'" class="form-control">
+                    <span class="label-text text-xs">提示词模板</span>
+                    <textarea v-model="newSlashCommand.template" class="textarea textarea-bordered textarea-sm h-24" placeholder="请审查当前改动：{{input}}"></textarea>
+                  </label>
+                  <label v-else class="form-control">
+                    <span class="label-text text-xs">功能</span>
+                    <select v-model="newSlashCommand.action" class="select select-bordered select-sm">
+                      <option value="new_conversation">新建会话</option>
+                      <option value="clear_conversation">清空会话</option>
+                      <option value="toggle_rag">切换 RAG</option>
+                      <option value="toggle_tools">切换 Tools</option>
+                      <option value="open_tool_config">打开工具配置</option>
+                    </select>
+                  </label>
+                  <label v-if="newSlashCommand.type === 'prompt'" class="label cursor-pointer justify-start gap-2">
+                    <input type="checkbox" class="checkbox checkbox-sm" v-model="newSlashCommand.auto_send" />
+                    <span class="label-text text-xs">执行后立即发送</span>
+                  </label>
+                  <div v-if="slashFormError" class="text-xs text-error bg-error/10 border border-error/20 rounded px-2 py-1">
+                    {{ slashFormError }}
+                  </div>
+                  <button type="button" class="btn btn-primary btn-sm w-full" @click="editingSlashId ? saveEditedSlashCommand() : addCustomSlashCommand()">
+                    {{ editingSlashId ? '保存修改' : '添加命令' }}
+                  </button>
+                  <button v-if="editingSlashId" type="button" class="btn btn-ghost btn-sm w-full" @click="cancelEditCommand">取消编辑</button>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="modal-action">
-            <button type="button" class="btn" @click="closeSlashManager">关闭</button>
+            <div class="modal-action">
+              <button type="button" class="btn" @click="closeSlashManager">关闭</button>
+            </div>
           </div>
-        </div>
-        <form method="dialog" class="modal-backdrop">
-          <button @click.prevent="closeSlashManager">close</button>
-        </form>
-      </dialog>
+          <form method="dialog" class="modal-backdrop">
+            <button @click.prevent="closeSlashManager">close</button>
+          </form>
+        </dialog>
+      </Teleport>
       <input
         ref="importSlashInputRef"
         type="file"
@@ -2036,8 +2041,16 @@ defineExpose({
   left: 0.5rem;
   right: 0.5rem;
   bottom: calc(100% + 6px);
-  z-index: 70;
+  z-index: 120;
   backdrop-filter: blur(8px);
+}
+
+.slash-manager-modal {
+  z-index: 1300;
+}
+
+.slash-manager-modal .modal-box {
+  max-height: calc(100vh - 3rem);
 }
 
 .icon-btn { 

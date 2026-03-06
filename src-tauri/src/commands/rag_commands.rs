@@ -11,6 +11,8 @@ use sentinel_rag::models::{
 use sentinel_rag::service::RagService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
@@ -131,6 +133,58 @@ fn convert_rag_to_core(rag: RagConfigRag) -> RagConfigCore {
     }
 }
 
+const SQLITE_VECTOR_DB_FILENAME: &str = "rag_vectors.db";
+const LEGACY_LANCEDB_DIR_NAME: &str = "lancedb";
+
+fn normalize_vector_database_path(path: &Path) -> PathBuf {
+    if path.as_os_str().is_empty() {
+        return PathBuf::from(format!("AppData/{}", SQLITE_VECTOR_DB_FILENAME));
+    }
+
+    if path.file_name() == Some(OsStr::new(LEGACY_LANCEDB_DIR_NAME)) {
+        return path
+            .parent()
+            .map(|parent| parent.join(SQLITE_VECTOR_DB_FILENAME))
+            .unwrap_or_else(|| PathBuf::from(SQLITE_VECTOR_DB_FILENAME));
+    }
+
+    if path.is_dir() {
+        return path.join(SQLITE_VECTOR_DB_FILENAME);
+    }
+
+    path.to_path_buf()
+}
+
+async fn normalize_and_persist_rag_config_path(
+    database: &Arc<DatabaseService>,
+    config: &mut RagConfigRag,
+) {
+    let Some(original_path) = config.database_path.clone() else {
+        return;
+    };
+
+    let normalized_path = normalize_vector_database_path(&original_path);
+    if normalized_path == original_path {
+        return;
+    }
+
+    warn!(
+        "Detected legacy or directory-based RAG database path '{}', normalizing to '{}'",
+        original_path.display(),
+        normalized_path.display()
+    );
+    config.database_path = Some(normalized_path);
+
+    if let Err(e) = database
+        .save_rag_config(&convert_rag_to_core(config.clone()))
+        .await
+    {
+        warn!("Failed to persist normalized RAG database path: {}", e);
+    } else {
+        info!("Persisted normalized RAG database path");
+    }
+}
+
 /// 初始化全局RAG服务
 pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Result<(), String> {
     // 尝试从数据库加载配置，失败则使用默认配置
@@ -148,6 +202,8 @@ pub async fn initialize_global_rag_service(database: Arc<DatabaseService>) -> Re
             RagConfigRag::default()
         }
     };
+
+    normalize_and_persist_rag_config_path(&database, &mut config).await;
 
     // 从 AI 配置中获取嵌入服务的 base_url 和 api_key
     match database.get_config("ai", "providers_config").await {

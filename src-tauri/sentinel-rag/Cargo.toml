@@ -28,8 +28,8 @@ rand = "0.9"
 log = "0.4"
 dirs = "5.0"
 
-rig-core = { version = "0.31.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
-rig-sqlite = "0.1.34"
+rig-core = { version = "0.32.0", default-features = false, features = ["derive", "reqwest-native-tls"] }
+rig-sqlite = "0.2.1"
 tokio-rusqlite = { version = "0.6.0", features = ["bundled"], default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
 sqlite-vec = "0.1"

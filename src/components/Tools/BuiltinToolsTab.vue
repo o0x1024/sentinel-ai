@@ -386,18 +386,20 @@ const categoryConfigs: CategoryConfig[] = [
   { key: 'ai', label: 'AI', icon: 'fas fa-brain', btnClass: 'btn-warning', badgeClass: 'badge-warning', bgClass: 'bg-warning/10', textClass: 'text-warning' },
   { key: 'browser', label: '浏览器', icon: 'fas fa-globe', btnClass: 'btn-primary', badgeClass: 'badge-primary', bgClass: 'bg-primary/10', textClass: 'text-primary' },
   { key: 'utility', label: '工具', icon: 'fas fa-tools', btnClass: 'btn-success', badgeClass: 'badge-success', bgClass: 'bg-success/10', textClass: 'text-success' },
+  { key: 'other', label: '其他', icon: 'fas fa-tools', btnClass: 'btn-ghost', badgeClass: 'badge-ghost', bgClass: 'bg-base-200', textClass: 'text-base-content' },
 ]
 
+const knownCategoryKeys = new Set(categoryConfigs.map(c => c.key))
+
+const normalizeCategory = (category: unknown): string => {
+  const raw = String(category || '').toLowerCase().trim()
+  if (!raw) return 'utility'
+  return knownCategoryKeys.has(raw) ? raw : 'other'
+}
+
 const getCategoryConfig = (category: string): CategoryConfig => {
-  return categoryConfigs.find(c => c.key === category.toLowerCase()) || {
-    key: category,
-    label: category,
-    icon: 'fas fa-tools',
-    btnClass: 'btn-ghost',
-    badgeClass: 'badge-ghost',
-    bgClass: 'bg-base-200',
-    textClass: 'text-base-content'
-  }
+  const normalized = normalizeCategory(category)
+  return categoryConfigs.find(c => c.key === normalized) || categoryConfigs[categoryConfigs.length - 1]
 }
 
 // 状态
@@ -423,7 +425,7 @@ const infoText = computed(() => {
 
 // 计算属性：可用的分类
 const categories = computed(() => {
-  const cats = new Set(tools.value.map(t => t.category?.toLowerCase() || 'utility'))
+  const cats = new Set(tools.value.map(t => normalizeCategory(t.category)))
   return categoryConfigs.filter(c => cats.has(c.key))
 })
 
@@ -434,7 +436,7 @@ const groupedTools = computed(() => {
   // 如果选择了分类，只显示该分类
   if (selectedCategory.value) {
     filteredTools = tools.value.filter(t => 
-      (t.category?.toLowerCase() || 'utility') === selectedCategory.value
+      normalizeCategory(t.category) === selectedCategory.value
     )
   }
   
@@ -444,29 +446,20 @@ const groupedTools = computed(() => {
   
   for (const cat of categoryOrder) {
     const categoryTools = filteredTools.filter(t => 
-      (t.category?.toLowerCase() || 'utility') === cat
+      normalizeCategory(t.category) === cat
     )
     if (categoryTools.length > 0) {
       groups.push({ category: cat, tools: categoryTools })
     }
   }
-  
-  // 添加未分类的工具
-  const knownCategories = new Set(categoryOrder)
-  const otherTools = filteredTools.filter(t => 
-    !knownCategories.has(t.category?.toLowerCase() || 'utility')
-  )
-  if (otherTools.length > 0) {
-    groups.push({ category: 'other', tools: otherTools })
-  }
-  
+
   return groups
 })
 
 // 获取分类工具数量
 const getToolCountByCategory = (category: string) => {
   return tools.value.filter(t => 
-    (t.category?.toLowerCase() || 'utility') === category
+    normalizeCategory(t.category) === category
   ).length
 }
 
@@ -507,6 +500,7 @@ function getToolIcon(toolName: string) {
     'ocr': 'fas fa-file-image',
     'tenth_man_review': 'fas fa-user-secret',
     'todos': 'fas fa-tasks',
+    'search_exploit': 'fas fa-bug',
     // Browser tools
     'browser_open': 'fas fa-external-link-alt',
     'browser_snapshot': 'fas fa-camera',

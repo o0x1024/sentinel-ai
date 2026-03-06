@@ -1,8 +1,8 @@
 //! LLM 请求/响应日志记录模块
 
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL_LOG_MAX_CHARS: usize = 8000;
@@ -10,7 +10,10 @@ const LLM_REQUEST_LOG_MAX_CHARS: usize = 12000;
 const LLM_RESPONSE_LOG_MAX_CHARS: usize = 12000;
 const LLM_ERROR_LOG_MAX_CHARS: usize = 6000;
 const LLM_JSONL_PREVIEW_MAX_CHARS: usize = 800;
+const STREAM_EVENT_LOG_MAX_CHARS: usize = 8000;
+const TURN_LOG_MAX_CHARS: usize = 12000;
 static LLM_TURN_COUNTER: AtomicU64 = AtomicU64::new(1);
+static LLM_STREAM_EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
@@ -37,6 +40,26 @@ fn content_hash_u64(input: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     hasher.finish()
+}
+
+fn truncate_json_value_strings(value: &serde_json::Value, max_bytes: usize) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            serde_json::Value::String(truncate_with_marker(s, max_bytes))
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .map(|item| truncate_json_value_strings(item, max_bytes))
+                .collect(),
+        ),
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), truncate_json_value_strings(v, max_bytes)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 fn write_llm_jsonl_log(
@@ -74,13 +97,21 @@ fn write_llm_jsonl_log(
     {
         Ok(mut file) => {
             if let Err(e) = writeln!(file, "{}", event) {
-                tracing::error!("Failed to write to LLM JSONL log file {}: {}", jsonl_file_path, e);
+                tracing::error!(
+                    "Failed to write to LLM JSONL log file {}: {}",
+                    jsonl_file_path,
+                    e
+                );
             } else {
                 let _ = file.flush();
             }
         }
         Err(e) => {
-            tracing::error!("Failed to open LLM JSONL log file {}: {}", jsonl_file_path, e);
+            tracing::error!(
+                "Failed to open LLM JSONL log file {}: {}",
+                jsonl_file_path,
+                e
+            );
         }
     }
 }
@@ -146,7 +177,231 @@ pub fn write_llm_log(
         }
     }
 
-    write_llm_jsonl_log(session_id, conversation_id, provider, model, log_type, content);
+    write_llm_jsonl_log(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        log_type,
+        content,
+    );
+}
+
+fn write_stream_log(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    sequence: u64,
+    event_type: &str,
+    payload: &serde_json::Value,
+) {
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC");
+    let payload_text = truncate_with_marker(&payload.to_string(), STREAM_EVENT_LOG_MAX_CHARS);
+    let log_entry = format!(
+        "[{}] [STREAM {}] [Session: {}] [Conversation: {}] [Provider: {}] [Model: {}] [Event: {}] {}\n",
+        timestamp,
+        sequence,
+        session_id,
+        conversation_id.unwrap_or("N/A"),
+        provider,
+        model,
+        event_type,
+        payload_text
+    );
+
+    if let Err(e) = std::fs::create_dir_all("logs") {
+        tracing::error!("Failed to create logs directory: {}", e);
+        return;
+    }
+
+    let log_file_path = format!(
+        "logs/llm-stream-events-{}.log",
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(log_entry.as_bytes()) {
+                tracing::error!(
+                    "Failed to write to stream log file {}: {}",
+                    log_file_path,
+                    e
+                );
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to open stream log file {}: {}", log_file_path, e);
+        }
+    }
+}
+
+pub fn log_stream_event(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    event_type: &str,
+    payload: &serde_json::Value,
+) {
+    let sequence = LLM_STREAM_EVENT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp = chrono::Utc::now();
+    let sanitized_payload = truncate_json_value_strings(payload, STREAM_EVENT_LOG_MAX_CHARS);
+    let event = serde_json::json!({
+        "timestamp": timestamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "sequence": sequence,
+        "event_type": event_type,
+        "session_id": session_id,
+        "conversation_id": conversation_id.unwrap_or("N/A"),
+        "provider": provider,
+        "model": model,
+        "payload": sanitized_payload,
+    });
+
+    if let Err(e) = std::fs::create_dir_all("logs") {
+        tracing::error!("Failed to create logs directory: {}", e);
+        return;
+    }
+
+    let jsonl_file_path = format!(
+        "logs/llm-stream-events-{}.jsonl",
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&jsonl_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", event) {
+                tracing::error!(
+                    "Failed to write to stream JSONL log file {}: {}",
+                    jsonl_file_path,
+                    e
+                );
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to open stream JSONL log file {}: {}",
+                jsonl_file_path,
+                e
+            );
+        }
+    }
+
+    write_stream_log(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        sequence,
+        event_type,
+        &event["payload"],
+    );
+}
+
+fn extract_turn_number(session_id: &str) -> Option<u64> {
+    session_id
+        .rsplit("::turn-")
+        .next()
+        .and_then(|raw| raw.parse::<u64>().ok())
+}
+
+pub fn log_turn_summary(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    payload: &serde_json::Value,
+) {
+    let sanitized_payload = truncate_json_value_strings(payload, TURN_LOG_MAX_CHARS);
+    let turn_number = extract_turn_number(session_id);
+    let event = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "session_id": session_id,
+        "conversation_id": conversation_id.unwrap_or("N/A"),
+        "turn": turn_number,
+        "provider": provider,
+        "model": model,
+        "summary": sanitized_payload,
+    });
+
+    if let Err(e) = std::fs::create_dir_all("logs") {
+        tracing::error!("Failed to create logs directory: {}", e);
+        return;
+    }
+
+    let jsonl_file_path = format!(
+        "logs/llm-turns-{}.jsonl",
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&jsonl_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", event) {
+                tracing::error!(
+                    "Failed to write to turn JSONL log file {}: {}",
+                    jsonl_file_path,
+                    e
+                );
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to open turn JSONL log file {}: {}",
+                jsonl_file_path,
+                e
+            );
+        }
+    }
+
+    let log_file_path = format!(
+        "logs/llm-turns-{}.log",
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+    let payload_text = truncate_with_marker(&event["summary"].to_string(), TURN_LOG_MAX_CHARS);
+    let log_entry = format!(
+        "[{}] [TURN {}] [Session: {}] [Conversation: {}] [Provider: {}] [Model: {}] {}\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f UTC"),
+        turn_number
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "N/A".to_string()),
+        session_id,
+        conversation_id.unwrap_or("N/A"),
+        provider,
+        model,
+        payload_text
+    );
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+    {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(log_entry.as_bytes()) {
+                tracing::error!("Failed to write to turn log file {}: {}", log_file_path, e);
+            } else {
+                let _ = file.flush();
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to open turn log file {}: {}", log_file_path, e);
+        }
+    }
 }
 
 /// 写入工具调用日志

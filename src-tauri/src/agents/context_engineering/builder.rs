@@ -28,6 +28,10 @@ use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs
 use crate::agents::sliding_window::{SlidingWindowConfig, SlidingWindowManager};
 use crate::agents::types::DocumentAttachmentInfo;
 
+const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
+const USER_FORCED_RULES_CONFIG_KEY: &str = "user_forced_rules";
+const USER_FORCED_RULES_BLOCK_MARKER: &str = "[User Forced Rules]";
+
 pub struct ContextBuildInput {
     pub app_handle: AppHandle,
     pub execution_id: String,
@@ -99,6 +103,28 @@ fn env_label(env: ExecutionEnvironment) -> &'static str {
 
 pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResult> {
     let mut system_prompt = input.base_system_prompt;
+    if !system_prompt.contains(USER_FORCED_RULES_BLOCK_MARKER) {
+        if let Some(db) = input
+            .app_handle
+            .try_state::<Arc<sentinel_db::DatabaseService>>()
+        {
+            if let Ok(Some(raw_rules)) = db
+                .get_config(
+                    USER_FORCED_RULES_CONFIG_CATEGORY,
+                    USER_FORCED_RULES_CONFIG_KEY,
+                )
+                .await
+            {
+                let forced_rules = raw_rules.trim();
+                if !forced_rules.is_empty() {
+                    system_prompt.push_str(&format!(
+                        "\n\n[User Forced Rules]\n{}\n\n[Rule Priority]\n- The above rules are user-defined mandatory instructions. Follow them unless they conflict with higher-priority safety/system constraints.",
+                        forced_rules
+                    ));
+                }
+            }
+        }
+    }
     let execution_context = resolve_execution_context(&input.app_handle).await;
     let mut policy = input.policy.clone();
     if let Some(db) = input

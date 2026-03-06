@@ -15,6 +15,9 @@ use sentinel_rag;
 use sentinel_workflow::WorkflowGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
@@ -23,6 +26,8 @@ use uuid::Uuid;
 /// Hard safety ceiling for output storage threshold.
 /// UI recommends 8K-32K, but we still allow up to 50K for compatibility.
 const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 50_000;
+const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
+const USER_FORCED_RULES_CONFIG_KEY: &str = "user_forced_rules";
 
 // Re-export AI settings related types for backward compatibility
 pub use crate::commands::aisettings::{
@@ -56,6 +61,48 @@ impl From<CommandAiConfig> for AiConfig {
             max_turns: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AiTurnLogQuery {
+    pub date: Option<String>,
+    pub conversation_id: Option<String>,
+    pub session_id: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiTurnLogEntry {
+    pub timestamp: String,
+    pub session_id: String,
+    pub conversation_id: String,
+    pub turn: Option<u64>,
+    pub provider: String,
+    pub model: String,
+    pub summary: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiTurnLogSummaryEntry {
+    pub timestamp: String,
+    pub session_id: String,
+    pub conversation_id: String,
+    pub turn: Option<u64>,
+    pub provider: String,
+    pub model: String,
+    pub status: String,
+    pub duration_ms: Option<i64>,
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+    pub tool_call_count: usize,
+    pub user_request_preview: String,
+    pub assistant_response_preview: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AiTurnLogDetailQuery {
+    pub date: Option<String>,
+    pub session_id: String,
 }
 
 // 全局取消令牌管理器: maps conversation_id -> (token, generation counter)
@@ -1549,6 +1596,230 @@ pub async fn get_ai_conversations_count(
     Ok(0)
 }
 
+fn resolve_turn_log_date(date: Option<&str>) -> String {
+    date.map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string())
+}
+
+fn build_turn_log_path(date: &str) -> PathBuf {
+    PathBuf::from("logs").join(format!("llm-turns-{}.jsonl", date))
+}
+
+fn for_each_jsonl_line_reverse<F>(path: &PathBuf, mut visit: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<bool, String>,
+{
+    let mut file = File::open(path)
+        .map_err(|e| format!("Failed to open turn log file {}: {}", path.display(), e))?;
+    let mut pos = file
+        .seek(SeekFrom::End(0))
+        .map_err(|e| format!("Failed to seek turn log file {}: {}", path.display(), e))?;
+    let mut remainder = Vec::<u8>::new();
+    let mut chunk = vec![0u8; 8192];
+
+    while pos > 0 {
+        let read_size = usize::try_from(pos.min(chunk.len() as u64)).unwrap_or(chunk.len());
+        pos -= read_size as u64;
+        file.seek(SeekFrom::Start(pos))
+            .map_err(|e| format!("Failed to seek turn log file {}: {}", path.display(), e))?;
+        file.read_exact(&mut chunk[..read_size])
+            .map_err(|e| format!("Failed to read turn log file {}: {}", path.display(), e))?;
+
+        let mut combined = Vec::with_capacity(read_size + remainder.len());
+        combined.extend_from_slice(&chunk[..read_size]);
+        combined.extend_from_slice(&remainder);
+
+        let parts = combined.split(|b| *b == b'\n').collect::<Vec<_>>();
+        remainder = parts.first().map(|part| part.to_vec()).unwrap_or_default();
+
+        for part in parts.iter().skip(1).rev() {
+            let line = String::from_utf8_lossy(part).trim().to_string();
+            if line.is_empty() {
+                continue;
+            }
+            if !visit(&line)? {
+                return Ok(());
+            }
+        }
+    }
+
+    if !remainder.is_empty() {
+        let line = String::from_utf8_lossy(&remainder).trim().to_string();
+        if !line.is_empty() && !visit(&line)? {
+            return Ok(());
+        }
+    }
+
+    Ok(())
+}
+
+fn preview_from_json_value(value: &serde_json::Value, max_chars: usize) -> String {
+    let raw = match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    };
+    let normalized = raw
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string();
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let mut preview = normalized.chars().take(max_chars).collect::<String>();
+    preview.push_str("...");
+    preview
+}
+
+fn build_turn_log_summary(entry: AiTurnLogEntry) -> AiTurnLogSummaryEntry {
+    let status = entry
+        .summary
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let duration_ms = entry.summary.get("duration_ms").and_then(|v| v.as_i64());
+    let input_tokens = entry
+        .summary
+        .get("usage")
+        .and_then(|v| v.get("input_tokens"))
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u32::try_from(v).ok());
+    let output_tokens = entry
+        .summary
+        .get("usage")
+        .and_then(|v| v.get("output_tokens"))
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u32::try_from(v).ok());
+    let tool_call_count = entry
+        .summary
+        .get("tool_calls")
+        .and_then(|v| v.as_array())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let user_request_preview = preview_from_json_value(
+        entry
+            .summary
+            .get("user_request")
+            .unwrap_or(&serde_json::Value::Null),
+        160,
+    );
+    let assistant_response_preview = preview_from_json_value(
+        entry
+            .summary
+            .get("assistant_response")
+            .unwrap_or(&serde_json::Value::Null),
+        220,
+    );
+
+    AiTurnLogSummaryEntry {
+        timestamp: entry.timestamp,
+        session_id: entry.session_id,
+        conversation_id: entry.conversation_id,
+        turn: entry.turn,
+        provider: entry.provider,
+        model: entry.model,
+        status,
+        duration_ms,
+        input_tokens,
+        output_tokens,
+        tool_call_count,
+        user_request_preview,
+        assistant_response_preview,
+    }
+}
+
+#[tauri::command]
+pub async fn get_ai_turn_logs(
+    request: AiTurnLogQuery,
+) -> Result<Vec<AiTurnLogSummaryEntry>, String> {
+    let date = resolve_turn_log_date(request.date.as_deref());
+    let path = build_turn_log_path(&date);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let conversation_filter = request
+        .conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let session_filter = request
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let limit = request.limit.unwrap_or(50).min(500);
+
+    let mut rows = Vec::new();
+    for_each_jsonl_line_reverse(&path, |line| {
+        let entry = match serde_json::from_str::<AiTurnLogEntry>(line) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Skipping malformed turn log row: {}", e);
+                return Ok(true);
+            }
+        };
+
+        if let Some(filter) = conversation_filter.as_deref() {
+            if !entry.conversation_id.contains(filter) {
+                return Ok(true);
+            }
+        }
+        if let Some(filter) = session_filter.as_deref() {
+            if !entry.session_id.contains(filter) {
+                return Ok(true);
+            }
+        }
+
+        rows.push(build_turn_log_summary(entry));
+        Ok(rows.len() < limit)
+    })?;
+
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn get_ai_turn_log_detail(
+    request: AiTurnLogDetailQuery,
+) -> Result<Option<AiTurnLogEntry>, String> {
+    let session_id = request.session_id.trim();
+    if session_id.is_empty() {
+        return Err("session_id is required".to_string());
+    }
+
+    let date = resolve_turn_log_date(request.date.as_deref());
+    let path = build_turn_log_path(&date);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let mut found = None;
+    for_each_jsonl_line_reverse(&path, |line| {
+        let entry = match serde_json::from_str::<AiTurnLogEntry>(line) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    "Skipping malformed turn log row while loading detail: {}",
+                    e
+                );
+                return Ok(true);
+            }
+        };
+        if entry.session_id == session_id {
+            found = Some(entry);
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+
+    Ok(found)
+}
+
 // 获取对话历史
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_ai_conversation_history(
@@ -2574,6 +2845,33 @@ pub async fn agent_execute(
                 }
                 _ => Some(role_prompt),
             };
+        }
+
+        // 注入用户强制规则（agent.user_forced_rules）
+        if let Some(db) = app_handle.try_state::<Arc<crate::services::database::DatabaseService>>()
+        {
+            if let Ok(Some(raw_rules)) = db
+                .get_config(
+                    USER_FORCED_RULES_CONFIG_CATEGORY,
+                    USER_FORCED_RULES_CONFIG_KEY,
+                )
+                .await
+            {
+                let forced_rules = raw_rules.trim();
+                if !forced_rules.is_empty() {
+                    let rules_block = format!(
+                        "[User Forced Rules]\n{}\n\n[Rule Priority]\n- The above rules are user-defined mandatory instructions. Follow them unless they conflict with higher-priority safety/system constraints.",
+                        forced_rules
+                    );
+                    base_system_prompt = match base_system_prompt {
+                        Some(existing) if !existing.trim().is_empty() => {
+                            Some(format!("{}\n\n{}", existing, rules_block))
+                        }
+                        _ => Some(rules_block),
+                    };
+                    tracing::info!("Injected user forced rules into system prompt");
+                }
+            }
         }
 
         // Image attachments processing (default: local OCR, do not upload images)
