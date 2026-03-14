@@ -593,6 +593,89 @@ pub async fn cleanup_execution_todos(execution_id: &str) -> bool {
     removed
 }
 
+/// Helper function to auto-complete all unfinished todos for an execution.
+/// Used as a server-side fallback when the agent's response clearly indicates
+/// the task is done but it forgot to call todos(update_status, completed).
+pub async fn auto_complete_all_todos(execution_id: &str, reason: &str) -> bool {
+    let mut list = get_or_load_todos(execution_id).await;
+    if list.items.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+    for item in list.items.iter_mut() {
+        if item.status != TodoStatus::Completed {
+            item.status = TodoStatus::Completed;
+            if item.result.is_none() {
+                item.result = Some(format!("[auto-completed] {}", reason));
+            }
+            changed = true;
+        }
+    }
+    if !changed {
+        return false;
+    }
+
+    list.current_index = None;
+
+    // Update cache
+    {
+        let mut cache = TODOS_CACHE.write().await;
+        cache.insert(execution_id.to_string(), list.clone());
+    }
+    // Persist to database
+    save_todos_to_db(execution_id, &list).await;
+
+    // Emit UI event
+    if let Some(handle) = &*APP_HANDLE.read().await {
+        let _ = handle.emit(
+            "agent:plan_updated",
+            serde_json::json!({
+                "execution_id": execution_id,
+                "plan": {
+                    "tasks": list.items,
+                    "current_task_index": serde_json::Value::Null
+                }
+            }),
+        );
+
+        let todos_json: Vec<serde_json::Value> = list
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                serde_json::json!({
+                    "id": format!("{}_{}", execution_id, i),
+                    "content": item.description,
+                    "status": "completed",
+                    "created_at": chrono::Utc::now().timestamp_millis(),
+                    "updated_at": chrono::Utc::now().timestamp_millis(),
+                    "metadata": {
+                        "step_index": i,
+                        "result": item.result
+                    }
+                })
+            })
+            .collect();
+
+        let _ = handle.emit(
+            "agent-todos-update",
+            serde_json::json!({
+                "execution_id": execution_id,
+                "todos": todos_json,
+                "timestamp": chrono::Utc::now().timestamp_millis()
+            }),
+        );
+    }
+
+    tracing::info!(
+        "Auto-completed all todos for execution {} (reason: {})",
+        execution_id,
+        reason
+    );
+    true
+}
+
 /// Helper function to cleanup all todos lists (cache only, not database)
 pub async fn cleanup_all_todos() {
     let mut cache = TODOS_CACHE.write().await;

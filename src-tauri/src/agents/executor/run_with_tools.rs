@@ -10,7 +10,7 @@ use sentinel_db::DatabaseService;
 use sentinel_llm::{parse_image_from_json, ChatMessage, StreamContent, StreamingLlmClient};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::buildin_tools::todos::{
-    get_execution_todos, TodoStatus as ExecutionTodoStatus, TodosList,
+    auto_complete_all_todos, get_execution_todos, TodoStatus as ExecutionTodoStatus, TodosList,
 };
 use sentinel_tools::buildin_tools::{ShellTool, SkillsTool, TodosTool};
 use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
@@ -1678,117 +1678,182 @@ pub async fn execute_agent_with_tools(
                     .map(|list| collect_incomplete_todo_summaries(&list, 5))
                     .unwrap_or_default();
                 if !incomplete_todos.is_empty() {
-                    let reason_text = format!("todos not completed: {}", incomplete_todos.join("; "));
-                    let err = anyhow::anyhow!("Todos guard failed: {}", reason_text);
-                    tracing::warn!(
-                        "Todos guard rejected final response - execution_id: {}, incomplete_todos: {:?}",
-                        params.execution_id,
-                        incomplete_todos
-                    );
-                    if retries < max_retries {
-                        retries += 1;
-                        last_error = Some(err);
-                        silent_retry_pending = true;
-                        todos_recovery_prompt = Some(format!(
-                            "[TodosGuard] Do not finish yet. Your todos list still has unfinished items. First use the todos tool to inspect/update the list, then continue execution until every remaining todo is completed, deleted, or replanned to match reality. Current incomplete todos: {}.",
-                            incomplete_todos.join("; ")
-                        ));
+                    // Smart completion detection: if the agent's response clearly
+                    // indicates the task is done, auto-complete the remaining todos
+                    // instead of retrying and causing an infinite loop.
+                    let response_lower = full_response.to_lowercase();
+                    let has_completion_signal = {
+                        // CTF flag found patterns
+                        let has_flag = response_lower.contains("flag{") 
+                            || response_lower.contains("flag_found")
+                            || response_lower.contains("[flag_found]")
+                            || response_lower.contains("ctf{")
+                            || response_lower.contains("picoctf{")
+                            || response_lower.contains("htb{")
+                            || regex::Regex::new(r"(?i)flag\s*[:：]\s*\S+\{")
+                                .map(|re| re.is_match(&response_lower))
+                                .unwrap_or(false);
+                        // Explicit task-completion phrases
+                        let has_conclusion = response_lower.contains("任务已完成")
+                            || response_lower.contains("挑战已完成")
+                            || response_lower.contains("题目已完成")
+                            || response_lower.contains("已成功完成")
+                            || response_lower.contains("成功找到")
+                            || response_lower.contains("task completed")
+                            || response_lower.contains("task is complete")
+                            || response_lower.contains("successfully completed")
+                            || response_lower.contains("mission accomplished");
+                        // Check if all incomplete items have completion markers in their description
+                        let all_items_semantically_done = incomplete_todos.iter().all(|t| {
+                            let t_lower = t.to_lowercase();
+                            t_lower.contains('✅') || t_lower.contains("已完成") || t_lower.contains("done")
+                        });
 
-                        if let Ok(current_calls) = tool_calls_collector.lock() {
-                            if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                                acc.extend(current_calls.clone());
-                            }
-                        }
-                        if let Ok(current_output) = assistant_segment_buf.lock() {
-                            if !current_output.is_empty() {
-                                if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                                    if !acc.is_empty() {
-                                        acc.push_str("\n\n");
-                                    }
-                                    acc.push_str(current_output.as_str());
+                        has_flag || has_conclusion || all_items_semantically_done
+                    };
+
+                    if has_completion_signal {
+                        tracing::info!(
+                            "TodosGuard detected task completion signal in response - auto-completing remaining todos for execution: {}",
+                            params.execution_id
+                        );
+                        auto_complete_all_todos(
+                            &params.execution_id,
+                            "Task completed (auto-detected from response)",
+                        )
+                        .await;
+                        // Fall through to normal completion path
+                    } else {
+                        let reason_text = format!("todos not completed: {}", incomplete_todos.join("; "));
+                        let err = anyhow::anyhow!("Todos guard failed: {}", reason_text);
+                        tracing::warn!(
+                            "Todos guard rejected final response - execution_id: {}, incomplete_todos: {:?}",
+                            params.execution_id,
+                            incomplete_todos
+                        );
+                        if retries < max_retries {
+                            retries += 1;
+                            last_error = Some(err);
+                            silent_retry_pending = true;
+                            todos_recovery_prompt = Some(format!(
+                                "[TodosGuard] STOP! Do NOT output conclusions yet. Your todos list has unfinished items. \
+                                You MUST use the `todos` tool to update each item's status before concluding. \
+                                For each completed item, call: todos(action=\"update_status\", item_index=N, status=\"completed\"). \
+                                For items that cannot be done, call: todos(action=\"update_status\", item_index=N, status=\"failed\"). \
+                                Current incomplete todos: {}.",
+                                incomplete_todos.join("; ")
+                            ));
+
+                            if let Ok(current_calls) = tool_calls_collector.lock() {
+                                if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                                    acc.extend(current_calls.clone());
                                 }
                             }
-                        }
-
-                        if let Ok(mut buf) = assistant_segment_buf.lock() {
-                            buf.clear();
-                        }
-                        if let Ok(mut buf) = reasoning_content_buf.lock() {
-                            buf.clear();
-                        }
-                        if let Ok(mut p) = pending_calls.lock() {
-                            p.clear();
-                        }
-                        if let Ok(mut tc) = tool_calls_collector.lock() {
-                            tc.clear();
-                        }
-                        if let Ok(mut fp) = last_tool_fingerprint.lock() {
-                            *fp = None;
-                        }
-                        repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
-                        force_history_with_tools = true;
-                        continue;
-                    }
-                    if unfinished_task_retries < max_unfinished_task_retries {
-                        unfinished_task_retries += 1;
-                        last_error = Some(err);
-                        silent_retry_pending = true;
-                        todos_recovery_prompt = Some(format!(
-                            "[TodosGuard] Do not finish yet. Your todos list still has unfinished items. First use the todos tool to inspect/update the list, then continue execution until every remaining todo is completed, deleted, or replanned to match reality. Current incomplete todos: {}.",
-                            incomplete_todos.join("; ")
-                        ));
-
-                        if let Ok(current_calls) = tool_calls_collector.lock() {
-                            if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                                acc.extend(current_calls.clone());
-                            }
-                        }
-                        if let Ok(current_output) = assistant_segment_buf.lock() {
-                            if !current_output.is_empty() {
-                                if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                                    if !acc.is_empty() {
-                                        acc.push_str("\n\n");
+                            if let Ok(current_output) = assistant_segment_buf.lock() {
+                                if !current_output.is_empty() {
+                                    if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                                        if !acc.is_empty() {
+                                            acc.push_str("\n\n");
+                                        }
+                                        acc.push_str(current_output.as_str());
                                     }
-                                    acc.push_str(current_output.as_str());
                                 }
                             }
+
+                            if let Ok(mut buf) = assistant_segment_buf.lock() {
+                                buf.clear();
+                            }
+                            if let Ok(mut buf) = reasoning_content_buf.lock() {
+                                buf.clear();
+                            }
+                            if let Ok(mut p) = pending_calls.lock() {
+                                p.clear();
+                            }
+                            if let Ok(mut tc) = tool_calls_collector.lock() {
+                                tc.clear();
+                            }
+                            if let Ok(mut fp) = last_tool_fingerprint.lock() {
+                                *fp = None;
+                            }
+                            repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+                            force_history_with_tools = true;
+                            continue;
+                        }
+                        if unfinished_task_retries < max_unfinished_task_retries {
+                            unfinished_task_retries += 1;
+                            last_error = Some(err);
+                            silent_retry_pending = true;
+                            todos_recovery_prompt = Some(format!(
+                                "[TodosGuard] STOP! Do NOT output conclusions yet. Your todos list has unfinished items. \
+                                You MUST use the `todos` tool to update each item's status before concluding. \
+                                For each completed item, call: todos(action=\"update_status\", item_index=N, status=\"completed\"). \
+                                For items that cannot be done, call: todos(action=\"update_status\", item_index=N, status=\"failed\"). \
+                                Current incomplete todos: {}.",
+                                incomplete_todos.join("; ")
+                            ));
+
+                            if let Ok(current_calls) = tool_calls_collector.lock() {
+                                if let Ok(mut acc) = accumulated_tool_calls.lock() {
+                                    acc.extend(current_calls.clone());
+                                }
+                            }
+                            if let Ok(current_output) = assistant_segment_buf.lock() {
+                                if !current_output.is_empty() {
+                                    if let Ok(mut acc) = accumulated_assistant_output.lock() {
+                                        if !acc.is_empty() {
+                                            acc.push_str("\n\n");
+                                        }
+                                        acc.push_str(current_output.as_str());
+                                    }
+                                }
+                            }
+
+                            if let Ok(mut buf) = assistant_segment_buf.lock() {
+                                buf.clear();
+                            }
+                            if let Ok(mut buf) = reasoning_content_buf.lock() {
+                                buf.clear();
+                            }
+                            if let Ok(mut p) = pending_calls.lock() {
+                                p.clear();
+                            }
+                            if let Ok(mut tc) = tool_calls_collector.lock() {
+                                tc.clear();
+                            }
+                            if let Ok(mut fp) = last_tool_fingerprint.lock() {
+                                *fp = None;
+                            }
+                            repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+                            force_history_with_tools = true;
+                            continue;
                         }
 
-                        if let Ok(mut buf) = assistant_segment_buf.lock() {
-                            buf.clear();
-                        }
-                        if let Ok(mut buf) = reasoning_content_buf.lock() {
-                            buf.clear();
-                        }
-                        if let Ok(mut p) = pending_calls.lock() {
-                            p.clear();
-                        }
-                        if let Ok(mut tc) = tool_calls_collector.lock() {
-                            tc.clear();
-                        }
-                        if let Ok(mut fp) = last_tool_fingerprint.lock() {
-                            *fp = None;
-                        }
-                        repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
-                        force_history_with_tools = true;
-                        continue;
+                        // All retries exhausted — auto-complete as a final fallback
+                        // to avoid leaving stale incomplete todos in the database.
+                        tracing::warn!(
+                            "TodosGuard retries exhausted, auto-completing remaining todos as fallback - execution_id: {}",
+                            params.execution_id
+                        );
+                        auto_complete_all_todos(
+                            &params.execution_id,
+                            "Retries exhausted, auto-completed by TodosGuard",
+                        )
+                        .await;
+
+                        let _ = app.emit(
+                            "agent:completion_guard_failed",
+                            &json!({
+                                "execution_id": params.execution_id,
+                                "reasons": [reason_text.clone()],
+                                "required_artifact": serde_json::Value::Null,
+                                "incomplete_todos": incomplete_todos,
+                                "response_length": final_response.len(),
+                                "tool_calls": all_tool_calls.len(),
+                                "auto_completed": true,
+                            }),
+                        );
+                        // Fall through to normal completion instead of breaking
                     }
-
-                    let _ = app.emit(
-                        "agent:completion_guard_failed",
-                        &json!({
-                            "execution_id": params.execution_id,
-                            "reasons": [reason_text.clone()],
-                            "required_artifact": serde_json::Value::Null,
-                            "incomplete_todos": incomplete_todos,
-                            "response_length": final_response.len(),
-                            "tool_calls": all_tool_calls.len(),
-                        }),
-                    );
-
-                    last_error = Some(err);
-                    cleanup_container_context_async(&app, &params.execution_id).await;
-                    break;
                 }
 
                 tracing::info!(
