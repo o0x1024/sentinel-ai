@@ -230,9 +230,3 @@ cd src-tauri && cargo check
 - 漏洞运营中的复测、通知、归档自动化
 - 将团队经验沉淀为插件与知识库，持续复用
 
-## License
-
-本项目采用最严格许可策略：`All Rights Reserved`（保留所有权利）。
-
-- 未经书面授权，不得复制、修改、分发、再许可或用于商业用途。
-- 详细条款见根目录 `/Users/a1024/code/ai/sentinel-ai/LICENSE`。
