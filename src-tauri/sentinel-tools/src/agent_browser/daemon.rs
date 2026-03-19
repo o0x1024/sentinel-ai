@@ -159,6 +159,9 @@ fn get_daemon_script_path() -> Result<PathBuf> {
     }
 
     candidates.extend(vec![
+        // Release build staging directory generated before tauri bundle
+        PathBuf::from("src-tauri/agent-browser-bundle/dist/daemon.js"),
+        PathBuf::from("agent-browser-bundle/dist/daemon.js"),
         // Development: in src-tauri directory
         PathBuf::from("src-tauri/agent-browser/dist/daemon.js"),
         // Development: relative to workspace
@@ -311,14 +314,44 @@ impl DaemonManager {
             }
         }
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .context("Failed to start agent-browser daemon")?;
         let pid = child.id();
         info!("Daemon started with PID: {}", pid);
 
         // Wait for daemon to be ready
-        self.wait_for_ready()?;
+        if let Err(err) = self.wait_for_ready() {
+            let status = child.try_wait().ok().flatten();
+            let _ = child.kill();
+            let output = child.wait_with_output().ok();
+            cleanup_daemon_files(&self.session);
+
+            let stderr = output
+                .as_ref()
+                .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+                .filter(|s| !s.is_empty());
+            let stdout = output
+                .as_ref()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let mut details = Vec::new();
+            details.push(format!("session={}", self.session));
+            details.push(format!("pid={}", pid));
+            if let Some(status) = status {
+                details.push(format!("status={}", status));
+            }
+            if let Some(stderr) = stderr {
+                details.push(format!("stderr={}", stderr));
+            }
+            if let Some(stdout) = stdout {
+                details.push(format!("stdout={}", stdout));
+            }
+
+            return Err(err)
+                .context(format!("agent-browser daemon startup failed ({})", details.join(", ")));
+        }
 
         self.child = Some(child);
         Ok(())

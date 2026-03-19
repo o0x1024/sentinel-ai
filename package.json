@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prepare:agent-browser": "node scripts/prepare-agent-browser-latest.mjs",
     "build": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 vite build",
     "build:check": "vue-tsc --noEmit --skipLibCheck && cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 vite build",
     "preview": "vite preview",

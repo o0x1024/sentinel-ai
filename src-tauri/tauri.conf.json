@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "yarn dev",
     "devUrl": "http://localhost:1499",
-    "beforeBuildCommand": "yarn build && cd src-tauri/agent-browser && npm run build",
+    "beforeBuildCommand": "npm run prepare:agent-browser && yarn build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -48,8 +48,10 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "agent-browser/dist/**/*",
-      "agent-browser/package.json"
+      "agent-browser-bundle/dist/**/*",
+      "agent-browser-bundle/node_modules/**/*",
+      "agent-browser-bundle/package.json",
+      "agent-browser-bundle/UPSTREAM_COMMIT"
     ]
   },
   "plugins": {
