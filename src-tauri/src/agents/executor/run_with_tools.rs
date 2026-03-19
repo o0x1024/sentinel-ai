@@ -12,7 +12,7 @@ use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 use sentinel_tools::buildin_tools::todos::{
     auto_complete_all_todos, get_execution_todos, TodoStatus as ExecutionTodoStatus, TodosList,
 };
-use sentinel_tools::buildin_tools::{ShellTool, SkillsTool, TodosTool};
+use sentinel_tools::buildin_tools::{HttpRequestTool, ShellTool, SkillsTool, TodosTool};
 use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
 use sentinel_tools::ToolServer;
 
@@ -687,6 +687,10 @@ pub async fn execute_agent_with_tools(
                                 "execution_id".to_string(),
                                 serde_json::Value::String(execution_id_for_shell.clone()),
                             );
+                            obj.insert(
+                                "enable_large_output_storage".to_string(),
+                                serde_json::Value::Bool(true),
+                            );
                         }
 
                         let tool_args: ShellArgs = serde_json::from_value(patched_args)
@@ -718,6 +722,62 @@ pub async fn execute_agent_with_tools(
                     .map(|tool| {
                         if tool.name() == ShellTool::NAME {
                             DynamicTool::new(shell_def.clone())
+                        } else {
+                            tool
+                        }
+                    })
+                    .collect();
+            }
+        }
+
+        if current_tool_ids.iter().any(|id| id == HttpRequestTool::NAME) {
+            if let Some(http_info) = tool_server.get_tool(HttpRequestTool::NAME).await {
+                let http_input_schema = http_info.input_schema.clone();
+                let http_description = http_info.description.clone();
+                let http_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
+                    Box::pin(async move {
+                        use rig::tool::Tool;
+                        use sentinel_tools::buildin_tools::http_request::{
+                            HttpRequestArgs, HttpRequestTool,
+                        };
+
+                        let mut patched_args = args;
+                        if let Some(obj) = patched_args.as_object_mut() {
+                            obj.insert(
+                                "enable_large_output_storage".to_string(),
+                                serde_json::Value::Bool(true),
+                            );
+                        }
+
+                        let tool_args: HttpRequestArgs = serde_json::from_value(patched_args)
+                            .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                        let tool = HttpRequestTool::default();
+                        let result = tool
+                            .call(tool_args)
+                            .await
+                            .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+                        serde_json::to_value(result)
+                            .map_err(|e| format!("Failed to serialize HTTP result: {}", e))
+                    })
+                });
+
+                let http_def = DynamicToolDef {
+                    name: HttpRequestTool::NAME.to_string(),
+                    description: http_description,
+                    input_schema: http_input_schema,
+                    output_schema: None,
+                    source: ToolSource::Builtin,
+                    category: "network".to_string(),
+                    executor: http_executor,
+                };
+
+                dynamic_tools = dynamic_tools
+                    .into_iter()
+                    .map(|tool| {
+                        if tool.name() == HttpRequestTool::NAME {
+                            DynamicTool::new(http_def.clone())
                         } else {
                             tool
                         }

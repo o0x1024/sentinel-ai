@@ -5,9 +5,7 @@
   "identifier": "com.sentinel-ai.app",
   "build": {
     "beforeDevCommand": "yarn dev",
-    "devUrl": "http://localhost:1499",
-    "beforeBuildCommand": "npm run prepare:agent-browser && yarn build",
-    "frontendDist": "../dist"
+    "devUrl": "http://localhost:1499"
   },
   "app": {
     "windows": [
@@ -37,6 +35,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "bin/sentinel-agent-browser"
+    ],
     "macOS": {
       "entitlements": "macos-extension/MainApp.entitlements"
     },
@@ -46,12 +47,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "resources": [
-      "agent-browser-bundle/dist/**/*",
-      "agent-browser-bundle/node_modules/**/*",
-      "agent-browser-bundle/package.json",
-      "agent-browser-bundle/UPSTREAM_COMMIT"
     ]
   },
   "plugins": {

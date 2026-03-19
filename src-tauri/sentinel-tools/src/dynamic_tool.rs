@@ -181,7 +181,25 @@ impl ToolRegistry {
     /// Get a tool by name
     pub async fn get(&self, name: &str) -> Option<DynamicToolDef> {
         let tools = self.tools.read().await;
-        tools.get(name).cloned()
+        if let Some(def) = tools.get(name) {
+            return Some(def.clone());
+        }
+
+        if name.contains("::") {
+            let normalized = name.replace("::", "__");
+            if let Some(def) = tools.get(&normalized) {
+                return Some(def.clone());
+            }
+        }
+
+        if name.contains("__") {
+            let denormalized = name.replace("__", "::");
+            if let Some(def) = tools.get(&denormalized) {
+                return Some(def.clone());
+            }
+        }
+
+        None
     }
 
     /// List all tools

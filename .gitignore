@@ -23,6 +23,7 @@ AppData/
 .trea
 /.artifacts/
 src-tauri/agent-browser-bundle/
+src-tauri/bin/
 # Editor directories and files
 !.vscode/extensions.json
 .idea

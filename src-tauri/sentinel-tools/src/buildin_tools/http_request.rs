@@ -26,6 +26,9 @@ pub struct HttpRequestArgs {
     /// Follow redirects
     #[serde(default = "default_follow_redirects")]
     pub follow_redirects: bool,
+    /// Whether to store oversized response body into context files (agent-only)
+    #[serde(default)]
+    pub enable_large_output_storage: bool,
 }
 
 fn default_method() -> String {
@@ -173,8 +176,8 @@ impl Tool for HttpRequestTool {
             .map_err(|e| HttpRequestError::RequestFailed(e.to_string()))?;
         let original_size = body.len();
 
-        // Check if body should be stored to container file
-        let body =
+        // Store large response only for agent-invoked calls
+        let body = if args.enable_large_output_storage {
             match crate::output_storage::store_output_unified("http_response", &body, None).await {
                 Ok(storage_result) => storage_result.get_agent_content(),
                 Err(e) => {
@@ -191,7 +194,10 @@ impl Tool for HttpRequestTool {
                         body
                     }
                 }
-            };
+            }
+        } else {
+            body
+        };
 
         let truncated = body.contains("[Large Output Stored");
 

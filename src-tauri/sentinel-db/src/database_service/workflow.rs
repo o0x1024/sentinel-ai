@@ -377,6 +377,42 @@ impl DatabaseService {
             ))
             .await?;
 
+        let normalize_step_result = |value: Option<&serde_json::Value>| -> serde_json::Value {
+            let Some(raw) = value else {
+                return serde_json::Value::Null;
+            };
+
+            match raw {
+                serde_json::Value::Null => serde_json::Value::Null,
+                serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
+                    .unwrap_or_else(|_| serde_json::Value::String(text.clone())),
+                other => other.clone(),
+            }
+        };
+
+        let normalized_steps: Vec<serde_json::Value> = steps
+            .iter()
+            .map(|step| {
+                let result = normalize_step_result(step.get("result").or_else(|| step.get("result_json")));
+                serde_json::json!({
+                    "step_id": step.get("step_id").cloned().unwrap_or(serde_json::Value::Null),
+                    "step_name": step.get("step_name").cloned().unwrap_or(serde_json::Value::Null),
+                    "step_order": step.get("step_order").cloned().unwrap_or(serde_json::Value::Null),
+                    "status": step.get("status").cloned().unwrap_or(serde_json::Value::Null),
+                    "started_at": step.get("started_at").cloned().unwrap_or(serde_json::Value::Null),
+                    "completed_at": step.get("completed_at").cloned().unwrap_or(serde_json::Value::Null),
+                    "duration_ms": step.get("duration_ms").cloned().unwrap_or(serde_json::Value::Null),
+                    "result": result,
+                    "result_json": step.get("result_json").cloned().unwrap_or(serde_json::Value::Null),
+                    "error_message": step
+                        .get("error_message")
+                        .cloned()
+                        .or_else(|| step.get("error").cloned())
+                        .unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect();
+
         Ok(Some(serde_json::json!({
             "execution_id": row.get("id").cloned().unwrap_or(serde_json::Value::Null),
             "workflow_id": row.get("workflow_id").cloned().unwrap_or(serde_json::Value::Null),
@@ -390,7 +426,7 @@ impl DatabaseService {
             "completed_steps": row.get("completed_steps").cloned().unwrap_or(serde_json::Value::Null),
             "total_steps": row.get("total_steps").cloned().unwrap_or(serde_json::Value::Null),
             "error_message": row.get("error_message").cloned().unwrap_or(serde_json::Value::Null),
-            "steps": steps
+            "steps": normalized_steps
         })))
     }
 

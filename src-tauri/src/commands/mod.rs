@@ -1,6 +1,7 @@
 //! Commands module - Tauri commands
 #![allow(ambiguous_glob_reexports)]
 
+pub mod agent_browser_commands;
 pub mod ai;
 pub mod aisettings;
 pub mod asset;
@@ -41,6 +42,7 @@ pub mod window;
 
 // Re-export commands
 #[allow(ambiguous_glob_reexports)]
+pub use agent_browser_commands::*;
 pub use ai::*;
 pub use aisettings::*;
 pub use asset::*;

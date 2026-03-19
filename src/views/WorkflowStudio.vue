@@ -1385,7 +1385,7 @@ const build_graph = (): WorkflowGraph => {
         to_port: 'in'
       })))
   
-  // 生成 input_schema：从起始节点或第一个节点推断
+  // 生成 input_schema：优先从起始节点推断，其次从入口节点兜底
   // 这样 Agent 调用工作流工具时可以知道需要什么输入参数
   const build_input_schema = (): Record<string, any> | null => {
     const to_json_schema_type = (port_type?: string) => {
@@ -1407,43 +1407,31 @@ const build_graph = (): WorkflowGraph => {
       }
     }
 
-    // 优先从 start/trigger/input 类型节点提取
-    const startNode = node_defs.find(n =>
-      ['start', 'trigger', 'input', 'webhook', 'trigger_schedule'].includes(n.node_type)
-    )
+    const build_schema_from_node = (node: NodeDef): Record<string, any> | null => {
+      const params = node.params || {}
+      if (params.input_schema && typeof params.input_schema === 'object') {
+        return params.input_schema
+      }
 
-    if (!startNode) return null
-    
-    const properties: Record<string, any> = {}
-    const required: string[] = []
-    
-    // 从节点的 input_ports 构建 schema
-    const ports = startNode.input_ports || []
-    for (const port of ports) {
-      // 跳过通用流控制端口
-      if (['in', 'flow', 'trigger', 'input'].includes(port.id)) continue
-      
-      // 将 port_type 转换为 JSON Schema 类型
-      const jsonType = to_json_schema_type(port.port_type)
-      
-      properties[port.id] = {
-        type: jsonType,
-        description: port.name || port.id
+      const properties: Record<string, any> = {}
+      const required: string[] = []
+      const ports = node.input_ports || []
+
+      for (const port of ports) {
+        if (['in', 'flow', 'trigger', 'input'].includes(port.id)) continue
+
+        properties[port.id] = {
+          type: to_json_schema_type(port.port_type),
+          description: port.name || port.id
+        }
+
+        if (port.required) {
+          required.push(port.id)
+        }
       }
-      
-      if (port.required) {
-        required.push(port.id)
-      }
-    }
-    
-    // 从节点的 params 中也可能有工作流输入参数定义
-    const params = startNode.params || {}
-    if (params.input_schema) {
-      return params.input_schema
-    }
-    
-    // 如果找到了有效的参数，返回 schema
-    if (Object.keys(properties).length > 0) {
+
+      if (!Object.keys(properties).length) return null
+
       const schema: Record<string, any> = {
         type: 'object',
         properties
@@ -1453,7 +1441,31 @@ const build_graph = (): WorkflowGraph => {
       }
       return schema
     }
-    
+
+    const start_like_nodes = node_defs.filter(n =>
+      ['start', 'trigger', 'input', 'webhook', 'trigger_schedule'].includes(n.node_type)
+    )
+
+    for (const node of start_like_nodes) {
+      const schema = build_schema_from_node(node)
+      if (schema) return schema
+    }
+
+    const indegree = new Map<string, number>()
+    node_defs.forEach(n => indegree.set(n.id, 0))
+    edge_defs.forEach(e => indegree.set(e.to_node, (indegree.get(e.to_node) || 0) + 1))
+
+    const entry_nodes = node_defs.filter(n => (indegree.get(n.id) || 0) === 0)
+    for (const node of entry_nodes) {
+      const schema = build_schema_from_node(node)
+      if (schema) return schema
+    }
+
+    for (const node of node_defs) {
+      const schema = build_schema_from_node(node)
+      if (schema) return schema
+    }
+
     return null
   }
 
@@ -1530,8 +1542,34 @@ const build_graph = (): WorkflowGraph => {
     return null
   }
   
-  const input_schema = build_input_schema()
-  const output_schema = build_output_schema()
+  let input_schema = build_input_schema()
+  let output_schema = build_output_schema()
+
+  if (workflow_is_tool.value) {
+    if (!input_schema) {
+      input_schema = {
+        type: 'object',
+        properties: {
+          inputs: {
+            type: 'object',
+            description: 'Workflow input parameters'
+          }
+        }
+      }
+    }
+
+    if (!output_schema) {
+      output_schema = {
+        type: 'object',
+        properties: {
+          result: {
+            type: 'object',
+            description: 'Workflow execution result'
+          }
+        }
+      }
+    }
+  }
   
   const graph: Record<string, any> = {
     id: workflow_id.value,

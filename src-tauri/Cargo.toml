@@ -33,7 +33,7 @@ sentinel-traffic = { path = "sentinel-traffic", default-features = false }
 sentinel-notify = { path = "sentinel-notify" }
 sentinel-llm = { path = "sentinel-llm" }
 sentinel-license = { path = "sentinel-license" }
-sentinel-plugins = { path = "sentinel-plugins", default-features = false }
+sentinel-plugins = { path = "sentinel-plugins", default-features = false, features = ["plugin-ts-transpile"] }
 sentinel-bounty = { path = "sentinel-bounty" }
 
 urlencoding = "2.1.3"

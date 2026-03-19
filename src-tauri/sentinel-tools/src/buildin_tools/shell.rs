@@ -41,6 +41,9 @@ pub struct ShellArgs {
     /// Internal execution id for cancellation scope
     #[serde(default)]
     pub execution_id: Option<String>,
+    /// Whether to store oversized output into context files (agent-only)
+    #[serde(default)]
+    pub enable_large_output_storage: bool,
 }
 
 fn default_timeout() -> u64 {
@@ -602,6 +605,7 @@ impl Tool for ShellTool {
             ),
             ShellError,
         > = (async {
+            let enable_large_output_storage = args.enable_large_output_storage;
             match execution_mode {
             ShellExecutionMode::Docker => {
                 tracing::info!("Attempting to execute command in Docker sandbox: {}", args.command);
@@ -622,7 +626,7 @@ impl Tool for ShellTool {
                         let mut final_stderr = stderr.clone();
                         
                         // Store stdout if large (unless reading context files to avoid recursion)
-                        if stdout.len() > storage_threshold && !is_reading_context {
+                        if enable_large_output_storage && stdout.len() > storage_threshold && !is_reading_context {
                             match crate::output_storage::store_output_in_container(
                                 &sandbox,
                                 "shell_stdout",
@@ -640,7 +644,7 @@ impl Tool for ShellTool {
                                     final_stdout.push_str(&format!("\n... [Truncated: {}/{} chars]", storage_threshold, stdout.len()));
                                 }
                             }
-                        } else if stdout.len() > storage_threshold && is_reading_context {
+                        } else if enable_large_output_storage && stdout.len() > storage_threshold && is_reading_context {
                             // Directly truncate to avoid recursive storage
                             tracing::info!("Command is reading context file, truncating output instead of storing");
                             final_stdout = stdout.chars().take(storage_threshold).collect();
@@ -648,7 +652,7 @@ impl Tool for ShellTool {
                         }
                         
                         // Store stderr if large
-                        if stderr.len() > storage_threshold {
+                        if enable_large_output_storage && stderr.len() > storage_threshold {
                             match crate::output_storage::store_output_in_container(
                                 &sandbox,
                                 "shell_stderr",
@@ -702,7 +706,7 @@ impl Tool for ShellTool {
                             let mut final_stderr = stderr.clone();
                             
                             // Store stdout if large
-                            if stdout.len() > storage_threshold {
+                            if enable_large_output_storage && stdout.len() > storage_threshold {
                                 match crate::output_storage::store_output_on_host(
                                     "shell_stdout_host_fallback",
                                     &stdout,
@@ -721,7 +725,7 @@ impl Tool for ShellTool {
                             }
                             
                             // Store stderr if large
-                            if stderr.len() > storage_threshold {
+                            if enable_large_output_storage && stderr.len() > storage_threshold {
                                 match crate::output_storage::store_output_on_host(
                                     "shell_stderr_host_fallback",
                                     &stderr,
@@ -768,7 +772,7 @@ impl Tool for ShellTool {
                 let mut final_stderr = stderr.clone();
                 
                 // Store stdout if large
-                if stdout.len() > storage_threshold {
+                if enable_large_output_storage && stdout.len() > storage_threshold {
                     match crate::output_storage::store_output_on_host(
                         "shell_stdout_host",
                         &stdout,
@@ -788,7 +792,7 @@ impl Tool for ShellTool {
                 }
                 
                 // Store stderr if large
-                if stderr.len() > storage_threshold {
+                if enable_large_output_storage && stderr.len() > storage_threshold {
                     match crate::output_storage::store_output_on_host(
                         "shell_stderr_host",
                         &stderr,

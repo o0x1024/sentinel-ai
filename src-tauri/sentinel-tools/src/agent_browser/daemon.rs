@@ -1,11 +1,11 @@
 //! Daemon process management for agent-browser
 //!
-//! Handles starting, stopping, and monitoring the Node.js daemon process.
+//! Handles starting, stopping, and monitoring the agent-browser daemon process.
 
 use anyhow::{Context, Result};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use tracing::{debug, info};
 
@@ -19,12 +19,19 @@ fn get_temp_dir() -> PathBuf {
     env::temp_dir()
 }
 
+/// Get socket directory used by daemon
+fn get_socket_dir() -> PathBuf {
+    env::var("AGENT_BROWSER_SOCKET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| get_temp_dir())
+}
+
 /// Get socket path for Unix or port for Windows
 pub fn get_socket_path(session: &str) -> String {
     #[cfg(unix)]
     {
-        get_temp_dir()
-            .join(format!("agent-browser-{}.sock", session))
+        get_socket_dir()
+            .join(format!("{}.sock", session))
             .to_string_lossy()
             .to_string()
     }
@@ -57,6 +64,10 @@ fn get_port_for_session(session: &str) -> u16 {
 
 /// Check if daemon is running for the session
 pub fn is_daemon_running(session: &str) -> bool {
+    if can_connect_to_daemon(session) {
+        return true;
+    }
+
     let pid_file = get_pid_file(session);
     if !pid_file.exists() {
         return false;
@@ -66,7 +77,19 @@ pub fn is_daemon_running(session: &str) -> bool {
         Ok(pid_str) => {
             if let Ok(pid) = pid_str.trim().parse::<u32>() {
                 if is_process_alive(pid) {
-                    return true;
+                    for _ in 0..3 {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        if can_connect_to_daemon(session) {
+                            return true;
+                        }
+                    }
+
+                    debug!(
+                        "Daemon PID {} is alive but socket is unreachable for session {}",
+                        pid, session
+                    );
+                    cleanup_daemon_files(session);
+                    return false;
                 }
             }
             // Stale PID file, clean up
@@ -74,6 +97,18 @@ pub fn is_daemon_running(session: &str) -> bool {
             false
         }
         Err(_) => false,
+    }
+}
+
+fn can_connect_to_daemon(session: &str) -> bool {
+    #[cfg(unix)]
+    {
+        UnixStream::connect(get_socket_path(session)).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        let port: u16 = get_socket_path(session).parse().unwrap_or(0);
+        TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok()
     }
 }
 
@@ -110,6 +145,8 @@ pub fn cleanup_daemon_files(session: &str) {
     {
         let socket_path = get_socket_path(session);
         let _ = fs::remove_file(&socket_path);
+        let legacy_socket_path = get_temp_dir().join(format!("agent-browser-{}.sock", session));
+        let _ = fs::remove_file(&legacy_socket_path);
     }
 
     // Clean up stream port file
@@ -117,90 +154,67 @@ pub fn cleanup_daemon_files(session: &str) {
     let _ = fs::remove_file(&stream_file);
 }
 
-/// Get the agent-browser daemon script path
-fn get_daemon_script_path() -> Result<PathBuf> {
-    // Try multiple locations
-    let mut candidates = vec![];
-
-    // Development: absolute path (for debugging)
-    #[cfg(debug_assertions)]
-    {
-        candidates.push(PathBuf::from(
-            "/Users/a1024/code/ai/sentinel-ai/src-tauri/agent-browser/dist/daemon.js",
-        ));
+/// Resolve agent-browser daemon executable path
+fn get_daemon_binary_path() -> Result<PathBuf> {
+    if let Ok(explicit) = env::var("AGENT_BROWSER_BIN_PATH") {
+        let path = PathBuf::from(explicit);
+        if path.exists() {
+            return Ok(path);
+        }
     }
 
-    // Release: bundled resources directory
-    #[cfg(not(debug_assertions))]
-    {
-        // Try to get resource directory from Tauri
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                // macOS: Resources directory in app bundle
-                #[cfg(target_os = "macos")]
-                {
-                    let resources_path = exe_dir.join("../Resources/agent-browser/dist/daemon.js");
-                    candidates.push(resources_path);
-                }
-                // Windows: resources next to exe
-                #[cfg(target_os = "windows")]
-                {
-                    let resources_path = exe_dir.join("agent-browser/dist/daemon.js");
-                    candidates.push(resources_path);
-                }
-                // Linux: resources next to exe
-                #[cfg(target_os = "linux")]
-                {
-                    let resources_path = exe_dir.join("agent-browser/dist/daemon.js");
-                    candidates.push(resources_path);
-                }
+    let mut candidates = Vec::new();
+
+    let binary_name = if cfg!(windows) {
+        "sentinel-agent-browser.exe"
+    } else {
+        "sentinel-agent-browser"
+    };
+
+    let legacy_name = if cfg!(windows) {
+        "agent-browser.exe"
+    } else {
+        "agent-browser"
+    };
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    candidates.push(manifest_dir.join("../bin").join(binary_name));
+    candidates.push(manifest_dir.join("../bin").join(legacy_name));
+
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join(binary_name));
+            candidates.push(exe_dir.join(legacy_name));
+            #[cfg(target_os = "macos")]
+            {
+                candidates.push(exe_dir.join("../Resources").join(binary_name));
+                candidates.push(exe_dir.join("../Resources").join(legacy_name));
             }
         }
     }
 
-    candidates.extend(vec![
-        // Release build staging directory generated before tauri bundle
-        PathBuf::from("src-tauri/agent-browser-bundle/dist/daemon.js"),
-        PathBuf::from("agent-browser-bundle/dist/daemon.js"),
-        // Development: in src-tauri directory
-        PathBuf::from("src-tauri/agent-browser/dist/daemon.js"),
-        // Development: relative to workspace
-        PathBuf::from("agent-browser/dist/daemon.js"),
-        // Installed in node_modules
-        PathBuf::from("node_modules/agent-browser/dist/daemon.js"),
-        // User data directory (for manual installation)
-        tauri_app_data_dir().join("agent-browser/dist/daemon.js"),
-        // Global npm install
-        home_dir().join(".npm-global/lib/node_modules/agent-browser/dist/daemon.js"),
-    ]);
-
     for path in &candidates {
-        debug!("Checking daemon path: {:?}", path);
+        debug!("Checking daemon binary path: {:?}", path);
         if path.exists() {
-            info!("Found daemon at: {:?}", path);
+            info!("Found daemon binary at: {:?}", path);
             return Ok(path.clone());
         }
     }
 
-    // Log current directory for debugging
-    if let Ok(cwd) = env::current_dir() {
-        debug!("Current working directory: {:?}", cwd);
-    }
-
-    // Try to find via which/where
-    #[cfg(unix)]
-    {
-        if let Ok(output) = Command::new("which").arg("agent-browser").output() {
+    let which_cmd = if cfg!(windows) { "where" } else { "which" };
+    for name in [binary_name, legacy_name] {
+        if let Ok(output) = Command::new(which_cmd).arg(name).output() {
             if output.status.success() {
-                let bin_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                // The binary is a wrapper, find the actual daemon.js
-                let daemon_path = PathBuf::from(&bin_path)
-                    .parent()
-                    .and_then(|p| p.parent())
-                    .map(|p| p.join("lib/node_modules/agent-browser/dist/daemon.js"));
-                if let Some(path) = daemon_path {
-                    if path.exists() {
-                        return Ok(path);
+                let path = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if !path.is_empty() {
+                    let candidate = PathBuf::from(path);
+                    if candidate.exists() {
+                        return Ok(candidate);
                     }
                 }
             }
@@ -208,29 +222,8 @@ fn get_daemon_script_path() -> Result<PathBuf> {
     }
 
     anyhow::bail!(
-        "agent-browser daemon not found. Please install it with: npm install -g agent-browser"
+        "agent-browser daemon binary not found. Run `npm run setup:agent-browser` in project root."
     )
-}
-
-/// Get tauri app data directory
-fn tauri_app_data_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home_dir().join("Library/Application Support/sentinel-ai")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        home_dir().join(".local/share/sentinel-ai")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        home_dir().join("AppData/Roaming/sentinel-ai")
-    }
-}
-
-/// Get home directory
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Daemon manager
@@ -262,13 +255,13 @@ impl DaemonManager {
         // Clean up any stale files
         cleanup_daemon_files(&self.session);
 
-        // Find daemon script
-        let daemon_script = get_daemon_script_path()?;
-        debug!("Using daemon script: {:?}", daemon_script);
+        // Find daemon binary
+        let daemon_binary = get_daemon_binary_path()?;
+        debug!("Using daemon binary: {:?}", daemon_binary);
 
         // Start the daemon process
-        let mut cmd = Command::new("node");
-        cmd.arg(&daemon_script)
+        let mut cmd = Command::new(&daemon_binary);
+        cmd.env("AGENT_BROWSER_SOCKET_DIR", get_socket_dir())
             .env("AGENT_BROWSER_SESSION", &self.session)
             .env("AGENT_BROWSER_DAEMON", "1")
             .stdin(Stdio::null())
@@ -319,6 +312,7 @@ impl DaemonManager {
             .context("Failed to start agent-browser daemon")?;
         let pid = child.id();
         info!("Daemon started with PID: {}", pid);
+        let _ = fs::write(get_pid_file(&self.session), pid.to_string());
 
         // Wait for daemon to be ready
         if let Err(err) = self.wait_for_ready() {
@@ -461,6 +455,8 @@ pub fn ensure_daemon(session: &str) -> Result<()> {
     if is_daemon_running(session) {
         return Ok(());
     }
+
+    cleanup_daemon_files(session);
 
     let mut manager = DaemonManager::new(session);
     manager.start()?;

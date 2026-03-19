@@ -1450,6 +1450,9 @@ pub fn run() {
             commands::team_v3_commands::team_v3_list_blackboard_entries,
             commands::team_v3_commands::team_v3_submit_plan_revision,
             commands::team_v3_commands::team_v3_review_plan_revision,
+            // Agent Browser commands
+            commands::agent_browser_commands::run_agent_browser_command,
+            commands::agent_browser_commands::get_agent_browser_version,
         ])
         .run(context)
         .expect("Failed to start Tauri application");

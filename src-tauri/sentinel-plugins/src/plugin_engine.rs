@@ -134,6 +134,27 @@ fn transpile_module(specifier: &str, source: &str) -> std::result::Result<String
     Ok(transpiled.into_source().text)
 }
 
+fn sanitize_plugin_source(source: &str) -> String {
+    let trimmed = source.trim();
+
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+
+    let mut lines = trimmed.lines();
+    let _opening_fence = lines.next();
+
+    let mut content_lines = Vec::new();
+    for line in lines {
+        if line.trim_start().starts_with("```") {
+            break;
+        }
+        content_lines.push(line);
+    }
+
+    content_lines.join("\n").trim().to_string()
+}
+
 impl ModuleLoader for PluginModuleLoader {
     fn resolve(
         &self,
@@ -445,7 +466,8 @@ if (typeof get_metadata === 'function') {
     globalThis.get_metadata = get_metadata;
 }
 "#;
-        let augmented_code = format!("{}\n{}", code, binding_code);
+        let sanitized_code = sanitize_plugin_source(code);
+        let augmented_code = format!("{}\n{}", sanitized_code, binding_code);
 
         // 注册模块到加载器
         self.loader
