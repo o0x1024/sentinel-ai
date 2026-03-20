@@ -383,6 +383,7 @@ export default {
     createFailed: 'Failed to create',
     updateFailed: 'Failed to update',
     deleteFailed: 'Failed to delete',
+    operationFailed: 'Operation failed',
     duplicateFinding: 'A similar finding already exists',
   },
 
@@ -669,6 +670,7 @@ export default {
     runs: 'runs',
     events: 'events',
     runNow: 'Run Now',
+    stopTask: 'Stop Task',
     editTask: 'Edit Task',
     taskName: 'Task Name',
     taskNamePlaceholder: 'e.g., DNS Change Monitor',
@@ -700,6 +702,7 @@ export default {
     taskEnabled: 'Monitor task enabled',
     taskDisabled: 'Monitor task disabled',
     taskTriggered: 'Monitor task triggered',
+    taskStopRequested: 'Stop requested for monitor task',
     autoStartingScheduler: 'Auto-starting monitor scheduler...',
     defaultTasksCreated: '{count} default monitor tasks created',
     changeDetected: 'Asset change detected',

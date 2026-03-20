@@ -156,8 +156,8 @@ RUN set -eux; \
     fi
 
 # PWN enhancement: GDB GEF
-RUN wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py && \
-    echo source ~/.gdbinit-gef.py >> ~/.gdbinit
+# RUN wget -O ~/.gdbinit-gef.py -q https://gef.blah.cat/py && \
+#     echo source ~/.gdbinit-gef.py >> ~/.gdbinit
 
 # Web tools (lightweight)
 RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap && \

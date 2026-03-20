@@ -4,9 +4,11 @@ use chrono::Utc;
 use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorScheduler, MonitorStats, MonitorTask,
 };
-use sentinel_db::{BountyAssetRow, Database, DatabaseService};
+use sentinel_db::{BountyAssetRow, BountyChangeEventRow, Database, DatabaseService};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -114,6 +116,8 @@ fn calculate_cert_risk_score(cert_value: &serde_json::Value) -> f64 {
 pub struct MonitorSchedulerState {
     pub scheduler: Arc<MonitorScheduler>,
     pub initialized: bool,
+    pub running_task_ids: Arc<RwLock<HashSet<String>>>,
+    pub cancel_requested_task_ids: Arc<RwLock<HashSet<String>>>,
 }
 
 impl MonitorSchedulerState {
@@ -121,6 +125,8 @@ impl MonitorSchedulerState {
         Self {
             scheduler: Arc::new(MonitorScheduler::new()),
             initialized: false,
+            running_task_ids: Arc::new(RwLock::new(HashSet::new())),
+            cancel_requested_task_ids: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 }
@@ -199,6 +205,8 @@ pub async fn monitor_start_scheduler(
     // Start scheduler if not running (logic from start() handles check)
     state_guard.scheduler.start().await?;
     let scheduler = state_guard.scheduler.clone();
+    let running_task_ids = state_guard.running_task_ids.clone();
+    let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
     drop(state_guard);
 
     // Set up event callback to emit Tauri events and save to DB
@@ -257,10 +265,25 @@ pub async fn monitor_start_scheduler(
 
     // Register Task Executor
     let db_service_clone = db_service.inner().clone();
+    let running_task_ids_for_executor = running_task_ids.clone();
+    let cancel_requested_task_ids_for_executor = cancel_requested_task_ids.clone();
     scheduler
         .set_task_executor(move |task| {
             let db = db_service_clone.clone();
+            let running_task_ids = running_task_ids_for_executor.clone();
+            let cancel_requested_task_ids = cancel_requested_task_ids_for_executor.clone();
             Box::pin(async move {
+                let task_id = task.id.clone();
+                {
+                    let mut running = running_task_ids.write().await;
+                    running.insert(task_id.clone());
+                }
+                {
+                    let mut cancel = cancel_requested_task_ids.write().await;
+                    cancel.remove(&task_id);
+                }
+
+                let result: Result<Vec<sentinel_bounty::models::ChangeEvent>, String> = async {
                 tracing::info!("Executor running for task: {}", task.name);
                 let all_events = Vec::new();
 
@@ -335,8 +358,8 @@ pub async fn monitor_start_scheduler(
                         plugins_to_run.push(p);
                     }
                 }
-                if task.config.enable_content_monitoring {
-                    for p in &task.config.content_plugins {
+                if task.config.enable_web_monitoring {
+                    for p in &task.config.web_plugins {
                         plugins_to_run.push(p);
                     }
                 }
@@ -345,13 +368,13 @@ pub async fn monitor_start_scheduler(
                         plugins_to_run.push(p);
                     }
                 }
-                if task.config.enable_port_monitoring {
-                    for p in &task.config.port_plugins {
+                if task.config.enable_content_monitoring {
+                    for p in &task.config.content_plugins {
                         plugins_to_run.push(p);
                     }
                 }
-                if task.config.enable_web_monitoring {
-                    for p in &task.config.web_plugins {
+                if task.config.enable_port_monitoring {
+                    for p in &task.config.port_plugins {
                         plugins_to_run.push(p);
                     }
                 }
@@ -365,6 +388,16 @@ pub async fn monitor_start_scheduler(
                 let tool_server = sentinel_tools::get_tool_server();
 
                 for plugin in plugins_to_run {
+                    if cancel_requested_task_ids.read().await.contains(&task_id) {
+                        tracing::info!(
+                            "Task '{}' stopped by user request before running plugin '{}'",
+                            task.name,
+                            plugin.plugin_id
+                        );
+                        break;
+                    }
+
+                    let plugin_started_at = Instant::now();
                     tracing::info!(
                         "Running plugin: {} for task {}",
                         plugin.plugin_id,
@@ -415,6 +448,12 @@ pub async fn monitor_start_scheduler(
 
                     if !result.success {
                         tracing::error!("Plugin {} failed: {:?}", plugin.plugin_id, result.error);
+                        tracing::info!(
+                            "Plugin {} completed for task {}: status=failed, duration_ms={}",
+                            plugin.plugin_id,
+                            task.name,
+                            plugin_started_at.elapsed().as_millis()
+                        );
                         continue;
                     }
 
@@ -880,9 +919,29 @@ pub async fn monitor_start_scheduler(
                             }
                         }
                     }
+
+                    tracing::info!(
+                        "Plugin {} completed for task {}: status=success, duration_ms={}",
+                        plugin.plugin_id,
+                        task.name,
+                        plugin_started_at.elapsed().as_millis()
+                    );
                 }
 
                 Ok(all_events)
+                }
+                .await;
+
+                {
+                    let mut running = running_task_ids.write().await;
+                    running.remove(&task_id);
+                }
+                {
+                    let mut cancel = cancel_requested_task_ids.write().await;
+                    cancel.remove(&task_id);
+                }
+
+                result
             })
         })
         .await;
@@ -1122,6 +1181,37 @@ pub async fn monitor_list_tasks(
     Ok(tasks)
 }
 
+/// List currently running monitoring task IDs
+#[tauri::command]
+pub async fn monitor_get_running_tasks(
+    state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+) -> Result<Vec<String>, String> {
+    let state_guard = state.read().await;
+    let running = state_guard.running_task_ids.read().await;
+    Ok(running.iter().cloned().collect())
+}
+
+/// Request stop for a running monitoring task (applies to auto/manual executions)
+#[tauri::command]
+pub async fn monitor_stop_task(
+    state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
+    task_id: String,
+) -> Result<bool, String> {
+    let state_guard = state.read().await;
+    let is_running = state_guard.running_task_ids.read().await.contains(&task_id);
+    if !is_running {
+        return Err(format!("Task is not currently running: {}", task_id));
+    }
+
+    {
+        let mut cancel = state_guard.cancel_requested_task_ids.write().await;
+        cancel.insert(task_id.clone());
+    }
+
+    tracing::info!("Stop requested for monitor task: {}", task_id);
+    Ok(true)
+}
+
 /// Delete a monitoring task
 #[tauri::command]
 pub async fn monitor_delete_task(
@@ -1166,6 +1256,8 @@ pub async fn monitor_disable_task(
 pub async fn monitor_trigger_task(
     state: State<'_, Arc<RwLock<MonitorSchedulerState>>>,
     db_service: State<'_, Arc<DatabaseService>>,
+    plugin_manager: State<'_, Arc<sentinel_traffic::PluginManager>>,
+    app: AppHandle,
     task_id: String,
 ) -> Result<bool, String> {
     tracing::info!(
@@ -1174,6 +1266,10 @@ pub async fn monitor_trigger_task(
     );
 
     let state_guard = state.read().await;
+
+    if state_guard.running_task_ids.read().await.contains(&task_id) {
+        return Err(format!("Task is already running: {}", task_id));
+    }
 
     // Get task to execute
     let task = match state_guard.scheduler.get_task(&task_id).await {
@@ -1270,8 +1366,8 @@ pub async fn monitor_trigger_task(
             plugins_to_run.push(p.clone());
         }
     }
-    if task.config.enable_content_monitoring {
-        for p in &task.config.content_plugins {
+    if task.config.enable_web_monitoring {
+        for p in &task.config.web_plugins {
             plugins_to_run.push(p.clone());
         }
     }
@@ -1280,13 +1376,13 @@ pub async fn monitor_trigger_task(
             plugins_to_run.push(p.clone());
         }
     }
-    if task.config.enable_port_monitoring {
-        for p in &task.config.port_plugins {
+    if task.config.enable_content_monitoring {
+        for p in &task.config.content_plugins {
             plugins_to_run.push(p.clone());
         }
     }
-    if task.config.enable_web_monitoring {
-        for p in &task.config.web_plugins {
+    if task.config.enable_port_monitoring {
+        for p in &task.config.port_plugins {
             plugins_to_run.push(p.clone());
         }
     }
@@ -1304,11 +1400,24 @@ pub async fn monitor_trigger_task(
 
     // 3. Execute Plugins (spawn async to not block the UI)
     let db_clone = db_service.inner().clone();
+    let plugin_manager_clone = plugin_manager.inner().clone();
+    let app_clone = app.clone();
     let task_clone = task.clone();
     let task_id_clone = task_id.clone();
     let scheduler = state_guard.scheduler.clone();
+    let running_task_ids = state_guard.running_task_ids.clone();
+    let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
 
     tokio::spawn(async move {
+        {
+            let mut running = running_task_ids.write().await;
+            running.insert(task_id_clone.clone());
+        }
+        {
+            let mut cancel = cancel_requested_task_ids.write().await;
+            cancel.remove(&task_id_clone);
+        }
+
         tracing::info!(
             "Background execution started for task '{}'",
             task_clone.name
@@ -1316,6 +1425,16 @@ pub async fn monitor_trigger_task(
         let mut total_imported = 0;
 
         for plugin in plugins_to_run {
+            if cancel_requested_task_ids.read().await.contains(&task_id_clone) {
+                tracing::info!(
+                    "Manual execution of task '{}' stopped by user request before plugin '{}'",
+                    task_clone.name,
+                    plugin.plugin_id
+                );
+                break;
+            }
+
+            let plugin_started_at = Instant::now();
             tracing::info!(
                 "Running plugin: {} for task {}",
                 plugin.plugin_id,
@@ -1359,12 +1478,57 @@ pub async fn monitor_trigger_task(
 
             if !result.success {
                 tracing::error!("Plugin {} failed: {:?}", plugin.plugin_id, result.error);
+                tracing::info!(
+                    "Plugin {} completed for task {}: status=failed, duration_ms={}",
+                    plugin.plugin_id,
+                    task_clone.name,
+                    plugin_started_at.elapsed().as_millis()
+                );
                 continue;
             }
+
+            let mut plugin_subdomains_count: usize = 0;
+            let mut plugin_urls_count: usize = 0;
+            let mut plugin_ips_count: usize = 0;
+            let mut plugin_assets_count: usize = 0;
+            let mut plugin_results_count: usize = 0;
+            let mut plugin_existing_count: usize = 0;
+            let mut plugin_inserted_count: usize = 0;
+            let mut inserted_from_subdomains: usize = 0;
+            let mut inserted_from_urls: usize = 0;
+            let mut inserted_from_ips: usize = 0;
+            let mut inserted_from_assets: usize = 0;
+            let mut inserted_from_results: usize = 0;
 
             // Process output (simplified asset import logic)
             if let Some(output) = &result.output {
                 let data = output.get("data").unwrap_or(output);
+
+                plugin_subdomains_count = data
+                    .get("subdomains")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                plugin_urls_count = data
+                    .get("urls")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                plugin_ips_count = data
+                    .get("ips")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                plugin_assets_count = data
+                    .get("assets")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                plugin_results_count = data
+                    .get("results")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
 
                 // Import discovered subdomains
                 if let Some(subdomains) = data.get("subdomains").and_then(|v| v.as_array()) {
@@ -1388,6 +1552,10 @@ pub async fn monitor_trigger_task(
                             .await
                             .map(|opt| opt.is_some())
                             .unwrap_or(false);
+
+                        if exists {
+                            plugin_existing_count += 1;
+                        }
 
                         if !exists {
                             let now = Utc::now().to_rfc3339();
@@ -1486,15 +1654,691 @@ pub async fn monitor_trigger_task(
                                 tracing::error!("Failed to save asset: {}", e);
                             } else {
                                 total_imported += 1;
-                                tracing::info!(
-                                    "Manual trigger imported new asset: {}",
-                                    clean_domain
-                                );
+                                plugin_inserted_count += 1;
+                                inserted_from_subdomains += 1;
+
+                                let change_event = BountyChangeEventRow {
+                                    id: Uuid::new_v4().to_string(),
+                                    program_id: Some(task_clone.program_id.clone()),
+                                    asset_id: asset.id.clone(),
+                                    event_type: "asset_discovered".to_string(),
+                                    severity: "medium".to_string(),
+                                    status: "new".to_string(),
+                                    title: format!(
+                                        "New asset discovered by manual monitor run: {}",
+                                        clean_domain
+                                    ),
+                                    description: format!(
+                                        "Task '{}' imported new asset '{}' via plugin '{}'.",
+                                        task_clone.name, clean_domain, plugin.plugin_id
+                                    ),
+                                    old_value: None,
+                                    new_value: Some(clean_domain.to_string()),
+                                    diff: None,
+                                    affected_scope: None,
+                                    detection_method: format!("manual-trigger:{}", plugin.plugin_id),
+                                    triggered_workflows_json: None,
+                                    generated_findings_json: None,
+                                    tags_json: Some(
+                                        serde_json::to_string(&vec!["manual-trigger", "asset-discovered"])
+                                            .unwrap_or_default(),
+                                    ),
+                                    metadata_json: None,
+                                    risk_score: 45.0,
+                                    auto_trigger_enabled: task_clone.config.auto_trigger_enabled,
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                    resolved_at: None,
+                                };
+
+                                if let Err(e) = db_clone.create_bounty_change_event(&change_event).await {
+                                    tracing::error!("Failed to create manual change event: {}", e);
+                                } else if task_clone.config.auto_trigger_enabled {
+                                    match crate::commands::bounty_commands::bounty_trigger_workflows_for_event_internal(
+                                        app_clone.clone(),
+                                        db_clone.clone(),
+                                        plugin_manager_clone.clone(),
+                                        change_event.id.clone(),
+                                    )
+                                    .await {
+                                        Ok(triggered_ids) => {
+                                            tracing::info!(
+                                                "manual-trigger workflow fired: event_id={}, triggered_count={}, triggered_bindings={:?}",
+                                                change_event.id,
+                                                triggered_ids.len(),
+                                                triggered_ids
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "manual-trigger workflow failed: event_id={}, error={}",
+                                                change_event.id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    tracing::info!(
+                                        "manual-trigger workflow skipped: event_id={}, auto_trigger_enabled=false",
+                                        change_event.id
+                                    );
+                                }
                             }
                         }
                     }
                 }
+
+                if let Some(urls) = data.get("urls").and_then(|v| v.as_array()) {
+                    for url_item in urls {
+                        let url_str = url_item
+                            .as_str()
+                            .or_else(|| url_item.get("url").and_then(|v| v.as_str()))
+                            .or_else(|| url_item.get("value").and_then(|v| v.as_str()))
+                            .unwrap_or("")
+                            .trim();
+
+                        if url_str.is_empty() {
+                            continue;
+                        }
+
+                        let canonical_url = url_str.to_string();
+                        let exists = db_clone
+                            .get_bounty_asset_by_canonical_url(&task_clone.program_id, &canonical_url)
+                            .await
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+
+                        if exists {
+                            plugin_existing_count += 1;
+                            continue;
+                        }
+
+                        let hostname = canonical_url
+                            .trim_start_matches("http://")
+                            .trim_start_matches("https://")
+                            .split('/')
+                            .next()
+                            .map(|s| s.to_string());
+
+                        let now = Utc::now().to_rfc3339();
+                        let asset = BountyAssetRow {
+                            id: Uuid::new_v4().to_string(),
+                            program_id: task_clone.program_id.clone(),
+                            scope_id: None,
+                            asset_type: "url".to_string(),
+                            canonical_url: canonical_url.clone(),
+                            hostname,
+                            is_alive: true,
+                            created_at: now.clone(),
+                            updated_at: now.clone(),
+                            first_seen_at: now.clone(),
+                            last_seen_at: now.clone(),
+                            labels_json: Some("[\"manual-trigger\"]".to_string()),
+                            discovery_method: Some("monitor-manual".to_string()),
+                            monitoring_enabled: Some(true),
+                            original_urls_json: None,
+                            port: None,
+                            path: None,
+                            protocol: None,
+                            priority_score: Some(0.0),
+                            risk_score: Some(0.0),
+                            findings_count: 0,
+                            change_events_count: 0,
+                            ip_addresses_json: None,
+                            dns_records_json: None,
+                            tech_stack_json: None,
+                            fingerprint: None,
+                            tags_json: None,
+                            metadata_json: None,
+                            ip_version: None,
+                            asn: None,
+                            asn_org: None,
+                            isp: None,
+                            country: None,
+                            city: None,
+                            latitude: None,
+                            longitude: None,
+                            is_cloud: None,
+                            cloud_provider: None,
+                            service_name: None,
+                            service_version: None,
+                            service_product: None,
+                            banner: None,
+                            transport_protocol: None,
+                            cpe: None,
+                            domain_registrar: None,
+                            registration_date: None,
+                            expiration_date: None,
+                            nameservers_json: None,
+                            mx_records_json: None,
+                            txt_records_json: None,
+                            whois_data_json: None,
+                            is_wildcard: None,
+                            parent_domain: None,
+                            http_status: None,
+                            response_time_ms: None,
+                            content_length: None,
+                            content_type: None,
+                            title: None,
+                            favicon_hash: None,
+                            headers_json: None,
+                            waf_detected: None,
+                            cdn_detected: None,
+                            screenshot_path: None,
+                            body_hash: None,
+                            certificate_id: None,
+                            ssl_enabled: None,
+                            certificate_subject: None,
+                            certificate_issuer: None,
+                            certificate_valid_from: None,
+                            certificate_valid_to: None,
+                            certificate_san_json: None,
+                            exposure_level: None,
+                            attack_surface_score: None,
+                            vulnerability_count: None,
+                            cvss_max_score: None,
+                            exploit_available: None,
+                            asset_category: None,
+                            asset_owner: None,
+                            business_unit: None,
+                            criticality: None,
+                            data_sources_json: None,
+                            confidence_score: None,
+                            scan_frequency: None,
+                            last_scan_type: None,
+                            last_checked_at: None,
+                            parent_asset_id: None,
+                            related_assets_json: None,
+                        };
+
+                        if let Err(e) = db_clone.create_bounty_asset(&asset).await {
+                            tracing::error!("Failed to save URL asset: {}", e);
+                        } else {
+                            total_imported += 1;
+                            plugin_inserted_count += 1;
+                            inserted_from_urls += 1;
+                        }
+                    }
+                }
+
+                if let Some(ips) = data.get("ips").and_then(|v| v.as_array()) {
+                    for ip_item in ips {
+                        let ip_str = ip_item
+                            .as_str()
+                            .or_else(|| ip_item.get("ip").and_then(|v| v.as_str()))
+                            .or_else(|| ip_item.get("address").and_then(|v| v.as_str()))
+                            .unwrap_or("")
+                            .trim();
+
+                        if ip_str.is_empty() {
+                            continue;
+                        }
+
+                        let canonical_url = ip_str.to_string();
+                        let exists = db_clone
+                            .get_bounty_asset_by_canonical_url(&task_clone.program_id, &canonical_url)
+                            .await
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+
+                        if exists {
+                            plugin_existing_count += 1;
+                            continue;
+                        }
+
+                        let now = Utc::now().to_rfc3339();
+                        let asset = BountyAssetRow {
+                            id: Uuid::new_v4().to_string(),
+                            program_id: task_clone.program_id.clone(),
+                            scope_id: None,
+                            asset_type: "ip".to_string(),
+                            canonical_url: canonical_url.clone(),
+                            hostname: None,
+                            is_alive: true,
+                            created_at: now.clone(),
+                            updated_at: now.clone(),
+                            first_seen_at: now.clone(),
+                            last_seen_at: now.clone(),
+                            labels_json: Some("[\"manual-trigger\"]".to_string()),
+                            discovery_method: Some("monitor-manual".to_string()),
+                            monitoring_enabled: Some(true),
+                            original_urls_json: None,
+                            port: None,
+                            path: None,
+                            protocol: None,
+                            priority_score: Some(0.0),
+                            risk_score: Some(0.0),
+                            findings_count: 0,
+                            change_events_count: 0,
+                            ip_addresses_json: None,
+                            dns_records_json: None,
+                            tech_stack_json: None,
+                            fingerprint: None,
+                            tags_json: None,
+                            metadata_json: None,
+                            ip_version: if canonical_url.contains(':') { Some("IPv6".to_string()) } else { Some("IPv4".to_string()) },
+                            asn: None,
+                            asn_org: None,
+                            isp: None,
+                            country: None,
+                            city: None,
+                            latitude: None,
+                            longitude: None,
+                            is_cloud: None,
+                            cloud_provider: None,
+                            service_name: None,
+                            service_version: None,
+                            service_product: None,
+                            banner: None,
+                            transport_protocol: None,
+                            cpe: None,
+                            domain_registrar: None,
+                            registration_date: None,
+                            expiration_date: None,
+                            nameservers_json: None,
+                            mx_records_json: None,
+                            txt_records_json: None,
+                            whois_data_json: None,
+                            is_wildcard: None,
+                            parent_domain: None,
+                            http_status: None,
+                            response_time_ms: None,
+                            content_length: None,
+                            content_type: None,
+                            title: None,
+                            favicon_hash: None,
+                            headers_json: None,
+                            waf_detected: None,
+                            cdn_detected: None,
+                            screenshot_path: None,
+                            body_hash: None,
+                            certificate_id: None,
+                            ssl_enabled: None,
+                            certificate_subject: None,
+                            certificate_issuer: None,
+                            certificate_valid_from: None,
+                            certificate_valid_to: None,
+                            certificate_san_json: None,
+                            exposure_level: None,
+                            attack_surface_score: None,
+                            vulnerability_count: None,
+                            cvss_max_score: None,
+                            exploit_available: None,
+                            asset_category: None,
+                            asset_owner: None,
+                            business_unit: None,
+                            criticality: None,
+                            data_sources_json: None,
+                            confidence_score: None,
+                            scan_frequency: None,
+                            last_scan_type: None,
+                            last_checked_at: None,
+                            parent_asset_id: None,
+                            related_assets_json: None,
+                        };
+
+                        if let Err(e) = db_clone.create_bounty_asset(&asset).await {
+                            tracing::error!("Failed to save IP asset: {}", e);
+                        } else {
+                            total_imported += 1;
+                            plugin_inserted_count += 1;
+                            inserted_from_ips += 1;
+                        }
+                    }
+                }
+
+                if let Some(assets) = data.get("assets").and_then(|v| v.as_array()) {
+                    for asset_item in assets {
+                        let canonical_url = asset_item
+                            .get("value")
+                            .or_else(|| asset_item.get("url"))
+                            .or_else(|| asset_item.get("domain"))
+                            .or_else(|| asset_item.get("ip"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+
+                        if canonical_url.is_empty() {
+                            continue;
+                        }
+
+                        let exists = db_clone
+                            .get_bounty_asset_by_canonical_url(&task_clone.program_id, &canonical_url)
+                            .await
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+
+                        if exists {
+                            plugin_existing_count += 1;
+                            continue;
+                        }
+
+                        let asset_type = asset_item
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("domain")
+                            .to_string();
+                        let hostname = asset_item
+                            .get("hostname")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .or_else(|| {
+                                if asset_type == "domain" || asset_type == "url" {
+                                    Some(
+                                        canonical_url
+                                            .trim_start_matches("http://")
+                                            .trim_start_matches("https://")
+                                            .split('/')
+                                            .next()
+                                            .unwrap_or("")
+                                            .to_string(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            });
+
+                        let now = Utc::now().to_rfc3339();
+                        let asset = BountyAssetRow {
+                            id: Uuid::new_v4().to_string(),
+                            program_id: task_clone.program_id.clone(),
+                            scope_id: None,
+                            asset_type,
+                            canonical_url: canonical_url.clone(),
+                            hostname,
+                            is_alive: true,
+                            created_at: now.clone(),
+                            updated_at: now.clone(),
+                            first_seen_at: now.clone(),
+                            last_seen_at: now.clone(),
+                            labels_json: Some("[\"manual-trigger\"]".to_string()),
+                            discovery_method: Some("monitor-manual".to_string()),
+                            monitoring_enabled: Some(true),
+                            original_urls_json: None,
+                            port: None,
+                            path: None,
+                            protocol: None,
+                            priority_score: Some(0.0),
+                            risk_score: Some(0.0),
+                            findings_count: 0,
+                            change_events_count: 0,
+                            ip_addresses_json: None,
+                            dns_records_json: None,
+                            tech_stack_json: None,
+                            fingerprint: None,
+                            tags_json: None,
+                            metadata_json: None,
+                            ip_version: None,
+                            asn: None,
+                            asn_org: None,
+                            isp: None,
+                            country: None,
+                            city: None,
+                            latitude: None,
+                            longitude: None,
+                            is_cloud: None,
+                            cloud_provider: None,
+                            service_name: None,
+                            service_version: None,
+                            service_product: None,
+                            banner: None,
+                            transport_protocol: None,
+                            cpe: None,
+                            domain_registrar: None,
+                            registration_date: None,
+                            expiration_date: None,
+                            nameservers_json: None,
+                            mx_records_json: None,
+                            txt_records_json: None,
+                            whois_data_json: None,
+                            is_wildcard: None,
+                            parent_domain: None,
+                            http_status: None,
+                            response_time_ms: None,
+                            content_length: None,
+                            content_type: None,
+                            title: None,
+                            favicon_hash: None,
+                            headers_json: None,
+                            waf_detected: None,
+                            cdn_detected: None,
+                            screenshot_path: None,
+                            body_hash: None,
+                            certificate_id: None,
+                            ssl_enabled: None,
+                            certificate_subject: None,
+                            certificate_issuer: None,
+                            certificate_valid_from: None,
+                            certificate_valid_to: None,
+                            certificate_san_json: None,
+                            exposure_level: None,
+                            attack_surface_score: None,
+                            vulnerability_count: None,
+                            cvss_max_score: None,
+                            exploit_available: None,
+                            asset_category: None,
+                            asset_owner: None,
+                            business_unit: None,
+                            criticality: None,
+                            data_sources_json: None,
+                            confidence_score: None,
+                            scan_frequency: None,
+                            last_scan_type: None,
+                            last_checked_at: None,
+                            parent_asset_id: None,
+                            related_assets_json: None,
+                        };
+
+                        if let Err(e) = db_clone.create_bounty_asset(&asset).await {
+                            tracing::error!("Failed to save generic asset: {}", e);
+                        } else {
+                            total_imported += 1;
+                            plugin_inserted_count += 1;
+                            inserted_from_assets += 1;
+                        }
+                    }
+                }
+
+                if let Some(results) = data.get("results").and_then(|v| v.as_array()) {
+                    for result_item in results {
+                        let is_alive = result_item
+                            .get("alive")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        if !is_alive {
+                            continue;
+                        }
+
+                        let canonical_url = result_item
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+
+                        if canonical_url.is_empty() {
+                            continue;
+                        }
+
+                        let exists = db_clone
+                            .get_bounty_asset_by_canonical_url(&task_clone.program_id, &canonical_url)
+                            .await
+                            .map(|opt| opt.is_some())
+                            .unwrap_or(false);
+
+                        if exists {
+                            plugin_existing_count += 1;
+                            continue;
+                        }
+
+                        let hostname = canonical_url
+                            .trim_start_matches("http://")
+                            .trim_start_matches("https://")
+                            .split('/')
+                            .next()
+                            .map(|s| s.to_string());
+
+                        let protocol = if canonical_url.starts_with("https://") {
+                            Some("https".to_string())
+                        } else if canonical_url.starts_with("http://") {
+                            Some("http".to_string())
+                        } else {
+                            None
+                        };
+
+                        let path = canonical_url
+                            .split_once("//")
+                            .and_then(|(_, rest)| rest.split_once('/').map(|(_, p)| format!("/{}", p)));
+
+                        let metadata_json = serde_json::to_string(result_item).ok();
+
+                        let now = Utc::now().to_rfc3339();
+                        let asset = BountyAssetRow {
+                            id: Uuid::new_v4().to_string(),
+                            program_id: task_clone.program_id.clone(),
+                            scope_id: None,
+                            asset_type: "website".to_string(),
+                            canonical_url: canonical_url.clone(),
+                            hostname,
+                            is_alive,
+                            created_at: now.clone(),
+                            updated_at: now.clone(),
+                            first_seen_at: now.clone(),
+                            last_seen_at: now.clone(),
+                            labels_json: Some("[\"manual-trigger\"]".to_string()),
+                            discovery_method: Some("monitor-manual".to_string()),
+                            monitoring_enabled: Some(true),
+                            original_urls_json: None,
+                            port: None,
+                            path,
+                            protocol,
+                            priority_score: Some(0.0),
+                            risk_score: Some(0.0),
+                            findings_count: 0,
+                            change_events_count: 0,
+                            ip_addresses_json: None,
+                            dns_records_json: None,
+                            tech_stack_json: None,
+                            fingerprint: None,
+                            tags_json: None,
+                            metadata_json,
+                            ip_version: None,
+                            asn: None,
+                            asn_org: None,
+                            isp: None,
+                            country: None,
+                            city: None,
+                            latitude: None,
+                            longitude: None,
+                            is_cloud: None,
+                            cloud_provider: None,
+                            service_name: None,
+                            service_version: None,
+                            service_product: None,
+                            banner: None,
+                            transport_protocol: None,
+                            cpe: None,
+                            domain_registrar: None,
+                            registration_date: None,
+                            expiration_date: None,
+                            nameservers_json: None,
+                            mx_records_json: None,
+                            txt_records_json: None,
+                            whois_data_json: None,
+                            is_wildcard: None,
+                            parent_domain: None,
+                            http_status: result_item
+                                .get("statusCode")
+                                .and_then(|v| v.as_i64())
+                                .map(|v| v as i32),
+                            response_time_ms: result_item
+                                .get("responseTime")
+                                .and_then(|v| v.as_i64())
+                                .map(|v| v as i32),
+                            content_length: result_item
+                                .get("contentLength")
+                                .and_then(|v| v.as_i64()),
+                            content_type: result_item
+                                .get("contentType")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string()),
+                            title: result_item
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .map(|v| v.to_string()),
+                            favicon_hash: None,
+                            headers_json: result_item.get("headers").and_then(|v| serde_json::to_string(v).ok()),
+                            waf_detected: None,
+                            cdn_detected: None,
+                            screenshot_path: None,
+                            body_hash: None,
+                            certificate_id: None,
+                            ssl_enabled: Some(canonical_url.starts_with("https://")),
+                            certificate_subject: None,
+                            certificate_issuer: None,
+                            certificate_valid_from: None,
+                            certificate_valid_to: None,
+                            certificate_san_json: None,
+                            exposure_level: None,
+                            attack_surface_score: None,
+                            vulnerability_count: None,
+                            cvss_max_score: None,
+                            exploit_available: None,
+                            asset_category: None,
+                            asset_owner: None,
+                            business_unit: None,
+                            criticality: None,
+                            data_sources_json: None,
+                            confidence_score: None,
+                            scan_frequency: None,
+                            last_scan_type: None,
+                            last_checked_at: None,
+                            parent_asset_id: None,
+                            related_assets_json: None,
+                        };
+
+                        if let Err(e) = db_clone.create_bounty_asset(&asset).await {
+                            tracing::error!("Failed to save website asset from results: {}", e);
+                        } else {
+                            total_imported += 1;
+                            plugin_inserted_count += 1;
+                            inserted_from_results += 1;
+                        }
+                    }
+                }
+            } else {
+                tracing::info!(
+                    "Plugin {} produced no output payload for task {}",
+                    plugin.plugin_id,
+                    task_clone.name
+                );
             }
+
+            tracing::info!(
+                "Plugin {} output summary for task {}: subdomains={}, urls={}, ips={}, assets={}, results={}, existing_total={}, inserted_total={}, inserted_from_subdomains={}, inserted_from_urls={}, inserted_from_ips={}, inserted_from_assets={}, inserted_from_results={}",
+                plugin.plugin_id,
+                task_clone.name,
+                plugin_subdomains_count,
+                plugin_urls_count,
+                plugin_ips_count,
+                plugin_assets_count,
+                plugin_results_count,
+                plugin_existing_count,
+                plugin_inserted_count,
+                inserted_from_subdomains,
+                inserted_from_urls,
+                inserted_from_ips,
+                inserted_from_assets,
+                inserted_from_results
+            );
+
+            tracing::info!(
+                "Plugin {} completed for task {}: status=success, duration_ms={}",
+                plugin.plugin_id,
+                task_clone.name,
+                plugin_started_at.elapsed().as_millis()
+            );
         }
 
         // Update task statistics
@@ -1511,6 +2355,15 @@ pub async fn monitor_trigger_task(
             task_clone.name,
             total_imported
         );
+
+        {
+            let mut running = running_task_ids.write().await;
+            running.remove(&task_id_clone);
+        }
+        {
+            let mut cancel = cancel_requested_task_ids.write().await;
+            cancel.remove(&task_id_clone);
+        }
     });
 
     tracing::info!("Task '{}' execution started in background", task.name);

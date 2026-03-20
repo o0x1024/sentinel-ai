@@ -161,6 +161,17 @@
                     <i class="fas fa-search"></i>
                   </button>
                   <button 
+                    v-if="isTaskRunning(task.id)"
+                    class="btn btn-error btn-xs"
+                    @click="stopTask(task)"
+                    :disabled="stoppingTaskIds.has(task.id)"
+                    :title="t('bugBounty.monitor.stopTask')"
+                  >
+                    <span v-if="stoppingTaskIds.has(task.id)" class="loading loading-spinner loading-xs"></span>
+                    <i v-else class="fas fa-stop"></i>
+                  </button>
+                  <button 
+                    v-else
                     class="btn btn-ghost btn-xs"
                     @click="triggerTask(task)"
                     :title="t('bugBounty.monitor.runNow')"
@@ -975,6 +986,8 @@ const discoverResult = ref<any>(null)
 const currentDiscoverTask = ref<any>(null)
 const availablePlugins = ref<any[]>([])
 const loadingPlugins = ref(false)
+const runningTaskIds = ref<Set<string>>(new Set())
+const stoppingTaskIds = ref<Set<string>>(new Set())
 
 const taskForm = reactive({
   name: '',
@@ -1032,6 +1045,25 @@ const refreshStats = async () => {
   } catch (error) {
     console.error('Failed to load stats:', error)
   }
+}
+
+const loadRunningTasks = async () => {
+  try {
+    const ids = await invoke('monitor_get_running_tasks') as string[]
+    runningTaskIds.value = new Set(ids || [])
+  } catch (error) {
+    console.error('Failed to load running tasks:', error)
+  }
+}
+
+const isTaskRunning = (taskId: string) => runningTaskIds.value.has(taskId)
+
+const formatInvokeError = (error: any, fallback: string) => {
+  if (typeof error === 'string' && error.trim()) return error
+  if (error?.message && typeof error.message === 'string') return error.message
+  const text = error?.toString?.()
+  if (text && text !== '[object Object]') return text
+  return fallback
 }
 
 const loadTasks = async (retryCount = 0) => {
@@ -1325,20 +1357,39 @@ const triggerTask = async (task: any) => {
     }
     
     await invoke('monitor_trigger_task', { taskId: task.id })
+    runningTaskIds.value = new Set(runningTaskIds.value).add(task.id)
     toast.success(t('bugBounty.monitor.taskTriggered'))
     
     // Wait a bit for task to start, then reload tasks
     await new Promise(resolve => setTimeout(resolve, 500))
     await loadTasks()
+    await loadRunningTasks()
   } catch (error) {
     console.error('Failed to trigger task:', error)
-    toast.error(t('bugBounty.errors.operationFailed'))
+    toast.error(formatInvokeError(error, t('bugBounty.errors.operationFailed')))
     // Still try to reload tasks even if trigger failed
     try {
       await loadTasks()
+      await loadRunningTasks()
     } catch (e) {
       console.error('Failed to reload tasks after trigger error:', e)
     }
+  }
+}
+
+const stopTask = async (task: any) => {
+  try {
+    stoppingTaskIds.value = new Set(stoppingTaskIds.value).add(task.id)
+    await invoke('monitor_stop_task', { taskId: task.id })
+    toast.success(t('bugBounty.monitor.taskStopRequested'))
+    await loadRunningTasks()
+  } catch (error) {
+    console.error('Failed to stop task:', error)
+    toast.error(formatInvokeError(error, t('bugBounty.errors.operationFailed')))
+  } finally {
+    const next = new Set(stoppingTaskIds.value)
+    next.delete(task.id)
+    stoppingTaskIds.value = next
   }
 }
 
@@ -1523,6 +1574,7 @@ onMounted(async () => {
   await checkSchedulerStatus()
   await refreshStats()
   await loadTasks()
+  await loadRunningTasks()
   await loadAvailablePlugins()
   await setupEventListeners()
   
@@ -1532,6 +1584,7 @@ onMounted(async () => {
       refreshStats()
       loadTasks()
     }
+    loadRunningTasks()
   }, 30000)
   
   onUnmounted(() => {

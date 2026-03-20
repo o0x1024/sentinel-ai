@@ -221,11 +221,11 @@ impl DatabaseService {
         if !matches!(config.db_type, DatabaseType::PostgreSQL) {
             let runtime = DatabasePool::connect(&config).await?;
             self.ensure_compat_schema(&runtime).await?;
-            self.runtime_pool = Some(runtime);
+            self.runtime_pool = Some(runtime.clone());
             self.pool = None;
             self.ensure_runtime_default_data().await?;
-            tracing::warn!(
-                "Database initialized in {:?} compatibility mode; PostgreSQL-specific features may be unavailable",
+            tracing::info!(
+                "Database initialized in {:?} compatibility mode with  migrations",
                 config.db_type
             );
             return Ok(());
@@ -617,7 +617,6 @@ impl DatabaseService {
 
         // Agent Team 模块迁移
         AgentTeamMigration::apply(pool).await?;
-
         Ok(())
     }
 
@@ -1006,6 +1005,10 @@ impl DatabaseService {
 
         Ok(())
     }
+
+
+
+
 
     async fn ensure_runtime_default_data(&self) -> Result<()> {
         if self

@@ -383,6 +383,7 @@ export default {
     createFailed: '创建失败',
     updateFailed: '更新失败',
     deleteFailed: '删除失败',
+    operationFailed: '操作失败',
     duplicateFinding: '已存在相同的发现记录',
   },
 
@@ -670,6 +671,7 @@ export default {
     runs: '次运行',
     events: '个事件',
     runNow: '立即运行',
+    stopTask: '停止任务',
     editTask: '编辑任务',
     taskName: '任务名称',
     taskNamePlaceholder: '例如：DNS 变更监控',
@@ -701,6 +703,7 @@ export default {
     taskEnabled: '监控任务已启用',
     taskDisabled: '监控任务已禁用',
     taskTriggered: '监控任务已触发',
+    taskStopRequested: '已发送停止监控任务请求',
     autoStartingScheduler: '正在自动启动监控调度器...',
     defaultTasksCreated: '已创建 {count} 个默认监控任务',
     changeDetected: '检测到资产变更',

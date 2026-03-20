@@ -5092,17 +5092,43 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
-            let query = r#"INSERT INTO bounty_assets (
+        let insert_columns = r#"
                     id, program_id, scope_id, asset_type, canonical_url, original_urls_json,
                     hostname, port, path, protocol, ip_addresses_json, dns_records_json,
                     tech_stack_json, fingerprint, tags_json, labels_json, priority_score,
                     risk_score, is_alive, last_checked_at, first_seen_at, last_seen_at,
-                    findings_count, change_events_count, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+                    findings_count, change_events_count, metadata_json, created_at, updated_at,
+                    ip_version, asn, asn_org, isp, country, city, latitude, longitude,
+                    is_cloud, cloud_provider, service_name, service_version, service_product, banner,
+                    transport_protocol, cpe, domain_registrar, registration_date, expiration_date,
+                    nameservers_json, mx_records_json, txt_records_json, whois_data_json,
+                    is_wildcard, parent_domain, http_status, response_time_ms, content_length,
+                    content_type, title, favicon_hash, headers_json, waf_detected, cdn_detected,
+                    screenshot_path, body_hash, certificate_id, ssl_enabled, certificate_subject,
+                    certificate_issuer, certificate_valid_from, certificate_valid_to, certificate_san_json,
+                    exposure_level, attack_surface_score, vulnerability_count, cvss_max_score,
+                    exploit_available, asset_category, asset_owner, business_unit, criticality,
+                    discovery_method, data_sources_json, confidence_score, monitoring_enabled,
+                    scan_frequency, last_scan_type, parent_asset_id, related_assets_json
+        "#;
+        let insert_column_count = insert_columns
+            .split(',')
+            .map(|c| c.trim())
+            .filter(|c| !c.is_empty())
+            .count();
+
+        if matches!(runtime, DatabasePool::SQLite(_) | DatabasePool::MySQL(_)) {
+            let sqlite_placeholders = std::iter::repeat("?")
+                .take(insert_column_count)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let query = format!(
+                "INSERT INTO bounty_assets ({}) VALUES ({})",
+                insert_columns, sqlite_placeholders
+            );
             match runtime {
                 DatabasePool::SQLite(pool) => {
-                    sqlx::query(query)
+                    sqlx::query(&query)
                         .bind(&asset.id)
                         .bind(&asset.program_id)
                         .bind(&asset.scope_id)
@@ -5130,11 +5156,71 @@ impl DatabaseService {
                         .bind(&asset.metadata_json)
                         .bind(&asset.created_at)
                         .bind(&asset.updated_at)
+                        .bind(&asset.ip_version)
+                        .bind(asset.asn)
+                        .bind(&asset.asn_org)
+                        .bind(&asset.isp)
+                        .bind(&asset.country)
+                        .bind(&asset.city)
+                        .bind(asset.latitude)
+                        .bind(asset.longitude)
+                        .bind(asset.is_cloud)
+                        .bind(&asset.cloud_provider)
+                        .bind(&asset.service_name)
+                        .bind(&asset.service_version)
+                        .bind(&asset.service_product)
+                        .bind(&asset.banner)
+                        .bind(&asset.transport_protocol)
+                        .bind(&asset.cpe)
+                        .bind(&asset.domain_registrar)
+                        .bind(&asset.registration_date)
+                        .bind(&asset.expiration_date)
+                        .bind(&asset.nameservers_json)
+                        .bind(&asset.mx_records_json)
+                        .bind(&asset.txt_records_json)
+                        .bind(&asset.whois_data_json)
+                        .bind(asset.is_wildcard)
+                        .bind(&asset.parent_domain)
+                        .bind(asset.http_status)
+                        .bind(asset.response_time_ms)
+                        .bind(asset.content_length)
+                        .bind(&asset.content_type)
+                        .bind(&asset.title)
+                        .bind(&asset.favicon_hash)
+                        .bind(&asset.headers_json)
+                        .bind(&asset.waf_detected)
+                        .bind(&asset.cdn_detected)
+                        .bind(&asset.screenshot_path)
+                        .bind(&asset.body_hash)
+                        .bind(&asset.certificate_id)
+                        .bind(asset.ssl_enabled)
+                        .bind(&asset.certificate_subject)
+                        .bind(&asset.certificate_issuer)
+                        .bind(&asset.certificate_valid_from)
+                        .bind(&asset.certificate_valid_to)
+                        .bind(&asset.certificate_san_json)
+                        .bind(&asset.exposure_level)
+                        .bind(asset.attack_surface_score)
+                        .bind(asset.vulnerability_count)
+                        .bind(asset.cvss_max_score)
+                        .bind(asset.exploit_available)
+                        .bind(&asset.asset_category)
+                        .bind(&asset.asset_owner)
+                        .bind(&asset.business_unit)
+                        .bind(&asset.criticality)
+                        .bind(&asset.discovery_method)
+                        .bind(&asset.data_sources_json)
+                        .bind(asset.confidence_score)
+                        .bind(asset.monitoring_enabled)
+                        .bind(&asset.scan_frequency)
+                        .bind(&asset.last_scan_type)
+                        .bind(&asset.parent_asset_id)
+                        .bind(&asset.related_assets_json)
                         .execute(pool)
                         .await?;
                 }
                 DatabasePool::MySQL(pool) => {
-                    sqlx::query(query)
+                    sqlx::query(&query)
                         .bind(&asset.id)
                         .bind(&asset.program_id)
                         .bind(&asset.scope_id)
@@ -5162,6 +5248,66 @@ impl DatabaseService {
                         .bind(&asset.metadata_json)
                         .bind(&asset.created_at)
                         .bind(&asset.updated_at)
+                        .bind(&asset.ip_version)
+                        .bind(asset.asn)
+                        .bind(&asset.asn_org)
+                        .bind(&asset.isp)
+                        .bind(&asset.country)
+                        .bind(&asset.city)
+                        .bind(asset.latitude)
+                        .bind(asset.longitude)
+                        .bind(asset.is_cloud)
+                        .bind(&asset.cloud_provider)
+                        .bind(&asset.service_name)
+                        .bind(&asset.service_version)
+                        .bind(&asset.service_product)
+                        .bind(&asset.banner)
+                        .bind(&asset.transport_protocol)
+                        .bind(&asset.cpe)
+                        .bind(&asset.domain_registrar)
+                        .bind(&asset.registration_date)
+                        .bind(&asset.expiration_date)
+                        .bind(&asset.nameservers_json)
+                        .bind(&asset.mx_records_json)
+                        .bind(&asset.txt_records_json)
+                        .bind(&asset.whois_data_json)
+                        .bind(asset.is_wildcard)
+                        .bind(&asset.parent_domain)
+                        .bind(asset.http_status)
+                        .bind(asset.response_time_ms)
+                        .bind(asset.content_length)
+                        .bind(&asset.content_type)
+                        .bind(&asset.title)
+                        .bind(&asset.favicon_hash)
+                        .bind(&asset.headers_json)
+                        .bind(&asset.waf_detected)
+                        .bind(&asset.cdn_detected)
+                        .bind(&asset.screenshot_path)
+                        .bind(&asset.body_hash)
+                        .bind(&asset.certificate_id)
+                        .bind(asset.ssl_enabled)
+                        .bind(&asset.certificate_subject)
+                        .bind(&asset.certificate_issuer)
+                        .bind(&asset.certificate_valid_from)
+                        .bind(&asset.certificate_valid_to)
+                        .bind(&asset.certificate_san_json)
+                        .bind(&asset.exposure_level)
+                        .bind(asset.attack_surface_score)
+                        .bind(asset.vulnerability_count)
+                        .bind(asset.cvss_max_score)
+                        .bind(asset.exploit_available)
+                        .bind(&asset.asset_category)
+                        .bind(&asset.asset_owner)
+                        .bind(&asset.business_unit)
+                        .bind(&asset.criticality)
+                        .bind(&asset.discovery_method)
+                        .bind(&asset.data_sources_json)
+                        .bind(asset.confidence_score)
+                        .bind(asset.monitoring_enabled)
+                        .bind(&asset.scan_frequency)
+                        .bind(&asset.last_scan_type)
+                        .bind(&asset.parent_asset_id)
+                        .bind(&asset.related_assets_json)
                         .execute(pool)
                         .await?;
                 }
@@ -5171,15 +5317,16 @@ impl DatabaseService {
             return Ok(());
         }
 
-        sqlx::query(
-            r#"INSERT INTO bounty_assets (
-                id, program_id, scope_id, asset_type, canonical_url, original_urls_json,
-                hostname, port, path, protocol, ip_addresses_json, dns_records_json,
-                tech_stack_json, fingerprint, tags_json, labels_json, priority_score,
-                risk_score, is_alive, last_checked_at, first_seen_at, last_seen_at,
-                findings_count, change_events_count, metadata_json, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)"#
-        )
+        let postgres_placeholders = (1..=insert_column_count)
+            .map(|i| format!("${}", i))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            "INSERT INTO bounty_assets ({}) VALUES ({})",
+            insert_columns, postgres_placeholders
+        );
+
+        sqlx::query(&query)
         .bind(&asset.id)
         .bind(&asset.program_id)
         .bind(&asset.scope_id)
@@ -5207,6 +5354,66 @@ impl DatabaseService {
         .bind(&asset.metadata_json)
         .bind(timestamp_string_to_datetime(&asset.created_at))
         .bind(timestamp_string_to_datetime(&asset.updated_at))
+        .bind(&asset.ip_version)
+        .bind(asset.asn)
+        .bind(&asset.asn_org)
+        .bind(&asset.isp)
+        .bind(&asset.country)
+        .bind(&asset.city)
+        .bind(asset.latitude)
+        .bind(asset.longitude)
+        .bind(asset.is_cloud)
+        .bind(&asset.cloud_provider)
+        .bind(&asset.service_name)
+        .bind(&asset.service_version)
+        .bind(&asset.service_product)
+        .bind(&asset.banner)
+        .bind(&asset.transport_protocol)
+        .bind(&asset.cpe)
+        .bind(&asset.domain_registrar)
+        .bind(&asset.registration_date)
+        .bind(&asset.expiration_date)
+        .bind(&asset.nameservers_json)
+        .bind(&asset.mx_records_json)
+        .bind(&asset.txt_records_json)
+        .bind(&asset.whois_data_json)
+        .bind(asset.is_wildcard)
+        .bind(&asset.parent_domain)
+        .bind(asset.http_status)
+        .bind(asset.response_time_ms)
+        .bind(asset.content_length)
+        .bind(&asset.content_type)
+        .bind(&asset.title)
+        .bind(&asset.favicon_hash)
+        .bind(&asset.headers_json)
+        .bind(&asset.waf_detected)
+        .bind(&asset.cdn_detected)
+        .bind(&asset.screenshot_path)
+        .bind(&asset.body_hash)
+        .bind(&asset.certificate_id)
+        .bind(asset.ssl_enabled)
+        .bind(&asset.certificate_subject)
+        .bind(&asset.certificate_issuer)
+        .bind(&asset.certificate_valid_from)
+        .bind(&asset.certificate_valid_to)
+        .bind(&asset.certificate_san_json)
+        .bind(&asset.exposure_level)
+        .bind(asset.attack_surface_score)
+        .bind(asset.vulnerability_count)
+        .bind(asset.cvss_max_score)
+        .bind(asset.exploit_available)
+        .bind(&asset.asset_category)
+        .bind(&asset.asset_owner)
+        .bind(&asset.business_unit)
+        .bind(&asset.criticality)
+        .bind(&asset.discovery_method)
+        .bind(&asset.data_sources_json)
+        .bind(asset.confidence_score)
+        .bind(asset.monitoring_enabled)
+        .bind(&asset.scan_frequency)
+        .bind(&asset.last_scan_type)
+        .bind(&asset.parent_asset_id)
+        .bind(&asset.related_assets_json)
         .execute(self.get_pool()?)
         .await?;
 
@@ -5533,7 +5740,19 @@ impl DatabaseService {
                     dns_records_json = ?, tech_stack_json = ?, fingerprint = ?, tags_json = ?,
                     labels_json = ?, priority_score = ?, risk_score = ?, is_alive = ?,
                     last_checked_at = ?, last_seen_at = ?, findings_count = ?,
-                    change_events_count = ?, metadata_json = ?, updated_at = ?
+                    change_events_count = ?, metadata_json = ?, updated_at = ?,
+                    ip_version = ?, asn = ?, asn_org = ?, isp = ?, country = ?, city = ?, latitude = ?, longitude = ?,
+                    is_cloud = ?, cloud_provider = ?, service_name = ?, service_version = ?, service_product = ?, banner = ?,
+                    transport_protocol = ?, cpe = ?, domain_registrar = ?, registration_date = ?, expiration_date = ?,
+                    nameservers_json = ?, mx_records_json = ?, txt_records_json = ?, whois_data_json = ?,
+                    is_wildcard = ?, parent_domain = ?, http_status = ?, response_time_ms = ?, content_length = ?,
+                    content_type = ?, title = ?, favicon_hash = ?, headers_json = ?, waf_detected = ?, cdn_detected = ?,
+                    screenshot_path = ?, body_hash = ?, certificate_id = ?, ssl_enabled = ?, certificate_subject = ?,
+                    certificate_issuer = ?, certificate_valid_from = ?, certificate_valid_to = ?, certificate_san_json = ?,
+                    exposure_level = ?, attack_surface_score = ?, vulnerability_count = ?, cvss_max_score = ?,
+                    exploit_available = ?, asset_category = ?, asset_owner = ?, business_unit = ?, criticality = ?,
+                    discovery_method = ?, data_sources_json = ?, confidence_score = ?, monitoring_enabled = ?,
+                    scan_frequency = ?, last_scan_type = ?, parent_asset_id = ?, related_assets_json = ?
                 WHERE id = ?"#;
             return match runtime {
                 DatabasePool::SQLite(pool) => {
@@ -5561,6 +5780,66 @@ impl DatabaseService {
                         .bind(asset.change_events_count)
                         .bind(&asset.metadata_json)
                         .bind(&asset.updated_at)
+                        .bind(&asset.ip_version)
+                        .bind(asset.asn)
+                        .bind(&asset.asn_org)
+                        .bind(&asset.isp)
+                        .bind(&asset.country)
+                        .bind(&asset.city)
+                        .bind(asset.latitude)
+                        .bind(asset.longitude)
+                        .bind(asset.is_cloud)
+                        .bind(&asset.cloud_provider)
+                        .bind(&asset.service_name)
+                        .bind(&asset.service_version)
+                        .bind(&asset.service_product)
+                        .bind(&asset.banner)
+                        .bind(&asset.transport_protocol)
+                        .bind(&asset.cpe)
+                        .bind(&asset.domain_registrar)
+                        .bind(&asset.registration_date)
+                        .bind(&asset.expiration_date)
+                        .bind(&asset.nameservers_json)
+                        .bind(&asset.mx_records_json)
+                        .bind(&asset.txt_records_json)
+                        .bind(&asset.whois_data_json)
+                        .bind(asset.is_wildcard)
+                        .bind(&asset.parent_domain)
+                        .bind(asset.http_status)
+                        .bind(asset.response_time_ms)
+                        .bind(asset.content_length)
+                        .bind(&asset.content_type)
+                        .bind(&asset.title)
+                        .bind(&asset.favicon_hash)
+                        .bind(&asset.headers_json)
+                        .bind(&asset.waf_detected)
+                        .bind(&asset.cdn_detected)
+                        .bind(&asset.screenshot_path)
+                        .bind(&asset.body_hash)
+                        .bind(&asset.certificate_id)
+                        .bind(asset.ssl_enabled)
+                        .bind(&asset.certificate_subject)
+                        .bind(&asset.certificate_issuer)
+                        .bind(&asset.certificate_valid_from)
+                        .bind(&asset.certificate_valid_to)
+                        .bind(&asset.certificate_san_json)
+                        .bind(&asset.exposure_level)
+                        .bind(asset.attack_surface_score)
+                        .bind(asset.vulnerability_count)
+                        .bind(asset.cvss_max_score)
+                        .bind(asset.exploit_available)
+                        .bind(&asset.asset_category)
+                        .bind(&asset.asset_owner)
+                        .bind(&asset.business_unit)
+                        .bind(&asset.criticality)
+                        .bind(&asset.discovery_method)
+                        .bind(&asset.data_sources_json)
+                        .bind(asset.confidence_score)
+                        .bind(asset.monitoring_enabled)
+                        .bind(&asset.scan_frequency)
+                        .bind(&asset.last_scan_type)
+                        .bind(&asset.parent_asset_id)
+                        .bind(&asset.related_assets_json)
                         .bind(&asset.id)
                         .execute(pool)
                         .await?;
@@ -5591,6 +5870,66 @@ impl DatabaseService {
                         .bind(asset.change_events_count)
                         .bind(&asset.metadata_json)
                         .bind(&asset.updated_at)
+                        .bind(&asset.ip_version)
+                        .bind(asset.asn)
+                        .bind(&asset.asn_org)
+                        .bind(&asset.isp)
+                        .bind(&asset.country)
+                        .bind(&asset.city)
+                        .bind(asset.latitude)
+                        .bind(asset.longitude)
+                        .bind(asset.is_cloud)
+                        .bind(&asset.cloud_provider)
+                        .bind(&asset.service_name)
+                        .bind(&asset.service_version)
+                        .bind(&asset.service_product)
+                        .bind(&asset.banner)
+                        .bind(&asset.transport_protocol)
+                        .bind(&asset.cpe)
+                        .bind(&asset.domain_registrar)
+                        .bind(&asset.registration_date)
+                        .bind(&asset.expiration_date)
+                        .bind(&asset.nameservers_json)
+                        .bind(&asset.mx_records_json)
+                        .bind(&asset.txt_records_json)
+                        .bind(&asset.whois_data_json)
+                        .bind(asset.is_wildcard)
+                        .bind(&asset.parent_domain)
+                        .bind(asset.http_status)
+                        .bind(asset.response_time_ms)
+                        .bind(asset.content_length)
+                        .bind(&asset.content_type)
+                        .bind(&asset.title)
+                        .bind(&asset.favicon_hash)
+                        .bind(&asset.headers_json)
+                        .bind(&asset.waf_detected)
+                        .bind(&asset.cdn_detected)
+                        .bind(&asset.screenshot_path)
+                        .bind(&asset.body_hash)
+                        .bind(&asset.certificate_id)
+                        .bind(asset.ssl_enabled)
+                        .bind(&asset.certificate_subject)
+                        .bind(&asset.certificate_issuer)
+                        .bind(&asset.certificate_valid_from)
+                        .bind(&asset.certificate_valid_to)
+                        .bind(&asset.certificate_san_json)
+                        .bind(&asset.exposure_level)
+                        .bind(asset.attack_surface_score)
+                        .bind(asset.vulnerability_count)
+                        .bind(asset.cvss_max_score)
+                        .bind(asset.exploit_available)
+                        .bind(&asset.asset_category)
+                        .bind(&asset.asset_owner)
+                        .bind(&asset.business_unit)
+                        .bind(&asset.criticality)
+                        .bind(&asset.discovery_method)
+                        .bind(&asset.data_sources_json)
+                        .bind(asset.confidence_score)
+                        .bind(asset.monitoring_enabled)
+                        .bind(&asset.scan_frequency)
+                        .bind(&asset.last_scan_type)
+                        .bind(&asset.parent_asset_id)
+                        .bind(&asset.related_assets_json)
                         .bind(&asset.id)
                         .execute(pool)
                         .await?;
@@ -5607,8 +5946,20 @@ impl DatabaseService {
                 dns_records_json = $10, tech_stack_json = $11, fingerprint = $12, tags_json = $13,
                 labels_json = $14, priority_score = $15, risk_score = $16, is_alive = $17,
                 last_checked_at = $18, last_seen_at = $19, findings_count = $20,
-                change_events_count = $21, metadata_json = $22, updated_at = $23
-            WHERE id = $24"#,
+                change_events_count = $21, metadata_json = $22, updated_at = $23,
+                ip_version = $24, asn = $25, asn_org = $26, isp = $27, country = $28, city = $29, latitude = $30, longitude = $31,
+                is_cloud = $32, cloud_provider = $33, service_name = $34, service_version = $35, service_product = $36, banner = $37,
+                transport_protocol = $38, cpe = $39, domain_registrar = $40, registration_date = $41, expiration_date = $42,
+                nameservers_json = $43, mx_records_json = $44, txt_records_json = $45, whois_data_json = $46,
+                is_wildcard = $47, parent_domain = $48, http_status = $49, response_time_ms = $50, content_length = $51,
+                content_type = $52, title = $53, favicon_hash = $54, headers_json = $55, waf_detected = $56, cdn_detected = $57,
+                screenshot_path = $58, body_hash = $59, certificate_id = $60, ssl_enabled = $61, certificate_subject = $62,
+                certificate_issuer = $63, certificate_valid_from = $64, certificate_valid_to = $65, certificate_san_json = $66,
+                exposure_level = $67, attack_surface_score = $68, vulnerability_count = $69, cvss_max_score = $70,
+                exploit_available = $71, asset_category = $72, asset_owner = $73, business_unit = $74, criticality = $75,
+                discovery_method = $76, data_sources_json = $77, confidence_score = $78, monitoring_enabled = $79,
+                scan_frequency = $80, last_scan_type = $81, parent_asset_id = $82, related_assets_json = $83
+            WHERE id = $84"#,
         )
         .bind(&asset.scope_id)
         .bind(&asset.asset_type)
@@ -5635,6 +5986,66 @@ impl DatabaseService {
         .bind(asset.change_events_count)
         .bind(&asset.metadata_json)
         .bind(timestamp_string_to_datetime(&asset.updated_at))
+        .bind(&asset.ip_version)
+        .bind(asset.asn)
+        .bind(&asset.asn_org)
+        .bind(&asset.isp)
+        .bind(&asset.country)
+        .bind(&asset.city)
+        .bind(asset.latitude)
+        .bind(asset.longitude)
+        .bind(asset.is_cloud)
+        .bind(&asset.cloud_provider)
+        .bind(&asset.service_name)
+        .bind(&asset.service_version)
+        .bind(&asset.service_product)
+        .bind(&asset.banner)
+        .bind(&asset.transport_protocol)
+        .bind(&asset.cpe)
+        .bind(&asset.domain_registrar)
+        .bind(&asset.registration_date)
+        .bind(&asset.expiration_date)
+        .bind(&asset.nameservers_json)
+        .bind(&asset.mx_records_json)
+        .bind(&asset.txt_records_json)
+        .bind(&asset.whois_data_json)
+        .bind(asset.is_wildcard)
+        .bind(&asset.parent_domain)
+        .bind(asset.http_status)
+        .bind(asset.response_time_ms)
+        .bind(asset.content_length)
+        .bind(&asset.content_type)
+        .bind(&asset.title)
+        .bind(&asset.favicon_hash)
+        .bind(&asset.headers_json)
+        .bind(&asset.waf_detected)
+        .bind(&asset.cdn_detected)
+        .bind(&asset.screenshot_path)
+        .bind(&asset.body_hash)
+        .bind(&asset.certificate_id)
+        .bind(asset.ssl_enabled)
+        .bind(&asset.certificate_subject)
+        .bind(&asset.certificate_issuer)
+        .bind(&asset.certificate_valid_from)
+        .bind(&asset.certificate_valid_to)
+        .bind(&asset.certificate_san_json)
+        .bind(&asset.exposure_level)
+        .bind(asset.attack_surface_score)
+        .bind(asset.vulnerability_count)
+        .bind(asset.cvss_max_score)
+        .bind(asset.exploit_available)
+        .bind(&asset.asset_category)
+        .bind(&asset.asset_owner)
+        .bind(&asset.business_unit)
+        .bind(&asset.criticality)
+        .bind(&asset.discovery_method)
+        .bind(&asset.data_sources_json)
+        .bind(asset.confidence_score)
+        .bind(asset.monitoring_enabled)
+        .bind(&asset.scan_frequency)
+        .bind(&asset.last_scan_type)
+        .bind(&asset.parent_asset_id)
+        .bind(&asset.related_assets_json)
         .bind(&asset.id)
         .execute(self.get_pool()?)
         .await?;

@@ -117,13 +117,12 @@
       />
 
       <!-- Assets Tab -->
-      <AssetsPanel 
-        ref="assetsPanelRef"
+      <AssetsPanelV2 
         v-if="activeTab === 'assets'"
-        :selected-program="selectedProgram"
+        :program-id="selectedProgram?.id"
         :programs="programs"
         @stats-updated="updateAssetStats"
-        @discover-assets="showDiscoverAssetsModal = true"
+        @refresh="onAssetsRefreshNeeded"
       />
 
       <!-- Findings Tab -->
@@ -306,7 +305,6 @@ import {
   ProgramsPanel, 
   FindingsPanel, 
   SubmissionsPanel, 
-  AssetsPanel,
   ChangeEventsPanel,
   ChangeEventDetailModal,
   WorkflowTemplatesPanel,
@@ -324,6 +322,7 @@ import {
 } from '../components/BugBounty'
 import MonitorPanel from '../components/BugBounty/MonitorPanel.vue'
 import CreateChangeEventModal from '../components/BugBounty/CreateChangeEventModal.vue'
+import AssetsPanelV2 from '../components/BugBounty/AssetsPanelV2.vue'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -334,9 +333,6 @@ const loadingFindings = ref(false)
 const loadingSubmissions = ref(false)
 const creating = ref(false)
 const activeTab = ref('programs')
-
-// Component refs
-const assetsPanelRef = ref<InstanceType<typeof AssetsPanel> | null>(null)
 
 // Modals
 const showCreateProgramModal = ref(false)
@@ -911,13 +907,13 @@ const createChangeEvent = async (data: any) => {
 const onAssetsDiscovered = async (result: any) => {
   // Refresh asset stats and change event stats after assets are discovered
   await loadChangeEventStats()
-  
-  // Refresh assets panel to show newly imported assets
-  if (assetsPanelRef.value) {
-    assetsPanelRef.value.refreshAssets()
-  }
-  
+  // v2 asset panel will auto-refresh via event emission
   showDiscoverAssetsModal.value = false
+}
+
+const onAssetsRefreshNeeded = () => {
+  // Handle any UI state updates if needed
+  loadChangeEventStats()
 }
 
 // Workflow Template
