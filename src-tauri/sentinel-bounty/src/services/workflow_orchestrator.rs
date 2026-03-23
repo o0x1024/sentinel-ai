@@ -466,6 +466,17 @@ pub struct ArtifactSummary {
     pub findings: usize,
     pub evidence: usize,
     pub assets: usize,
+    pub surface_bundles: usize,
+    pub surface_domains: usize,
+    pub surface_ips: usize,
+    pub surface_hosts: usize,
+    pub surface_ports: usize,
+    pub surface_services: usize,
+    pub surface_webs: usize,
+    pub surface_certificates: usize,
+    pub surface_fingerprints: usize,
+    pub surface_relations: usize,
+    pub surface_changes: usize,
     pub subdomains: usize,
     pub live_hosts: usize,
     pub technologies: usize,
@@ -483,6 +494,39 @@ impl ArtifactSummary {
                 ArtifactType::Finding => summary.findings += artifact.metadata.count.unwrap_or(1),
                 ArtifactType::Evidence => summary.evidence += artifact.metadata.count.unwrap_or(1),
                 ArtifactType::Asset => summary.assets += artifact.metadata.count.unwrap_or(1),
+                ArtifactType::SurfaceBundle => {
+                    summary.surface_bundles += artifact.metadata.count.unwrap_or(1)
+                }
+                ArtifactType::SurfaceDomains => {
+                    summary.surface_domains += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceIps => {
+                    summary.surface_ips += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceHosts => {
+                    summary.surface_hosts += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfacePorts => {
+                    summary.surface_ports += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceServices => {
+                    summary.surface_services += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceWebs => {
+                    summary.surface_webs += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceCertificates => {
+                    summary.surface_certificates += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceFingerprints => {
+                    summary.surface_fingerprints += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceRelations => {
+                    summary.surface_relations += artifact.metadata.count.unwrap_or(0)
+                }
+                ArtifactType::SurfaceChanges => {
+                    summary.surface_changes += artifact.metadata.count.unwrap_or(0)
+                }
                 ArtifactType::Subdomains => {
                     summary.subdomains += artifact.metadata.count.unwrap_or(0)
                 }

@@ -447,7 +447,7 @@ pub fn run() {
                             tracing::warn!("Failed to ensure memory collection exists: {}", e);
                         }
                     }
-                    
+
                     // Initialize Memory Tool hooks via existing RAG service
                     let db_for_store = db_service.clone();
                     let store_fn = Box::new(move |content: String, title: Option<String>, tags: Vec<String>| {
@@ -619,7 +619,7 @@ pub fn run() {
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
                 handle.manage(commands::web_explorer::WebExplorerState::default());
-                
+
                 // Initialize asset enrichment service
                 let enrichment_service = Arc::new(sentinel_bounty::services::AssetEnrichmentService::new(
                     db_service_for_enrichment
@@ -653,7 +653,7 @@ pub fn run() {
                 tokio::spawn(async move {
                     // Wait a bit for app to be fully ready
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    
+
                     if let Err(e) = auto_start_proxy_if_enabled(&handle_for_proxy, &traffic_state_for_proxy).await {
                         tracing::warn!("Failed to auto-start proxy listener: {}", e);
                     }
@@ -714,10 +714,10 @@ pub fn run() {
                     {
                         let tool_server = sentinel_tools::get_tool_server();
                         let db_plugin = db_service_for_mcp.clone();
-                        
+
                         // 使用 Database trait 获取已启用的 agent 插件
                         let active_plugins = db_plugin.get_active_agent_plugins().await;
-                        
+
                         match active_plugins {
                             Ok(plugins) => {
                                 let mut plugin_metas = Vec::new();
@@ -726,10 +726,10 @@ pub fn run() {
                                     if id.is_empty() {
                                         continue;
                                     }
-                                    
+
                                     let description_str = p.metadata.description.as_deref().unwrap_or("Agent plugin tool");
                                     let code = db_plugin.get_plugin_code(&id).await.unwrap_or(None);
-                                    
+
                                     // 使用运行时调用获取 input_schema
                                     let input_schema = if let Some(code_str) = &code {
                                         sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
@@ -742,9 +742,9 @@ pub fn run() {
                                             "properties": {}
                                         })
                                     };
-                                    
+
                                     tracing::debug!("Plugin {} input_schema: {:?}", id, input_schema);
-                                    
+
                                     plugin_metas.push(sentinel_tools::plugin_adapter::PluginToolMeta {
                                         plugin_id: id.clone(),
                                         name: p.metadata.name.clone(),
@@ -754,11 +754,11 @@ pub fn run() {
                                         category: Some(p.metadata.category.clone()),
                                     });
                                 }
-                                
+
                                 if !plugin_metas.is_empty() {
                                     tracing::info!("Loading {} plugin tools...", plugin_metas.len());
                                     sentinel_tools::plugin_adapter::load_plugin_tools_to_server(
-                                        &tool_server, 
+                                        &tool_server,
                                         plugin_metas
                                     ).await;
                                 }
@@ -1001,6 +1001,14 @@ pub fn run() {
             commands::monitor_get_available_plugins,
             commands::monitor_test_plugin,
             commands::monitor_update_task_plugins,
+            // Surface graph commands
+            commands::surface_get_overview,
+            commands::surface_list_assets,
+            commands::surface_list_relations,
+            commands::surface_list_discovery_runs,
+            commands::surface_get_topology,
+            commands::surface_get_asset_detail,
+            commands::surface_create_observation,
             // Asset enrichment commands
             commands::asset_enrichment_commands::enrich_asset,
             commands::asset_enrichment_commands::start_asset_enrichment,
@@ -1310,7 +1318,7 @@ pub fn run() {
             commands::task_tool_commands::record_tool_execution_start,
             commands::task_tool_commands::record_tool_execution_complete,
             commands::task_tool_commands::get_all_active_tools,
-            
+
             // Test tracking commands
             commands::test_tracking_commands::test_plugin_tracking,
             commands::test_tracking_commands::test_mcp_tracking,

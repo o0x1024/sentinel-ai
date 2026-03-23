@@ -21,6 +21,12 @@ pub mod service;
 pub mod skills;
 pub mod sliding_window;
 pub mod sqlx_compat;
+pub mod surface;
+pub mod surface_artifacts;
+pub mod surface_detail;
+pub mod surface_extensions;
+pub mod surface_migrations;
+pub mod surface_topology;
 pub mod task_tool;
 pub mod todos;
 pub mod traffic;
@@ -69,6 +75,18 @@ pub use skills::*;
 pub use sliding_window::*;
 #[allow(unused_imports)]
 pub use sqlx_compat::*;
+#[allow(unused_imports)]
+pub use surface::*;
+#[allow(unused_imports)]
+pub use surface_artifacts::*;
+#[allow(unused_imports)]
+pub use surface_detail::*;
+#[allow(unused_imports)]
+pub use surface_extensions::*;
+#[allow(unused_imports)]
+pub use surface_migrations::*;
+#[allow(unused_imports)]
+pub use surface_topology::*;
 #[allow(unused_imports)]
 pub use todos::*;
 #[allow(unused_imports)]

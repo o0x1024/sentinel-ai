@@ -1,0 +1,211 @@
+<template>
+  <div v-if="visible" class="modal modal-open z-50">
+    <div class="modal-box max-w-5xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 class="text-lg font-semibold">
+              {{ detail?.asset?.display_name || detail?.asset?.asset_name || '资产详情' }}
+            </h3>
+            <span v-if="detail?.asset?.asset_type" class="badge badge-outline badge-sm">
+              {{ detail.asset.asset_type }}
+            </span>
+          </div>
+          <p class="mt-1 font-mono text-xs text-base-content/60 break-all">
+            {{ detail?.asset?.asset_name || '-' }}
+          </p>
+        </div>
+        <button class="btn btn-sm btn-ghost" @click="$emit('close')">✕</button>
+      </div>
+
+      <div v-if="loading" class="py-12 flex items-center justify-center">
+        <span class="loading loading-spinner loading-md"></span>
+      </div>
+
+      <div v-else-if="error" class="alert alert-error mt-4">
+        <span>{{ error }}</span>
+      </div>
+
+      <div v-else-if="detail" class="mt-4 space-y-6">
+        <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+            <div class="text-xs text-base-content/60">Status</div>
+            <div class="mt-1 font-medium">{{ detail.asset.status }}</div>
+          </div>
+          <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+            <div class="text-xs text-base-content/60">Exposure</div>
+            <div class="mt-1 font-medium">{{ detail.asset.internet_exposure || '-' }}</div>
+          </div>
+          <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+            <div class="text-xs text-base-content/60">Source</div>
+            <div class="mt-1 font-medium">{{ detail.asset.source || '-' }}</div>
+          </div>
+          <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
+            <div class="text-xs text-base-content/60">Last Seen</div>
+            <div class="mt-1 font-medium">{{ formatTime(detail.asset.last_seen_at) }}</div>
+          </div>
+        </section>
+
+        <section class="card bg-base-100 border border-base-300">
+          <div class="card-body">
+            <h4 class="card-title text-base">Typed Details</h4>
+            <div v-if="typedEntries.length" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div v-for="[key, value] in typedEntries" :key="key" class="rounded-lg border border-base-300 px-3 py-2">
+                <div class="text-xs text-base-content/60">{{ key }}</div>
+                <div class="mt-1 break-all whitespace-pre-wrap text-sm">{{ formatValue(value) }}</div>
+              </div>
+            </div>
+            <div v-else class="text-sm text-base-content/60">暂无类型扩展字段。</div>
+          </div>
+        </section>
+
+        <section class="card bg-base-100 border border-base-300">
+          <div class="card-body">
+            <h4 class="card-title text-base">Relations</h4>
+            <div class="overflow-x-auto">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th>Direction</th>
+                    <th>Relation</th>
+                    <th>Peer Type</th>
+                    <th>Peer Asset</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="relation in detail.relations" :key="relation.relation.id">
+                    <td>{{ relation.direction }}</td>
+                    <td>{{ relation.relation.relation_type }}</td>
+                    <td>{{ relation.peer_asset.asset_type }}</td>
+                    <td class="font-mono text-xs break-all">
+                      {{ relation.peer_asset.display_name || relation.peer_asset.asset_name }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="!detail.relations.length" class="text-sm text-base-content/60">暂无关联边。</div>
+          </div>
+        </section>
+
+        <section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div class="card bg-base-100 border border-base-300">
+            <div class="card-body">
+              <h4 class="card-title text-base">Fingerprints</h4>
+              <div v-if="detail.fingerprints.length" class="space-y-2">
+                <div v-for="fingerprint in detail.fingerprints" :key="fingerprint.id" class="rounded-lg border border-base-300 px-3 py-2">
+                  <div class="text-xs text-base-content/60">
+                    {{ fingerprint.fingerprint_type }} / {{ fingerprint.fingerprint_key || '-' }}
+                  </div>
+                  <div class="mt-1 break-all text-sm">{{ fingerprint.fingerprint_value }}</div>
+                </div>
+              </div>
+              <div v-else class="text-sm text-base-content/60">暂无指纹。</div>
+            </div>
+          </div>
+
+          <div class="card bg-base-100 border border-base-300">
+            <div class="card-body">
+              <h4 class="card-title text-base">Evidence</h4>
+              <div v-if="detail.evidence.length" class="space-y-2">
+                <div v-for="evidence in detail.evidence" :key="evidence.id" class="rounded-lg border border-base-300 px-3 py-2">
+                  <div class="text-xs text-base-content/60">{{ evidence.evidence_type }}</div>
+                  <div class="mt-1 text-sm">{{ evidence.title || '-' }}</div>
+                  <div class="mt-1 whitespace-pre-wrap break-all text-xs text-base-content/70">
+                    {{ evidence.content_text || formatJsonSnippet(evidence.content_json) }}
+                  </div>
+                </div>
+              </div>
+              <div v-else class="text-sm text-base-content/60">暂无证据。</div>
+            </div>
+          </div>
+
+          <div class="card bg-base-100 border border-base-300">
+            <div class="card-body">
+              <h4 class="card-title text-base">Changes</h4>
+              <div v-if="detail.changes.length" class="space-y-2">
+                <div v-for="change in detail.changes" :key="change.id" class="rounded-lg border border-base-300 px-3 py-2">
+                  <div class="text-xs text-base-content/60">{{ change.change_type }}</div>
+                  <div class="mt-1 text-sm">{{ change.summary }}</div>
+                  <div class="mt-1 text-xs text-base-content/60">{{ formatTime(change.detected_at) }}</div>
+                </div>
+              </div>
+              <div v-else class="text-sm text-base-content/60">暂无变更。</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <div class="modal-backdrop" @click="$emit('close')"></div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+
+const props = defineProps<{
+  visible: boolean
+  assetId?: string | null
+}>()
+
+defineEmits<{
+  (e: 'close'): void
+}>()
+
+const loading = ref(false)
+const error = ref('')
+const detail = ref<any | null>(null)
+
+const typedEntries = computed(() => {
+  const typed = detail.value?.typed_details
+  if (!typed || typeof typed !== 'object') return []
+  return Object.entries(typed).filter(([key, value]) => key !== 'asset_id' && value !== null && value !== '')
+})
+
+const formatTime = (value?: string) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
+const formatValue = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
+
+const formatJsonSnippet = (value?: string | null) => {
+  if (!value) return '-'
+  return value.length > 180 ? `${value.slice(0, 180)}...` : value
+}
+
+const loadDetail = async () => {
+  if (!props.visible || !props.assetId) return
+  try {
+    loading.value = true
+    error.value = ''
+    detail.value = await invoke('surface_get_asset_detail', { assetId: props.assetId })
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    detail.value = null
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(
+  () => [props.visible, props.assetId],
+  () => {
+    loadDetail()
+  },
+  { immediate: true },
+)
+</script>

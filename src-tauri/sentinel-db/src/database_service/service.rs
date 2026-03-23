@@ -5,6 +5,7 @@ use crate::database_service::db_config::{
 };
 use crate::database_service::migration::DatabaseMigration;
 use crate::database_service::migrations::AgentTeamMigration;
+use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use crate::database_service::sqlx_compat::{MySqlRow, PgPool, PgPoolOptions, PgRow};
 use anyhow::Result;
 use serde_json::Value;
@@ -1002,6 +1003,7 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_traffic_evidence_vuln_id ON traffic_evidence(vuln_id)",
         )
         .await?;
+        SurfaceGraphMigration::apply_runtime(runtime).await?;
 
         Ok(())
     }

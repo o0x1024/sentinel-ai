@@ -15,6 +15,19 @@ pub enum ArtifactType {
     Evidence,
     /// Discovered or updated asset
     Asset,
+    /// Multi-object surface graph bundle
+    SurfaceBundle,
+    /// Typed surface graph objects
+    SurfaceDomains,
+    SurfaceIps,
+    SurfaceHosts,
+    SurfacePorts,
+    SurfaceServices,
+    SurfaceWebs,
+    SurfaceCertificates,
+    SurfaceFingerprints,
+    SurfaceRelations,
+    SurfaceChanges,
     /// Discovered subdomains
     Subdomains,
     /// Live hosts / HTTP probe results
@@ -37,6 +50,17 @@ impl ArtifactType {
             ArtifactType::Finding => "finding",
             ArtifactType::Evidence => "evidence",
             ArtifactType::Asset => "asset",
+            ArtifactType::SurfaceBundle => "surface_bundle",
+            ArtifactType::SurfaceDomains => "surface_domains",
+            ArtifactType::SurfaceIps => "surface_ips",
+            ArtifactType::SurfaceHosts => "surface_hosts",
+            ArtifactType::SurfacePorts => "surface_ports",
+            ArtifactType::SurfaceServices => "surface_services",
+            ArtifactType::SurfaceWebs => "surface_webs",
+            ArtifactType::SurfaceCertificates => "surface_certificates",
+            ArtifactType::SurfaceFingerprints => "surface_fingerprints",
+            ArtifactType::SurfaceRelations => "surface_relations",
+            ArtifactType::SurfaceChanges => "surface_changes",
             ArtifactType::Subdomains => "subdomains",
             ArtifactType::LiveHosts => "live_hosts",
             ArtifactType::Technologies => "technologies",
@@ -52,6 +76,17 @@ impl ArtifactType {
             "finding" | "findings" | "vulnerability" => Some(ArtifactType::Finding),
             "evidence" => Some(ArtifactType::Evidence),
             "asset" | "assets" => Some(ArtifactType::Asset),
+            "surface_bundle" | "surfacebundle" => Some(ArtifactType::SurfaceBundle),
+            "surface_domains" | "domains" => Some(ArtifactType::SurfaceDomains),
+            "surface_ips" | "ips" => Some(ArtifactType::SurfaceIps),
+            "surface_hosts" => Some(ArtifactType::SurfaceHosts),
+            "surface_ports" | "ports" => Some(ArtifactType::SurfacePorts),
+            "surface_services" | "services" => Some(ArtifactType::SurfaceServices),
+            "surface_webs" | "webs" | "web_assets" => Some(ArtifactType::SurfaceWebs),
+            "surface_certificates" | "certificates" => Some(ArtifactType::SurfaceCertificates),
+            "surface_fingerprints" | "fingerprints" => Some(ArtifactType::SurfaceFingerprints),
+            "surface_relations" | "relations" => Some(ArtifactType::SurfaceRelations),
+            "surface_changes" | "changes" => Some(ArtifactType::SurfaceChanges),
             "subdomains" | "subdomain" => Some(ArtifactType::Subdomains),
             "live_hosts" | "livehosts" | "alive" | "hosts" => Some(ArtifactType::LiveHosts),
             "technologies" | "tech" | "techstack" => Some(ArtifactType::Technologies),
@@ -143,6 +178,22 @@ pub struct AssetArtifact {
     pub title: Option<String>,
     pub fingerprint: Option<String>,
     pub labels: Vec<String>,
+}
+
+/// Multi-object surface graph payload for network asset mapping workflows.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SurfaceBundleArtifact {
+    pub organizations: Vec<serde_json::Value>,
+    pub domains: Vec<serde_json::Value>,
+    pub ips: Vec<serde_json::Value>,
+    pub hosts: Vec<serde_json::Value>,
+    pub ports: Vec<serde_json::Value>,
+    pub services: Vec<serde_json::Value>,
+    pub webs: Vec<serde_json::Value>,
+    pub certificates: Vec<serde_json::Value>,
+    pub fingerprints: Vec<serde_json::Value>,
+    pub relations: Vec<serde_json::Value>,
+    pub changes: Vec<serde_json::Value>,
 }
 
 /// Subdomain list artifact
@@ -240,6 +291,10 @@ pub struct ArtifactExtractor;
 impl ArtifactExtractor {
     /// Detect artifact type from raw output
     pub fn detect_type(data: &serde_json::Value) -> ArtifactType {
+        if data.get("surface_artifacts").is_some() || data.get("surface").is_some() {
+            return ArtifactType::SurfaceBundle;
+        }
+
         // Check for explicit type field
         if let Some(t) = data.get("artifact_type").and_then(|v| v.as_str()) {
             if let Some(at) = ArtifactType::from_str(t) {
@@ -261,6 +316,33 @@ impl ArtifactExtractor {
         }
         if data.get("subdomains").is_some() {
             return ArtifactType::Subdomains;
+        }
+        if data.get("domains").is_some() {
+            return ArtifactType::SurfaceDomains;
+        }
+        if data.get("ips").is_some() {
+            return ArtifactType::SurfaceIps;
+        }
+        if data.get("ports").is_some() {
+            return ArtifactType::SurfacePorts;
+        }
+        if data.get("services").is_some() {
+            return ArtifactType::SurfaceServices;
+        }
+        if data.get("webs").is_some() || data.get("web_assets").is_some() {
+            return ArtifactType::SurfaceWebs;
+        }
+        if data.get("certificates").is_some() {
+            return ArtifactType::SurfaceCertificates;
+        }
+        if data.get("fingerprints").is_some() {
+            return ArtifactType::SurfaceFingerprints;
+        }
+        if data.get("relations").is_some() {
+            return ArtifactType::SurfaceRelations;
+        }
+        if data.get("changes").is_some() {
+            return ArtifactType::SurfaceChanges;
         }
         if data.get("hosts").is_some()
             || data.get("liveHosts").is_some()
@@ -694,6 +776,10 @@ mod tests {
         assert_eq!(
             ArtifactExtractor::detect_type(&json!({"technologies": []})),
             ArtifactType::Technologies
+        );
+        assert_eq!(
+            ArtifactExtractor::detect_type(&json!({"surface_artifacts": {"domains": []}})),
+            ArtifactType::SurfaceBundle
         );
     }
 

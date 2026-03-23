@@ -53,19 +53,23 @@ impl Default for PluginPortRegistry {
 
 impl PluginPortRegistry {
     pub fn new() -> Self {
-        // registry.register_builtin_plugins();
-        Self {
+        let mut registry = Self {
             output_specs: HashMap::new(),
             input_specs: HashMap::new(),
-        }
+        };
+        registry.register_builtin_plugins();
+        registry
     }
 
-    #[allow(dead_code)]
     fn register_builtin_plugins(&mut self) {
         // Subdomain Enumerator
         self.output_specs.insert(
             "subdomain_enumerator".to_string(),
-            vec![("subdomains".to_string(), ArtifactType::Subdomains)],
+            vec![
+                ("subdomains".to_string(), ArtifactType::Subdomains),
+                ("surface_domains".to_string(), ArtifactType::SurfaceDomains),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
         );
         self.input_specs.insert(
             "subdomain_enumerator".to_string(),
@@ -82,7 +86,11 @@ impl PluginPortRegistry {
         // HTTP Prober
         self.output_specs.insert(
             "http_prober".to_string(),
-            vec![("live_hosts".to_string(), ArtifactType::LiveHosts)],
+            vec![
+                ("live_hosts".to_string(), ArtifactType::LiveHosts),
+                ("surface_webs".to_string(), ArtifactType::SurfaceWebs),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
         );
         self.input_specs.insert(
             "http_prober".to_string(),
@@ -99,7 +107,13 @@ impl PluginPortRegistry {
         // Tech Fingerprinter
         self.output_specs.insert(
             "tech_fingerprinter".to_string(),
-            vec![("technologies".to_string(), ArtifactType::Technologies)],
+            vec![
+                ("technologies".to_string(), ArtifactType::Technologies),
+                (
+                    "surface_fingerprints".to_string(),
+                    ArtifactType::SurfaceFingerprints,
+                ),
+            ],
         );
         self.input_specs.insert(
             "tech_fingerprinter".to_string(),
@@ -116,7 +130,10 @@ impl PluginPortRegistry {
         // Directory Bruteforcer
         self.output_specs.insert(
             "directory_bruteforcer".to_string(),
-            vec![("directories".to_string(), ArtifactType::Directories)],
+            vec![
+                ("directories".to_string(), ArtifactType::Directories),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
         );
         self.input_specs.insert(
             "directory_bruteforcer".to_string(),
@@ -136,6 +153,7 @@ impl PluginPortRegistry {
             vec![
                 ("endpoints".to_string(), ArtifactType::Endpoints),
                 ("secrets".to_string(), ArtifactType::Secrets),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
             ],
         );
         self.input_specs.insert(
@@ -230,6 +248,52 @@ impl PluginPortRegistry {
                 ParamBindingSpec {
                     artifact_type: ArtifactType::Subdomains,
                     extract_path: Some("subdomains[*].subdomain".to_string()),
+                    required: true,
+                },
+            )],
+        );
+
+        // Port Monitor
+        self.output_specs.insert(
+            "port_monitor".to_string(),
+            vec![
+                ("surface_ports".to_string(), ArtifactType::SurfacePorts),
+                ("surface_services".to_string(), ArtifactType::SurfaceServices),
+                ("surface_changes".to_string(), ArtifactType::SurfaceChanges),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
+        );
+        self.input_specs.insert(
+            "port_monitor".to_string(),
+            vec![(
+                "targets".to_string(),
+                ParamBindingSpec {
+                    artifact_type: ArtifactType::SurfaceHosts,
+                    extract_path: Some("hosts[*].hostname".to_string()),
+                    required: true,
+                },
+            )],
+        );
+
+        // Certificate Monitor
+        self.output_specs.insert(
+            "cert_monitor".to_string(),
+            vec![
+                (
+                    "surface_certificates".to_string(),
+                    ArtifactType::SurfaceCertificates,
+                ),
+                ("surface_changes".to_string(), ArtifactType::SurfaceChanges),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
+        );
+        self.input_specs.insert(
+            "cert_monitor".to_string(),
+            vec![(
+                "targets".to_string(),
+                ParamBindingSpec {
+                    artifact_type: ArtifactType::SurfaceWebs,
+                    extract_path: Some("webs[*].canonical_url".to_string()),
                     required: true,
                 },
             )],

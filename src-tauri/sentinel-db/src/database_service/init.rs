@@ -4,6 +4,7 @@ use crate::database_service::migrations::{
     TaskToolIntegrationMigration, TimestampTypeMigration,
 };
 use crate::database_service::service::DatabaseService;
+use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use crate::database_service::sqlx_compat::PgPool;
 use anyhow::Result;
 use chrono::Utc;
@@ -1453,6 +1454,7 @@ impl DatabaseService {
         SubagentRunsMigration::apply(pool).await?;
         SubagentMessagesMigration::apply(pool).await?;
         AgentTodosMigration::apply(pool).await?;
+        SurfaceGraphMigration::apply(pool).await?;
 
         // Run ASM enhancement migration
         AsmEnhancementMigration::apply(pool).await?;
