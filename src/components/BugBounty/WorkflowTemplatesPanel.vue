@@ -10,10 +10,9 @@
           <div class="flex gap-2">
             <select v-model="filter.category" class="select select-sm select-bordered" @change="loadTemplates">
               <option value="">{{ t('bugBounty.workflowTemplates.allCategories') }}</option>
-              <option value="recon">{{ t('bugBounty.workflowTemplates.categories.recon') }}</option>
-              <option value="discovery">{{ t('bugBounty.workflowTemplates.categories.discovery') }}</option>
-              <option value="vuln">{{ t('bugBounty.workflowTemplates.categories.vuln') }}</option>
-              <option value="api">{{ t('bugBounty.workflowTemplates.categories.api') }}</option>
+              <option v-for="category in workflowTemplateCategories" :key="category" :value="category">
+                {{ t(`bugBounty.workflowTemplates.categories.${category}`) }}
+              </option>
             </select>
             <button class="btn btn-sm btn-outline" @click="initBuiltinTemplates">
               <i class="fas fa-magic mr-2"></i>
@@ -51,7 +50,7 @@
                   <i :class="getCategoryIcon(template.category)" class="text-xl"></i>
                   <div>
                     <h3 class="font-semibold">{{ template.name }}</h3>
-                    <span class="badge badge-ghost badge-xs">{{ template.category }}</span>
+                    <span class="badge badge-ghost badge-xs">{{ getCategoryLabel(template.category) }}</span>
                   </div>
                 </div>
                 <span v-if="template.is_built_in" class="badge badge-info badge-sm">
@@ -198,10 +197,9 @@
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.category') }}</span></label>
           <select v-model="createForm.category" class="select select-bordered">
-            <option value="recon">{{ t('bugBounty.workflowTemplates.categories.recon') }}</option>
-            <option value="discovery">{{ t('bugBounty.workflowTemplates.categories.discovery') }}</option>
-            <option value="vuln">{{ t('bugBounty.workflowTemplates.categories.vuln') }}</option>
-            <option value="api">{{ t('bugBounty.workflowTemplates.categories.api') }}</option>
+            <option v-for="category in workflowTemplateCategories" :key="category" :value="category">
+              {{ t(`bugBounty.workflowTemplates.categories.${category}`) }}
+            </option>
           </select>
         </div>
 
@@ -264,10 +262,34 @@
         
         <div class="form-control mb-4">
           <label class="label"><span class="label-text">{{ t('bugBounty.form.program') }}</span></label>
-          <select v-model="bindForm.program_id" class="select select-bordered">
-            <option value="">{{ t('bugBounty.form.selectProgram') }}</option>
-            <option v-for="p in programs" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
+          <div class="rounded-lg border border-base-300 bg-base-200/40">
+            <div class="flex items-center justify-between px-3 py-2 border-b border-base-300 text-xs text-base-content/70">
+              <span>{{ t('bugBounty.workflowTemplates.programsSelected', { count: bindForm.program_ids.length }) }}</span>
+              <div class="flex gap-2">
+                <button type="button" class="btn btn-ghost btn-xs" @click="selectAllPrograms">
+                  {{ t('bugBounty.workflowTemplates.selectAllPrograms') }}
+                </button>
+                <button type="button" class="btn btn-ghost btn-xs" @click="clearSelectedPrograms">
+                  {{ t('common.clear') }}
+                </button>
+              </div>
+            </div>
+            <div class="max-h-64 overflow-y-auto divide-y divide-base-300">
+              <label
+                v-for="p in programs"
+                :key="p.id"
+                class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-base-200"
+              >
+                <input
+                  :checked="bindForm.program_ids.includes(p.id)"
+                  type="checkbox"
+                  class="checkbox checkbox-primary checkbox-sm"
+                  @change="toggleBindProgram(p.id, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="text-sm">{{ p.name }}</span>
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="form-control mb-4">
@@ -279,7 +301,7 @@
 
         <div class="modal-action">
           <button class="btn btn-ghost" @click="showBindModal = false">{{ t('common.cancel') }}</button>
-          <button class="btn btn-primary" @click="createBinding" :disabled="!bindForm.program_id">
+          <button class="btn btn-primary" @click="createBinding" :disabled="bindForm.program_ids.length === 0">
             {{ t('bugBounty.workflowTemplates.bind') }}
           </button>
         </div>
@@ -292,7 +314,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
@@ -317,6 +339,7 @@ const allBindings = ref<any[]>([]) // All bindings for all templates
 const showCreateModal = ref(false)
 const showBindModal = ref(false)
 const selectedTemplate = ref<any>(null)
+const workflowTemplateCategories = ['recon', 'discovery', 'monitoring', 'risk', 'api']
 
 const filter = reactive({
   category: '',
@@ -333,7 +356,7 @@ const createForm = reactive({
 const createLoading = ref(false)
 
 const bindForm = reactive({
-  program_id: '',
+  program_ids: [] as string[],
   auto_run_on_change: false,
 })
 
@@ -350,6 +373,14 @@ const loadTemplates = async () => {
     toast.error(t('bugBounty.errors.loadFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+const ensureBuiltinTemplates = async () => {
+  try {
+    await invoke('bounty_init_builtin_templates')
+  } catch (error) {
+    console.error('Failed to ensure builtin templates:', error)
   }
 }
 
@@ -455,34 +486,39 @@ const deleteTemplate = async (template: any) => {
 
 const bindToProgram = (template: any) => {
   selectedTemplate.value = template
-  bindForm.program_id = props.selectedProgram?.id || ''
+  bindForm.program_ids = props.selectedProgram?.id ? [props.selectedProgram.id] : []
   bindForm.auto_run_on_change = false
   showBindModal.value = true
 }
 
 const createBinding = async () => {
-  if (!selectedTemplate.value || !bindForm.program_id) return
-  
-  // Check if binding already exists
-  const existingBinding = allBindings.value.find(
-    b => b.workflow_template_id === selectedTemplate.value.id && b.program_id === bindForm.program_id
-  )
-  
-  if (existingBinding) {
+  if (!selectedTemplate.value || bindForm.program_ids.length === 0) return
+
+  const targetProgramIds = [...new Set(bindForm.program_ids)]
+  const existingProgramIds = targetProgramIds.filter(programId => allBindings.value.some(
+    b => b.workflow_template_id === selectedTemplate.value.id && b.program_id === programId,
+  ))
+  const pendingProgramIds = targetProgramIds.filter(programId => !existingProgramIds.includes(programId))
+
+  if (pendingProgramIds.length === 0) {
     toast.warning(t('bugBounty.workflowTemplates.bindingExists'))
     return
   }
-  
+
   try {
-    await invoke('bounty_create_workflow_binding', {
+    await Promise.all(pendingProgramIds.map(programId => invoke('bounty_create_workflow_binding', {
       request: {
-        program_id: bindForm.program_id,
+        program_id: programId,
         workflow_template_id: selectedTemplate.value.id,
         is_enabled: true,
         auto_run_on_change: bindForm.auto_run_on_change,
-      }
-    })
-    toast.success(t('bugBounty.workflowTemplates.bindingCreated'))
+      },
+    })))
+
+    toast.success(t('bugBounty.workflowTemplates.bindingCreatedCount', { count: pendingProgramIds.length }))
+    if (existingProgramIds.length > 0) {
+      toast.info(t('bugBounty.workflowTemplates.bindingSkippedCount', { count: existingProgramIds.length }))
+    }
     showBindModal.value = false
     await loadBindings()
     await loadAllBindings() // Reload all bindings to update template cards
@@ -532,10 +568,33 @@ const getCategoryIcon = (category: string) => {
   const icons: Record<string, string> = {
     recon: 'fas fa-search text-info',
     discovery: 'fas fa-folder-open text-warning',
+    monitoring: 'fas fa-satellite-dish text-secondary',
+    risk: 'fas fa-shield-alt text-error',
     vuln: 'fas fa-shield-alt text-error',
     api: 'fas fa-plug text-primary',
   }
   return icons[category] || 'fas fa-cog'
+}
+
+const getCategoryLabel = (category: string) => {
+  return t(`bugBounty.workflowTemplates.categories.${category}`)
+}
+
+const toggleBindProgram = (programId: string, checked: boolean) => {
+  if (checked) {
+    bindForm.program_ids = [...new Set([...bindForm.program_ids, programId])]
+    return
+  }
+
+  bindForm.program_ids = bindForm.program_ids.filter(id => id !== programId)
+}
+
+const selectAllPrograms = () => {
+  bindForm.program_ids = props.programs.map(program => program.id)
+}
+
+const clearSelectedPrograms = () => {
+  bindForm.program_ids = []
 }
 
 const getTemplateName = (templateId: string) => {
@@ -560,11 +619,16 @@ const getBoundPrograms = (templateId: string) => {
 
 // Lifecycle
 onMounted(async () => {
+  await ensureBuiltinTemplates()
   await loadTemplates()
   await loadAllBindings()
   if (props.selectedProgram) {
     await loadBindings()
   }
+})
+
+watch(() => props.selectedProgram?.id, async () => {
+  await loadBindings()
 })
 </script>
 

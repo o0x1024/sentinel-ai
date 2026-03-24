@@ -7,8 +7,15 @@
 
 use deno_core::{extension, op2, OpState};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+use tokio_rustls::TlsConnector;
 use tracing::{debug, error, info, warn};
+use x509_parser::extensions::GeneralName;
+use x509_parser::parse_x509_certificate;
 
 use crate::types::{Confidence, Finding, Severity};
 
@@ -220,6 +227,7 @@ extension!(
         op_plugin_return,
         op_fetch,
         op_tls_peer_certificate,
+        op_get_tls_certificate,
         // File system operations
         op_read_text_file,
         op_write_text_file,
@@ -233,7 +241,9 @@ extension!(
         op_make_temp_file,
         // Dictionary operations
         op_get_dictionary,
+        op_get_default_dictionary_id,
         op_get_dictionary_words,
+        op_get_dictionary_entries,
         op_list_dictionaries,
         // JavaScript AST parsing
         op_parse_js,
@@ -408,6 +418,181 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
 fn op_tls_peer_certificate(#[smi] _rid: u32, _detailed: bool) -> Option<serde_json::Value> {
     // Stub: return null for peer certificate
     None
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsCertificateResponse {
+    pub success: bool,
+    pub cert: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+fn fingerprint_sha256(der: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(der);
+    let digest = hasher.finalize();
+    digest
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<String>>()
+        .join(":")
+}
+
+#[op2(async)]
+#[serde]
+async fn op_get_tls_certificate(
+    #[string] hostname: String,
+    #[smi] port: u16,
+    #[smi] timeout_ms: u32,
+) -> TlsCertificateResponse {
+    let timeout_ms = if timeout_ms == 0 { 10_000 } else { timeout_ms as u64 };
+    let port = if port == 0 { 443 } else { port };
+
+    let addr = format!("{}:{}", hostname, port);
+
+    let tcp_stream = match timeout(Duration::from_millis(timeout_ms), TcpStream::connect(&addr)).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some(format!("TCP connect failed: {}", e)),
+            };
+        }
+        Err(_) => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some(format!("TCP connect timeout after {} ms", timeout_ms)),
+            };
+        }
+    };
+
+    let root_store = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let connector = TlsConnector::from(Arc::new(config));
+
+    let server_name = match rustls::pki_types::ServerName::try_from(hostname.clone()) {
+        Ok(name) => name,
+        Err(_) => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some("Invalid hostname for TLS SNI".to_string()),
+            };
+        }
+    };
+
+    let tls_stream = match timeout(
+        Duration::from_millis(timeout_ms),
+        connector.connect(server_name, tcp_stream),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some(format!("TLS handshake failed: {}", e)),
+            };
+        }
+        Err(_) => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some(format!("TLS handshake timeout after {} ms", timeout_ms)),
+            };
+        }
+    };
+
+    let (_socket, session) = tls_stream.get_ref();
+    let certs = match session.peer_certificates() {
+        Some(certs) if !certs.is_empty() => certs,
+        _ => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some("No peer certificates presented".to_string()),
+            };
+        }
+    };
+
+    let leaf_der = certs[0].as_ref();
+    let parsed = match parse_x509_certificate(leaf_der) {
+        Ok((_, cert)) => cert,
+        Err(e) => {
+            return TlsCertificateResponse {
+                success: false,
+                cert: None,
+                error: Some(format!("Failed to parse X509 certificate: {}", e)),
+            };
+        }
+    };
+
+    let alt_names = parsed
+        .subject_alternative_name()
+        .ok()
+        .flatten()
+        .map(|ext| {
+            ext.value
+                .general_names
+                .iter()
+                .filter_map(|name| match name {
+                    GeneralName::DNSName(dns) => Some(dns.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    let protocol = session
+        .protocol_version()
+        .map(|v| format!("{:?}", v))
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let cipher = session
+        .negotiated_cipher_suite()
+        .map(|s| format!("{:?}", s.suite()))
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let valid_from = chrono::DateTime::<chrono::Utc>::from_timestamp(
+        parsed.validity().not_before.timestamp(),
+        0,
+    )
+    .map(|dt| dt.to_rfc3339())
+    .unwrap_or_else(|| parsed.validity().not_before.to_string());
+
+    let valid_to = chrono::DateTime::<chrono::Utc>::from_timestamp(
+        parsed.validity().not_after.timestamp(),
+        0,
+    )
+    .map(|dt| dt.to_rfc3339())
+    .unwrap_or_else(|| parsed.validity().not_after.to_string());
+
+    let cert_json = serde_json::json!({
+        "subject": parsed.subject().to_string(),
+        "issuer": parsed.issuer().to_string(),
+        "validFrom": valid_from,
+        "validTo": valid_to,
+        "fingerprint": fingerprint_sha256(leaf_der),
+        "serialNumber": parsed.raw_serial_as_string(),
+        "altNames": alt_names,
+        "protocol": protocol,
+        "cipher": cipher,
+    });
+
+    TlsCertificateResponse {
+        success: true,
+        cert: Some(cert_json),
+        error: None,
+    }
 }
 
 // ============================================================
@@ -1074,6 +1259,14 @@ struct JsDictionary {
     tags: Option<String>,
 }
 
+#[derive(Serialize)]
+struct JsDictionaryEntry {
+    word: String,
+    weight: f64,
+    category: Option<String>,
+    metadata: Option<serde_json::Value>,
+}
+
 /// Get dictionary by ID or name
 #[op2(async)]
 #[serde]
@@ -1129,6 +1322,40 @@ async fn op_get_dictionary(
     }
 }
 
+/// Get the configured default dictionary ID for a type
+#[op2(async)]
+#[string]
+async fn op_get_default_dictionary_id(
+    #[string] dict_type: String,
+) -> Result<String, deno_error::JsErrorBox> {
+    #[cfg(feature = "db-postgres")]
+    {
+        let pool = get_dictionary_pool().ok_or_else(|| {
+            deno_error::JsErrorBox::generic("Dictionary database not initialized")
+        })?;
+
+        let dict_id: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM configurations WHERE category = 'dictionary_default' AND key = $1"
+        )
+        .bind(&dict_type)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
+        return Ok(dict_id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_default());
+    }
+
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        let _ = dict_type;
+        Err(deno_error::JsErrorBox::generic(
+            "Dictionary operations require `db-postgres` feature",
+        ))
+    }
+}
+
 /// Get words from a dictionary by ID or name
 #[op2(async)]
 #[serde]
@@ -1168,6 +1395,62 @@ async fn op_get_dictionary_words(
             .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
 
         return Ok(words);
+    }
+
+    #[cfg(not(feature = "db-postgres"))]
+    {
+        let _ = (id_or_name, limit);
+        Err(deno_error::JsErrorBox::generic(
+            "Dictionary operations require `db-postgres` feature",
+        ))
+    }
+}
+
+/// Get structured entries from a dictionary by ID or name
+#[op2(async)]
+#[serde]
+async fn op_get_dictionary_entries(
+    #[string] id_or_name: String,
+    #[smi] limit: Option<i32>,
+) -> Result<Vec<JsDictionaryEntry>, deno_error::JsErrorBox> {
+    #[cfg(feature = "db-postgres")]
+    {
+        let pool = get_dictionary_pool().ok_or_else(|| {
+            deno_error::JsErrorBox::generic("Dictionary database not initialized")
+        })?;
+
+        let dict_id: Option<String> =
+            sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
+                .bind(&id_or_name)
+                .bind(&id_or_name)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
+        let dict_id = match dict_id {
+            Some(id) => id,
+            None => return Ok(vec![]),
+        };
+
+        let limit_val = limit.unwrap_or(10000) as i64;
+        let rows: Vec<(String, f64, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2"
+        )
+        .bind(&dict_id)
+        .bind(limit_val)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
+
+        return Ok(rows
+            .into_iter()
+            .map(|(word, weight, category, metadata)| JsDictionaryEntry {
+                word,
+                weight,
+                category,
+                metadata: metadata.and_then(|raw| serde_json::from_str(&raw).ok()),
+            })
+            .collect());
     }
 
     #[cfg(not(feature = "db-postgres"))]

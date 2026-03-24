@@ -69,6 +69,22 @@ globalThis.Sentinel = {
   log: (level, message) => {
     Deno.core.ops.op_plugin_log(level, message)
   },
+
+  TLS: {
+    /**
+     * Get leaf TLS certificate details from remote host.
+     * @param {string} hostname - target hostname
+     * @param {object} [options] - options
+     * @param {number} [options.port=443] - target port
+     * @param {number} [options.timeout=10000] - timeout in milliseconds
+     * @returns {Promise<{success: boolean, cert?: object, error?: string}>}
+     */
+    getCertificate: async (hostname, options = {}) => {
+      const port = options.port || 443
+      const timeout = options.timeout || 10000
+      return await Deno.core.ops.op_get_tls_certificate(hostname, port, timeout)
+    },
+  },
   
   // JavaScript AST parsing API (powered by oxc_parser)
   AST: {
@@ -147,6 +163,16 @@ globalThis.Sentinel = {
     get: async (idOrName) => {
       return await Deno.core.ops.op_get_dictionary(idOrName)
     },
+
+    /**
+     * Get the configured default dictionary id for a type
+     * @param {string} dictType
+     * @returns {Promise<string | null>}
+     */
+    getDefaultId: async (dictType) => {
+      const value = await Deno.core.ops.op_get_default_dictionary_id(dictType)
+      return value || null
+    },
     
     /**
      * Get words from a dictionary
@@ -156,6 +182,16 @@ globalThis.Sentinel = {
      */
     getWords: async (idOrName, limit) => {
       return await Deno.core.ops.op_get_dictionary_words(idOrName, limit || null)
+    },
+
+    /**
+     * Get structured entries from a dictionary
+     * @param {string} idOrName - Dictionary ID or name
+     * @param {number} [limit=10000]
+     * @returns {Promise<Array<{word: string, weight: number, category?: string, metadata?: any}>>}
+     */
+    getEntries: async (idOrName, limit) => {
+      return await Deno.core.ops.op_get_dictionary_entries(idOrName, limit || null)
     },
     
     /**
@@ -1615,5 +1651,3 @@ globalThis.console = {
   _timers: new Map(),
   _counters: new Map(),
 }
-
-

@@ -1,5 +1,8 @@
 //! Bug Bounty commands for Tauri
 
+use super::bounty_workflow_event_support::{
+    build_workflow_trigger_inputs_from_event, run_workflow_template_with_inputs,
+};
 use chrono::Utc;
 use sentinel_bounty::services::{
     CreateFindingInput, CreateProgramInput, CreateSubmissionInput, FindingService,
@@ -2047,7 +2050,7 @@ pub struct CreateWorkflowTemplateRequest {
 pub struct InputMapping {
     /// Target field name in current step's input (e.g., "targets")
     pub target_field: String,
-    /// Source step ID (e.g., "step_subdomain_enum")
+    /// Source step ID (e.g., "step_subdomain_enum"), or "__trigger__" for workflow initial inputs
     pub source_step_id: String,
     /// JSONPath expression to extract data (e.g., "$.data.subdomains")
     pub source_path: String,
@@ -2079,6 +2082,221 @@ pub struct CreateWorkflowBindingRequest {
     pub auto_run_on_change: Option<bool>,
     pub trigger_conditions: Option<serde_json::Value>,
     pub schedule_cron: Option<String>,
+}
+
+fn build_builtin_workflow_templates() -> Vec<BountyWorkflowTemplateRow> {
+    let now = Utc::now().to_rfc3339();
+
+    let domain_discovery_steps = vec![
+        WorkflowStepDefinition {
+            id: "step_subdomain_enum".to_string(),
+            name: "Subdomain Enumeration".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("subdomain_enumerator".to_string()),
+            config: serde_json::json!({
+                "domain": "",
+                "removeDuplicates": true,
+                "concurrency": 5,
+            }),
+            depends_on: vec![],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_dns_resolver".to_string(),
+            name: "DNS Resolution".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("dns_resolver".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "recordTypes": ["A", "AAAA", "CNAME", "MX", "NS"],
+                "concurrency": 10,
+            }),
+            depends_on: vec!["step_subdomain_enum".to_string()],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_http_probe".to_string(),
+            name: "HTTP Probe".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("http_prober".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "ports": [80, 443, 8080, 8443],
+                "checkHttp": true,
+                "checkHttps": true,
+            }),
+            depends_on: vec!["step_subdomain_enum".to_string()],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_tech_fp".to_string(),
+            name: "Technology Fingerprint".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("tech_fingerprinter".to_string()),
+            config: serde_json::json!({
+                "url": "",
+            }),
+            depends_on: vec!["step_http_probe".to_string()],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_favicon_fp".to_string(),
+            name: "Favicon Fingerprint".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("favicon_fingerprinter".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "followRedirects": true,
+                "concurrency": 10,
+            }),
+            depends_on: vec!["step_http_probe".to_string()],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_cert_monitor".to_string(),
+            name: "Certificate Discovery".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("cert_monitor".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "checkExpiry": true,
+                "expiryWarningDays": 30,
+            }),
+            depends_on: vec!["step_http_probe".to_string()],
+            input_mappings: vec![],
+        },
+    ];
+
+    let network_service_steps = vec![
+        WorkflowStepDefinition {
+            id: "step_cidr_mapper".to_string(),
+            name: "CIDR Expansion".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("cidr_mapper".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "maxHosts": 1024,
+                "includeNetworkBroadcast": false,
+            }),
+            depends_on: vec![],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_port_monitor".to_string(),
+            name: "Port Monitoring".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("port_monitor".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "detectService": true,
+            }),
+            depends_on: vec!["step_cidr_mapper".to_string()],
+            input_mappings: vec![],
+        },
+        WorkflowStepDefinition {
+            id: "step_service_fp".to_string(),
+            name: "Service Fingerprint".to_string(),
+            step_type: "plugin".to_string(),
+            tool_name: None,
+            plugin_id: Some("service_fingerprinter".to_string()),
+            config: serde_json::json!({
+                "targets": [],
+                "readBanner": true,
+                "followHttpRedirects": true,
+            }),
+            depends_on: vec!["step_port_monitor".to_string()],
+            input_mappings: vec![],
+        },
+    ];
+
+    vec![
+        BountyWorkflowTemplateRow {
+            id: "builtin-asm-domain-discovery".to_string(),
+            name: "ASM Domain Discovery".to_string(),
+            description: Some(
+                "Enumerate subdomains, resolve DNS, probe web services, fingerprint technologies, and discover certificates."
+                    .to_string(),
+            ),
+            category: "recon".to_string(),
+            workflow_definition_id: None,
+            steps_json: serde_json::to_string(&domain_discovery_steps).unwrap_or_default(),
+            input_schema_json: Some(
+                serde_json::json!({
+                    "type": "object",
+                    "required": ["domain"],
+                    "properties": {
+                        "domain": { "type": "string", "description": "Root domain to enumerate and map" }
+                    }
+                })
+                .to_string(),
+            ),
+            output_schema_json: Some(
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "surface_bundle": { "type": "object" }
+                    }
+                })
+                .to_string(),
+            ),
+            tags_json: Some(
+                serde_json::json!(["asm", "surface", "dns", "recon", "web", "favicon"]).to_string(),
+            ),
+            is_built_in: true,
+            estimated_duration_mins: Some(25),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        },
+        BountyWorkflowTemplateRow {
+            id: "builtin-asm-network-service-mapping".to_string(),
+            name: "ASM Network Service Mapping".to_string(),
+            description: Some(
+                "Scan exposed ports and fingerprint reachable services for network surface mapping."
+                    .to_string(),
+            ),
+            category: "monitoring".to_string(),
+            workflow_definition_id: None,
+            steps_json: serde_json::to_string(&network_service_steps).unwrap_or_default(),
+            input_schema_json: Some(
+                serde_json::json!({
+                    "type": "object",
+                    "required": ["targets"],
+                    "properties": {
+                        "targets": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Hosts, IPs, or CIDR ranges to expand, scan, and fingerprint"
+                        }
+                    }
+                })
+                .to_string(),
+            ),
+            output_schema_json: Some(
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "surface_bundle": { "type": "object" }
+                    }
+                })
+                .to_string(),
+            ),
+            tags_json: Some(
+                serde_json::json!(["asm", "surface", "ports", "services", "network", "cidr"]).to_string(),
+            ),
+            is_built_in: true,
+            estimated_duration_mins: Some(20),
+            created_at: now.clone(),
+            updated_at: now,
+        },
+    ]
 }
 
 /// Create a workflow template
@@ -2209,59 +2427,19 @@ pub async fn bounty_run_workflow_template(
     program_id: Option<String>,
     inputs: serde_json::Value,
 ) -> Result<String, String> {
-    let template = db_service
-        .get_bounty_workflow_template(&template_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Template not found".to_string())?;
-
-    let steps: Vec<WorkflowStepDefinition> =
-        serde_json::from_str(&template.steps_json).map_err(|e| format!("Invalid steps: {}", e))?;
-
-    if steps.is_empty() {
-        return Err("Template has no steps".to_string());
-    }
-
-    // Generate execution ID
-    let execution_id = Uuid::new_v4().to_string();
-
-    log::info!(
-        "Starting workflow execution {} for template {}",
-        execution_id,
-        template_id
-    );
-    log::info!("Inputs: {:?}", inputs);
-    log::info!("Steps: {}", steps.len());
-
-    // Debug: log input_mappings for each step
-    for step in &steps {
-        if !step.input_mappings.is_empty() {
-            log::info!(
-                "Step '{}' has {} input mappings: {:?}",
-                step.id,
-                step.input_mappings.len(),
-                step.input_mappings
-            );
-        }
-    }
-
-    // Clone for async task
-    let exec_id = execution_id.clone();
-    let db = db_service.inner().clone();
-    let pm = plugin_manager.inner().clone();
-    let app = app_handle.clone();
-    let initial_inputs = inputs.clone();
-
-    // Spawn async task to execute workflow
-    tokio::spawn(async move {
-        execute_workflow_steps(exec_id, steps, initial_inputs, program_id, db, pm, app).await;
-    });
-
-    Ok(execution_id)
+    run_workflow_template_with_inputs(
+        app_handle,
+        db_service.inner().clone(),
+        plugin_manager.inner().clone(),
+        template_id,
+        program_id,
+        inputs,
+    )
+    .await
 }
 
 /// Execute workflow steps asynchronously
-async fn execute_workflow_steps(
+pub(crate) async fn execute_workflow_steps(
     execution_id: String,
     steps: Vec<WorkflowStepDefinition>,
     initial_inputs: serde_json::Value,
@@ -2439,6 +2617,7 @@ fn resolve_step_inputs(
     step_results: &HashMap<String, serde_json::Value>,
     initial_inputs: &serde_json::Value,
 ) -> serde_json::Value {
+    const TRIGGER_INPUT_SOURCE_ID: &str = "__trigger__";
     let mut resolved = step.config.clone();
 
     log::info!(
@@ -2472,7 +2651,13 @@ fn resolve_step_inputs(
             mapping.source_path
         );
 
-        if let Some(source_result) = step_results.get(&mapping.source_step_id) {
+        let source_result = if mapping.source_step_id == TRIGGER_INPUT_SOURCE_ID {
+            Some(initial_inputs)
+        } else {
+            step_results.get(&mapping.source_step_id)
+        };
+
+        if let Some(source_result) = source_result {
             log::info!(
                 "Found source_result for step '{}', keys: {:?}",
                 mapping.source_step_id,
@@ -2961,13 +3146,40 @@ pub async fn bounty_delete_workflow_binding(
         .map_err(|e| e.to_string())
 }
 
-/// Initialize built-in workflow templates (disabled - no built-in templates)
+/// Initialize built-in workflow templates
 #[tauri::command]
 pub async fn bounty_init_builtin_templates(
-    _db_service: State<'_, Arc<DatabaseService>>,
+    db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<Vec<BountyWorkflowTemplateRow>, String> {
-    // Built-in templates have been removed. Users should create their own templates.
-    Ok(Vec::new())
+    let builtins = build_builtin_workflow_templates();
+    let existing = db_service
+        .list_bounty_workflow_templates(None, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let existing_by_id: std::collections::HashMap<String, BountyWorkflowTemplateRow> = existing
+        .into_iter()
+        .map(|template| (template.id.clone(), template))
+        .collect();
+
+    let mut created_or_updated = Vec::new();
+
+    for template in builtins {
+        if existing_by_id.contains_key(&template.id) {
+            db_service
+                .update_bounty_workflow_template(&template)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            db_service
+                .create_bounty_workflow_template(&template)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        created_or_updated.push(template);
+    }
+
+    Ok(created_or_updated)
 }
 
 // ============================================================================
@@ -3424,6 +3636,7 @@ pub async fn bounty_trigger_workflows_for_event_internal(
         .ok_or_else(|| "Change event not found".to_string())?;
 
     let mut triggered_workflow_ids = Vec::new();
+    let workflow_inputs = build_workflow_trigger_inputs_from_event(&db_service, &event).await?;
 
     for result in triggered_results {
         if result.triggered {
@@ -3448,10 +3661,6 @@ pub async fn bounty_trigger_workflows_for_event_internal(
                 {
                     if !steps.is_empty() {
                         let execution_id = uuid::Uuid::new_v4().to_string();
-                        let inputs = serde_json::json!({
-                            "asset_id": event.asset_id,
-                            "event_id": event.id,
-                        });
 
                         log::info!("Auto-triggering workflow execution {} for template {} based on event {}", execution_id, template.id, event.id);
 
@@ -3460,6 +3669,7 @@ pub async fn bounty_trigger_workflows_for_event_internal(
                         let pm = plugin_manager.clone();
                         let app = app_handle.clone();
                         let program_id = event.program_id.clone();
+                        let inputs = workflow_inputs.clone();
 
                         tokio::spawn(async move {
                             execute_workflow_steps(exec_id, steps, inputs, program_id, db, pm, app)
@@ -5596,10 +5806,18 @@ pub async fn bounty_list_plugin_ports() -> Result<Vec<PluginPortInfo>, String> {
     // List of known builtin plugins
     let plugin_ids = vec![
         "subdomain_enumerator",
+        "cidr_mapper",
+        "dns_resolver",
         "http_prober",
         "tech_fingerprinter",
+        "favicon_fingerprinter",
+        "port_monitor",
+        "service_fingerprinter",
+        "cert_monitor",
         "directory_bruteforcer",
         "js_analyzer",
+        "sensitive_file_scanner",
+        "risk_scanner",
         "ssrf_detector",
         "cors_misconfiguration",
         "open_redirect_detector",

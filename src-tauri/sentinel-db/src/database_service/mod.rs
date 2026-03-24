@@ -25,7 +25,9 @@ pub mod surface;
 pub mod surface_artifacts;
 pub mod surface_detail;
 pub mod surface_extensions;
+pub mod surface_inventory;
 pub mod surface_migrations;
+pub mod surface_runs;
 pub mod surface_topology;
 pub mod task_tool;
 pub mod todos;
@@ -84,7 +86,11 @@ pub use surface_detail::*;
 #[allow(unused_imports)]
 pub use surface_extensions::*;
 #[allow(unused_imports)]
+pub use surface_inventory::*;
+#[allow(unused_imports)]
 pub use surface_migrations::*;
+#[allow(unused_imports)]
+pub use surface_runs::*;
 #[allow(unused_imports)]
 pub use surface_topology::*;
 #[allow(unused_imports)]

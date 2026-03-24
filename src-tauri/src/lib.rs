@@ -423,6 +423,15 @@ pub fn run() {
                     tracing::info!("Dictionary pool initialized for plugins");
                 }
 
+                if let Err(e) =
+                    crate::services::builtin_bounty_plugins::initialize_builtin_bounty_resources(
+                        &db_service,
+                    )
+                    .await
+                {
+                    tracing::warn!("Failed to initialize builtin bounty resources: {}", e);
+                }
+
                 // Initialize agent configuration from database
                 if let Err(e) = tool_commands::init_agent_config(&db_service).await {
                     tracing::error!("Failed to initialize agent config: {}", e);
@@ -618,8 +627,6 @@ pub fn run() {
                 handle.manage(Arc::new(tokio::sync::RwLock::new(MonitorSchedulerState::new())));
                 handle.manage(workflow_engine);
                 handle.manage(workflow_scheduler);
-                handle.manage(commands::web_explorer::WebExplorerState::default());
-
                 // Initialize asset enrichment service
                 let enrichment_service = Arc::new(sentinel_bounty::services::AssetEnrichmentService::new(
                     db_service_for_enrichment
@@ -671,17 +678,6 @@ pub fn run() {
                         handle_for_gateway,
                     ).await {
                         tracing::warn!("Failed to auto-start HTTP gateway: {}", e);
-                    }
-                });
-
-                // Auto-start agent-browser daemon for browser automation
-                tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    tracing::info!("Starting agent-browser daemon...");
-                    if let Err(e) = sentinel_tools::agent_browser::ensure_daemon("default") {
-                        tracing::warn!("Failed to start agent-browser daemon: {}", e);
-                    } else {
-                        tracing::info!("Agent-browser daemon started successfully");
                     }
                 });
 
@@ -942,6 +938,7 @@ pub fn run() {
             commands::bounty_delete_workflow_template,
             commands::bounty_update_workflow_template,
             commands::bounty_run_workflow_template,
+            commands::bounty_run_workflow_template_for_event,
             commands::bounty_create_workflow_binding,
             commands::bounty_list_workflow_bindings,
             commands::bounty_delete_workflow_binding,
@@ -1004,10 +1001,12 @@ pub fn run() {
             // Surface graph commands
             commands::surface_get_overview,
             commands::surface_list_assets,
+            commands::surface_list_inventory,
             commands::surface_list_relations,
             commands::surface_list_discovery_runs,
             commands::surface_get_topology,
             commands::surface_get_asset_detail,
+            commands::surface_get_discovery_run_detail,
             commands::surface_create_observation,
             // Asset enrichment commands
             commands::asset_enrichment_commands::enrich_asset,
@@ -1079,6 +1078,9 @@ pub fn run() {
             dictionary::get_dictionary_words,
             dictionary::get_dictionary_words_paged,
             dictionary::add_dictionary_words,
+            dictionary::add_dictionary_entries,
+            dictionary::update_dictionary_word,
+            dictionary::update_dictionary_words_batch,
             dictionary::remove_dictionary_words,
             dictionary::search_dictionary_words,
             dictionary::clear_dictionary,
@@ -1298,19 +1300,6 @@ pub fn run() {
             tool_commands::save_exploitdb_settings,
             tool_commands::get_exploitdb_sync_status,
             tool_commands::sync_exploitdb,
-            // Vision Explorer V2 commands - disabled after ReAct refactoring
-            // Now accessed through Rig Tool interface
-            // tool_commands::vision_explorer_receive_credentials,
-            // tool_commands::vision_explorer_send_user_message,
-            // tool_commands::vision_explorer_skip_login,
-            // tool_commands::vision_explorer_manual_login_complete,
-            // commands::vision_explorer_v2::start_vision_explorer_v2,
-            // commands::vision_explorer_v2::stop_vision_explorer_v2,
-            // commands::vision_explorer_v2::vision_explorer_v2_receive_credentials,
-            // commands::vision_explorer_v2::vision_explorer_v2_skip_login,
-            // commands::vision_explorer_v2::get_vision_explorer_v2_status,
-            // commands::vision_explorer_v2::list_vision_explorer_v2_sessions,
-
             // Task Tool Integration commands
             commands::task_tool_commands::get_task_active_tools,
             commands::task_tool_commands::get_task_tool_statistics,
@@ -1460,9 +1449,6 @@ pub fn run() {
             commands::team_v3_commands::team_v3_list_blackboard_entries,
             commands::team_v3_commands::team_v3_submit_plan_revision,
             commands::team_v3_commands::team_v3_review_plan_revision,
-            // Agent Browser commands
-            commands::agent_browser_commands::run_agent_browser_command,
-            commands::agent_browser_commands::get_agent_browser_version,
         ])
         .run(context)
         .expect("Failed to start Tauri application");
@@ -1516,10 +1502,6 @@ async fn cleanup_and_exit(app: &tauri::AppHandle) {
             let _ = traffic_analysis_commands::stop_traffic_analysis_internal(app, &state).await;
         }
     }
-
-    // Stop agent-browser daemon
-    tracing::info!("Stopping agent-browser daemon...");
-    sentinel_tools::agent_browser::stop_all_daemons();
 
     tracing::info!("Application cleanup completed, exiting");
     std::process::exit(0);

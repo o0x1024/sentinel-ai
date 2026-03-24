@@ -436,7 +436,8 @@ export default {
     agentCategories: {
       recon: 'Reconnaissance',
       discovery: 'Discovery',
-      vuln: 'Vulnerability Scan',
+      risk: 'Risk Scanning',
+      vuln: 'Risk Scanning',
       exploit: 'Exploitation',
       monitor: 'Change Monitor',
       utility: 'Utility',

@@ -72,18 +72,6 @@
 
         </div>
         <div class="flex items-center gap-2">
-          <!-- Web Explorer History Button - shows when there's exploration history -->
-          <button 
-            v-if="webExplorerEvents.hasHistory.value"
-            @click="handleToggleWebExplorer()"
-            class="btn btn-sm gap-1"
-            :class="activeRightPanel === 'web' ? 'btn-primary' : 'btn-ghost text-primary'"
-            :title="activeRightPanel === 'web' ? t('agent.webExplorerPanelOpen') : t('agent.viewWebExplorerHistory')"
-          >
-            <i class="fas fa-globe"></i>
-            <span>{{ t('agent.explore') }}</span>
-            <span class="badge badge-xs badge-primary">{{ webExplorerEvents.steps.value.length }}</span>
-          </button>
           <!-- Todos Button - always visible -->
           <button 
             @click="handleToggleTodos()"
@@ -155,7 +143,6 @@
             :is-executing="isExecuting"
             :is-streaming="isStreaming"
             :streaming-content="streamingContent"
-            :is-web-explorer-active="isWebExplorerActive"
             class="flex-1"
             @resend="handleResendMessage"
             @edit="handleEditMessage"
@@ -201,7 +188,7 @@
           />
         </div>
         
-        <!-- Right: Side Panel (WebExplorer, Todo, HTML, or Terminal) -->
+        <!-- Right: Side Panel (Todo, HTML, Terminal, or Team) -->
         <div 
           v-if="activeRightPanel"
           class="sidebar-container flex-shrink-0 border-l border-base-300 flex flex-col overflow-hidden bg-base-100 relative"
@@ -228,26 +215,6 @@
               @toggle-selected-task="toggleSelectedTeamTask"
             />
 
-            <WebExplorerPanel 
-               v-else-if="activeRightPanel === 'web'"
-               :steps="webExplorerEvents.steps.value" 
-               :coverage="webExplorerEvents.coverage.value"
-               :discovered-apis="webExplorerEvents.discoveredApis.value"
-               :is-active="activeRightPanel === 'web'"
-               :current-url="webExplorerEvents.currentUrl.value"
-               :current-plan="webExplorerEvents.currentPlan.value"
-               :current-progress="webExplorerEvents.currentProgress.value"
-               :multi-agent="webExplorerEvents.multiAgent.value"
-               :is-multi-agent-mode="webExplorerEvents.isMultiAgentMode.value"
-               :activity="webExplorerEvents.activity.value"
-               :show-takeover-form="webExplorerEvents.showTakeoverForm.value"
-               :takeover-message="webExplorerEvents.takeoverMessage.value"
-               :takeover-fields="webExplorerEvents.takeoverFields.value"
-               :login-timeout-seconds="webExplorerEvents.loginTimeoutSeconds.value"
-               :execution-id="webExplorerEvents.currentExecutionId.value"
-               class="h-full border-0 rounded-none bg-transparent"
-               @close="handleCloseWebExplorer"
-            />
             <TodoPanel 
               v-else-if="activeRightPanel === 'todos'" 
               :todos="todos"
@@ -312,14 +279,12 @@ import type {
 } from '@/types/agentTeam'
 import { agentTeamApi } from '@/api/agentTeam'
 import { useAgentEvents } from '@/composables/useAgentEvents'
-import { useWebExplorerEvents } from '@/composables/useWebExplorerEvents'
 import { useTodos } from '@/composables/useTodos'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
 import TodoPanel from './TodoPanel.vue'
 import HtmlPanel from './HtmlPanel.vue'
-import WebExplorerPanel from './WebExplorerPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import SubagentDetailModal from './SubagentDetailModal.vue'
 import InteractiveTerminal from '@/components/Tools/InteractiveTerminal.vue'
@@ -376,7 +341,7 @@ interface AgentAssistantMessageSavedEvent {
   timestamp: number
 }
 
-type RightPanelKey = 'web' | 'todos' | 'html' | 'terminal' | 'team'
+type RightPanelKey = 'todos' | 'html' | 'terminal' | 'team'
 
 type TeamOrchestrationStepType = 'agent' | 'serial' | 'parallel'
 
@@ -1020,14 +985,16 @@ const buildEffectiveToolConfigForExecution = () => {
   }
 }
 
-const TEAM_SKILLS_BASE_TOOLS = [
+const LEGACY_SKILLS_TOOL_IDS = [
   'skills',
   'shell',
   'http_request',
   'subagent_execute',
   'subagent_await',
   'subagent_channel',
-  'tenth_man',
+  'tenth_man_review',
+  'memory',
+  'todos',
 ]
 
 const normalizeToolIdList = (items: unknown): string[] => {
@@ -1054,12 +1021,15 @@ const parseToolSelectionStrategy = (
       return { mode: 'Manual', manualTools: normalizeToolIdList(strategyObj.Manual) }
     }
     if (Array.isArray(strategyObj.Skills)) {
-      return { mode: 'Skills', manualTools: [] as string[] }
+      return { mode: 'Manual', manualTools: [...LEGACY_SKILLS_TOOL_IDS] }
     }
   }
 
   if (typeof strategyRaw === 'string') {
     const mode = strategyRaw.trim() || 'Keyword'
+    if (mode === 'Skills') {
+      return { mode: 'Manual', manualTools: [...LEGACY_SKILLS_TOOL_IDS] }
+    }
     if (mode === 'Manual') {
       return { mode, manualTools: normalizeToolIdList(fallbackManualTools) }
     }
@@ -1083,15 +1053,6 @@ const buildTeamToolPolicyFromUiConfig = (config: UiToolConfigPayload) => {
   } else if (strategy.mode === 'Manual') {
     const manualSet = new Set([...strategy.manualTools, ...fixedSet])
     allowlist = [...manualSet].filter((tool) => !disabledSet.has(tool))
-  } else if (strategy.mode === 'Skills') {
-    const allowSet = new Set([...TEAM_SKILLS_BASE_TOOLS, ...fixedSet])
-    if (!disabledSet.has('memory')) {
-      allowSet.add('memory')
-    }
-    if (!disabledSet.has('todos')) {
-      allowSet.add('todos')
-    }
-    allowlist = [...allowSet].filter((tool) => !disabledSet.has(tool))
   }
 
   const policy: Record<string, unknown> = {
@@ -1672,12 +1633,6 @@ const loadSubagentRuns = async (parentExecutionId: string, loadToken?: number) =
 }
 
 
-// Web Explorer Events
-// Important: pass through the nullable execution id ref so Web Explorer can
-// receive early events (start/plan/progress) and then bind itself to the session.
-const webExplorerEvents = useWebExplorerEvents(agentEvents.currentExecutionId)
-const isWebExplorerActive = computed(() => webExplorerEvents.isVisionActive.value)
-
 // Todos management
 interface TodoSourceOption {
   key: string
@@ -1844,10 +1799,6 @@ const activeRightPanel = ref<RightPanelKey | null>(null)
 let isSyncingRightPanel = false
 
 const closeRightPanelByKey = (panel: RightPanelKey) => {
-  if (panel === 'web') {
-    webExplorerEvents.close()
-    return
-  }
   if (panel === 'todos') {
     todosComposable.close()
     return
@@ -1864,9 +1815,6 @@ const closeRightPanelByKey = (panel: RightPanelKey) => {
 }
 
 const closeOtherRightPanels = (activePanel: RightPanelKey) => {
-  if (activePanel !== 'web') {
-    webExplorerEvents.close()
-  }
   if (activePanel !== 'todos') {
     todosComposable.close()
   }
@@ -1901,10 +1849,6 @@ const syncRightPanelState = (panel: RightPanelKey, isActive: boolean) => {
     isSyncingRightPanel = false
   }
 }
-
-watch(isWebExplorerActive, (active) => {
-  syncRightPanelState('web', active)
-}, { immediate: true })
 
 watch(isTodosPanelActive, (active) => {
   syncRightPanelState('todos', active)
@@ -1943,10 +1887,6 @@ const handleRenderHtml = (htmlContent: string) => {
 
 const hasHtmlPanelContent = computed(() => !!htmlPanelContent.value)
 
-const handleCloseWebExplorer = () => {
-  deactivateRightPanel('web')
-}
-
 // Handle close todos panel
 const handleCloseTodos = () => {
   deactivateRightPanel('todos')
@@ -1962,15 +1902,6 @@ const handleCloseTerminal = () => {
 }
 
 // Handle toggle panel functions - ensure only one panel is active at a time
-const handleToggleWebExplorer = () => {
-  if (activeRightPanel.value === 'web') {
-    deactivateRightPanel('web')
-    return
-  }
-  activateRightPanel('web')
-  webExplorerEvents.open()
-}
-
 const handleToggleTodos = () => {
   if (activeRightPanel.value === 'todos') {
     deactivateRightPanel('todos')
@@ -4519,12 +4450,6 @@ const handleStop = async () => {
     
     // Notify useAgentEvents to stop execution status
     agentEvents.stopExecution()
-    
-    // Also stop Web Explorer if it's running
-    if (webExplorerEvents.isVisionActive.value) {
-      console.log('[AgentView] Stopping Web Explorer')
-      webExplorerEvents.stop()
-    }
     
   } catch (e) {
     console.error('[AgentView] Failed to stop execution:', e)

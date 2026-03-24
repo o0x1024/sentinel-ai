@@ -323,8 +323,9 @@ interface PluginRecord {
 }
 
 // 定义事件
-defineEmits<{
+const emit = defineEmits<{
   (e: 'show-upload'): void
+  (e: 'count-changed', count: number): void
 }>()
 
 // 状态
@@ -399,10 +400,15 @@ async function fetchPlugins() {
       plugins.value = response.data.filter((plugin: PluginRecord) => 
         plugin.metadata.main_category === 'agent'
       )
+      emit('count-changed', plugins.value.length)
+    } else {
+      plugins.value = []
+      emit('count-changed', 0)
     }
   } catch (error) {
     console.error('Failed to fetch agent tool plugins:', error)
     plugins.value = []
+    emit('count-changed', 0)
   } finally {
     isLoading.value = false
   }

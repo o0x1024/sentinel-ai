@@ -83,6 +83,49 @@ impl PluginPortRegistry {
             )],
         );
 
+        // CIDR Mapper
+        self.output_specs.insert(
+            "cidr_mapper".to_string(),
+            vec![
+                ("surface_ips".to_string(), ArtifactType::SurfaceIps),
+                ("surface_hosts".to_string(), ArtifactType::SurfaceHosts),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
+        );
+        self.input_specs.insert(
+            "cidr_mapper".to_string(),
+            vec![(
+                "targets".to_string(),
+                ParamBindingSpec {
+                    artifact_type: ArtifactType::RawData,
+                    extract_path: None,
+                    required: true,
+                },
+            )],
+        );
+
+        // DNS Resolver
+        self.output_specs.insert(
+            "dns_resolver".to_string(),
+            vec![
+                ("surface_domains".to_string(), ArtifactType::SurfaceDomains),
+                ("surface_ips".to_string(), ArtifactType::SurfaceIps),
+                ("surface_relations".to_string(), ArtifactType::SurfaceRelations),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
+        );
+        self.input_specs.insert(
+            "dns_resolver".to_string(),
+            vec![(
+                "targets".to_string(),
+                ParamBindingSpec {
+                    artifact_type: ArtifactType::Subdomains,
+                    extract_path: Some("subdomains[*].subdomain".to_string()),
+                    required: true,
+                },
+            )],
+        );
+
         // HTTP Prober
         self.output_specs.insert(
             "http_prober".to_string(),
@@ -122,6 +165,26 @@ impl PluginPortRegistry {
                 ParamBindingSpec {
                     artifact_type: ArtifactType::LiveHosts,
                     extract_path: Some("hosts[0].url".to_string()),
+                    required: true,
+                },
+            )],
+        );
+
+        // Favicon Fingerprinter
+        self.output_specs.insert(
+            "favicon_fingerprinter".to_string(),
+            vec![(
+                "surface_fingerprints".to_string(),
+                ArtifactType::SurfaceFingerprints,
+            )],
+        );
+        self.input_specs.insert(
+            "favicon_fingerprinter".to_string(),
+            vec![(
+                "targets".to_string(),
+                ParamBindingSpec {
+                    artifact_type: ArtifactType::LiveHosts,
+                    extract_path: Some("hosts[*].url".to_string()),
                     required: true,
                 },
             )],
@@ -270,6 +333,30 @@ impl PluginPortRegistry {
                 ParamBindingSpec {
                     artifact_type: ArtifactType::SurfaceHosts,
                     extract_path: Some("hosts[*].hostname".to_string()),
+                    required: true,
+                },
+            )],
+        );
+
+        // Service Fingerprinter
+        self.output_specs.insert(
+            "service_fingerprinter".to_string(),
+            vec![
+                ("surface_services".to_string(), ArtifactType::SurfaceServices),
+                (
+                    "surface_fingerprints".to_string(),
+                    ArtifactType::SurfaceFingerprints,
+                ),
+                ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
+            ],
+        );
+        self.input_specs.insert(
+            "service_fingerprinter".to_string(),
+            vec![(
+                "targets".to_string(),
+                ParamBindingSpec {
+                    artifact_type: ArtifactType::SurfaceBundle,
+                    extract_path: Some("ports[*]".to_string()),
                     required: true,
                 },
             )],

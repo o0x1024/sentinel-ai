@@ -77,10 +77,9 @@
             <h3 class="card-title text-sm">内置工具追踪测试</h3>
             <div class="form-control">
               <select v-model="builtinToolName" class="select select-sm select-bordered">
-                <option value="port_scan">端口扫描</option>
-                <option value="subdomain_brute">子域名爆破</option>
                 <option value="http_request">HTTP请求</option>
-                <option value="local_time">本地时间</option>
+                <option value="web_search">Web 搜索</option>
+                <option value="shell">Shell</option>
               </select>
             </div>
             <button 
@@ -170,7 +169,7 @@ const mcpConnectionId = ref('test-server')
 const mcpToolName = ref('test_tool')
 
 // Builtin test
-const builtinToolName = ref('port_scan')
+const builtinToolName = ref('http_request')
 
 // Error test
 const errorToolId = ref('error_plugin')

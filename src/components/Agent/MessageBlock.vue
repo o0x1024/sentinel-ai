@@ -364,12 +364,8 @@
         
         <!-- Display Mode -->
         <div v-else>
-          <div v-if="shouldHideContent" class="text-xs text-base-content/50 italic py-1 flex items-center gap-2">
-            <i class="fas fa-external-link-alt"></i>
-            <span>{{ t('agent.detailsInVisionPanel') }}</span>
-          </div>
           <div
-            v-else-if="isLightweightStreamingRender"
+            v-if="isLightweightStreamingRender"
             class="whitespace-pre-wrap break-words text-sm leading-relaxed text-base-content/90 font-mono"
           >
             {{ lightweightStreamingContent }}
@@ -441,7 +437,6 @@ const { t } = useI18n()
 
 const props = defineProps<{
   message: AgentMessage
-  isWebExplorerActive?: boolean
   isExecuting?: boolean
 }>()
 
@@ -1147,28 +1142,6 @@ const formattedContent = computed(() => {
     default:
       return wrapHtmlAsCodeBlock(content, cursor)
   }
-})
-
-// Check if content should be hidden (Web Explorer duplication)
-const shouldHideContent = computed(() => {
-  // Only apply if web explorer drawer is active
-  if (!props.isWebExplorerActive) return false
-  
-  // Check if it is a web explorer tool message
-  const toolName = props.message.metadata?.tool_name
-  if (toolName === 'web_explorer' || toolName === 'vision_explorer') {
-    // Hide tool_result and progress messages (which are usually verbose logs)
-    return ['tool_result', 'progress'].includes(props.message.type)
-  }
-  
-  // Also check if content looks like iteration logs
-  if (['tool_result', 'final'].includes(props.message.type)) {
-     if (props.message.content.includes('**迭代') && (props.message.content.includes('web_explorer') || props.message.content.includes('vision_explorer'))) {
-       return true
-     }
-  }
-  
-  return false
 })
 
 const showTableDownload = computed(() => {

@@ -2,9 +2,6 @@ export default {
   // AgentView
   newConversation: 'New Conversation',
   switchConversationList: 'Switch Conversation List',
-  webExplorerPanelOpen: 'Web Explorer Panel Open',
-  viewWebExplorerHistory: 'View Web Explorer History',
-  explore: 'Explore',
   todosPanelOpen: 'Todos Panel Open',
   viewTodos: 'View Todos',
   todos: 'Todos',
@@ -302,9 +299,9 @@ export default {
   aiGenerate: 'AI Generate',
   aiExpand: 'AI Expand',
   aiGenerating: 'AI Generating...',
-  aiGenerateHint: 'Select tools or add content to use AI generation',
+  aiGenerateHint: 'Add a brief or content to use AI generation',
   selectToolsFirst: 'Please select tools first',
-  selectToolsOrAddContent: 'Please select tools or add content first',
+  selectToolsOrAddContent: 'Please enter a brief or content first',
   selected: 'selected',
   noToolsAvailable: 'No tools available',
   tools: 'tools',
@@ -333,69 +330,12 @@ export default {
   longTermMemory: 'Long-term Memory',
   summaryContent: 'Summary Content',
 
-  // WebExplorerPanel
-  loginPageDetected: 'Login page detected, please enter credentials',
-  llmThinking: 'LLM Thinking',
-  alreadyLoggedIn: 'Logged In',
-  usernameAccount: 'Username/Account',
-  password: 'Password',
-  verificationCodeOptional: 'Verification Code (Optional)',
-  continueExploration: 'Continue Exploration',
-  skipLogin: 'Skip Login',
-  webMessagePlaceholder: 'Instruction for Web Explorer (Enter to send, Shift+Enter for newline)',
-  send: 'Send',
-  stop: 'Stop',
-
-  // More WebExplorerPanel strings
-  username: 'Username',
-  verificationCode: 'Verification Code',
-
-  // WebExplorerProgress
-  route: 'Route',
-  element: 'Element',
-  component: 'Component',
-  pendingRoutes: 'Pending Routes',
-  pendingRoutesCount: 'Pending Routes ({count})',
-
-  // Web Plan & Progress
-  webGoal: 'Goal',
-  webSteps: 'Steps',
-  webCompletion: 'Completion',
-  webProgress: 'Progress',
-  webPages: 'Pages',
-  webElements: 'Elements',
-
-  // Multi-Agent Mode
-  multiAgentMode: 'Multi-Agent Mode',
-  workersCompleted: 'workers completed',
-  webWaitingForEvents: 'Waiting for events...',
-  webActivity: 'Activity',
-  webActivityMultiAgentStart: 'Multi-agent started: {mode}, workers: {count}',
-  webActivityWorkerTasks: 'Manager assigned {count} scope(s)',
-  webActivityWorkerProgress: '{scope}: {status} ({pages} {pagesLabel}, {apis} APIs)',
-  webActivityWorkerComplete: '{scope} completed ({pages} {pagesLabel}, {apis} APIs)',
-  webActivityWorkerDecision: '{scope} (#{iteration}) decided: {action} ({progress}%)',
-  webActivityWorkerAction: '{scope} (#{iteration}) action: {action} → {result} {duration}',
-  webActivityPlan: 'Plan updated: {phase}',
-  webActivityProgress: 'Progress: {phase} {iteration}/{max}',
-  webActivityApi: 'API discovered: {method} {url}',
-  webActivityComplete: 'Completed: {status}',
-  totalUrls: 'Total URLs',
-  totalApis: 'Total APIs',
-  managerAgent: 'Manager Agent',
-  workerAgent: 'Worker Agent',
-  scopeExploration: 'Scope Exploration',
-  parallelMode: 'Parallel',
-  sequentialMode: 'Sequential',
-  adaptiveMode: 'Adaptive',
-
   // MarkdownRenderer
   sourceCitation: 'Source Citation #{number}',
   copyCode: 'Copy code',
   renderHtml: 'Render HTML',
 
   // MessageBlock actions & status
-  detailsInWebExplorerPanel: 'Details are shown in the Web Explorer panel',
   collapseDetails: 'Collapse details',
   expandDetails: 'Expand details',
   download: 'Download',

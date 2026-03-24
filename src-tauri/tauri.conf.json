@@ -35,9 +35,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": [
-      "bin/sentinel-agent-browser"
-    ],
     "macOS": {
       "entitlements": "macos-extension/MainApp.entitlements"
     },

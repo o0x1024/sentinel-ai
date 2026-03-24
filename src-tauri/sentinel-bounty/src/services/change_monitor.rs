@@ -85,11 +85,13 @@ pub struct ChangeMonitorConfig {
     #[serde(default)]
     pub web_plugins: Vec<MonitorPluginConfig>,
 
-    /// Enable Vulnerability monitoring
-    pub enable_vuln_monitoring: bool,
-    /// Plugin configuration for Vulnerability monitoring
+    /// Enable Risk monitoring
+    #[serde(alias = "enable_vuln_monitoring")]
+    pub enable_risk_monitoring: bool,
+    /// Plugin configuration for Risk monitoring
     #[serde(default)]
-    pub vuln_plugins: Vec<MonitorPluginConfig>,
+    #[serde(alias = "vuln_plugins")]
+    pub risk_plugins: Vec<MonitorPluginConfig>,
 
     /// Auto-trigger workflows on high severity events
     pub auto_trigger_enabled: bool,
@@ -118,13 +120,19 @@ impl Default for ChangeMonitorConfig {
             api_plugins: vec![MonitorPluginConfig::new("api_monitor".to_string())],
 
             enable_port_monitoring: true,
-            port_plugins: vec![MonitorPluginConfig::new("port_scanner".to_string())],
+            port_plugins: vec![MonitorPluginConfig::with_fallbacks(
+                "port_monitor".to_string(),
+                vec!["service_fingerprinter".to_string()],
+            )],
 
             enable_web_monitoring: true,
-            web_plugins: vec![MonitorPluginConfig::new("web_prober".to_string())],
+            web_plugins: vec![MonitorPluginConfig::new("http_prober".to_string())],
 
-            enable_vuln_monitoring: false, // Default off as it might be heavy
-            vuln_plugins: vec![],
+            enable_risk_monitoring: false, // Default off as it might be heavy
+            risk_plugins: vec![
+                MonitorPluginConfig::new("sensitive_file_scanner".to_string()),
+                MonitorPluginConfig::new("risk_scanner".to_string()),
+            ],
 
             auto_trigger_enabled: true,
             auto_trigger_min_severity: ChangeSeverity::Medium,
@@ -182,9 +190,9 @@ impl ChangeMonitorConfig {
             .collect()
     }
 
-    /// Get all Vuln plugin IDs
-    pub fn vuln_plugin_ids(&self) -> Vec<String> {
-        self.vuln_plugins
+    /// Get all risk plugin IDs
+    pub fn risk_plugin_ids(&self) -> Vec<String> {
+        self.risk_plugins
             .iter()
             .flat_map(|p| p.all_plugins())
             .collect()

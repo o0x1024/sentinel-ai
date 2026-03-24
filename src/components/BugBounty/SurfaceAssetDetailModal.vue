@@ -5,10 +5,10 @@
         <div>
           <div class="flex items-center gap-2">
             <h3 class="text-lg font-semibold">
-              {{ detail?.asset?.display_name || detail?.asset?.asset_name || '资产详情' }}
+              {{ detail?.asset?.display_name || detail?.asset?.asset_name || t('bugBounty.surface.detail.titleFallback') }}
             </h3>
             <span v-if="detail?.asset?.asset_type" class="badge badge-outline badge-sm">
-              {{ detail.asset.asset_type }}
+              {{ formatAssetType(detail.asset.asset_type) }}
             </span>
           </div>
           <p class="mt-1 font-mono text-xs text-base-content/60 break-all">
@@ -29,54 +29,54 @@
       <div v-else-if="detail" class="mt-4 space-y-6">
         <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
           <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
-            <div class="text-xs text-base-content/60">Status</div>
-            <div class="mt-1 font-medium">{{ detail.asset.status }}</div>
+            <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.status') }}</div>
+            <div class="mt-1 font-medium">{{ formatStatus(detail.asset.status) }}</div>
           </div>
           <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
-            <div class="text-xs text-base-content/60">Exposure</div>
+            <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.exposure') }}</div>
             <div class="mt-1 font-medium">{{ detail.asset.internet_exposure || '-' }}</div>
           </div>
           <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
-            <div class="text-xs text-base-content/60">Source</div>
+            <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.source') }}</div>
             <div class="mt-1 font-medium">{{ detail.asset.source || '-' }}</div>
           </div>
           <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
-            <div class="text-xs text-base-content/60">Last Seen</div>
+            <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.lastSeen') }}</div>
             <div class="mt-1 font-medium">{{ formatTime(detail.asset.last_seen_at) }}</div>
           </div>
         </section>
 
         <section class="card bg-base-100 border border-base-300">
           <div class="card-body">
-            <h4 class="card-title text-base">Typed Details</h4>
+            <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.typedDetails') }}</h4>
             <div v-if="typedEntries.length" class="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div v-for="[key, value] in typedEntries" :key="key" class="rounded-lg border border-base-300 px-3 py-2">
                 <div class="text-xs text-base-content/60">{{ key }}</div>
                 <div class="mt-1 break-all whitespace-pre-wrap text-sm">{{ formatValue(value) }}</div>
               </div>
             </div>
-            <div v-else class="text-sm text-base-content/60">暂无类型扩展字段。</div>
+            <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noTypedDetails') }}</div>
           </div>
         </section>
 
         <section class="card bg-base-100 border border-base-300">
           <div class="card-body">
-            <h4 class="card-title text-base">Relations</h4>
+            <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.relations') }}</h4>
             <div class="overflow-x-auto">
               <table class="table table-sm">
                 <thead>
                   <tr>
-                    <th>Direction</th>
-                    <th>Relation</th>
-                    <th>Peer Type</th>
-                    <th>Peer Asset</th>
+                    <th>{{ t('bugBounty.surface.detail.direction') }}</th>
+                    <th>{{ t('bugBounty.surface.detail.relation') }}</th>
+                    <th>{{ t('bugBounty.surface.detail.peerType') }}</th>
+                    <th>{{ t('bugBounty.surface.detail.peerAsset') }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="relation in detail.relations" :key="relation.relation.id">
-                    <td>{{ relation.direction }}</td>
+                    <td>{{ formatDirection(relation.direction) }}</td>
                     <td>{{ relation.relation.relation_type }}</td>
-                    <td>{{ relation.peer_asset.asset_type }}</td>
+                    <td>{{ formatAssetType(relation.peer_asset.asset_type) }}</td>
                     <td class="font-mono text-xs break-all">
                       {{ relation.peer_asset.display_name || relation.peer_asset.asset_name }}
                     </td>
@@ -84,14 +84,14 @@
                 </tbody>
               </table>
             </div>
-            <div v-if="!detail.relations.length" class="text-sm text-base-content/60">暂无关联边。</div>
+            <div v-if="!detail.relations.length" class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noRelations') }}</div>
           </div>
         </section>
 
         <section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <div class="card bg-base-100 border border-base-300">
             <div class="card-body">
-              <h4 class="card-title text-base">Fingerprints</h4>
+              <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.fingerprints') }}</h4>
               <div v-if="detail.fingerprints.length" class="space-y-2">
                 <div v-for="fingerprint in detail.fingerprints" :key="fingerprint.id" class="rounded-lg border border-base-300 px-3 py-2">
                   <div class="text-xs text-base-content/60">
@@ -100,13 +100,13 @@
                   <div class="mt-1 break-all text-sm">{{ fingerprint.fingerprint_value }}</div>
                 </div>
               </div>
-              <div v-else class="text-sm text-base-content/60">暂无指纹。</div>
+              <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noFingerprints') }}</div>
             </div>
           </div>
 
           <div class="card bg-base-100 border border-base-300">
             <div class="card-body">
-              <h4 class="card-title text-base">Evidence</h4>
+              <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.evidence') }}</h4>
               <div v-if="detail.evidence.length" class="space-y-2">
                 <div v-for="evidence in detail.evidence" :key="evidence.id" class="rounded-lg border border-base-300 px-3 py-2">
                   <div class="text-xs text-base-content/60">{{ evidence.evidence_type }}</div>
@@ -116,13 +116,13 @@
                   </div>
                 </div>
               </div>
-              <div v-else class="text-sm text-base-content/60">暂无证据。</div>
+              <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noEvidence') }}</div>
             </div>
           </div>
 
           <div class="card bg-base-100 border border-base-300">
             <div class="card-body">
-              <h4 class="card-title text-base">Changes</h4>
+              <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.changes') }}</h4>
               <div v-if="detail.changes.length" class="space-y-2">
                 <div v-for="change in detail.changes" :key="change.id" class="rounded-lg border border-base-300 px-3 py-2">
                   <div class="text-xs text-base-content/60">{{ change.change_type }}</div>
@@ -130,7 +130,7 @@
                   <div class="mt-1 text-xs text-base-content/60">{{ formatTime(change.detected_at) }}</div>
                 </div>
               </div>
-              <div v-else class="text-sm text-base-content/60">暂无变更。</div>
+              <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noChanges') }}</div>
             </div>
           </div>
         </section>
@@ -143,11 +143,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   visible: boolean
   assetId?: string | null
 }>()
+
+const { t } = useI18n()
 
 defineEmits<{
   (e: 'close'): void
@@ -187,6 +190,27 @@ const formatJsonSnippet = (value?: string | null) => {
   return value.length > 180 ? `${value.slice(0, 180)}...` : value
 }
 
+const formatStatus = (value?: string) => {
+  if (!value) return '-'
+  const key = `bugBounty.surface.status.${value}`
+  const translated = t(key)
+  return translated === key ? value : translated
+}
+
+const formatAssetType = (value?: string) => {
+  if (!value) return '-'
+  const key = `bugBounty.surface.assetTypes.${value}`
+  const translated = t(key)
+  return translated === key ? value : translated
+}
+
+const formatDirection = (value?: string) => {
+  if (!value) return '-'
+  const key = `bugBounty.surface.relationDirection.${value}`
+  const translated = t(key)
+  return translated === key ? value : translated
+}
+
 const loadDetail = async () => {
   if (!props.visible || !props.assetId) return
   try {
@@ -194,7 +218,8 @@ const loadDetail = async () => {
     error.value = ''
     detail.value = await invoke('surface_get_asset_detail', { assetId: props.assetId })
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    const message = err instanceof Error ? err.message : String(err)
+    error.value = `${t('bugBounty.surface.detail.loadFailed')}: ${message}`
     detail.value = null
   } finally {
     loading.value = false

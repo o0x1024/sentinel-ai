@@ -44,7 +44,6 @@
             <option value="LLM">{{ t('agent.intelligentAnalysis') }}</option>
             <option value="Hybrid">{{ t('agent.hybridStrategy') }}</option>
             <option value="Manual">{{ t('agent.manualSelection') }}</option>
-            <option value="Skills">{{ t('agent.skillsMode') }}</option>
             <option value="All">{{ t('agent.allTools') }}</option>
           </select>
           <label class="label">
@@ -71,40 +70,8 @@
           </label>
         </div>
 
-        <!-- Skills Mode: Auto Selection -->
-        <div v-if="localConfig.selection_strategy === 'Skills'" class="form-control">
-          <label class="label">
-            <span class="label-text font-medium">{{ t('agent.skills') }}</span>
-            <div class="flex gap-1">
-              <button @click="loadSkills" class="btn btn-xs btn-ghost">
-                <i class="fas fa-sync-alt"></i>
-              </button>
-              <button @click="openSkillsManager" class="btn btn-xs btn-primary btn-outline">
-                <i class="fas fa-external-link-alt"></i>
-                {{ t('agent.manageInTools') }}
-              </button>
-            </div>
-          </label>
-
-          <div v-if="loadingSkills" class="flex justify-center py-4">
-            <span class="loading loading-spinner loading-sm"></span>
-          </div>
-
-          <div v-else-if="skills.length === 0" class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle"></i>
-            <span>{{ t('agent.noSkillsHint') }}</span>
-          </div>
-
-          <div v-else class="border border-base-300 rounded-lg p-3 bg-base-100">
-            <p class="text-sm text-base-content/70">
-              {{ t('agent.skillsAutoSelectHint', { count: skills.length }) }}
-            </p>
-          </div>
-          <p class="text-xs text-base-content/50 mt-2">{{ t('agent.skillsManagedInTools') }}</p>
-        </div>
-
         <!-- Tool Management -->
-        <div v-if="localConfig.selection_strategy !== 'Skills'" class="form-control">
+        <div class="form-control">
           <label class="label">
             <span class="label-text font-medium">
               {{ shouldUseCheckboxSelection ? t('agent.selectTools') : t('agent.toolManagement') }}
@@ -396,7 +363,6 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 
 interface ToolMetadata {
   id: string
@@ -408,12 +374,6 @@ interface ToolMetadata {
   always_available: boolean
 }
 
-interface SkillSummary {
-  id: string
-  name: string
-  description: string
-}
-
 interface ToolConfig {
   enabled: boolean
   selection_strategy: string
@@ -421,7 +381,6 @@ interface ToolConfig {
   fixed_tools: string[]
   disabled_tools: string[]
   manual_tools?: string[]
-  skills?: string[]
 }
 
 interface ToolStatistics {
@@ -472,15 +431,26 @@ const emit = defineEmits<{
   'close': []
 }>()
 
-// 初始化 localConfig，处理 Manual/Skills 枚举格式
+const LEGACY_SKILLS_TOOL_IDS = [
+  'skills',
+  'shell',
+  'http_request',
+  'subagent_execute',
+  'subagent_await',
+  'subagent_channel',
+  'tenth_man_review',
+  'memory',
+  'todos',
+]
+
+// 初始化 localConfig，兼容旧的 Skills 枚举格式并降级为 Manual
 const initLocalConfig = () => {
   let manualTools: string[] = []
-  let skillIds: string[] = []
   const rawStrategy = props.config.selection_strategy
   let strategy: string = 'Keyword'
   
   if (rawStrategy !== null && rawStrategy !== undefined) {
-    // 如果 selection_strategy 是枚举格式 { Manual: [...] } 或 { Skills: [...] }，提取列表
+    // 如果 selection_strategy 是枚举格式 { Manual: [...] } 或旧版 { Skills: [...] }，提取列表
     if (typeof rawStrategy === 'object') {
       const manualValue = (rawStrategy as any).Manual
       const skillsValue = (rawStrategy as any).Skills
@@ -489,11 +459,14 @@ const initLocalConfig = () => {
         manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
         strategy = 'Manual'
       } else if (skillsValue !== undefined) {
-        skillIds = skillsValue || []
-        strategy = 'Skills'
+        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
+        strategy = 'Manual'
       }
     } else {
-      strategy = rawStrategy as string
+      strategy = rawStrategy === 'Skills' ? 'Manual' : rawStrategy as string
+      if (rawStrategy === 'Skills') {
+        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
+      }
     }
   }
   
@@ -501,12 +474,10 @@ const initLocalConfig = () => {
     ...props.config, 
     selection_strategy: strategy,
     manual_tools: manualTools,
-    skills: skillIds,
   }
 }
 
 const { t } = useI18n()
-const router = useRouter()
 
 const localConfig = ref<ToolConfig>(initLocalConfig())
 const allTools = ref<ToolMetadata[]>([])
@@ -515,10 +486,6 @@ const usageStats = ref<ToolUsageStatistics | null>(null)
 const loading = ref(false)
 const selectedCategories = ref<string[]>([])
 const searchQuery = ref('')
-
-// Skills mode state
-const skills = ref<SkillSummary[]>([])
-const loadingSkills = ref(false)
 
 const categories = computed(() => {
   const cats = new Set(allTools.value.map(t => t.category))
@@ -674,14 +641,9 @@ const getStrategyDescription = (strategy: string) => {
     'LLM': '使用 LLM 智能分析任务，准确度高，有少量 token 成本',
     'Hybrid': '关键词初筛 + LLM 精选，兼顾速度和准确度',
     'Manual': '手动选择需要的工具',
-    'Skills': 'Claude-style：模型先看技能摘要，自主决定加载哪个 Skill',
     'All': '使用所有可用工具（不推荐，token 消耗大）',
   }
   return descriptions[strategy] || ''
-}
-
-const openSkillsManager = () => {
-  router.push({ path: '/mcp-tools', query: { tab: 'skills' } })
 }
 
 const loadTools = async () => {
@@ -693,23 +655,6 @@ const loadTools = async () => {
     console.error('Failed to load tools:', error)
   } finally {
     loading.value = false
-  }
-}
-
-const loadSkills = async () => {
-  loadingSkills.value = true
-  try {
-    skills.value = await invoke<SkillSummary[]>('list_skills')
-    
-    // Skills mode: auto-discovery, no explicit selection
-    if (localConfig.value.selection_strategy === 'Skills') {
-      localConfig.value.skills = []
-      emitUpdate()
-    }
-  } catch (error) {
-    console.error('Failed to load skills:', error)
-  } finally {
-    loadingSkills.value = false
   }
 }
 
@@ -781,7 +726,6 @@ const resetToDefault = () => {
     fixed_tools: ['interactive_shell'],
     disabled_tools: [],
     manual_tools: [],
-    skills: [],
   }
   emitUpdate()
 }
@@ -816,20 +760,14 @@ const emitUpdate = () => {
     // 将 selection_strategy 转换为 Rust 枚举格式: { Manual: [...] }
     configToEmit.selection_strategy = { Manual: normalizedTools } as any
     delete configToEmit.manual_tools
-  } else if (configToEmit.selection_strategy === 'Skills') {
-    // 将 selection_strategy 转换为 Rust 枚举格式: { Skills: [...] }
-    console.log('[ToolConfigPanel] Emitting skills: auto')
-    configToEmit.selection_strategy = { Skills: [] } as any
-    delete configToEmit.skills
   }
   
   emit('update:config', configToEmit)
 }
 
 watch(() => props.config, (newConfig) => {
-  // 处理 Manual/Skills 枚举格式
+  // 处理 Manual/旧版 Skills 枚举格式
   let manualTools: string[] = []
-  let skillIds: string[] = []
   const rawStrategy = newConfig.selection_strategy
   let strategy: string = 'Keyword'
   
@@ -841,11 +779,14 @@ watch(() => props.config, (newConfig) => {
         manualTools = manualValue.map((id: string) => id.replace(/::/g, '__'))
         strategy = 'Manual'
       } else if (skillsValue !== undefined) {
-        skillIds = skillsValue || []
-        strategy = 'Skills'
+        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
+        strategy = 'Manual'
       }
     } else {
-      strategy = rawStrategy as string
+      strategy = rawStrategy === 'Skills' ? 'Manual' : rawStrategy as string
+      if (rawStrategy === 'Skills') {
+        manualTools = [...LEGACY_SKILLS_TOOL_IDS]
+      }
     }
   }
   
@@ -853,14 +794,12 @@ watch(() => props.config, (newConfig) => {
     ...newConfig, 
     selection_strategy: strategy,
     manual_tools: manualTools,
-    skills: skillIds,
   }
 }, { deep: true })
 
 onMounted(() => {
   loadTools()
   loadUsageStats()
-  loadSkills()
 })
 </script>
 

@@ -730,7 +730,10 @@ pub async fn execute_agent_with_tools(
             }
         }
 
-        if current_tool_ids.iter().any(|id| id == HttpRequestTool::NAME) {
+        if current_tool_ids
+            .iter()
+            .any(|id| id == HttpRequestTool::NAME)
+        {
             if let Some(http_info) = tool_server.get_tool(HttpRequestTool::NAME).await {
                 let http_input_schema = http_info.input_schema.clone();
                 let http_description = http_info.description.clone();
@@ -1744,7 +1747,7 @@ pub async fn execute_agent_with_tools(
                     let response_lower = full_response.to_lowercase();
                     let has_completion_signal = {
                         // CTF flag found patterns
-                        let has_flag = response_lower.contains("flag{") 
+                        let has_flag = response_lower.contains("flag{")
                             || response_lower.contains("flag_found")
                             || response_lower.contains("[flag_found]")
                             || response_lower.contains("ctf{")
@@ -1766,7 +1769,9 @@ pub async fn execute_agent_with_tools(
                         // Check if all incomplete items have completion markers in their description
                         let all_items_semantically_done = incomplete_todos.iter().all(|t| {
                             let t_lower = t.to_lowercase();
-                            t_lower.contains('✅') || t_lower.contains("已完成") || t_lower.contains("done")
+                            t_lower.contains('✅')
+                                || t_lower.contains("已完成")
+                                || t_lower.contains("done")
                         });
 
                         has_flag || has_conclusion || all_items_semantically_done
@@ -1784,7 +1789,8 @@ pub async fn execute_agent_with_tools(
                         .await;
                         // Fall through to normal completion path
                     } else {
-                        let reason_text = format!("todos not completed: {}", incomplete_todos.join("; "));
+                        let reason_text =
+                            format!("todos not completed: {}", incomplete_todos.join("; "));
                         let err = anyhow::anyhow!("Todos guard failed: {}", reason_text);
                         tracing::warn!(
                             "Todos guard rejected final response - execution_id: {}, incomplete_todos: {:?}",

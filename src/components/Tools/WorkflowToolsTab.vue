@@ -196,6 +196,10 @@ const props = withDefaults(defineProps<{
   embedded: false
 })
 
+const emit = defineEmits<{
+  (e: 'count-changed', count: number): void
+}>()
+
 // 状态
 const workflows = ref<any[]>([])
 const isLoading = ref(false)
@@ -297,9 +301,11 @@ async function fetchWorkflows() {
   try {
     const result = await invoke<any[]>('list_workflow_tools')
     workflows.value = result || []
+    emit('count-changed', workflows.value.length)
   } catch (error) {
     console.error('Failed to fetch workflow tools:', error)
     workflows.value = []
+    emit('count-changed', 0)
   } finally {
     isLoading.value = false
   }

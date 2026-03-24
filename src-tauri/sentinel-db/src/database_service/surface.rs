@@ -314,6 +314,7 @@ pub struct SurfaceSeedRow {
 pub struct SurfaceAssetFilter {
     pub program_id: Option<String>,
     pub asset_type: Option<String>,
+    pub status: Option<String>,
     pub search: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
@@ -339,6 +340,41 @@ pub struct SurfaceOverview {
 }
 
 impl DatabaseService {
+    async fn surface_asset_matches_search(
+        &self,
+        row: &SurfaceAssetRow,
+        needle: &str,
+    ) -> Result<bool> {
+        if row.asset_name.to_lowercase().contains(needle)
+            || row
+                .display_name
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains(needle)
+            || row.status.to_lowercase().contains(needle)
+            || row
+                .internet_exposure
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains(needle)
+            || row
+                .source
+                .as_deref()
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains(needle)
+        {
+            return Ok(true);
+        }
+
+        let typed_details = self.get_surface_typed_details(row).await?;
+        Ok(typed_details
+            .map(|details| details.to_string().to_lowercase().contains(needle))
+            .unwrap_or(false))
+    }
+
     pub async fn get_surface_asset_by_identity(
         &self,
         program_id: &str,
@@ -1190,17 +1226,18 @@ impl DatabaseService {
         if let Some(asset_type) = filter.asset_type.as_deref() {
             rows.retain(|row| row.asset_type == asset_type);
         }
+        if let Some(status) = filter.status.as_deref() {
+            rows.retain(|row| row.status == status);
+        }
         if let Some(search) = filter.search.as_deref() {
             let needle = search.to_lowercase();
-            rows.retain(|row| {
-                row.asset_name.to_lowercase().contains(&needle)
-                    || row
-                        .display_name
-                        .as_deref()
-                        .unwrap_or_default()
-                        .to_lowercase()
-                        .contains(&needle)
-            });
+            let mut matched_rows = Vec::with_capacity(rows.len());
+            for row in rows {
+                if self.surface_asset_matches_search(&row, &needle).await? {
+                    matched_rows.push(row);
+                }
+            }
+            rows = matched_rows;
         }
 
         rows.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));

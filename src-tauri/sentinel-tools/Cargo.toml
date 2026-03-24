@@ -83,13 +83,3 @@ bytes = "1.8"
 
 # PTY for better terminal support
 portable-pty = "0.9.0"
-
-# Process management for agent-browser daemon
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_System_Threading",
-] }

@@ -217,7 +217,7 @@ defineOptions({
 
 // Component refs
 const pluginDialogsRef = ref<InstanceType<typeof PluginDialogs>>()
-const pluginStoreSectionRef = ref<InstanceType<typeof PluginStoreSection>>()
+const pluginStoreSectionRef = ref<{ refreshStore: (forceRefresh?: boolean) => Promise<void> } | null>(null)
 
 // Component State
 const selectedCategory = ref('all')
@@ -243,7 +243,7 @@ const reviewTotalPagesCount = ref(0)
 const reviewStatsData = ref({ total: 0, pending: 0, approved: 0, rejected: 0, failed: 0 })
 
 // Plugin List State
-const pluginViewMode = ref<'favorited' | 'all'>('all')
+const pluginViewMode = ref<'favorited' | 'all'>('favorited')
 const pluginCurrentPage = ref(1)
 const pluginPageSize = ref(10)
 const pluginSearchText = ref('')
@@ -444,6 +444,18 @@ const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warnin
   setTimeout(() => toast.remove(), 3000)
 }
 
+const updatePluginFavoriteState = (pluginId: string, isFavorited: boolean) => {
+  const target = plugins.value.find(item => item.metadata.id === pluginId)
+  if (target) {
+    target.is_favorited = isFavorited
+  }
+}
+
+const refreshPluginStore = async (forceRefresh = true) => {
+  await nextTick()
+  await pluginStoreSectionRef.value?.refreshStore(forceRefresh)
+}
+
 // Plugin CRUD
 const refreshPlugins = async () => {
   try {
@@ -473,21 +485,38 @@ const togglePluginFavorite = async (plugin: PluginRecord) => {
   try {
     const response: any = await invoke('toggle_plugin_favorite', { pluginId: plugin.metadata.id, userId: null })
     if (response.success) {
-      showToast(response.data?.is_favorited ? '已收藏' : '已取消收藏', 'success')
+      const isFavorited = typeof response.data?.is_favorited === 'boolean'
+        ? response.data.is_favorited
+        : !isPluginFavorited(plugin)
+      updatePluginFavoriteState(plugin.metadata.id, isFavorited)
+      showToast(
+        isFavorited
+          ? t('plugins.favoritedSuccess', '已收藏')
+          : t('plugins.unfavoritedSuccess', '已取消收藏'),
+        'success'
+      )
       await refreshPlugins()
+    } else {
+      showToast(t('plugins.favoriteError', '操作失败'), 'error')
     }
   } catch (error) {
-    showToast('操作失败', 'error')
+    showToast(t('plugins.favoriteError', '操作失败'), 'error')
   }
 }
 
 // Plugin store callbacks
 const onPluginInstalled = async () => {
   await refreshPlugins()
+  if (selectedCategory.value === 'store') {
+    await refreshPluginStore(true)
+  }
 }
 
 const onPluginUpdated = async () => {
   await refreshPlugins()
+  if (selectedCategory.value === 'store') {
+    await refreshPluginStore(true)
+  }
 }
 
 // Batch operations
@@ -1211,8 +1240,11 @@ watch(reviewEditMode, (newValue) => {
   }
 })
 
-watch(selectedCategory, () => {
+watch(selectedCategory, async (newValue) => {
   pluginCurrentPage.value = 1
+  if (newValue === 'store') {
+    await refreshPluginStore(true)
+  }
 })
 
 // Lifecycle

@@ -12,6 +12,7 @@ use uuid::Uuid;
 async fn upsert_surface_shell_asset(
     db_service: &Arc<DatabaseService>,
     program_id: &str,
+    discovery_task_id: Option<&str>,
     asset_type: &str,
     asset_name: &str,
     display_name: Option<String>,
@@ -40,7 +41,7 @@ async fn upsert_surface_shell_asset(
         first_seen_at: now.clone(),
         last_seen_at: now.clone(),
         last_verified_at: Some(now.clone()),
-        discovery_task_id: None,
+        discovery_task_id: discovery_task_id.map(str::to_string),
         status: "active".to_string(),
         alive_status: Some("alive".to_string()),
         confidence_score: metadata
@@ -80,6 +81,7 @@ async fn upsert_artifact_asset(
     db_service: &Arc<DatabaseService>,
     ids: &mut HashMap<(String, String), String>,
     program_id: &str,
+    discovery_task_id: Option<&str>,
     plugin_id: &str,
     asset_type: &str,
     asset_name: &str,
@@ -89,6 +91,7 @@ async fn upsert_artifact_asset(
     let id = upsert_surface_shell_asset(
         db_service,
         program_id,
+        discovery_task_id,
         asset_type,
         asset_name,
         display_name,
@@ -336,6 +339,7 @@ async fn materialize_surface_changes(
     db_service: &Arc<DatabaseService>,
     ids: &HashMap<(String, String), String>,
     program_id: &str,
+    run_id: Option<&str>,
     plugin_id: &str,
     artifacts: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
@@ -379,7 +383,7 @@ async fn materialize_surface_changes(
                 .map(|description| format!("{title}: {description}"))
                 .unwrap_or(title),
             detected_at: Utc::now().to_rfc3339(),
-            source_run_id: None,
+            source_run_id: run_id.map(str::to_string),
             risk_delta: change.get("risk_score").and_then(|value| value.as_f64()),
             metadata_json: Some(
                 serde_json::json!({
@@ -402,6 +406,7 @@ async fn materialize_surface_changes(
 pub(crate) async fn materialize_surface_artifacts(
     db_service: &Arc<DatabaseService>,
     program_id: &str,
+    run_id: Option<&str>,
     plugin_id: &str,
     artifacts: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<usize, String> {
@@ -415,6 +420,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     db_service,
                     &mut ids,
                     program_id,
+                    run_id,
                     plugin_id,
                     "domain",
                     fqdn,
@@ -438,6 +444,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     db_service,
                     &mut ids,
                     program_id,
+                    run_id,
                     plugin_id,
                     "ip",
                     asset_name,
@@ -461,6 +468,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     db_service,
                     &mut ids,
                     program_id,
+                    run_id,
                     plugin_id,
                     "host",
                     asset_name,
@@ -494,6 +502,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 db_service,
                 &mut ids,
                 program_id,
+                run_id,
                 plugin_id,
                 "port",
                 &asset_name,
@@ -531,6 +540,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 db_service,
                 &mut ids,
                 program_id,
+                run_id,
                 plugin_id,
                 "service",
                 &asset_name,
@@ -559,6 +569,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     db_service,
                     &mut ids,
                     program_id,
+                    run_id,
                     plugin_id,
                     "web",
                     canonical_url,
@@ -581,6 +592,7 @@ pub(crate) async fn materialize_surface_artifacts(
                     db_service,
                     &mut ids,
                     program_id,
+                    run_id,
                     plugin_id,
                     "certificate",
                     sha256,
@@ -627,6 +639,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 let id = upsert_surface_shell_asset(
                     db_service,
                     program_id,
+                    run_id,
                     from_type,
                     from_key,
                     Some(from_key.to_string()),
@@ -641,6 +654,7 @@ pub(crate) async fn materialize_surface_artifacts(
                 let id = upsert_surface_shell_asset(
                     db_service,
                     program_id,
+                    run_id,
                     to_type,
                     to_key,
                     Some(to_key.to_string()),
@@ -678,7 +692,7 @@ pub(crate) async fn materialize_surface_artifacts(
 
     materialize_surface_fingerprints(db_service, &ids, program_id, plugin_id, artifacts).await?;
     materialize_surface_evidence(db_service, &ids, program_id, plugin_id, artifacts).await?;
-    materialize_surface_changes(db_service, &ids, program_id, plugin_id, artifacts).await?;
+    materialize_surface_changes(db_service, &ids, program_id, run_id, plugin_id, artifacts).await?;
 
     Ok(materialized)
 }

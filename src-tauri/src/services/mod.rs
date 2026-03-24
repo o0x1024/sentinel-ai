@@ -2,6 +2,7 @@
 
 pub mod ai_manager;
 pub mod asset_service;
+pub mod builtin_bounty_plugins;
 pub mod database {
     pub use sentinel_db::Database;
     pub use sentinel_db::DatabaseService;

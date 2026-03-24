@@ -67,6 +67,25 @@ export default {
   bugBounty,
   llmSecurity,
 
+  cyberchef: {
+    operations: '操作',
+    searchPlaceholder: '搜索操作...',
+    recipe: '配方',
+    clearRecipe: '清空配方',
+    bake: '执行 BAKE!',
+    autoBake: '自动执行',
+    input: '输入',
+    chars: '长度',
+    clear: '清空',
+    inputPlaceholder: '在此输入待处理数据...',
+    output: '输出',
+    copy: '复制',
+    outputPlaceholder: '结果将在此实时呈现...',
+    emptyRecipe: '从左侧拖动操作到此处',
+    doubleClickHint: '或双击添加',
+    operationDisabled: '已禁用'
+  },
+
   // Top-level aliases for sidebar navigation
   rag: {
     title: '知识库管理'
@@ -436,7 +455,8 @@ export default {
     agentCategories: {
       recon: '信息收集',
       discovery: '目标发现',
-      vuln: '漏洞扫描',
+      risk: '风险扫描',
+      vuln: '风险扫描',
       exploit: '漏洞利用',
       monitor: '变更监控',
       utility: '实用工具',

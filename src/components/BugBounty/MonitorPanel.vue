@@ -111,116 +111,21 @@
         </div>
 
         <div v-else class="space-y-3">
-          <div 
-            v-for="task in tasks" 
+          <MonitorTaskCard
+            v-for="task in tasks"
             :key="task.id"
-            class="card bg-base-200 hover:bg-base-300 transition-colors"
-          >
-            <div class="card-body p-4">
-              <div class="flex items-start justify-between">
-                <div class="flex items-center gap-3 flex-1">
-                  <input 
-                    type="checkbox" 
-                    class="toggle toggle-success" 
-                    :checked="task.enabled"
-                    @change="toggleTask(task)"
-                  />
-                  <div class="flex-1">
-                    <div class="flex items-center gap-2">
-                      <h4 class="font-medium">{{ task.name }}</h4>
-                      <span v-if="task.enabled" class="badge badge-success badge-xs">
-                        {{ t('bugBounty.monitor.enabled') }}
-                      </span>
-                      <span v-else class="badge badge-ghost badge-xs">
-                        {{ t('bugBounty.monitor.disabled') }}
-                      </span>
-                    </div>
-                    <div class="text-xs text-base-content/60 mt-1 space-y-1">
-                      <div>
-                        <i class="fas fa-clock mr-1"></i>
-                        {{ t('bugBounty.monitor.interval') }}: {{ formatInterval(task.interval_secs) }}
-                      </div>
-                      <div v-if="task.next_run_at">
-                        <i class="fas fa-calendar-alt mr-1"></i>
-                        {{ t('bugBounty.monitor.nextRun') }}: {{ formatDateTime(task.next_run_at) }}
-                      </div>
-                      <div>
-                        <i class="fas fa-chart-line mr-1"></i>
-                        {{ task.run_count }} {{ t('bugBounty.monitor.runs') }}, 
-                        {{ task.events_detected }} {{ t('bugBounty.monitor.events') }}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="flex gap-1">
-                  <button 
-                    class="btn btn-primary btn-xs"
-                    @click="discoverAssets(task)"
-                    :title="t('bugBounty.monitor.discoverAssets')"
-                  >
-                    <i class="fas fa-search"></i>
-                  </button>
-                  <button 
-                    v-if="isTaskRunning(task.id)"
-                    class="btn btn-error btn-xs"
-                    @click="stopTask(task)"
-                    :disabled="stoppingTaskIds.has(task.id)"
-                    :title="t('bugBounty.monitor.stopTask')"
-                  >
-                    <span v-if="stoppingTaskIds.has(task.id)" class="loading loading-spinner loading-xs"></span>
-                    <i v-else class="fas fa-stop"></i>
-                  </button>
-                  <button 
-                    v-else
-                    class="btn btn-ghost btn-xs"
-                    @click="triggerTask(task)"
-                    :title="t('bugBounty.monitor.runNow')"
-                  >
-                    <i class="fas fa-play"></i>
-                  </button>
-                  <button 
-                    class="btn btn-ghost btn-xs"
-                    @click="editTask(task)"
-                    :title="t('common.edit')"
-                  >
-                    <i class="fas fa-edit"></i>
-                  </button>
-                  <button 
-                    class="btn btn-ghost btn-xs text-error"
-                    @click="deleteTask(task)"
-                    :title="t('common.delete')"
-                  >
-                    <i class="fas fa-trash"></i>
-                  </button>
-                </div>
-              </div>
-
-              <!-- Monitor Config Summary -->
-              <div class="flex flex-wrap gap-2 mt-2">
-                <span v-if="task.config.enable_dns_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-network-wired mr-1"></i>DNS
-                </span>
-                <span v-if="task.config.enable_cert_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-certificate mr-1"></i>{{ t('bugBounty.monitor.cert') }}
-                </span>
-                <span v-if="task.config.enable_content_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-file-alt mr-1"></i>{{ t('bugBounty.monitor.content') }}
-                </span>
-                <span v-if="task.config.enable_api_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-plug mr-1"></i>API
-                </span>
-                <span v-if="task.config.enable_port_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-network-wired mr-1"></i>Port
-                </span>
-                <span v-if="task.config.enable_web_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-globe mr-1"></i>Web
-                </span>
-                <span v-if="task.config.enable_vuln_monitoring" class="badge badge-outline badge-xs">
-                  <i class="fas fa-shield-alt mr-1"></i>Vuln
-                </span>
-              </div>
-            </div>
-          </div>
+            :task="task"
+            :is-running="isTaskRunning(task.id)"
+            :stopping="stoppingTaskIds.has(task.id)"
+            :progress="getTaskProgress(task.id)"
+            :logs="getTaskLogs(task.id)"
+            @toggle="toggleTask"
+            @discover="discoverAssets"
+            @stop="stopTask"
+            @trigger="triggerTask"
+            @edit="editTask"
+            @delete="deleteTask"
+          />
         </div>
       </div>
     </div>
@@ -734,29 +639,29 @@
           <div class="card bg-base-200 p-4 mb-3">
             <div class="flex items-center justify-between mb-2">
               <label class="label cursor-pointer gap-2">
-                <input type="checkbox" v-model="taskForm.config.enable_vuln_monitoring" class="checkbox checkbox-primary" />
+                <input type="checkbox" v-model="taskForm.config.enable_risk_monitoring" class="checkbox checkbox-primary" />
                 <span class="label-text font-semibold">
                   <i class="fas fa-shield-alt mr-2"></i>
                   {{ t('bugBounty.monitor.vulnMonitoring') }}
                 </span>
               </label>
               <button 
-                v-if="taskForm.config.enable_vuln_monitoring"
+                v-if="taskForm.config.enable_risk_monitoring"
                 class="btn btn-xs btn-ghost"
-                @click="addPluginConfig('vuln')"
+                @click="addPluginConfig('risk')"
               >
                 <i class="fas fa-plus mr-1"></i>
                 {{ t('bugBounty.monitor.addPlugin') }}
               </button>
             </div>
             
-            <div v-if="taskForm.config.enable_vuln_monitoring && taskForm.config.vuln_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
+            <div v-if="taskForm.config.enable_risk_monitoring && taskForm.config.risk_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
               <i class="fas fa-info-circle mr-1"></i>
               {{ t('bugBounty.monitor.noPluginsConfigured') }}
             </div>
             
-            <div v-if="taskForm.config.enable_vuln_monitoring && taskForm.config.vuln_plugins.length > 0" class="space-y-2 ml-6">
-              <div v-for="(plugin, idx) in taskForm.config.vuln_plugins" :key="`vuln-${idx}`" class="card bg-base-100 p-3">
+            <div v-if="taskForm.config.enable_risk_monitoring && taskForm.config.risk_plugins.length > 0" class="space-y-2 ml-6">
+              <div v-for="(plugin, idx) in taskForm.config.risk_plugins" :key="`risk-${idx}`" class="card bg-base-100 p-3">
                 <div class="flex items-start gap-2">
                   <div class="flex-1 space-y-2">
                     <div class="form-control">
@@ -765,7 +670,7 @@
                       </label>
                       <select v-model="plugin.plugin_id" class="select select-sm select-bordered">
                         <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-                        <option v-for="p in getPluginsByType('vuln')" :key="p.id" :value="p.id">
+                        <option v-for="p in getPluginsByType('risk')" :key="p.id" :value="p.id">
                           {{ p.name }}
                         </option>
                       </select>
@@ -775,14 +680,14 @@
                       <label class="label py-1">
                         <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
                       </label>
-                      <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`vuln-fb-${idx}-${fIdx}`" class="flex gap-1">
+                      <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`risk-fb-${idx}-${fIdx}`" class="flex gap-1">
                         <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1">
                           <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-                          <option v-for="p in getPluginsByType('vuln')" :key="p.id" :value="p.id">
+                          <option v-for="p in getPluginsByType('risk')" :key="p.id" :value="p.id">
                             {{ p.name }}
                           </option>
                         </select>
-                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('vuln', idx, Number(fIdx))">
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('risk', idx, Number(fIdx))">
                           <i class="fas fa-times"></i>
                         </button>
                       </div>
@@ -790,14 +695,14 @@
                     
                     <button 
                       class="btn btn-xs btn-ghost"
-                      @click="addFallbackPlugin('vuln', idx)"
+                      @click="addFallbackPlugin('risk', idx)"
                     >
                       <i class="fas fa-plus mr-1"></i>
                       {{ t('bugBounty.monitor.addFallback') }}
                     </button>
                   </div>
                   
-                  <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('vuln', idx)">
+                  <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('risk', idx)">
                     <i class="fas fa-trash"></i>
                   </button>
                 </div>
@@ -961,6 +866,9 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useToast } from '../../composables/useToast'
+import { useMonitorTaskProgress } from '../../composables/useMonitorTaskProgress'
+import MonitorTaskCard from './MonitorTaskCard.vue'
+import { formatInvokeError, formatUptime } from './monitorPanelUtils'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -986,8 +894,17 @@ const discoverResult = ref<any>(null)
 const currentDiscoverTask = ref<any>(null)
 const availablePlugins = ref<any[]>([])
 const loadingPlugins = ref(false)
-const runningTaskIds = ref<Set<string>>(new Set())
 const stoppingTaskIds = ref<Set<string>>(new Set())
+const {
+  runningTaskIds,
+  isTaskRunning,
+  getTaskProgress,
+  getTaskLogs,
+  markTaskQueued,
+  pruneTaskProgress,
+  loadRunningTasks,
+  setupTaskProgressListener,
+} = useMonitorTaskProgress()
 
 const taskForm = reactive({
   name: '',
@@ -1006,8 +923,8 @@ const taskForm = reactive({
     port_plugins: [] as any[],
     enable_web_monitoring: false,
     web_plugins: [] as any[],
-    enable_vuln_monitoring: false,
-    vuln_plugins: [] as any[],
+    enable_risk_monitoring: false,
+    risk_plugins: [] as any[],
     auto_trigger_enabled: true,
   }
 })
@@ -1029,6 +946,7 @@ const isDiscoverFormValid = computed(() => {
 let unlistenChangeDetected: any = null
 let unlistenSchedulerStarted: any = null
 let unlistenSchedulerStopped: any = null
+let unlistenTaskProgress: any = null
 
 // Methods
 const checkSchedulerStatus = async () => {
@@ -1047,31 +965,13 @@ const refreshStats = async () => {
   }
 }
 
-const loadRunningTasks = async () => {
-  try {
-    const ids = await invoke('monitor_get_running_tasks') as string[]
-    runningTaskIds.value = new Set(ids || [])
-  } catch (error) {
-    console.error('Failed to load running tasks:', error)
-  }
-}
-
-const isTaskRunning = (taskId: string) => runningTaskIds.value.has(taskId)
-
-const formatInvokeError = (error: any, fallback: string) => {
-  if (typeof error === 'string' && error.trim()) return error
-  if (error?.message && typeof error.message === 'string') return error.message
-  const text = error?.toString?.()
-  if (text && text !== '[object Object]') return text
-  return fallback
-}
-
 const loadTasks = async (retryCount = 0) => {
   try {
     loading.value = true
     tasks.value = await invoke('monitor_list_tasks', {
       programId: props.selectedProgram?.id || null
     })
+    pruneTaskProgress(tasks.value)
   } catch (error) {
     console.error('Failed to load tasks:', error)
     // Retry once after a short delay if this is the first attempt
@@ -1137,8 +1037,8 @@ const addPluginConfig = (monitorType: string) => {
     case 'web':
       taskForm.config.web_plugins.push(newPlugin)
       break
-    case 'vuln':
-      taskForm.config.vuln_plugins.push(newPlugin)
+    case 'risk':
+      taskForm.config.risk_plugins.push(newPlugin)
       break
   }
 }
@@ -1163,8 +1063,8 @@ const removePluginConfig = (monitorType: string, index: number) => {
     case 'web':
       taskForm.config.web_plugins.splice(index, 1)
       break
-    case 'vuln':
-      taskForm.config.vuln_plugins.splice(index, 1)
+    case 'risk':
+      taskForm.config.risk_plugins.splice(index, 1)
       break
   }
 }
@@ -1190,8 +1090,8 @@ const addFallbackPlugin = (monitorType: string, pluginIndex: number) => {
     case 'web':
       plugins = taskForm.config.web_plugins
       break
-    case 'vuln':
-      plugins = taskForm.config.vuln_plugins
+    case 'risk':
+      plugins = taskForm.config.risk_plugins
       break
   }
   
@@ -1221,8 +1121,8 @@ const removeFallbackPlugin = (monitorType: string, pluginIndex: number, fallback
     case 'web':
       plugins = taskForm.config.web_plugins
       break
-    case 'vuln':
-      plugins = taskForm.config.vuln_plugins
+    case 'risk':
+      plugins = taskForm.config.risk_plugins
       break
   }
   
@@ -1357,7 +1257,7 @@ const triggerTask = async (task: any) => {
     }
     
     await invoke('monitor_trigger_task', { taskId: task.id })
-    runningTaskIds.value = new Set(runningTaskIds.value).add(task.id)
+    markTaskQueued(task, t('bugBounty.monitor.progressPreparing'))
     toast.success(t('bugBounty.monitor.taskTriggered'))
     
     // Wait a bit for task to start, then reload tasks
@@ -1382,7 +1282,7 @@ const stopTask = async (task: any) => {
     stoppingTaskIds.value = new Set(stoppingTaskIds.value).add(task.id)
     await invoke('monitor_stop_task', { taskId: task.id })
     toast.success(t('bugBounty.monitor.taskStopRequested'))
-    await loadRunningTasks()
+    await loadRunningTasks(tasks.value)
   } catch (error) {
     console.error('Failed to stop task:', error)
     toast.error(formatInvokeError(error, t('bugBounty.errors.operationFailed')))
@@ -1519,35 +1419,10 @@ const closeModal = () => {
     port_plugins: [],
     enable_web_monitoring: false,
     web_plugins: [],
-    enable_vuln_monitoring: false,
-    vuln_plugins: [],
+    enable_risk_monitoring: false,
+    risk_plugins: [],
     auto_trigger_enabled: true,
   }
-}
-
-// Formatters
-const formatInterval = (secs: number) => {
-  const hours = secs / 3600
-  const days = hours / 24
-  
-  if (days >= 1) {
-    return `${days} ${t('bugBounty.monitor.days')}`
-  }
-  return `${hours} ${t('bugBounty.monitor.hours')}`
-}
-
-const formatUptime = (secs: number) => {
-  const hours = Math.floor(secs / 3600)
-  const minutes = Math.floor((secs % 3600) / 60)
-  
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`
-  }
-  return `${minutes}m`
-}
-
-const formatDateTime = (dateStr: string) => {
-  return new Date(dateStr).toLocaleString()
 }
 
 // Event listeners
@@ -1567,6 +1442,10 @@ const setupEventListeners = async () => {
     schedulerRunning.value = false
     refreshStats()
   })
+  unlistenTaskProgress = await setupTaskProgressListener(() => {
+    refreshStats()
+    loadTasks()
+  })
 }
 
 // Lifecycle
@@ -1574,7 +1453,7 @@ onMounted(async () => {
   await checkSchedulerStatus()
   await refreshStats()
   await loadTasks()
-  await loadRunningTasks()
+  await loadRunningTasks(tasks.value)
   await loadAvailablePlugins()
   await setupEventListeners()
   
@@ -1584,7 +1463,7 @@ onMounted(async () => {
       refreshStats()
       loadTasks()
     }
-    loadRunningTasks()
+    loadRunningTasks(tasks.value)
   }, 30000)
   
   onUnmounted(() => {
@@ -1592,6 +1471,7 @@ onMounted(async () => {
     unlistenChangeDetected?.()
     unlistenSchedulerStarted?.()
     unlistenSchedulerStopped?.()
+    unlistenTaskProgress?.()
   })
 })
 </script>

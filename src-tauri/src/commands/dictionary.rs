@@ -6,7 +6,7 @@ use crate::services::DatabaseService;
 use crate::services::DictionaryService;
 use sentinel_core::models::dictionary::{
     Dictionary, DictionaryExport, DictionaryFilter, DictionaryImportOptions, DictionarySet,
-    DictionaryStats, DictionaryType, DictionaryWord, ServiceType,
+    DictionaryStats, DictionaryType, DictionaryWord, DictionaryWordInput, ServiceType,
 };
 use sentinel_db::Database;
 use std::collections::HashMap;
@@ -183,6 +183,52 @@ pub async fn add_dictionary_words(
 
     dictionary_service
         .add_words(&dictionary_id, words)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 添加结构化词条到字典
+#[tauri::command(rename_all = "snake_case")]
+pub async fn add_dictionary_entries(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dictionary_id: String,
+    entries: Vec<DictionaryWordInput>,
+) -> Result<Vec<DictionaryWord>, String> {
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
+    let dictionary_service = DictionaryService::new(pool.clone());
+
+    dictionary_service
+        .add_word_entries(&dictionary_id, entries)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 更新单个字典词条
+#[tauri::command]
+pub async fn update_dictionary_word(
+    db_service: State<'_, Arc<DatabaseService>>,
+    word: DictionaryWord,
+) -> Result<DictionaryWord, String> {
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
+    let dictionary_service = DictionaryService::new(pool.clone());
+
+    dictionary_service
+        .update_word(word)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 批量更新字典词条
+#[tauri::command]
+pub async fn update_dictionary_words_batch(
+    db_service: State<'_, Arc<DatabaseService>>,
+    words: Vec<DictionaryWord>,
+) -> Result<Vec<DictionaryWord>, String> {
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
+    let dictionary_service = DictionaryService::new(pool.clone());
+
+    dictionary_service
+        .update_words_batch(words)
         .await
         .map_err(|e| e.to_string())
 }

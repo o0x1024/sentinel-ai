@@ -37,14 +37,14 @@
         :class="['btn btn-sm', sourceFilter === 'workflow' ? 'btn-secondary' : 'btn-ghost']"
       >
         <i class="fas fa-project-diagram mr-1"></i>
-        工作流工具
+        工作流工具 ({{ workflowCount }})
       </button>
       <button
         @click="selectSourceFilter('plugin')"
         :class="['btn btn-sm', sourceFilter === 'plugin' ? 'btn-accent' : 'btn-ghost']"
       >
         <i class="fas fa-plug mr-1"></i>
-        插件工具
+        插件工具 ({{ pluginCount }})
       </button>
     </div>
 
@@ -117,19 +117,9 @@
                   >
                     <i class="fas fa-shield-alt"></i>
                   </button>
-                  <!-- Web Explorer Special Actions -->
-                  <button 
-                    v-if="tool.name === 'web_explorer'"
-                    @click="openWebExplorerModal(tool)"
-                    class="btn btn-primary btn-sm"
-                    title="测试 Web Explorer"
-                  >
-                    <i class="fas fa-play mr-1"></i>
-                    测试
-                  </button>
                   <!-- Regular Tools -->
                   <button 
-                    v-if="tool.name !== 'shell' && tool.name !== 'web_explorer'"
+                    v-if="tool.name !== 'shell'"
                     @click="openTestModal(tool)"
                     class="btn btn-primary btn-sm"
                     title="测试工具"
@@ -204,18 +194,9 @@
                     >
                       <i class="fas fa-shield-alt"></i>
                     </button>
-                    <!-- Web Explorer -->
-                    <button 
-                      v-if="tool.name === 'web_explorer'"
-                      @click="openWebExplorerModal(tool)"
-                      class="btn btn-primary btn-xs"
-                      title="测试 Web Explorer"
-                    >
-                      <i class="fas fa-play"></i>
-                    </button>
                     <!-- Regular Tools -->
                     <button 
-                      v-if="tool.name !== 'shell' && tool.name !== 'web_explorer'"
+                      v-if="tool.name !== 'shell'"
                       @click="openTestModal(tool)"
                       class="btn btn-primary btn-xs"
                       title="测试工具"
@@ -262,93 +243,11 @@
     <!-- Shell 终端模态框 -->
     <ShellTerminal v-model="showShellTerminal" />
 
-    <!-- Vision Explorer V2 测试模态框 -->
-    <dialog :class="['modal', { 'modal-open': showWebExplorerModal }]">
-      <div class="modal-box w-11/12 max-w-3xl">
-        <div class="flex justify-between items-center mb-4">
-          <h3 class="font-bold text-lg">
-            <i class="fas fa-eye text-primary mr-2"></i>
-            Vision Explorer V2 测试
-          </h3>
-          <button @click="closeWebExplorerModal" class="btn btn-sm btn-ghost">✕</button>
-        </div>
-
-        <div class="space-y-4">
-          <div class="alert alert-info">
-            <i class="fas fa-info-circle"></i>
-            <span>Vision Explorer V2 会自动探索目标网站，识别导航、表单和交互元素。</span>
-          </div>
-
-          <!-- 目标 URL -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">目标 URL</span></label>
-            <input 
-              v-model="veTargetUrl"
-              type="url"
-              class="input input-bordered"
-              placeholder="https://example.com"
-            />
-          </div>
-
-          <!-- 最大深度 -->
-          <div class="form-control">
-            <label class="label"><span class="label-text">最大探索深度</span></label>
-            <input 
-              v-model.number="veMaxDepth"
-              type="number"
-              min="1"
-              max="10"
-              class="input input-bordered w-24"
-            />
-          </div>
-
-          <!-- 测试结果/状态 -->
-          <div v-if="veStatus" class="form-control">
-            <label class="label"><span class="label-text">探索状态</span></label>
-            <div class="bg-base-200 p-4 rounded-lg">
-              <div class="flex items-center gap-2 mb-2">
-                <span :class="veStatus.is_running ? 'badge badge-info' : 'badge badge-success'">
-                  {{ veStatus.is_running ? '运行中' : '已完成' }}
-                </span>
-                <span class="text-sm">{{ veStatus.session_id }}</span>
-              </div>
-              <p class="text-sm">目标: {{ veStatus.target_url }}</p>
-            </div>
-          </div>
-
-          <div v-if="veResult" class="form-control">
-            <label class="label"><span class="label-text">执行结果</span></label>
-            <pre class="textarea textarea-bordered font-mono text-xs whitespace-pre-wrap h-40 bg-base-200 overflow-auto">{{ veResult }}</pre>
-          </div>
-        </div>
-
-        <div class="modal-action">
-          <button @click="closeWebExplorerModal" class="btn">关闭</button>
-          <button 
-            v-if="veStatus?.is_running"
-            @click="stopWebExplorer"
-            class="btn btn-warning"
-          >
-            <i class="fas fa-stop mr-1"></i>
-            停止
-          </button>
-          <button 
-            @click="startWebExplorer"
-            class="btn btn-primary"
-            :disabled="isVeTesting || !veTargetUrl"
-          >
-            <i v-if="isVeTesting" class="fas fa-spinner fa-spin mr-1"></i>
-            <i v-else class="fas fa-play mr-1"></i>
-            开始探索
-          </button>
-        </div>
-      </div>
-    </dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { dialog } from '@/composables/useDialog'
 import ShellConfigModal from './ShellConfigModal.vue'
@@ -360,9 +259,13 @@ type BuiltinSourceFilter = 'builtin' | 'workflow' | 'plugin'
 const props = withDefaults(defineProps<{
   sourceFilter?: BuiltinSourceFilter
   showContent?: boolean
+  workflowCount?: number
+  pluginCount?: number
 }>(), {
   sourceFilter: 'builtin',
-  showContent: true
+  showContent: true,
+  workflowCount: 0,
+  pluginCount: 0,
 })
 
 const emit = defineEmits<{
@@ -384,7 +287,6 @@ const categoryConfigs: CategoryConfig[] = [
   { key: 'network', label: '网络', icon: 'fas fa-network-wired', btnClass: 'btn-info', badgeClass: 'badge-info', bgClass: 'bg-info/10', textClass: 'text-info' },
   { key: 'system', label: '系统', icon: 'fas fa-cog', btnClass: 'btn-neutral', badgeClass: 'badge-neutral', bgClass: 'bg-neutral/10', textClass: 'text-neutral' },
   { key: 'ai', label: 'AI', icon: 'fas fa-brain', btnClass: 'btn-warning', badgeClass: 'badge-warning', bgClass: 'bg-warning/10', textClass: 'text-warning' },
-  { key: 'browser', label: '浏览器', icon: 'fas fa-globe', btnClass: 'btn-primary', badgeClass: 'badge-primary', bgClass: 'bg-primary/10', textClass: 'text-primary' },
   { key: 'utility', label: '工具', icon: 'fas fa-tools', btnClass: 'btn-success', badgeClass: 'badge-success', bgClass: 'bg-success/10', textClass: 'text-success' },
   { key: 'other', label: '其他', icon: 'fas fa-tools', btnClass: 'btn-ghost', badgeClass: 'badge-ghost', bgClass: 'bg-base-200', textClass: 'text-base-content' },
 ]
@@ -413,6 +315,8 @@ const testingTool = ref<any>(null)
 const selectedCategory = ref('')
 const sourceFilter = computed(() => props.sourceFilter)
 const showContent = computed(() => props.showContent)
+const workflowCount = computed(() => props.workflowCount ?? 0)
+const pluginCount = computed(() => props.pluginCount ?? 0)
 const infoText = computed(() => {
   if (sourceFilter.value === 'workflow') {
     return '这些是在工作流工作室中标记为工具的工作流，可供AI助手调用执行。'
@@ -472,52 +376,17 @@ function selectSourceFilter(filter: BuiltinSourceFilter) {
   emit('source-filter-change', filter)
 }
 
-// Vision Explorer V2 状态
-const showWebExplorerModal = ref(false)
-const veTargetUrl = ref('https://example.com')
-const veMaxDepth = ref(5)
-const veStatus = ref<any>(null)
-const veResult = ref('')
-const isVeTesting = ref(false)
-const veExecutionId = ref('')
-
-// methods
-
-// methods
 function getToolIcon(toolName: string) {
   const iconMap: Record<string, string> = {
-    'subdomain_scanner': 'fas fa-sitemap',
-    'subdomain_brute': 'fas fa-sitemap',
-    'port_scanner': 'fas fa-network-wired',
-    'port_scan': 'fas fa-network-wired',
     'shell': 'fas fa-terminal',
     'interactive_shell': 'fas fa-terminal',
-    'web_explorer': 'fas fa-globe',
     'web_search': 'fas fa-search',
     'http_request': 'fas fa-globe',
-    'local_time': 'fas fa-clock',
     'memory': 'fas fa-memory',
     'ocr': 'fas fa-file-image',
     'tenth_man_review': 'fas fa-user-secret',
     'todos': 'fas fa-tasks',
     'search_exploit': 'fas fa-bug',
-    // Browser tools
-    'browser_open': 'fas fa-external-link-alt',
-    'browser_snapshot': 'fas fa-camera',
-    'browser_click': 'fas fa-mouse-pointer',
-    'browser_fill': 'fas fa-keyboard',
-    'browser_type': 'fas fa-i-cursor',
-    'browser_select': 'fas fa-list',
-    'browser_scroll': 'fas fa-arrows-alt-v',
-    'browser_wait': 'fas fa-hourglass-half',
-    'browser_get_text': 'fas fa-font',
-    'browser_screenshot': 'fas fa-camera-retro',
-    'browser_back': 'fas fa-arrow-left',
-    'browser_press': 'fas fa-keyboard',
-    'browser_hover': 'fas fa-hand-pointer',
-    'browser_evaluate': 'fas fa-code',
-    'browser_get_url': 'fas fa-link',
-    'browser_close': 'fas fa-times-circle',
   }
   return iconMap[toolName] || 'fas fa-tools'
 }
@@ -602,93 +471,6 @@ async function toggleTool(tool: any) {
 function openTestModal(tool: any) {
   testingTool.value = { ...tool }
   showTestModal.value = true
-}
-
-
-// ============================================================================
-// Web Explorer 方法
-// ============================================================================
-
-function openWebExplorerModal(tool: any) {
-  veStatus.value = null
-  veResult.value = ''
-  showWebExplorerModal.value = true
-}
-
-function closeWebExplorerModal() {
-  showWebExplorerModal.value = false
-}
-
-
-
-async function startWebExplorer() {
-  if (!veTargetUrl.value) {
-    dialog.toast.warning('请输入目标 URL')
-    return
-  }
-
-  isVeTesting.value = true
-  veResult.value = '正在启动 Web Explorer...'
-
-  try {
-    const executionId = await invoke<string>('start_web_explorer', {
-      config: {
-        target_url: veTargetUrl.value,
-        max_depth: veMaxDepth.value,
-        ai_config: {}
-      }
-    })
-
-    veExecutionId.value = executionId
-    dialog.toast.success(`探索已启动，执行ID: ${executionId.substring(0, 8)}...`)
-    
-    // Poll status periodically
-    await pollWeStatus(executionId)
-  } catch (error: any) {
-    console.error('Failed to start Web Explorer:', error)
-    veResult.value = `启动失败: ${error?.message || error}`
-    dialog.toast.error('启动 Web Explorer 失败')
-  } finally {
-    isVeTesting.value = false
-  }
-}
-
-async function stopWebExplorer() {
-  if (!veExecutionId.value) return
-
-  try {
-    await invoke('stop_web_explorer', {
-      executionId: veExecutionId.value
-    })
-    dialog.toast.success('已发送停止请求')
-    veResult.value = '探索已停止'
-    
-    // Refresh status
-    await pollWeStatus(veExecutionId.value)
-  } catch (error: any) {
-    console.error('Failed to stop Web Explorer:', error)
-    dialog.toast.error(`停止失败: ${error?.message || error}`)
-  }
-}
-
-async function pollWeStatus(executionId: string) {
-  try {
-    const status = await invoke<any>('get_web_explorer_status', { executionId })
-    veStatus.value = status
-    
-    if (status.is_running) {
-      veResult.value = `探索进行中...\n会话ID: ${status.session_id}\n目标: ${status.target_url}`
-      // Continue polling
-      setTimeout(() => pollWeStatus(executionId), 2000)
-    } else {
-      veResult.value = `探索已完成\n会话ID: ${status.session_id}\n目标: ${status.target_url}`
-    }
-  } catch (error: any) {
-    console.warn('Failed to get Web Explorer status:', error)
-    // Session may have ended or not found
-    veResult.value = '会话已结束或未找到'
-    veStatus.value = null
-  }
 }
 
 // 暴露刷新方法供父组件调用

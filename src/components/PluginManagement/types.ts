@@ -152,6 +152,7 @@ export const trafficCategories = [
 export const agentsCategories = [
   'recon',      // Reconnaissance
   'discovery',  // Discovery & Enumeration
+  'risk',       // Risk Scanning
   'vuln',       // Vulnerability Scanning
   'exploit',    // Exploitation
   'monitor',    // Monitoring & Change Detection

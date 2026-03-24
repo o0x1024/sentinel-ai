@@ -4,7 +4,6 @@
 //! Agent execution is now handled by rig-core.
 
 pub mod types;
-pub mod web_explorer;
 
 pub use types::*;
 

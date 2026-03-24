@@ -67,6 +67,25 @@ export default {
   bugBounty,
   llmSecurity,
 
+  cyberchef: {
+    operations: 'Operations',
+    searchPlaceholder: 'Search operations...',
+    recipe: 'Recipe',
+    clearRecipe: 'Clear Recipe',
+    bake: 'Bake!',
+    autoBake: 'Auto Bake',
+    input: 'Input',
+    chars: 'Chars',
+    clear: 'Clear',
+    inputPlaceholder: 'Enter data to process here...',
+    output: 'Output',
+    copy: 'Copy',
+    outputPlaceholder: 'Results will appear here in real time...',
+    emptyRecipe: 'Drag operations from the left into this area',
+    doubleClickHint: 'or double-click to add',
+    operationDisabled: 'Disabled'
+  },
+
   // Top-level aliases for sidebar navigation
   rag: {
     title: 'RAG Management'
@@ -447,7 +466,8 @@ export default {
     agentCategories: {
       recon: 'Reconnaissance',
       discovery: 'Discovery',
-      vuln: 'Vulnerability Scan',
+      risk: 'Risk Scanning',
+      vuln: 'Risk Scanning',
       exploit: 'Exploitation',
       monitor: 'Change Monitor',
       utility: 'Utility',

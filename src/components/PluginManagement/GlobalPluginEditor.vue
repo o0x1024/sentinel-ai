@@ -423,7 +423,8 @@ const subCategories = computed<SubCategory[]>(() => {
     return [
       { value: 'recon', label: t('plugins.agentCategories.recon', '信息收集'), icon: 'fas fa-search' },
       { value: 'discovery', label: t('plugins.agentCategories.discovery', '目标发现'), icon: 'fas fa-compass' },
-      { value: 'vuln', label: t('plugins.agentCategories.vuln', '漏洞扫描'), icon: 'fas fa-bug' },
+      { value: 'risk', label: t('plugins.agentCategories.risk', '风险扫描'), icon: 'fas fa-shield-alt' },
+      { value: 'vuln', label: t('plugins.agentCategories.vuln', '风险扫描（兼容旧分类）'), icon: 'fas fa-bug' },
       { value: 'exploit', label: t('plugins.agentCategories.exploit', '漏洞利用'), icon: 'fas fa-bomb' },
       { value: 'monitor', label: t('plugins.agentCategories.monitor', '变更监控'), icon: 'fas fa-eye' },
       { value: 'utility', label: t('plugins.agentCategories.utility', '实用工具'), icon: 'fas fa-toolbox' },

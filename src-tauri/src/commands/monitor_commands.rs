@@ -1,6 +1,13 @@
 //! Asset Monitor Scheduler Commands
 
 use crate::commands::monitor_surface::materialize_surface_artifacts;
+use crate::commands::monitor_progress_support::{
+    build_monitor_task_log_event, build_monitor_task_progress_event, collect_monitor_plugins,
+    emit_monitor_task_log, emit_monitor_task_progress,
+};
+use crate::commands::monitor_surface_support::{
+    collect_monitor_targets, ingest_surface_plugin_output,
+};
 use chrono::Utc;
 use sentinel_bounty::services::{
     ChangeMonitorConfig, MonitorPluginConfig, MonitorScheduler, MonitorStats, MonitorTask,
@@ -66,7 +73,7 @@ fn calculate_url_risk_score(http_status: Option<i32>, waf_detected: Option<bool>
             200..=299 => score += 20.0, // Accessible endpoints
             300..=399 => score += 10.0, // Redirects
             400..=499 => score += 5.0,  // Client errors
-            500..=599 => score += 15.0, // Server errors (potential vuln)
+            500..=599 => score += 15.0, // Server errors (potential risk exposure)
             _ => {}
         }
     }
@@ -211,6 +218,7 @@ pub async fn monitor_start_scheduler(
     let scheduler = state_guard.scheduler.clone();
     let running_task_ids = state_guard.running_task_ids.clone();
     let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
+    let app_for_executor = app.clone();
     drop(state_guard);
 
     // Set up event callback to emit Tauri events and save to DB
@@ -271,13 +279,16 @@ pub async fn monitor_start_scheduler(
     let db_service_clone = db_service.inner().clone();
     let running_task_ids_for_executor = running_task_ids.clone();
     let cancel_requested_task_ids_for_executor = cancel_requested_task_ids.clone();
+    let app_for_executor_clone = app_for_executor.clone();
     scheduler
         .set_task_executor(move |task| {
             let db = db_service_clone.clone();
             let running_task_ids = running_task_ids_for_executor.clone();
             let cancel_requested_task_ids = cancel_requested_task_ids_for_executor.clone();
+            let app_handle = app_for_executor_clone.clone();
             Box::pin(async move {
                 let task_id = task.id.clone();
+                let execution_started_at = Utc::now().to_rfc3339();
                 {
                     let mut running = running_task_ids.write().await;
                     running.insert(task_id.clone());
@@ -290,116 +301,140 @@ pub async fn monitor_start_scheduler(
                 let result: Result<Vec<sentinel_bounty::models::ChangeEvent>, String> = async {
                     tracing::info!("Executor running for task: {}", task.name);
                     let all_events = Vec::new();
+                    let mut total_imported = 0usize;
+                    let mut completed_steps = 0usize;
+                    let mut stopped = false;
 
-                    // 1. Resolve targets from Program Scope
-                    let scopes = db
-                        .list_program_scopes(Some(&task.program_id), None)
-                        .await
-                        .map_err(|e| e.to_string())?;
-
-                    let mut targets = Vec::new();
-                    for scope in scopes {
-                        // Determine if scope is relevant (e.g. in_scope)
-                        // For now, assume all scopes are valid targets if they are domains/wildcards
-                        if scope.target_type == "wildcard"
-                            || scope.target_type == "domain"
-                            || scope.target_type == "url"
-                        {
-                            targets.push(scope.target);
+                    let targets = match collect_monitor_targets(&db, &task.program_id).await {
+                        Ok(value) => value,
+                        Err(error) => {
+                            emit_monitor_task_progress(
+                                &app_handle,
+                                &build_monitor_task_progress_event(
+                                    &task,
+                                    "scheduler",
+                                    "failed",
+                                    0,
+                                    0,
+                                    None,
+                                    None,
+                                    0,
+                                    0,
+                                    Some(error.clone()),
+                                    &execution_started_at,
+                                ),
+                            );
+                            return Err(error);
                         }
-                    }
-
-                    // Also fetch all discovered subdomains/assets for this program
-                    // This is critical for web monitoring to scan all subdomains, not just the root scope
-                    match db
-                        .list_bounty_assets(
-                            Some(&task.program_id), // program_id
-                            None,                   // scope_id
-                            Some("domain"),         // asset_type
-                            None,                   // is_alive
-                            None,                   // has_findings
-                            None,                   // search
-                            None,                   // sort_by
-                            None,                   // sort_dir
-                            Some(10000),            // limit
-                            Some(0),                // offset
-                        )
-                        .await
-                    {
-                        Ok(assets) => {
-                            for asset in assets {
-                                if asset.asset_type == "domain" && asset.is_wildcard != Some(true) {
-                                    if !targets.contains(&asset.canonical_url) {
-                                        targets.push(asset.canonical_url);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to fetch existing assets for task targets: {}",
-                                e
-                            )
-                        }
-                    }
+                    };
 
                     if targets.is_empty() {
                         tracing::warn!(
                             "No targets found for program {}, skipping task execution",
                             task.program_id
                         );
+                        emit_monitor_task_progress(
+                            &app_handle,
+                            &build_monitor_task_progress_event(
+                                &task,
+                                "scheduler",
+                                "completed",
+                                0,
+                                0,
+                                None,
+                                None,
+                                0,
+                                0,
+                                Some("No monitor targets found".to_string()),
+                                &execution_started_at,
+                            ),
+                        );
                         return Ok(vec![]);
                     }
                     let target_domains = targets.join(",");
 
-                    // 2. Gather plugins to run
-                    let mut plugins_to_run = Vec::new();
+                    let plugins_to_run = collect_monitor_plugins(&task);
+                    let total_steps = plugins_to_run.len();
 
-                    if task.config.enable_dns_monitoring {
-                        for p in &task.config.dns_plugins {
-                            plugins_to_run.push(p);
-                        }
-                    }
-                    if task.config.enable_cert_monitoring {
-                        for p in &task.config.cert_plugins {
-                            plugins_to_run.push(p);
-                        }
-                    }
-                    if task.config.enable_web_monitoring {
-                        for p in &task.config.web_plugins {
-                            plugins_to_run.push(p);
-                        }
-                    }
-                    if task.config.enable_api_monitoring {
-                        for p in &task.config.api_plugins {
-                            plugins_to_run.push(p);
-                        }
-                    }
-                    if task.config.enable_content_monitoring {
-                        for p in &task.config.content_plugins {
-                            plugins_to_run.push(p);
-                        }
-                    }
-                    if task.config.enable_port_monitoring {
-                        for p in &task.config.port_plugins {
-                            plugins_to_run.push(p);
-                        }
-                    }
-                    if task.config.enable_vuln_monitoring {
-                        for p in &task.config.vuln_plugins {
-                            plugins_to_run.push(p);
-                        }
+                    emit_monitor_task_progress(
+                        &app_handle,
+                        &build_monitor_task_progress_event(
+                            &task,
+                            "scheduler",
+                            "running",
+                            0,
+                            total_steps,
+                            None,
+                            None,
+                            targets.len(),
+                            0,
+                            Some("Preparing monitor task".to_string()),
+                            &execution_started_at,
+                        ),
+                    );
+
+                    if total_steps == 0 {
+                        emit_monitor_task_progress(
+                            &app_handle,
+                            &build_monitor_task_progress_event(
+                                &task,
+                                "scheduler",
+                                "completed",
+                                0,
+                                0,
+                                None,
+                                None,
+                                targets.len(),
+                                0,
+                                Some("No monitor plugins configured".to_string()),
+                                &execution_started_at,
+                            ),
+                        );
+                        return Ok(vec![]);
                     }
 
                     // 3. Execute Plugins
                     let tool_server = sentinel_tools::get_tool_server();
 
-                    for plugin in plugins_to_run {
+                    for (index, plugin) in plugins_to_run.iter().enumerate() {
+                        let imported_before_plugin = total_imported;
                         if cancel_requested_task_ids.read().await.contains(&task_id) {
                             tracing::info!(
                                 "Task '{}' stopped by user request before running plugin '{}'",
                                 task.name,
                                 plugin.plugin_id
+                            );
+                            stopped = true;
+                            emit_monitor_task_progress(
+                                &app_handle,
+                                &build_monitor_task_progress_event(
+                                    &task,
+                                    "scheduler",
+                                    "stopped",
+                                    completed_steps,
+                                    total_steps,
+                                    Some(plugin.plugin_id.as_str()),
+                                    Some(index + 1),
+                                    targets.len(),
+                                    total_imported,
+                                    Some(format!("Stopped before plugin {}", plugin.plugin_id)),
+                                    &execution_started_at,
+                                ),
+                            );
+                            emit_monitor_task_log(
+                                &app_handle,
+                                &build_monitor_task_log_event(
+                                    &task,
+                                    plugin.plugin_id.as_str(),
+                                    "scheduler",
+                                    "stopped",
+                                    index + 1,
+                                    total_steps,
+                                    None,
+                                    0,
+                                    total_imported,
+                                    format!("Stopped before plugin {}", plugin.plugin_id),
+                                ),
                             );
                             break;
                         }
@@ -409,6 +444,37 @@ pub async fn monitor_start_scheduler(
                             "Running plugin: {} for task {}",
                             plugin.plugin_id,
                             task.name
+                        );
+                        emit_monitor_task_progress(
+                            &app_handle,
+                            &build_monitor_task_progress_event(
+                                &task,
+                                "scheduler",
+                                "running",
+                                completed_steps,
+                                total_steps,
+                                Some(plugin.plugin_id.as_str()),
+                                Some(index + 1),
+                                targets.len(),
+                                total_imported,
+                                Some(format!("Running plugin {}", plugin.plugin_id)),
+                                &execution_started_at,
+                            ),
+                        );
+                        emit_monitor_task_log(
+                            &app_handle,
+                            &build_monitor_task_log_event(
+                                &task,
+                                plugin.plugin_id.as_str(),
+                                "scheduler",
+                                "running",
+                                index + 1,
+                                total_steps,
+                                None,
+                                0,
+                                total_imported,
+                                format!("Running plugin {}", plugin.plugin_id),
+                            ),
                         );
 
                         // Prepare input
@@ -465,15 +531,109 @@ pub async fn monitor_start_scheduler(
                                 task.name,
                                 plugin_started_at.elapsed().as_millis()
                             );
+                            completed_steps = index + 1;
+                            emit_monitor_task_progress(
+                                &app_handle,
+                                &build_monitor_task_progress_event(
+                                    &task,
+                                    "scheduler",
+                                    "running",
+                                    completed_steps,
+                                    total_steps,
+                                    Some(plugin.plugin_id.as_str()),
+                                    Some(index + 1),
+                                    targets.len(),
+                                    total_imported,
+                                    Some(format!("Plugin {} failed", plugin.plugin_id)),
+                                    &execution_started_at,
+                                ),
+                            );
+                            emit_monitor_task_log(
+                                &app_handle,
+                                &build_monitor_task_log_event(
+                                    &task,
+                                    plugin.plugin_id.as_str(),
+                                    "scheduler",
+                                    "failed",
+                                    index + 1,
+                                    total_steps,
+                                    Some(plugin_started_at.elapsed().as_millis() as u64),
+                                    0,
+                                    total_imported,
+                                    format!("Plugin {} failed", plugin.plugin_id),
+                                ),
+                            );
                             continue;
                         }
 
-                        // Process Output (Simulated import logic similar to monitor_discover_and_import_assets)
-                        // We'll reuse the logic by calling a helper or implementing it here.
-                        // For brevity, we'll implement basic ingestion for subdomain_brute keys
-
                         // Process Output
                         if let Some(output) = &result.output {
+                            match ingest_surface_plugin_output(
+                                &db,
+                                &task.program_id,
+                                &plugin.plugin_id,
+                                "monitor_scheduler",
+                                Some(&task.id),
+                                output,
+                                Some(serde_json::json!({
+                                    "task_id": task.id,
+                                    "task_name": task.name,
+                                    "execution_mode": "scheduler",
+                                })),
+                            )
+                            .await
+                            {
+                                Ok(materialized) if materialized > 0 => {
+                                    total_imported += materialized;
+                                    tracing::info!(
+                                        "Scheduler task '{}' materialized {} surface assets for plugin '{}'",
+                                        task.name,
+                                        materialized,
+                                        plugin.plugin_id
+                                    );
+                                    completed_steps = index + 1;
+                                    emit_monitor_task_progress(
+                                        &app_handle,
+                                        &build_monitor_task_progress_event(
+                                            &task,
+                                            "scheduler",
+                                            "running",
+                                            completed_steps,
+                                            total_steps,
+                                            Some(plugin.plugin_id.as_str()),
+                                            Some(index + 1),
+                                            targets.len(),
+                                            total_imported,
+                                            Some(format!("Plugin {} completed", plugin.plugin_id)),
+                                            &execution_started_at,
+                                        ),
+                                    );
+                                    emit_monitor_task_log(
+                                        &app_handle,
+                                        &build_monitor_task_log_event(
+                                            &task,
+                                            plugin.plugin_id.as_str(),
+                                            "scheduler",
+                                            "completed",
+                                            index + 1,
+                                            total_steps,
+                                            Some(plugin_started_at.elapsed().as_millis() as u64),
+                                            total_imported.saturating_sub(imported_before_plugin),
+                                            total_imported,
+                                            format!("Plugin {} completed", plugin.plugin_id),
+                                        ),
+                                    );
+                                    continue;
+                                }
+                                Ok(_) => {}
+                                Err(e) => tracing::warn!(
+                                    "Failed to ingest surface output for scheduled task '{}' plugin '{}': {}",
+                                    task.name,
+                                    plugin.plugin_id,
+                                    e
+                                ),
+                            }
+
                             tracing::info!("Plugin {} output: {}", plugin.plugin_id, output);
 
                             // Normalize output: wrapping in 'data' or using direct keys
@@ -659,12 +819,13 @@ pub async fn monitor_start_scheduler(
                                         related_assets_json: None,
                                     };
 
-                                    if let Err(e) = db.create_bounty_asset(&asset).await {
-                                        tracing::error!("Failed to save asset: {}", e);
-                                    } else {
-                                        tracing::info!(
-                                            "Monitor imported new asset: {}",
-                                            clean_domain
+                                        if let Err(e) = db.create_bounty_asset(&asset).await {
+                                            tracing::error!("Failed to save asset: {}", e);
+                                        } else {
+                                            total_imported += 1;
+                                            tracing::info!(
+                                                "Monitor imported new asset: {}",
+                                                clean_domain
                                         );
                                     }
                                 }
@@ -930,6 +1091,7 @@ pub async fn monitor_start_scheduler(
                                         if let Err(e) = db.create_bounty_asset(&asset).await {
                                             tracing::error!("Failed to save asset: {}", e);
                                         } else {
+                                            total_imported += 1;
                                             tracing::info!(
                                                 "Monitor imported new detailed asset: {}",
                                                 canonical_url
@@ -945,6 +1107,57 @@ pub async fn monitor_start_scheduler(
                             plugin.plugin_id,
                             task.name,
                             plugin_started_at.elapsed().as_millis()
+                        );
+                        completed_steps = index + 1;
+                        emit_monitor_task_progress(
+                            &app_handle,
+                            &build_monitor_task_progress_event(
+                                &task,
+                                "scheduler",
+                                "running",
+                                completed_steps,
+                                total_steps,
+                                Some(plugin.plugin_id.as_str()),
+                                Some(index + 1),
+                                targets.len(),
+                                total_imported,
+                                Some(format!("Plugin {} completed", plugin.plugin_id)),
+                                &execution_started_at,
+                            ),
+                        );
+                        emit_monitor_task_log(
+                            &app_handle,
+                            &build_monitor_task_log_event(
+                                &task,
+                                plugin.plugin_id.as_str(),
+                                "scheduler",
+                                "completed",
+                                index + 1,
+                                total_steps,
+                                Some(plugin_started_at.elapsed().as_millis() as u64),
+                                total_imported.saturating_sub(imported_before_plugin),
+                                total_imported,
+                                format!("Plugin {} completed", plugin.plugin_id),
+                            ),
+                        );
+                    }
+
+                    if !stopped {
+                        emit_monitor_task_progress(
+                            &app_handle,
+                            &build_monitor_task_progress_event(
+                                &task,
+                                "scheduler",
+                                "completed",
+                                completed_steps.max(total_steps),
+                                total_steps,
+                                None,
+                                None,
+                                targets.len(),
+                                total_imported,
+                                Some("Monitor task completed".to_string()),
+                                &execution_started_at,
+                            ),
                         );
                     }
 
@@ -1064,9 +1277,11 @@ pub struct MonitorConfigDto {
     #[serde(default)]
     pub web_plugins: Vec<MonitorPluginConfigDto>,
 
-    pub enable_vuln_monitoring: Option<bool>,
+    #[serde(alias = "enable_vuln_monitoring")]
+    pub enable_risk_monitoring: Option<bool>,
     #[serde(default)]
-    pub vuln_plugins: Vec<MonitorPluginConfigDto>,
+    #[serde(alias = "vuln_plugins")]
+    pub risk_plugins: Vec<MonitorPluginConfigDto>,
 
     pub auto_trigger_enabled: Option<bool>,
     pub auto_trigger_min_severity: Option<String>,
@@ -1119,11 +1334,11 @@ impl From<MonitorConfigDto> for ChangeMonitorConfig {
             config.web_plugins = dto.web_plugins.into_iter().map(Into::into).collect();
         }
 
-        if let Some(v) = dto.enable_vuln_monitoring {
-            config.enable_vuln_monitoring = v;
+        if let Some(v) = dto.enable_risk_monitoring {
+            config.enable_risk_monitoring = v;
         }
-        if !dto.vuln_plugins.is_empty() {
-            config.vuln_plugins = dto.vuln_plugins.into_iter().map(Into::into).collect();
+        if !dto.risk_plugins.is_empty() {
+            config.risk_plugins = dto.risk_plugins.into_iter().map(Into::into).collect();
         }
 
         if let Some(v) = dto.auto_trigger_enabled {
@@ -1318,49 +1533,7 @@ pub async fn monitor_trigger_task(
     // Get executor
     let tool_server = sentinel_tools::get_tool_server();
 
-    // 1. Resolve targets from Program Scope
-    let scopes = db_service
-        .list_program_scopes(Some(&task.program_id), None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut targets = Vec::new();
-    for scope in scopes {
-        if scope.target_type == "wildcard"
-            || scope.target_type == "domain"
-            || scope.target_type == "url"
-        {
-            targets.push(scope.target);
-        }
-    }
-
-    // Also fetch all discovered subdomains/assets for this program
-    match db_service
-        .list_bounty_assets(
-            Some(&task.program_id),
-            None,
-            Some("domain"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(10000),
-            Some(0),
-        )
-        .await
-    {
-        Ok(assets) => {
-            for asset in assets {
-                if asset.asset_type == "domain" && asset.is_wildcard != Some(true) {
-                    if !targets.contains(&asset.canonical_url) {
-                        targets.push(asset.canonical_url);
-                    }
-                }
-            }
-        }
-        Err(e) => tracing::warn!("Failed to fetch existing assets for task targets: {}", e),
-    }
+    let targets = collect_monitor_targets(db_service.inner(), &task.program_id).await?;
 
     if targets.is_empty() {
         tracing::warn!(
@@ -1373,44 +1546,7 @@ pub async fn monitor_trigger_task(
     let target_domains = targets.join(",");
     tracing::info!("Task '{}' will scan {} targets", task.name, targets.len());
 
-    // 2. Gather plugins to run (clone them for 'static lifetime)
-    let mut plugins_to_run = Vec::new();
-
-    if task.config.enable_dns_monitoring {
-        for p in &task.config.dns_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
-    if task.config.enable_cert_monitoring {
-        for p in &task.config.cert_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
-    if task.config.enable_web_monitoring {
-        for p in &task.config.web_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
-    if task.config.enable_api_monitoring {
-        for p in &task.config.api_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
-    if task.config.enable_content_monitoring {
-        for p in &task.config.content_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
-    if task.config.enable_port_monitoring {
-        for p in &task.config.port_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
-    if task.config.enable_vuln_monitoring {
-        for p in &task.config.vuln_plugins {
-            plugins_to_run.push(p.clone());
-        }
-    }
+    let plugins_to_run = collect_monitor_plugins(&task);
 
     tracing::info!(
         "Task '{}' will execute {} plugins",
@@ -1429,6 +1565,7 @@ pub async fn monitor_trigger_task(
     let cancel_requested_task_ids = state_guard.cancel_requested_task_ids.clone();
 
     tokio::spawn(async move {
+        let execution_started_at = Utc::now().to_rfc3339();
         {
             let mut running = running_task_ids.write().await;
             running.insert(task_id_clone.clone());
@@ -1442,9 +1579,49 @@ pub async fn monitor_trigger_task(
             "Background execution started for task '{}'",
             task_clone.name
         );
+        let total_steps = plugins_to_run.len();
         let mut total_imported = 0;
+        let mut completed_steps = 0usize;
+        let mut stopped = false;
 
-        for plugin in plugins_to_run {
+        emit_monitor_task_progress(
+            &app_clone,
+            &build_monitor_task_progress_event(
+                &task_clone,
+                "manual_trigger",
+                "running",
+                0,
+                total_steps,
+                None,
+                None,
+                targets.len(),
+                0,
+                Some("Preparing monitor task".to_string()),
+                &execution_started_at,
+            ),
+        );
+
+        if total_steps == 0 {
+            emit_monitor_task_progress(
+                &app_clone,
+                &build_monitor_task_progress_event(
+                    &task_clone,
+                    "manual_trigger",
+                    "completed",
+                    0,
+                    0,
+                    None,
+                    None,
+                    targets.len(),
+                    0,
+                    Some("No monitor plugins configured".to_string()),
+                    &execution_started_at,
+                ),
+            );
+        }
+
+        for (index, plugin) in plugins_to_run.iter().enumerate() {
+            let imported_before_plugin = total_imported;
             if cancel_requested_task_ids
                 .read()
                 .await
@@ -1455,6 +1632,38 @@ pub async fn monitor_trigger_task(
                     task_clone.name,
                     plugin.plugin_id
                 );
+                stopped = true;
+                emit_monitor_task_progress(
+                    &app_clone,
+                    &build_monitor_task_progress_event(
+                        &task_clone,
+                        "manual_trigger",
+                        "stopped",
+                        completed_steps,
+                        total_steps,
+                        Some(plugin.plugin_id.as_str()),
+                        Some(index + 1),
+                        targets.len(),
+                        total_imported,
+                        Some(format!("Stopped before plugin {}", plugin.plugin_id)),
+                        &execution_started_at,
+                    ),
+                );
+                emit_monitor_task_log(
+                    &app_clone,
+                    &build_monitor_task_log_event(
+                        &task_clone,
+                        plugin.plugin_id.as_str(),
+                        "manual_trigger",
+                        "stopped",
+                        index + 1,
+                        total_steps,
+                        None,
+                        0,
+                        total_imported,
+                        format!("Stopped before plugin {}", plugin.plugin_id),
+                    ),
+                );
                 break;
             }
 
@@ -1463,6 +1672,37 @@ pub async fn monitor_trigger_task(
                 "Running plugin: {} for task {}",
                 plugin.plugin_id,
                 task_clone.name
+            );
+            emit_monitor_task_progress(
+                &app_clone,
+                &build_monitor_task_progress_event(
+                    &task_clone,
+                    "manual_trigger",
+                    "running",
+                    completed_steps,
+                    total_steps,
+                    Some(plugin.plugin_id.as_str()),
+                    Some(index + 1),
+                    targets.len(),
+                    total_imported,
+                    Some(format!("Running plugin {}", plugin.plugin_id)),
+                    &execution_started_at,
+                ),
+            );
+            emit_monitor_task_log(
+                &app_clone,
+                &build_monitor_task_log_event(
+                    &task_clone,
+                    plugin.plugin_id.as_str(),
+                    "manual_trigger",
+                    "running",
+                    index + 1,
+                    total_steps,
+                    None,
+                    0,
+                    total_imported,
+                    format!("Running plugin {}", plugin.plugin_id),
+                ),
             );
 
             // Prepare input
@@ -1508,6 +1748,38 @@ pub async fn monitor_trigger_task(
                     task_clone.name,
                     plugin_started_at.elapsed().as_millis()
                 );
+                completed_steps = index + 1;
+                emit_monitor_task_progress(
+                    &app_clone,
+                    &build_monitor_task_progress_event(
+                        &task_clone,
+                        "manual_trigger",
+                        "running",
+                        completed_steps,
+                        total_steps,
+                        Some(plugin.plugin_id.as_str()),
+                        Some(index + 1),
+                        targets.len(),
+                        total_imported,
+                        Some(format!("Plugin {} failed", plugin.plugin_id)),
+                        &execution_started_at,
+                    ),
+                );
+                emit_monitor_task_log(
+                    &app_clone,
+                    &build_monitor_task_log_event(
+                        &task_clone,
+                        plugin.plugin_id.as_str(),
+                        "manual_trigger",
+                        "failed",
+                        index + 1,
+                        total_steps,
+                        Some(plugin_started_at.elapsed().as_millis() as u64),
+                        0,
+                        total_imported,
+                        format!("Plugin {} failed", plugin.plugin_id),
+                    ),
+                );
                 continue;
             }
 
@@ -1526,6 +1798,72 @@ pub async fn monitor_trigger_task(
 
             // Process output (simplified asset import logic)
             if let Some(output) = &result.output {
+                match ingest_surface_plugin_output(
+                    &db_clone,
+                    &task_clone.program_id,
+                    &plugin.plugin_id,
+                    "monitor_trigger_task",
+                    Some(&task_clone.id),
+                    output,
+                    Some(serde_json::json!({
+                        "task_id": task_clone.id,
+                        "task_name": task_clone.name,
+                        "execution_mode": "manual_trigger",
+                    })),
+                )
+                .await
+                {
+                    Ok(materialized) if materialized > 0 => {
+                        total_imported += materialized;
+                        tracing::info!(
+                            "Manual task '{}' materialized {} surface assets for plugin '{}'",
+                            task_clone.name,
+                            materialized,
+                            plugin.plugin_id
+                        );
+                        completed_steps = index + 1;
+                        emit_monitor_task_progress(
+                            &app_clone,
+                            &build_monitor_task_progress_event(
+                                &task_clone,
+                                "manual_trigger",
+                                "running",
+                                completed_steps,
+                                total_steps,
+                                Some(plugin.plugin_id.as_str()),
+                                Some(index + 1),
+                                targets.len(),
+                                total_imported,
+                                Some(format!("Plugin {} completed", plugin.plugin_id)),
+                                &execution_started_at,
+                            ),
+                        );
+                        emit_monitor_task_log(
+                            &app_clone,
+                            &build_monitor_task_log_event(
+                                &task_clone,
+                                plugin.plugin_id.as_str(),
+                                "manual_trigger",
+                                "completed",
+                                index + 1,
+                                total_steps,
+                                Some(plugin_started_at.elapsed().as_millis() as u64),
+                                total_imported.saturating_sub(imported_before_plugin),
+                                total_imported,
+                                format!("Plugin {} completed", plugin.plugin_id),
+                            ),
+                        );
+                        continue;
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(
+                        "Failed to ingest surface output for manual task '{}' plugin '{}': {}",
+                        task_clone.name,
+                        plugin.plugin_id,
+                        e
+                    ),
+                }
+
                 let data = output.get("data").unwrap_or(output);
 
                 plugin_subdomains_count = data
@@ -2389,6 +2727,57 @@ pub async fn monitor_trigger_task(
                 task_clone.name,
                 plugin_started_at.elapsed().as_millis()
             );
+            completed_steps = index + 1;
+            emit_monitor_task_progress(
+                &app_clone,
+                &build_monitor_task_progress_event(
+                    &task_clone,
+                    "manual_trigger",
+                    "running",
+                    completed_steps,
+                    total_steps,
+                    Some(plugin.plugin_id.as_str()),
+                    Some(index + 1),
+                    targets.len(),
+                    total_imported,
+                    Some(format!("Plugin {} completed", plugin.plugin_id)),
+                    &execution_started_at,
+                ),
+            );
+            emit_monitor_task_log(
+                &app_clone,
+                &build_monitor_task_log_event(
+                    &task_clone,
+                    plugin.plugin_id.as_str(),
+                    "manual_trigger",
+                    "completed",
+                    index + 1,
+                    total_steps,
+                    Some(plugin_started_at.elapsed().as_millis() as u64),
+                    total_imported.saturating_sub(imported_before_plugin),
+                    total_imported,
+                    format!("Plugin {} completed", plugin.plugin_id),
+                ),
+            );
+        }
+
+        if !stopped {
+            emit_monitor_task_progress(
+                &app_clone,
+                &build_monitor_task_progress_event(
+                    &task_clone,
+                    "manual_trigger",
+                    "completed",
+                    completed_steps.max(total_steps),
+                    total_steps,
+                    None,
+                    None,
+                    targets.len(),
+                    total_imported,
+                    Some("Monitor task completed".to_string()),
+                    &execution_started_at,
+                ),
+            );
         }
 
         // Update task statistics
@@ -2495,6 +2884,39 @@ pub async fn monitor_create_default_tasks(
     content_task.config.enable_content_monitoring = true;
     content_task.config.enable_api_monitoring = true;
     task_ids.push(state_guard.scheduler.add_task(content_task).await?);
+
+    // Network Surface Monitor (every 12 hours)
+    let mut network_task = MonitorTask::new(
+        program_id.clone(),
+        "Network Surface Monitor".to_string(),
+        12 * 3600,
+    );
+    network_task.config.enable_dns_monitoring = false;
+    network_task.config.enable_cert_monitoring = false;
+    network_task.config.enable_content_monitoring = false;
+    network_task.config.enable_api_monitoring = false;
+    network_task.config.enable_port_monitoring = true;
+    network_task.config.enable_web_monitoring = true;
+    task_ids.push(state_guard.scheduler.add_task(network_task).await?);
+
+    // Risk Monitor (every 24 hours)
+    let mut risk_task = MonitorTask::new(
+        program_id.clone(),
+        "Risk Monitor".to_string(),
+        24 * 3600,
+    );
+    risk_task.config.enable_dns_monitoring = false;
+    risk_task.config.enable_cert_monitoring = false;
+    risk_task.config.enable_content_monitoring = false;
+    risk_task.config.enable_api_monitoring = false;
+    risk_task.config.enable_port_monitoring = false;
+    risk_task.config.enable_web_monitoring = false;
+    risk_task.config.enable_risk_monitoring = true;
+    risk_task.config.risk_plugins = vec![
+        MonitorPluginConfig::new("sensitive_file_scanner".to_string()),
+        MonitorPluginConfig::new("risk_scanner".to_string()),
+    ];
+    task_ids.push(state_guard.scheduler.add_task(risk_task).await?);
 
     save_tasks_to_db(&state_guard.scheduler, &db_service).await?;
 
@@ -2666,6 +3088,7 @@ pub async fn monitor_discover_and_import_assets(
         match materialize_surface_artifacts(
             &db_service.inner().clone(),
             &request.program_id,
+            Some(&run_id),
             &request.plugin_id,
             surface_artifacts,
         )
@@ -3729,7 +4152,7 @@ pub struct MonitorPluginInfo {
     pub id: String,
     pub name: String,
     pub category: String,
-    pub monitor_type: String, // dns, cert, content, api
+    pub monitor_type: String, // dns, cert, content, api, port, web, risk
     pub description: Option<String>,
     pub is_available: bool,
 }
@@ -3766,10 +4189,19 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
             "cert_monitor" | "ssl_scanner" => "cert",
 
             // Content monitoring plugins
-            "content_monitor" | "http_prober" => "content",
+            "content_monitor" => "content",
 
             // API monitoring plugins
             "api_monitor" | "js_analyzer" | "js_link_finder" => "api",
+
+            // Port / service monitoring plugins
+            "port_monitor" | "service_fingerprinter" | "cidr_mapper" => "port",
+
+            // Web monitoring plugins
+            "http_prober" | "tech_fingerprinter" | "favicon_fingerprinter" => "web",
+
+            // Risk monitoring plugins
+            "sensitive_file_scanner" | "risk_scanner" => "risk",
 
             _ => {
                 // Check category-based matching
@@ -3787,16 +4219,30 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
                         "cert"
                     }
                     "monitor"
-                        if normalized_name.contains("content")
-                            || normalized_name.contains("http") =>
+                        if normalized_name.contains("content") =>
                     {
                         "content"
+                    }
+                    "monitor" | "recon"
+                        if normalized_name.contains("port")
+                            || normalized_name.contains("service") =>
+                    {
+                        "port"
+                    }
+                    "monitor" | "recon"
+                        if normalized_name.contains("web")
+                            || normalized_name.contains("tech")
+                            || normalized_name.contains("fingerprint")
+                            || normalized_name.contains("http") =>
+                    {
+                        "web"
                     }
                     "monitor"
                         if normalized_name.contains("api") || normalized_name.contains("js") =>
                     {
                         "api"
                     }
+                    "risk" | "vuln" | "exploit" => "risk",
                     _ => continue, // Skip non-monitor plugins
                 }
             }

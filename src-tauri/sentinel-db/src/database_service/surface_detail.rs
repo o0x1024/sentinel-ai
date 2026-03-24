@@ -55,7 +55,10 @@ impl DatabaseService {
         }
     }
 
-    async fn get_surface_typed_details(&self, asset: &SurfaceAssetRow) -> Result<Option<Value>> {
+    pub(crate) async fn get_surface_typed_details(
+        &self,
+        asset: &SurfaceAssetRow,
+    ) -> Result<Option<Value>> {
         let runtime = self
             .runtime_pool
             .as_ref()

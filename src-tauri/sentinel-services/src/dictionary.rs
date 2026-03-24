@@ -1,10 +1,11 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use sentinel_core::models::dictionary::{
     Dictionary, DictionaryExport, DictionaryFilter, DictionaryImportOptions, DictionarySet,
-    DictionarySetRelation, DictionaryStats, DictionaryType, DictionaryWord, MergeMode, ServiceType,
+    DictionarySetRelation, DictionaryStats, DictionaryType, DictionaryWord, DictionaryWordInput,
+    MergeMode, ServiceType,
 };
 use sentinel_db::DatabasePool;
 
@@ -327,10 +328,27 @@ impl DictionaryService {
         dictionary_id: &str,
         words: Vec<String>,
     ) -> Result<Vec<DictionaryWord>> {
+        let entries = words
+            .into_iter()
+            .map(|word| DictionaryWordInput {
+                word,
+                weight: None,
+                category: None,
+                metadata: None,
+            })
+            .collect();
+        self.add_word_entries(dictionary_id, entries).await
+    }
+
+    pub async fn add_word_entries(
+        &self,
+        dictionary_id: &str,
+        entries: Vec<DictionaryWordInput>,
+    ) -> Result<Vec<DictionaryWord>> {
         let mut added_words = Vec::new();
 
-        for word in words {
-            let dict_word = DictionaryWord::new(dictionary_id.to_string(), word);
+        for entry in entries {
+            let dict_word = entry.into_word(dictionary_id.to_string());
 
             db_execute!(
                 self,
@@ -373,6 +391,69 @@ impl DictionaryService {
         self.update_word_count(dictionary_id).await?;
 
         Ok(removed_count)
+    }
+
+    pub async fn update_word(&self, mut word: DictionaryWord) -> Result<DictionaryWord> {
+        word.word = word.word.trim().to_string();
+
+        db_execute!(
+            self,
+            r#"
+            UPDATE dictionary_words
+            SET word = $1, weight = $2, category = $3, metadata = $4
+            WHERE id = $5 AND dictionary_id = $6
+        "#,
+            |q| {
+                q.bind(&word.word)
+                    .bind(word.weight)
+                    .bind(&word.category)
+                    .bind(&word.metadata)
+                    .bind(&word.id)
+                    .bind(&word.dictionary_id)
+            }
+        );
+
+        self.update_word_count(&word.dictionary_id).await?;
+
+        Ok(word)
+    }
+
+    pub async fn update_words_batch(
+        &self,
+        words: Vec<DictionaryWord>,
+    ) -> Result<Vec<DictionaryWord>> {
+        let mut updated_words = Vec::with_capacity(words.len());
+        let mut touched_dictionary_ids = HashSet::new();
+
+        for mut word in words {
+            word.word = word.word.trim().to_string();
+
+            db_execute!(
+                self,
+                r#"
+                UPDATE dictionary_words
+                SET word = $1, weight = $2, category = $3, metadata = $4
+                WHERE id = $5 AND dictionary_id = $6
+            "#,
+                |q| {
+                    q.bind(&word.word)
+                        .bind(word.weight)
+                        .bind(&word.category)
+                        .bind(&word.metadata)
+                        .bind(&word.id)
+                        .bind(&word.dictionary_id)
+                }
+            );
+
+            touched_dictionary_ids.insert(word.dictionary_id.clone());
+            updated_words.push(word);
+        }
+
+        for dictionary_id in touched_dictionary_ids {
+            self.update_word_count(&dictionary_id).await?;
+        }
+
+        Ok(updated_words)
     }
 
     pub async fn get_dictionary_words(&self, dictionary_id: &str) -> Result<Vec<DictionaryWord>> {
@@ -730,129 +811,696 @@ impl DictionaryService {
     }
 
     pub async fn initialize_builtin_dictionaries(&self) -> Result<()> {
-        let subdomain_dict = Dictionary {
-            id: "builtin_subdomain_common".to_string(),
-            name: "Common Subdomains".to_string(),
-            description: Some("Common subdomain names for reconnaissance".to_string()),
-            dict_type: DictionaryType::Subdomain.to_string(),
-            service_type: Some(ServiceType::Web.to_string()),
-            category: Some("reconnaissance".to_string()),
-            is_builtin: true,
-            is_active: true,
-            word_count: 0,
-            file_size: 0,
-            checksum: None,
-            version: "1.0.0".to_string(),
-            author: Some("Sentinel AI".to_string()),
-            source_url: None,
-            tags: Some("subdomain,reconnaissance,common".to_string()),
-            metadata: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
+        self.ensure_builtin_dictionary(
+            Dictionary {
+                id: "builtin_subdomain_common".to_string(),
+                name: "Common Subdomains".to_string(),
+                description: Some("Common subdomain names for reconnaissance".to_string()),
+                dict_type: DictionaryType::Subdomain.to_string(),
+                service_type: Some(ServiceType::Web.to_string()),
+                category: Some("reconnaissance".to_string()),
+                is_builtin: true,
+                is_active: true,
+                word_count: 0,
+                file_size: 0,
+                checksum: None,
+                version: "1.0.0".to_string(),
+                author: Some("Sentinel AI".to_string()),
+                source_url: None,
+                tags: Some("subdomain,reconnaissance,common".to_string()),
+                metadata: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            vec![
+                "www", "mail", "ftp", "admin", "api", "dev", "test", "staging", "blog", "shop",
+                "store", "support", "help", "docs", "cdn", "static", "assets", "img", "images",
+                "media", "files", "download", "upload", "secure", "ssl", "vpn", "remote",
+                "portal", "dashboard", "panel", "control", "manage", "login", "auth", "sso",
+                "oauth", "app", "mobile", "m", "wap", "beta", "alpha", "demo", "sandbox", "old",
+                "legacy", "archive", "backup", "mirror", "proxy", "cache", "db", "database",
+                "sql", "mysql", "postgres", "redis", "mongo", "elastic", "search", "solr",
+                "kibana", "grafana", "prometheus", "jenkins", "ci", "cd", "build", "deploy",
+                "git", "svn", "repo", "jira", "confluence", "wiki", "forum", "chat", "slack",
+                "teams", "monitoring", "metrics", "logs", "analytics", "stats", "reports",
+            ]
+            .into_iter()
+            .map(|word| DictionaryWordInput {
+                word: word.to_string(),
+                weight: None,
+                category: None,
+                metadata: None,
+            })
+            .collect(),
+        )
+        .await?;
 
-        if self.get_dictionary(&subdomain_dict.id).await?.is_none() {
-            self.create_dictionary(subdomain_dict).await?;
+        self.ensure_builtin_dictionary(
+            Dictionary {
+                id: "builtin_sensitive_files_web".to_string(),
+                name: "Sensitive Web Files".to_string(),
+                description: Some(
+                    "Common sensitive files, API docs, debug outputs, and exposed configuration paths"
+                        .to_string(),
+                ),
+                dict_type: DictionaryType::SensitiveFile.to_string(),
+                service_type: Some(ServiceType::Web.to_string()),
+                category: Some("risk".to_string()),
+                is_builtin: true,
+                is_active: true,
+                word_count: 0,
+                file_size: 0,
+                checksum: None,
+                version: "1.0.0".to_string(),
+                author: Some("Sentinel AI".to_string()),
+                source_url: None,
+                tags: Some("file,exposure,swagger,config,leak".to_string()),
+                metadata: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            vec![
+                ("swagger-ui.html", "medium", "swagger"),
+                ("swagger/index.html", "medium", "swagger"),
+                ("swagger-resources", "medium", "swagger"),
+                ("api-docs", "high", "openapi"),
+                ("v2/api-docs", "high", "openapi"),
+                ("v3/api-docs", "high", "openapi"),
+                ("openapi.json", "high", "openapi"),
+                (".env", "critical", "config"),
+                (".env.local", "critical", "config"),
+                (".env.production", "critical", "config"),
+                (".git/config", "critical", "git"),
+                (".svn/entries", "high", "svn"),
+                (".hg/hgrc", "high", "hg"),
+                ("config", "medium", "config"),
+                ("config.js", "medium", "config"),
+                ("config.json", "high", "config"),
+                ("package.json", "medium", "javascript"),
+                ("composer.json", "medium", "php"),
+                ("web.config", "high", "iis"),
+                ("docker-compose.yml", "high", "docker"),
+                ("docker-compose.yaml", "high", "docker"),
+                ("application.properties", "high", "config"),
+                ("nohup.out", "medium", "log"),
+                ("actuator/env", "high", "spring"),
+                ("actuator/health", "low", "spring"),
+                ("actuator/configprops", "high", "spring"),
+                ("actuator/heapdump", "critical", "spring"),
+                ("actuator/logfile", "high", "spring"),
+                ("metrics", "medium", "metrics"),
+                ("server-status", "medium", "apache"),
+                ("phpinfo.php", "high", "php"),
+                ("backup.zip", "high", "backup"),
+            ]
+            .into_iter()
+            .map(|(path, severity, tag)| DictionaryWordInput {
+                word: path.to_string(),
+                weight: None,
+                category: Some(tag.to_string()),
+                metadata: Some(serde_json::json!({
+                    "path": path,
+                    "severity": severity,
+                    "tags": [tag],
+                    "description": format!("Potentially exposed sensitive resource at {}", path),
+                    "remediation": "Restrict public access, remove unnecessary debug/config files, and enforce authentication where needed."
+                })),
+            })
+            .collect(),
+        )
+        .await?;
 
-            let common_subdomains = vec![
-                "www",
-                "mail",
-                "ftp",
-                "admin",
-                "api",
-                "dev",
-                "test",
-                "staging",
-                "blog",
-                "shop",
-                "store",
-                "support",
-                "help",
-                "docs",
-                "cdn",
-                "static",
-                "assets",
-                "img",
-                "images",
-                "media",
-                "files",
-                "download",
-                "upload",
-                "secure",
-                "ssl",
-                "vpn",
-                "remote",
-                "portal",
-                "dashboard",
-                "panel",
-                "control",
-                "manage",
-                "login",
-                "auth",
-                "sso",
-                "oauth",
-                "app",
-                "mobile",
-                "m",
-                "wap",
-                "beta",
-                "alpha",
-                "demo",
-                "sandbox",
-                "old",
-                "legacy",
-                "archive",
-                "backup",
-                "mirror",
-                "proxy",
-                "cache",
-                "db",
-                "database",
-                "sql",
-                "mysql",
-                "postgres",
-                "redis",
-                "mongo",
-                "elastic",
-                "search",
-                "solr",
-                "kibana",
-                "grafana",
-                "prometheus",
-                "jenkins",
-                "ci",
-                "cd",
-                "build",
-                "deploy",
-                "git",
-                "svn",
-                "repo",
-                "jira",
-                "confluence",
-                "wiki",
-                "forum",
-                "chat",
-                "slack",
-                "teams",
-                "monitoring",
-                "metrics",
-                "logs",
-                "analytics",
-                "stats",
-                "reports",
-            ];
+        self.ensure_builtin_dictionary(
+            Dictionary {
+                id: "builtin_web_fingerprint_rules".to_string(),
+                name: "Web Fingerprint Rules".to_string(),
+                description: Some(
+                    "Dictionary-driven web technology fingerprint rules used by Technology Fingerprinter"
+                        .to_string(),
+                ),
+                dict_type: DictionaryType::FingerprintRule.to_string(),
+                service_type: Some(ServiceType::Web.to_string()),
+                category: Some("fingerprint".to_string()),
+                is_builtin: true,
+                is_active: true,
+                word_count: 0,
+                file_size: 0,
+                checksum: None,
+                version: "1.0.0".to_string(),
+                author: Some("Sentinel AI".to_string()),
+                source_url: Some("https://github.com/adysec/ARL".to_string()),
+                tags: Some("fingerprint,web,arl".to_string()),
+                metadata: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            vec![
+                DictionaryWordInput {
+                    word: "swagger_ui".to_string(),
+                    weight: Some(10.0),
+                    category: Some("api".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Swagger UI",
+                        "product": "Swagger UI",
+                        "matchers": [
+                            {"part": "body", "type": "contains", "value": "Swagger UI"},
+                            {"part": "title", "type": "contains", "value": "Swagger UI"}
+                        ],
+                        "confidence": 0.95
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "jenkins".to_string(),
+                    weight: Some(10.0),
+                    category: Some("ci".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Jenkins",
+                        "product": "Jenkins",
+                        "matchers": [
+                            {"part": "header", "key": "x-jenkins", "type": "exists"},
+                            {"part": "body", "type": "contains", "value": "Jenkins"}
+                        ],
+                        "confidence": 0.95
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "grafana".to_string(),
+                    weight: Some(9.0),
+                    category: Some("observability".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Grafana",
+                        "product": "Grafana",
+                        "matchers": [
+                            {"part": "body", "type": "contains", "value": "grafana-app"},
+                            {"part": "title", "type": "contains", "value": "Grafana"}
+                        ],
+                        "confidence": 0.9
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "spring_boot".to_string(),
+                    weight: Some(8.0),
+                    category: Some("java".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Spring Boot",
+                        "product": "Spring Boot",
+                        "matchers": [
+                            {"part": "header", "key": "x-application-context", "type": "exists"},
+                            {"part": "body", "type": "contains", "value": "\"_links\""}
+                        ],
+                        "confidence": 0.75
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "nextjs".to_string(),
+                    weight: Some(8.0),
+                    category: Some("javascript".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Next.js",
+                        "product": "Next.js",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "body", "type": "contains", "value": "__NEXT_DATA__"},
+                            {"part": "body", "type": "contains", "value": "_next/static"},
+                            {"part": "header", "key": "x-powered-by", "type": "contains", "value": "Next.js"}
+                        ],
+                        "confidence": 0.9
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "nginx".to_string(),
+                    weight: Some(7.0),
+                    category: Some("web_server".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Nginx",
+                        "product": "Nginx",
+                        "matchers": [
+                            {"part": "header", "key": "server", "type": "regex", "value": "nginx(?:/([0-9.]+))?"}
+                        ],
+                        "confidence": 0.95
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "apache".to_string(),
+                    weight: Some(7.0),
+                    category: Some("web_server".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Apache HTTP Server",
+                        "product": "Apache",
+                        "matchers": [
+                            {"part": "header", "key": "server", "type": "regex", "value": "apache(?:/([0-9.]+))?"}
+                        ],
+                        "confidence": 0.95
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "cloudflare".to_string(),
+                    weight: Some(7.0),
+                    category: Some("cdn".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Cloudflare",
+                        "product": "Cloudflare",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "header", "key": "server", "type": "contains", "value": "cloudflare"},
+                            {"part": "header", "key": "cf-ray", "type": "exists"}
+                        ],
+                        "confidence": 0.9
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "prometheus".to_string(),
+                    weight: Some(7.0),
+                    category: Some("observability".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Prometheus",
+                        "product": "Prometheus",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "title", "type": "contains", "value": "Prometheus Time Series Collection"},
+                            {"part": "body", "type": "contains", "value": "Prometheus Time Series Collection"}
+                        ],
+                        "confidence": 0.9
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "kibana".to_string(),
+                    weight: Some(7.0),
+                    category: Some("observability".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Kibana",
+                        "product": "Kibana",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "title", "type": "contains", "value": "Kibana"},
+                            {"part": "body", "type": "contains", "value": "kibanaWelcomeLogo"}
+                        ],
+                        "confidence": 0.88
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "elasticsearch".to_string(),
+                    weight: Some(7.0),
+                    category: Some("search".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Elasticsearch",
+                        "product": "Elasticsearch",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "body", "type": "contains", "value": "\"cluster_name\""},
+                            {"part": "body", "type": "contains", "value": "\"tagline\":\"You Know, for Search\""}
+                        ],
+                        "confidence": 0.85
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "traefik".to_string(),
+                    weight: Some(7.0),
+                    category: Some("gateway".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Traefik",
+                        "product": "Traefik",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "header", "key": "server", "type": "contains", "value": "Traefik"},
+                            {"part": "body", "type": "contains", "value": "Traefik"}
+                        ],
+                        "confidence": 0.85
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "gitlab".to_string(),
+                    weight: Some(8.0),
+                    category: Some("devops".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "GitLab",
+                        "product": "GitLab",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "body", "type": "contains", "value": "GitLab"},
+                            {"part": "header", "key": "x-gitlab-meta", "type": "exists"}
+                        ],
+                        "confidence": 0.88
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "harbor".to_string(),
+                    weight: Some(7.0),
+                    category: Some("registry".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Harbor",
+                        "product": "Harbor",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "title", "type": "contains", "value": "Harbor"},
+                            {"part": "body", "type": "contains", "value": "Harbor"}
+                        ],
+                        "confidence": 0.84
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "rabbitmq".to_string(),
+                    weight: Some(7.0),
+                    category: Some("messaging".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "RabbitMQ Management",
+                        "product": "RabbitMQ",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "title", "type": "contains", "value": "RabbitMQ Management"},
+                            {"part": "body", "type": "contains", "value": "rabbitmq"}
+                        ],
+                        "confidence": 0.86
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "consul".to_string(),
+                    weight: Some(7.0),
+                    category: Some("service_discovery".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Consul",
+                        "product": "Consul",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "title", "type": "contains", "value": "Consul by HashiCorp"},
+                            {"part": "body", "type": "contains", "value": "Consul by HashiCorp"}
+                        ],
+                        "confidence": 0.87
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "vault".to_string(),
+                    weight: Some(7.0),
+                    category: Some("secrets".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "HashiCorp Vault",
+                        "product": "Vault",
+                        "operator": "or",
+                        "matchers": [
+                            {"part": "title", "type": "contains", "value": "Vault"},
+                            {"part": "body", "type": "contains", "value": "Vault UI"}
+                        ],
+                        "confidence": 0.84
+                    })),
+                },
+            ],
+        )
+        .await?;
 
-            self.add_words(
-                "builtin_subdomain_common",
-                common_subdomains
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-            )
-            .await?;
-        }
+        self.ensure_builtin_dictionary(
+            Dictionary {
+                id: "builtin_safe_poc_rules".to_string(),
+                name: "Safe Risk Verification Rules".to_string(),
+                description: Some(
+                    "Safe HTTP validation rules for exposure and weak-access verification".to_string(),
+                ),
+                dict_type: DictionaryType::PocRule.to_string(),
+                service_type: Some(ServiceType::Web.to_string()),
+                category: Some("risk".to_string()),
+                is_builtin: true,
+                is_active: true,
+                word_count: 0,
+                file_size: 0,
+                checksum: None,
+                version: "1.0.0".to_string(),
+                author: Some("Sentinel AI".to_string()),
+                source_url: None,
+                tags: Some("poc,risk,verification,safe".to_string()),
+                metadata: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            vec![
+                DictionaryWordInput {
+                    word: "swagger_ui_exposure".to_string(),
+                    weight: Some(8.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Swagger UI Exposure",
+                        "finding_type": "api_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["swagger_ui"] },
+                        "request": { "method": "GET", "path": "/swagger-ui.html" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "Swagger UI" }
+                        ],
+                        "impact": "Exposed interactive API documentation can disclose endpoints and schemas",
+                        "remediation": "Restrict Swagger UI access or disable it in production",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "spring_actuator_env".to_string(),
+                    weight: Some(9.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Spring Actuator Env Exposure",
+                        "finding_type": "config_exposure",
+                        "severity": "high",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["spring_boot"] },
+                        "request": { "method": "GET", "path": "/actuator/env" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "propertySources" }
+                        ],
+                        "impact": "Environment and configuration values may be exposed to unauthenticated users",
+                        "remediation": "Disable or restrict sensitive actuator endpoints",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "jenkins_anonymous_read".to_string(),
+                    weight: Some(8.0),
+                    category: Some("access".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Jenkins Anonymous Read",
+                        "finding_type": "anonymous_access",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["jenkins"] },
+                        "request": { "method": "GET", "path": "/api/json" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "\"jobs\"" }
+                        ],
+                        "impact": "Anonymous users can enumerate Jenkins data",
+                        "remediation": "Disable anonymous read or restrict unauthenticated API access",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "prometheus_metrics_exposure".to_string(),
+                    weight: Some(8.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Prometheus Metrics Exposure",
+                        "finding_type": "metrics_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["prometheus"] },
+                        "request": { "method": "GET", "path": "/metrics" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "# HELP" }
+                        ],
+                        "impact": "Operational metrics are exposed to unauthenticated users",
+                        "remediation": "Require authentication for metrics endpoints or restrict network access",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "kibana_status_exposure".to_string(),
+                    weight: Some(7.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Kibana Status Exposure",
+                        "finding_type": "status_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["kibana"] },
+                        "request": { "method": "GET", "path": "/api/status" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "\"name\":\"kibana\"" }
+                        ],
+                        "impact": "Kibana status endpoint discloses stack and deployment details",
+                        "remediation": "Restrict or disable the status endpoint for unauthenticated users",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "elasticsearch_cluster_health_exposure".to_string(),
+                    weight: Some(8.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Elasticsearch Cluster Health Exposure",
+                        "finding_type": "cluster_exposure",
+                        "severity": "high",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["elasticsearch"] },
+                        "request": { "method": "GET", "path": "/_cluster/health" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "\"cluster_name\"" }
+                        ],
+                        "impact": "Cluster health information is accessible without authentication",
+                        "remediation": "Enable authentication and restrict Elasticsearch administrative endpoints",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "phpinfo_exposure".to_string(),
+                    weight: Some(7.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "phpinfo Exposure",
+                        "finding_type": "debug_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "request": { "method": "GET", "path": "/phpinfo.php" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "PHP Version" }
+                        ],
+                        "impact": "phpinfo output reveals environment, modules, and path details",
+                        "remediation": "Remove phpinfo pages from production environments",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "grafana_health_exposure".to_string(),
+                    weight: Some(7.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Grafana Health Exposure",
+                        "finding_type": "status_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["grafana"] },
+                        "request": { "method": "GET", "path": "/api/health" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "\"database\"" }
+                        ],
+                        "impact": "Grafana health endpoint discloses service status information",
+                        "remediation": "Restrict unauthenticated access to Grafana API endpoints",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "rabbitmq_management_overview".to_string(),
+                    weight: Some(8.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "RabbitMQ Management Overview Exposure",
+                        "finding_type": "management_exposure",
+                        "severity": "high",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["rabbitmq"] },
+                        "request": { "method": "GET", "path": "/api/overview" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "\"rabbitmq_version\"" }
+                        ],
+                        "impact": "RabbitMQ management API is exposed without authentication",
+                        "remediation": "Disable public exposure of management endpoints or require authentication",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "vault_health_exposure".to_string(),
+                    weight: Some(8.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Vault Health Exposure",
+                        "finding_type": "status_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["vault"] },
+                        "request": { "method": "GET", "path": "/v1/sys/health" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200, 429, 472, 473, 501, 503] },
+                            { "part": "body", "type": "contains", "value": "\"initialized\"" }
+                        ],
+                        "impact": "Vault health endpoint discloses service state and initialization details",
+                        "remediation": "Restrict or proxy health endpoints behind authenticated access",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "consul_ui_exposure".to_string(),
+                    weight: Some(7.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Consul UI Exposure",
+                        "finding_type": "ui_exposure",
+                        "severity": "medium",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["consul"] },
+                        "request": { "method": "GET", "path": "/ui/" },
+                        "matchers": [
+                            { "part": "status", "type": "in", "value": [200] },
+                            { "part": "body", "type": "contains", "value": "Consul" }
+                        ],
+                        "impact": "Consul UI may expose service topology and cluster metadata",
+                        "remediation": "Disable or restrict UI access to trusted networks",
+                        "safe_mode": true
+                    })),
+                },
+                DictionaryWordInput {
+                    word: "spring_actuator_heapdump_exposure".to_string(),
+                    weight: Some(9.0),
+                    category: Some("exposure".to_string()),
+                    metadata: Some(serde_json::json!({
+                        "name": "Spring Actuator Heapdump Exposure",
+                        "finding_type": "heapdump_exposure",
+                        "severity": "critical",
+                        "target_types": ["web"],
+                        "match_scope": { "fingerprints": ["spring_boot"] },
+                        "requests": [
+                            {
+                                "id": "health",
+                                "method": "GET",
+                                "path": "/actuator/health",
+                                "matchers": [
+                                    { "part": "status", "type": "in", "value": [200] }
+                                ]
+                            },
+                            {
+                                "id": "heapdump",
+                                "method": "GET",
+                                "path": "/actuator/heapdump",
+                                "matchers": [
+                                    { "part": "status", "type": "in", "value": [200] },
+                                    { "part": "header", "key": "content-type", "type": "contains", "value": "application/octet-stream" }
+                                ]
+                            }
+                        ],
+                        "impact": "Heapdump files can expose credentials, tokens, and in-memory secrets",
+                        "remediation": "Disable heapdump endpoints or restrict them behind authentication and trusted networks",
+                        "safe_mode": true
+                    })),
+                },
+            ],
+        )
+        .await?;
 
         tracing::info!("Builtin dictionaries initialized");
+        Ok(())
+    }
+
+    async fn ensure_builtin_dictionary(
+        &self,
+        dictionary: Dictionary,
+        entries: Vec<DictionaryWordInput>,
+    ) -> Result<()> {
+        if self.get_dictionary(&dictionary.id).await?.is_none() {
+            self.create_dictionary(dictionary.clone()).await?;
+            self.add_word_entries(&dictionary.id, entries).await?;
+        }
         Ok(())
     }
 }

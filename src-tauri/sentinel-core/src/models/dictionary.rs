@@ -29,6 +29,12 @@ pub enum DictionaryType {
     Port,
     /// API端点字典
     ApiEndpoint,
+    /// 敏感文件/路径规则字典
+    SensitiveFile,
+    /// 技术指纹规则字典
+    FingerprintRule,
+    /// PoC/风险验证规则字典
+    PocRule,
     /// 自定义字典
     Custom(String),
 }
@@ -47,6 +53,9 @@ impl fmt::Display for DictionaryType {
             DictionaryType::Extension => "extension",
             DictionaryType::Port => "port",
             DictionaryType::ApiEndpoint => "api_endpoint",
+            DictionaryType::SensitiveFile => "sensitive_file",
+            DictionaryType::FingerprintRule => "fingerprint_rule",
+            DictionaryType::PocRule => "poc_rule",
             DictionaryType::Custom(name) => return write!(f, "custom_{}", name),
         };
         write!(f, "{}", s)
@@ -67,6 +76,9 @@ impl From<String> for DictionaryType {
             "extension" => DictionaryType::Extension,
             "port" => DictionaryType::Port,
             "api_endpoint" => DictionaryType::ApiEndpoint,
+            "sensitive_file" => DictionaryType::SensitiveFile,
+            "fingerprint_rule" => DictionaryType::FingerprintRule,
+            "poc_rule" => DictionaryType::PocRule,
             custom if custom.starts_with("custom_") => {
                 DictionaryType::Custom(custom.strip_prefix("custom_").unwrap_or("").to_string())
             }
@@ -258,6 +270,27 @@ impl DictionaryWord {
     pub fn with_metadata(mut self, metadata: String) -> Self {
         self.metadata = Some(metadata);
         self
+    }
+}
+
+/// 创建/导入结构化字典词条时使用的输入格式
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictionaryWordInput {
+    pub word: String,
+    pub weight: Option<f64>,
+    pub category: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl DictionaryWordInput {
+    pub fn into_word(self, dictionary_id: String) -> DictionaryWord {
+        let mut word = DictionaryWord::new(dictionary_id, self.word);
+        if let Some(weight) = self.weight {
+            word.weight = weight;
+        }
+        word.category = self.category;
+        word.metadata = self.metadata.and_then(|value| serde_json::to_string(&value).ok());
+        word
     }
 }
 

@@ -1,12 +1,12 @@
 //! Commands module - Tauri commands
 #![allow(ambiguous_glob_reexports)]
 
-pub mod agent_browser_commands;
 pub mod ai;
 pub mod aisettings;
 pub mod asset;
 pub mod asset_enrichment_commands;
 pub mod bounty_commands;
+pub mod bounty_workflow_event_support;
 pub mod cache_commands;
 pub mod config;
 pub mod config_commands;
@@ -18,7 +18,9 @@ pub mod license_commands;
 pub mod llm_test_commands;
 pub mod mcp_commands;
 pub mod monitor_commands;
+pub(crate) mod monitor_progress_support;
 mod monitor_surface;
+mod monitor_surface_support;
 pub mod notifications;
 pub mod packet_capture_commands;
 pub mod performance;
@@ -39,16 +41,15 @@ pub mod test_proxy;
 pub mod test_tracking_commands;
 pub mod tool_commands;
 pub mod traffic_analysis_commands;
-pub mod web_explorer;
 pub mod window;
 
 // Re-export commands
 #[allow(ambiguous_glob_reexports)]
-pub use agent_browser_commands::*;
 pub use ai::*;
 pub use aisettings::*;
 pub use asset::*;
 pub use bounty_commands::*;
+pub use bounty_workflow_event_support::*;
 pub use cache_commands::*;
 pub use config::*;
 pub use config_commands::*;

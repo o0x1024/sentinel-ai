@@ -774,7 +774,8 @@ export default {
     agentCategories: {
       recon: '信息收集',
       discovery: '目标发现',
-      vuln: '漏洞扫描',
+      risk: '风险扫描',
+      vuln: '风险扫描',
       exploit: '漏洞利用',
       monitor: '变更监控',
       utility: '实用工具',

@@ -11,7 +11,7 @@
           <div>
             <h3 class="font-bold text-lg">{{ template.name }}</h3>
             <div class="flex items-center gap-2 text-sm text-base-content/60">
-              <span class="badge badge-ghost badge-sm">{{ template.category }}</span>
+              <span class="badge badge-ghost badge-sm">{{ t(`bugBounty.workflowTemplates.categories.${template.category}`) }}</span>
               <span v-if="template.is_built_in" class="badge badge-info badge-sm">{{ t('bugBounty.workflowTemplates.builtIn') }}</span>
               <span v-if="template.estimated_duration_mins">
                 <i class="fas fa-clock mr-1"></i>~{{ template.estimated_duration_mins }}m
@@ -279,18 +279,25 @@
               <!-- Fallback: built-in agent plugins when none loaded from DB -->
               <optgroup label="Recon">
                 <option value="subdomain_enumerator">Subdomain Enumerator</option>
+                <option value="cidr_mapper">CIDR Mapper</option>
+                <option value="dns_resolver">DNS Resolver</option>
                 <option value="http_prober">HTTP Prober</option>
                 <option value="tech_fingerprinter">Tech Fingerprinter</option>
+                <option value="favicon_fingerprinter">Favicon Fingerprinter</option>
                 <option value="port_monitor">Port Monitor</option>
+                <option value="service_fingerprinter">Service Fingerprinter</option>
                 <option value="cert_monitor">Certificate Monitor</option>
               </optgroup>
               <optgroup label="Discovery">
                 <option value="directory_bruteforcer">Directory Bruteforcer</option>
                 <option value="js_analyzer">JS Analyzer</option>
+                <option value="js_link_finder">JS Link Finder</option>
                 <option value="api_monitor">API Monitor</option>
                 <option value="content_monitor">Content Monitor</option>
               </optgroup>
               <optgroup label="Vulnerability">
+                <option value="sensitive_file_scanner">Sensitive File Scanner</option>
+                <option value="risk_scanner">Risk Scanner</option>
                 <option value="xss_scanner">XSS Scanner</option>
                 <option value="sql_injection_scanner">SQL Injection Scanner</option>
                 <option value="ssrf_detector">SSRF Detector</option>
@@ -342,7 +349,7 @@
         </div>
 
         <!-- Input Mappings -->
-        <div v-if="getUpstreamSteps().length > 0" class="form-control mb-4">
+        <div v-if="availableMappingSources.length > 0" class="form-control mb-4">
           <label class="label">
             <span class="label-text">{{ t('bugBounty.workflow.inputMappings') }}</span>
             <button type="button" class="btn btn-xs btn-ghost" @click="addInputMapping">
@@ -372,8 +379,8 @@
                 <select v-model="mapping.source_step_id" class="select select-sm select-bordered w-full"
                         @change="onSourceStepChange(mapping)">
                   <option value="">{{ t('bugBounty.workflow.selectStep') }}</option>
-                  <option v-for="step in getUpstreamSteps()" :key="step.id" :value="step.id">
-                    {{ step.name }}
+                  <option v-for="source in availableMappingSources" :key="source.id" :value="source.id">
+                    {{ source.name }}
                   </option>
                 </select>
               </div>
@@ -443,6 +450,11 @@ interface InputMapping {
   transform?: string
 }
 
+interface MappingSource {
+  id: string
+  name: string
+}
+
 interface WorkflowStep {
   id: string
   name: string
@@ -477,6 +489,7 @@ const modalBoxEl = ref<HTMLElement | null>(null)
 const executionId = ref<string | null>(null)
 const executionStatus = ref<'pending' | 'running' | 'completed' | 'failed' | 'cancelled'>('pending')
 const executionInputs = ref<any>(null)
+const TRIGGER_INPUT_SOURCE_ID = '__trigger__'
 
 const stepForm = reactive({
   name: '',
@@ -493,6 +506,52 @@ const runConfig = reactive({
 
 const loadingSchema = ref(false)
 const pluginSchemaCache = ref<Record<string, any>>({})
+const defaultInitialInputSchema = {
+  type: 'object',
+  properties: {
+    asset_id: { type: 'string', description: 'Triggered asset ID' },
+    event_id: { type: 'string', description: 'Triggered event ID' },
+    asset_type: { type: 'string', description: 'Triggered asset type' },
+    canonical_url: { type: 'string', description: 'Triggered asset canonical URL' },
+    url: { type: 'string', description: 'Triggered website URL' },
+    domain: { type: 'string', description: 'Triggered website domain' },
+    base_url: { type: 'string', description: 'Optional base URL alias for plugins' },
+    hostname: { type: 'string', description: 'Triggered asset hostname or IP' },
+    host: { type: 'string', description: 'Triggered asset host alias' },
+    port: { type: 'integer', description: 'Triggered asset port' },
+    protocol: { type: 'string', description: 'Triggered asset protocol' },
+    host_port: { type: 'string', description: 'Triggered host:port pair' },
+    targets: {
+      type: 'array',
+      description: 'Prebuilt target list for host-based plugins',
+      items: { type: 'string' },
+    },
+  },
+} as const
+
+const parseSchemaJson = (raw?: string | null) => {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+const initialInputSchema = computed(() => {
+  const templateSchema = parseSchemaJson(props.template?.input_schema_json)
+  if (!templateSchema?.properties) {
+    return defaultInitialInputSchema
+  }
+
+  return {
+    ...templateSchema,
+    properties: {
+      ...defaultInitialInputSchema.properties,
+      ...templateSchema.properties,
+    },
+  }
+})
 
 // Generate default config from JSON Schema (show all fields)
 const generateDefaultFromSchema = (schema: any): any => {
@@ -693,6 +752,8 @@ const getCategoryIcon = (category: string) => {
   const icons: Record<string, string> = {
     recon: 'fas fa-search text-info',
     discovery: 'fas fa-folder-open text-warning',
+    monitoring: 'fas fa-satellite-dish text-secondary',
+    risk: 'fas fa-shield-alt text-error',
     vuln: 'fas fa-shield-alt text-error',
     api: 'fas fa-plug text-primary',
   }
@@ -786,6 +847,24 @@ const getUpstreamSteps = () => {
   return steps.value.filter(s => s.id !== currentStepId && stepForm.depends_on.includes(s.id))
 }
 
+const availableMappingSources = computed<MappingSource[]>(() => {
+  const sources: MappingSource[] = [
+    {
+      id: TRIGGER_INPUT_SOURCE_ID,
+      name: t('bugBounty.workflow.initialInput'),
+    },
+  ]
+
+  for (const step of getUpstreamSteps()) {
+    sources.push({
+      id: step.id,
+      name: step.name,
+    })
+  }
+
+  return sources
+})
+
 const getCurrentInputFields = () => {
   const pluginId = stepForm.plugin_id
   if (!pluginId) return []
@@ -802,7 +881,11 @@ const getCurrentInputFields = () => {
 
 const getOutputPaths = (sourceStepId: string): Array<{path: string, type: string}> => {
   if (!sourceStepId) return []
-  
+
+  if (sourceStepId === TRIGGER_INPUT_SOURCE_ID) {
+    return extractSchemaPaths(initialInputSchema.value)
+  }
+
   const step = steps.value.find(s => s.id === sourceStepId)
   if (!step?.plugin_id) return []
   
@@ -827,6 +910,9 @@ const loadUpstreamOutputSchema = async (pluginId: string) => {
 
 const onSourceStepChange = (mapping: InputMapping) => {
   mapping.source_path = ''
+  if (mapping.source_step_id === TRIGGER_INPUT_SOURCE_ID) {
+    return
+  }
   const step = steps.value.find(s => s.id === mapping.source_step_id)
   if (step?.plugin_id) {
     loadUpstreamOutputSchema(step.plugin_id)
@@ -900,6 +986,8 @@ const removeStep = async (stepId: string) => {
 
 const saveTemplate = async () => {
   try {
+    const inputSchema = parseSchemaJson(props.template.input_schema_json)
+    const outputSchema = parseSchemaJson(props.template.output_schema_json)
     const updated = await invoke('bounty_update_workflow_template', {
       id: props.template.id,
       request: {
@@ -907,6 +995,8 @@ const saveTemplate = async () => {
         description: props.template.description,
         category: props.template.category,
         steps: steps.value,
+        input_schema: inputSchema,
+        output_schema: outputSchema,
         tags: getTags(),
         estimated_duration_mins: props.template.estimated_duration_mins,
       }

@@ -3158,10 +3158,6 @@ async fn bridge_invoke(
                 }
             }
         }
-        "web_explorer_send_user_message" => Ok(json!(null)),
-        "web_explorer_skip_login" => Ok(json!(null)),
-        "web_explorer_manual_login_complete" => Ok(json!(null)),
-        "web_explorer_receive_credentials" => Ok(json!(null)),
         "generate_plugin_stream" => Ok(json!(null)),
         "agent_execute" => {
             let req_obj = serde_json::from_value::<BridgeAgentExecuteRequest>(req.payload.clone())

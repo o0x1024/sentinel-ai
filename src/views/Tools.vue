@@ -66,15 +66,22 @@
         ref="builtinToolsRef"
         :source-filter="builtinSourceFilter"
         :show-content="builtinSourceFilter === 'builtin'"
+        :workflow-count="workflowToolCount"
+        :plugin-count="pluginToolCount"
         @source-filter-change="handleBuiltinSourceFilterChange"
       />
       <template v-if="builtinSourceFilter === 'workflow'">
-        <WorkflowToolsTab ref="workflowToolsRef" :embedded="true" />
+        <WorkflowToolsTab
+          ref="workflowToolsRef"
+          :embedded="true"
+          @count-changed="workflowToolCount = $event"
+        />
       </template>
       <template v-if="builtinSourceFilter === 'plugin'">
         <PluginToolsTab 
           ref="pluginToolsRef"
           :embedded="true"
+          @count-changed="pluginToolCount = $event"
           @show-upload="showUploadPluginModal = true"
         />
       </template>
@@ -383,6 +390,8 @@ const skillsRef = ref<InstanceType<typeof SkillsTab> | null>(null)
 // 状态
 const activeTab = ref('builtin_tools')
 const builtinSourceFilter = ref<'builtin' | 'workflow' | 'plugin'>('builtin')
+const workflowToolCount = ref(0)
+const pluginToolCount = ref(0)
 const validTabs = new Set(['builtin_tools', 'my_servers', 'marketplace', 'skills'])
 
 const syncTabFromRoute = () => {
@@ -506,12 +515,38 @@ function getToolProperties(schema: any) {
 }
 
 async function refreshAll() {
+  refreshWorkflowToolCount()
+  refreshPluginToolCount()
   builtinToolsRef.value?.refresh?.()
   workflowToolsRef.value?.refresh?.()
   mcpServersRef.value?.refresh?.()
   pluginToolsRef.value?.refresh?.()
   marketplaceRef.value?.refresh?.()
   skillsRef.value?.refresh?.()
+}
+
+async function refreshWorkflowToolCount() {
+  try {
+    const workflows = await invoke<any[]>('list_workflow_tools')
+    workflowToolCount.value = Array.isArray(workflows) ? workflows.length : 0
+  } catch (error) {
+    console.error('Failed to refresh workflow tool count:', error)
+    workflowToolCount.value = 0
+  }
+}
+
+async function refreshPluginToolCount() {
+  try {
+    const response = await invoke<any>('list_plugins')
+    if (response?.success && Array.isArray(response.data)) {
+      pluginToolCount.value = response.data.filter((plugin: any) => plugin?.metadata?.main_category === 'agent').length
+      return
+    }
+    pluginToolCount.value = 0
+  } catch (error) {
+    console.error('Failed to refresh plugin tool count:', error)
+    pluginToolCount.value = 0
+  }
 }
 
 // 服务器详情模态框
@@ -668,14 +703,22 @@ async function cleanupDuplicateServers() {
 // 生命周期
 onMounted(async () => {
   syncTabFromRoute()
+  refreshWorkflowToolCount()
+  refreshPluginToolCount()
   refreshAll()
-  listen('plugin:changed', async () => { pluginToolsRef.value?.refresh?.() })
+  listen('plugin:changed', async () => {
+    refreshPluginToolCount()
+    pluginToolsRef.value?.refresh?.()
+  })
   listen('mcp:tools-changed', async (event) => {
     console.log('MCP tools changed event received:', event.payload)
     builtinToolsRef.value?.refresh?.()
     mcpServersRef.value?.fetchConnections?.()
   })
-  listen('workflow:changed', async () => { workflowToolsRef.value?.refresh?.() })
+  listen('workflow:changed', async () => {
+    refreshWorkflowToolCount()
+    workflowToolsRef.value?.refresh?.()
+  })
 })
 
 watch(

@@ -868,13 +868,9 @@ const confirmTriggerWorkflow = async () => {
   if (!selectedWorkflowTemplateId.value || !selectedWorkflowEvent.value) return
   
   try {
-    await invoke('bounty_run_workflow_template', {
+    await invoke('bounty_run_workflow_template_for_event', {
       templateId: selectedWorkflowTemplateId.value,
-      programId: selectedWorkflowEvent.value.program_id,
-      inputs: {
-        asset_id: selectedWorkflowEvent.value.asset_id,
-        event_id: selectedWorkflowEvent.value.id
-      }
+      eventId: selectedWorkflowEvent.value.id,
     })
     toast.success(t('bugBounty.changeEvents.workflowTriggered') || 'Workflow triggered successfully')
     showSelectWorkflowModal.value = false

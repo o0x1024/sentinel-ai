@@ -111,6 +111,13 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
     }
 }
 
+fn plugin_favorites_user_id(user_id: Option<&str>) -> &str {
+    match user_id {
+        Some("default") | None => "default_user",
+        Some(value) => value,
+    }
+}
+
 impl DatabaseService {
     pub async fn list_enabled_traffic_plugins_for_scan(&self) -> Result<Vec<TrafficPluginScanRow>> {
         let runtime = self
@@ -222,7 +229,7 @@ impl DatabaseService {
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let uid = user_id.unwrap_or("default");
+        let uid = plugin_favorites_user_id(user_id);
         let rows: Vec<PluginRegistryFavoriteRow> = match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query_as(
@@ -737,7 +744,7 @@ impl DatabaseService {
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let uid = user_id.unwrap_or("default_user");
+        let uid = plugin_favorites_user_id(user_id);
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
                 let exists = sqlx::query(
@@ -826,7 +833,7 @@ impl DatabaseService {
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-        let uid = user_id.unwrap_or("default_user");
+        let uid = plugin_favorites_user_id(user_id);
 
         let plugin_ids = match runtime {
             DatabasePool::PostgreSQL(pool) => {

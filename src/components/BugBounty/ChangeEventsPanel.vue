@@ -8,8 +8,47 @@
             <span v-if="stats.pending_review > 0" class="badge badge-warning">
               {{ stats.pending_review }} {{ t('bugBounty.changeEvents.pendingReview') }}
             </span>
+            <span v-if="selectedIds.length > 0" class="badge badge-primary">
+              {{ selectedIds.length }} {{ t('bugBounty.batch.selected') }}
+            </span>
           </div>
           <div class="flex gap-2 flex-wrap">
+            <div v-if="events.length > 0" class="flex gap-2">
+              <button class="btn btn-sm btn-ghost" @click="selectCurrentPage">
+                <i class="fas fa-list-check mr-2"></i>
+                {{ t('bugBounty.batch.selectCurrentPage') }}
+              </button>
+              <button class="btn btn-sm btn-ghost" @click="selectAllFiltered">
+                <i class="fas fa-layer-group mr-2"></i>
+                {{ t('bugBounty.batch.selectAllFiltered') }}
+              </button>
+            </div>
+
+            <div v-if="selectedIds.length > 0" class="flex gap-2">
+              <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-sm btn-outline">
+                  <i class="fas fa-edit mr-2"></i>
+                  {{ t('bugBounty.batch.updateStatus') }}
+                </label>
+                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-48">
+                  <li><a @click="batchUpdateStatus('new')">{{ t('bugBounty.changeEvents.statuses.new') }}</a></li>
+                  <li><a @click="batchUpdateStatus('analyzing')">{{ t('bugBounty.changeEvents.statuses.analyzing') }}</a></li>
+                  <li><a @click="batchUpdateStatus('workflow_triggered')">{{ t('bugBounty.changeEvents.statuses.workflowTriggered') }}</a></li>
+                  <li><a @click="batchUpdateStatus('review_required')">{{ t('bugBounty.changeEvents.statuses.reviewRequired') }}</a></li>
+                  <li><a @click="batchUpdateStatus('acknowledged')">{{ t('bugBounty.changeEvents.statuses.acknowledged') }}</a></li>
+                  <li><a @click="batchUpdateStatus('resolved')">{{ t('bugBounty.changeEvents.statuses.resolved') }}</a></li>
+                  <li><a @click="batchUpdateStatus('ignored')">{{ t('bugBounty.changeEvents.statuses.ignored') }}</a></li>
+                </ul>
+              </div>
+              <button class="btn btn-sm btn-error btn-outline" @click="batchDelete">
+                <i class="fas fa-trash mr-2"></i>
+                {{ t('bugBounty.batch.delete') }}
+              </button>
+              <button class="btn btn-sm btn-ghost" @click="clearSelection">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+
             <!-- Filters -->
             <select v-model="filter.event_type" class="select select-sm select-bordered" @change="onFilterChange">
               <option value="">{{ t('bugBounty.changeEvents.allTypes') }}</option>
@@ -82,6 +121,15 @@
           <table class="table table-zebra">
             <thead>
               <tr>
+                <th class="w-10">
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm"
+                    :checked="isAllSelected"
+                    :indeterminate="isPartialSelected"
+                    @change="toggleSelectAll"
+                  />
+                </th>
                 <th>{{ t('bugBounty.changeEvents.eventType') }}</th>
                 <th>{{ t('bugBounty.table.title') }}</th>
                 <th>{{ t('bugBounty.changeEvents.asset') }}</th>
@@ -93,7 +141,15 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="event in events" :key="event.id" class="hover">
+              <tr v-for="event in events" :key="event.id" class="hover" :class="{ 'bg-primary/10': isSelected(event.id) }">
+                <td>
+                  <input 
+                    type="checkbox" 
+                    class="checkbox checkbox-sm"
+                    :checked="isSelected(event.id)"
+                    @change="toggleSelect(event.id)"
+                  />
+                </td>
                 <td>
                   <span class="badge badge-outline badge-sm">
                     <i :class="getEventTypeIcon(event.event_type)" class="mr-1"></i>
@@ -160,6 +216,14 @@
             </tbody>
           </table>
         </div>
+
+        <div v-if="events.length > 0" class="flex justify-center py-4">
+          <div class="join">
+            <button class="join-item btn btn-sm" :disabled="page <= 1 || loading" @click="goToPrevPage">«</button>
+            <button class="join-item btn btn-sm">{{ t('bugBounty.changeEvents.pageInfo', { page }) }}</button>
+            <button class="join-item btn btn-sm" :disabled="!hasNext || loading" @click="goToNextPage">»</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -183,6 +247,10 @@ const emit = defineEmits<{
 // State
 const loading = ref(false)
 const events = ref<any[]>([])
+const page = ref(1)
+const pageSize = 10
+const hasNext = ref(false)
+const selectedIds = ref<string[]>([])
 const stats = ref({
   total_events: 0,
   by_type: {} as Record<string, number>,
@@ -198,21 +266,91 @@ const filter = reactive({
   status: '',
 })
 
+const buildFilterParams = (includePagination = true) => {
+  const filterParams: any = {}
+  if (filter.event_type) filterParams.event_types = [filter.event_type]
+  if (filter.severity) filterParams.severities = [filter.severity]
+  if (filter.status) filterParams.statuses = [filter.status]
+  if (includePagination) {
+    filterParams.limit = pageSize + 1
+    filterParams.offset = (page.value - 1) * pageSize
+  }
+  return filterParams
+}
+
+const isAllSelected = computed(() => {
+  return events.value.length > 0 && events.value.every(event => selectedIds.value.includes(event.id))
+})
+
+const isPartialSelected = computed(() => {
+  const selectedOnPage = events.value.filter(event => selectedIds.value.includes(event.id)).length
+  return selectedOnPage > 0 && selectedOnPage < events.value.length
+})
+
+const isSelected = (id: string) => selectedIds.value.includes(id)
+
+const toggleSelect = (id: string) => {
+  const index = selectedIds.value.indexOf(id)
+  if (index === -1) {
+    selectedIds.value.push(id)
+  } else {
+    selectedIds.value.splice(index, 1)
+  }
+}
+
+const toggleSelectAll = () => {
+  if (isAllSelected.value) {
+    const currentPageIds = new Set(events.value.map(event => event.id))
+    selectedIds.value = selectedIds.value.filter(id => !currentPageIds.has(id))
+  } else {
+    const next = new Set(selectedIds.value)
+    for (const event of events.value) {
+      next.add(event.id)
+    }
+    selectedIds.value = [...next]
+  }
+}
+
+const clearSelection = () => {
+  selectedIds.value = []
+}
+
+const selectCurrentPage = () => {
+  selectedIds.value = events.value.map(event => event.id)
+}
+
+const selectAllFiltered = async () => {
+  try {
+    loading.value = true
+    const rows = await invoke<any[]>('bounty_list_change_events', {
+      filter: Object.keys(buildFilterParams(false)).length > 0 ? buildFilterParams(false) : null,
+    })
+    selectedIds.value = rows.map(event => event.id)
+  } catch (error) {
+    console.error('Failed to load filtered change events for batch selection:', error)
+    toast.error(t('bugBounty.errors.loadFailed'))
+  } finally {
+    loading.value = false
+  }
+}
+
 // Methods
 const loadEvents = async () => {
   try {
     loading.value = true
-    const filterParams: any = {}
-    if (filter.event_type) filterParams.event_types = [filter.event_type]
-    if (filter.severity) filterParams.severities = [filter.severity]
-    if (filter.status) filterParams.statuses = [filter.status]
+    const filterParams = buildFilterParams()
     
-    events.value = await invoke('bounty_list_change_events', { 
+    const rows = await invoke<any[]>('bounty_list_change_events', { 
       filter: Object.keys(filterParams).length > 0 ? filterParams : null 
     })
+    hasNext.value = rows.length > pageSize
+    events.value = hasNext.value ? rows.slice(0, pageSize) : rows
+    clearSelection()
   } catch (error) {
     console.error('Failed to load change events:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
+    events.value = []
+    hasNext.value = false
   } finally {
     loading.value = false
   }
@@ -227,7 +365,68 @@ const loadStats = async () => {
 }
 
 const onFilterChange = () => {
+  page.value = 1
+  clearSelection()
   loadEvents()
+}
+
+const goToPrevPage = () => {
+  if (page.value <= 1) return
+  page.value -= 1
+  clearSelection()
+  loadEvents()
+}
+
+const goToNextPage = () => {
+  if (!hasNext.value) return
+  page.value += 1
+  clearSelection()
+  loadEvents()
+}
+
+const batchUpdateStatus = async (status: string) => {
+  if (selectedIds.value.length === 0) return
+  if (!confirm(t('bugBounty.batch.confirmUpdateStatus', { count: selectedIds.value.length }))) return
+
+  try {
+    loading.value = true
+    const ids = [...selectedIds.value]
+    await Promise.all(
+      ids.map(id => invoke('bounty_update_change_event_status', { id, status }))
+    )
+    toast.success(t('bugBounty.batch.updateSuccess', { count: ids.length }))
+    clearSelection()
+    await loadEvents()
+    await loadStats()
+  } catch (error) {
+    console.error('Failed to batch update change event statuses:', error)
+    toast.error(t('bugBounty.errors.updateFailed'))
+  } finally {
+    loading.value = false
+  }
+}
+
+const batchDelete = async () => {
+  if (selectedIds.value.length === 0) return
+  if (!confirm(t('bugBounty.batch.confirmDelete', { count: selectedIds.value.length }))) return
+
+  try {
+    loading.value = true
+    const ids = [...selectedIds.value]
+    await Promise.all(ids.map(id => invoke('bounty_delete_change_event', { id })))
+    toast.success(t('bugBounty.batch.deleteSuccess', { count: ids.length }))
+    clearSelection()
+    if (events.value.length === ids.length && page.value > 1) {
+      page.value -= 1
+    }
+    await loadEvents()
+    await loadStats()
+  } catch (error) {
+    console.error('Failed to batch delete change events:', error)
+    toast.error(t('bugBounty.errors.deleteFailed'))
+  } finally {
+    loading.value = false
+  }
 }
 
 const viewEvent = (event: any) => {
@@ -255,6 +454,9 @@ const deleteEvent = async (event: any) => {
   try {
     await invoke('bounty_delete_change_event', { id: event.id })
     toast.success(t('bugBounty.changeEvents.deleted'))
+    if (events.value.length === 1 && page.value > 1) {
+      page.value -= 1
+    }
     await loadEvents()
     await loadStats()
   } catch (error) {

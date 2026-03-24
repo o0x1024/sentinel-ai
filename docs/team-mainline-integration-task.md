@@ -63,7 +63,7 @@
 - 已完成 Phase 3（运行视图并入，第一批）：
   - AgentView 右侧栏新增 Team 工作台（模板库 / 白板 / 产物 / 时间线 / 对比）。
   - Team 事件（state/round/artifact）已在主链路侧栏联动刷新数据。
-  - Team 模式与原 WebExplorer/Todo/Terminal/HTML 面板互斥切换。
+  - Team 模式与右侧任务/终端/HTML 工作面板互斥切换。
 - 已完成 Phase 4（第一批，DSL 校验）：
   - 新增 `agent_team/orchestration.rs`，实现 `orchestration_plan` 规范化与校验。
   - 在创建/更新 Team Session 时统一执行校验，阻断非法计划落库。

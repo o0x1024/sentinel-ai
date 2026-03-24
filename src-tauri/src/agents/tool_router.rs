@@ -16,13 +16,11 @@ use tokio::sync::RwLock;
 
 #[allow(unused_imports)]
 use sentinel_tools::buildin_tools::{
-    browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, MemoryManagerTool,
-    OcrTool, PortScanTool, SearchExploitTool, ShellTool, SkillsTool, SubagentAwaitTool,
-    SubagentChannelTool, SubagentExecuteTool, SubdomainBruteTool, TenthManTool, TodosTool,
+    HttpRequestTool, MemoryManagerTool, OcrTool, SearchExploitTool, ShellTool, SkillsTool,
+    SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool, TenthManTool, TodosTool,
     WebSearchTool,
 };
 
-use crate::engines::web_explorer::WebExplorerTool;
 use sentinel_tools::terminal::server::TerminalServer;
 
 /// 工具元数据
@@ -254,20 +252,6 @@ impl ToolRouter {
         vec![
             // 网络工具
             ToolMetadata {
-                id: PortScanTool::NAME.to_string(),
-                name: PortScanTool::NAME.to_string(),
-                description: PortScanTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Network,
-                tags: vec![
-                    "network".to_string(),
-                    "scan".to_string(),
-                    "port".to_string(),
-                    "tcp".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
                 id: HttpRequestTool::NAME.to_string(),
                 name: HttpRequestTool::NAME.to_string(),
                 description: HttpRequestTool::DESCRIPTION.to_string(),
@@ -279,22 +263,6 @@ impl ToolRouter {
                     "web".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: SubdomainBruteTool::NAME.to_string(),
-                name: SubdomainBruteTool::NAME.to_string(),
-                description: SubdomainBruteTool::DESCRIPTION.to_string(),
-                category: ToolCategory::Network,
-                tags: vec![
-                    "subdomain".to_string(),
-                    "brute".to_string(),
-                    "dns".to_string(),
-                    "scan".to_string(),
-                    "network".to_string(),
-                    "security".to_string(),
-                ],
-                cost_estimate: ToolCost::High,
                 always_available: false,
             },
             ToolMetadata {
@@ -330,15 +298,6 @@ impl ToolRouter {
                 always_available: false,
             },
             // 系统工具
-            ToolMetadata {
-                id: LocalTimeTool::NAME.to_string(),
-                name: LocalTimeTool::NAME.to_string(),
-                description: LocalTimeTool::DESCRIPTION.to_string(),
-                category: ToolCategory::System,
-                tags: vec!["time".to_string(), "date".to_string(), "clock".to_string()],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
             ToolMetadata {
                 id: ShellTool::NAME.to_string(),
                 name: ShellTool::NAME.to_string(),
@@ -415,21 +374,6 @@ impl ToolRouter {
                     "recognition".to_string(),
                 ],
                 cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: WebExplorerTool::NAME.to_string(),
-                name: WebExplorerTool::NAME.to_string(),
-                description: WebExplorerTool::DESCRIPTION.to_string(),
-                category: ToolCategory::AI,
-                tags: vec![
-                    "web".to_string(),
-                    "explorer".to_string(),
-                    "crawl".to_string(),
-                    "api".to_string(),
-                    "browser".to_string(),
-                ],
-                cost_estimate: ToolCost::High,
                 always_available: false,
             },
             // Memory Manager
@@ -515,209 +459,6 @@ impl ToolRouter {
                     "coordination".to_string(),
                     "channel".to_string(),
                 ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            // Browser automation tools
-            ToolMetadata {
-                id: browser_constants::BROWSER_OPEN_NAME.to_string(),
-                name: browser_constants::BROWSER_OPEN_NAME.to_string(),
-                description: browser_constants::BROWSER_OPEN_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "web".to_string(),
-                    "navigate".to_string(),
-                    "url".to_string(),
-                    "automation".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
-                name: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
-                description: browser_constants::BROWSER_SNAPSHOT_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "snapshot".to_string(),
-                    "page".to_string(),
-                    "elements".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_CLICK_NAME.to_string(),
-                name: browser_constants::BROWSER_CLICK_NAME.to_string(),
-                description: browser_constants::BROWSER_CLICK_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "click".to_string(),
-                    "interact".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_FILL_NAME.to_string(),
-                name: browser_constants::BROWSER_FILL_NAME.to_string(),
-                description: browser_constants::BROWSER_FILL_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "fill".to_string(),
-                    "input".to_string(),
-                    "form".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_TYPE_NAME.to_string(),
-                name: browser_constants::BROWSER_TYPE_NAME.to_string(),
-                description: browser_constants::BROWSER_TYPE_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "type".to_string(),
-                    "keyboard".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_SELECT_NAME.to_string(),
-                name: browser_constants::BROWSER_SELECT_NAME.to_string(),
-                description: browser_constants::BROWSER_SELECT_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "select".to_string(),
-                    "dropdown".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_SCROLL_NAME.to_string(),
-                name: browser_constants::BROWSER_SCROLL_NAME.to_string(),
-                description: browser_constants::BROWSER_SCROLL_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec!["browser".to_string(), "scroll".to_string()],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_WAIT_NAME.to_string(),
-                name: browser_constants::BROWSER_WAIT_NAME.to_string(),
-                description: browser_constants::BROWSER_WAIT_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec!["browser".to_string(), "wait".to_string()],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
-                name: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
-                description: browser_constants::BROWSER_GET_TEXT_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "text".to_string(),
-                    "extract".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
-                name: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
-                description: browser_constants::BROWSER_SCREENSHOT_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "screenshot".to_string(),
-                    "capture".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_BACK_NAME.to_string(),
-                name: browser_constants::BROWSER_BACK_NAME.to_string(),
-                description: browser_constants::BROWSER_BACK_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "back".to_string(),
-                    "navigate".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_PRESS_NAME.to_string(),
-                name: browser_constants::BROWSER_PRESS_NAME.to_string(),
-                description: browser_constants::BROWSER_PRESS_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "press".to_string(),
-                    "keyboard".to_string(),
-                    "key".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_HOVER_NAME.to_string(),
-                name: browser_constants::BROWSER_HOVER_NAME.to_string(),
-                description: browser_constants::BROWSER_HOVER_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "hover".to_string(),
-                    "mouse".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
-                name: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
-                description: browser_constants::BROWSER_EVALUATE_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "javascript".to_string(),
-                    "evaluate".to_string(),
-                    "script".to_string(),
-                ],
-                cost_estimate: ToolCost::Medium,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_GET_URL_NAME.to_string(),
-                name: browser_constants::BROWSER_GET_URL_NAME.to_string(),
-                description: browser_constants::BROWSER_GET_URL_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec![
-                    "browser".to_string(),
-                    "url".to_string(),
-                    "title".to_string(),
-                ],
-                cost_estimate: ToolCost::Low,
-                always_available: false,
-            },
-            ToolMetadata {
-                id: browser_constants::BROWSER_CLOSE_NAME.to_string(),
-                name: browser_constants::BROWSER_CLOSE_NAME.to_string(),
-                description: browser_constants::BROWSER_CLOSE_DESC.to_string(),
-                category: ToolCategory::Browser,
-                tags: vec!["browser".to_string(), "close".to_string()],
                 cost_estimate: ToolCost::Low,
                 always_available: false,
             },
@@ -1150,11 +891,6 @@ impl ToolRouter {
             }
             if (task_lower.contains("http") || task_lower.contains("api"))
                 && tool.id == "http_request"
-            {
-                score += 15;
-            }
-            if (task_lower.contains("time") || task_lower.contains("date"))
-                && tool.id == "local_time"
             {
                 score += 15;
             }
@@ -2323,20 +2059,10 @@ mod tests {
             allowed_tools: vec![],
         };
 
-        // 测试端口扫描任务
-        let task = "Scan ports on 192.168.1.1 to find open services";
-        let selected = router.select_tools(task, &config, None).await.unwrap();
-        assert!(selected.contains(&"port_scan".to_string()));
-
         // 测试 HTTP 请求任务
         let task = "Make an HTTP request to https://api.example.com";
         let selected = router.select_tools(task, &config, None).await.unwrap();
         assert!(selected.contains(&"http_request".to_string()));
-
-        // 测试时间查询任务
-        let task = "What is the current time?";
-        let selected = router.select_tools(task, &config, None).await.unwrap();
-        assert!(selected.contains(&"local_time".to_string()));
     }
 
     #[tokio::test]
@@ -2344,10 +2070,7 @@ mod tests {
         let router = ToolRouter::new();
         let config = ToolConfig {
             enabled: true,
-            selection_strategy: ToolSelectionStrategy::Manual(vec![
-                "port_scan".to_string(),
-                "http_request".to_string(),
-            ]),
+            selection_strategy: ToolSelectionStrategy::Manual(vec!["http_request".to_string()]),
             max_tools: 5,
             fixed_tools: vec![],
             disabled_tools: vec![],
@@ -2358,8 +2081,7 @@ mod tests {
             .select_tools("any task", &config, None)
             .await
             .unwrap();
-        assert_eq!(selected.len(), 2);
-        assert!(selected.contains(&"port_scan".to_string()));
+        assert_eq!(selected.len(), 1);
         assert!(selected.contains(&"http_request".to_string()));
     }
 

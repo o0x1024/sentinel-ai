@@ -217,7 +217,6 @@ cd src-tauri && cargo check
 │  ├─ sentinel-tools/        # 工具系统
 │  ├─ sentinel-workflow/     # 工作流引擎
 │  ├─ sentinel-rag/          # 知识库与检索
-│  └─ agent-browser/         # 浏览器自动化守护进程
 ├─ plugins/                  # 插件目录
 ├─ docs/                     # 项目文档
 └─ scripts/                  # 开发脚本
@@ -229,4 +228,3 @@ cd src-tauri && cargo check
 - 红蓝对抗中的自动化资产与风险分析
 - 漏洞运营中的复测、通知、归档自动化
 - 将团队经验沉淀为插件与知识库，持续复用
-

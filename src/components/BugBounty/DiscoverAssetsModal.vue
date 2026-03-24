@@ -381,7 +381,11 @@ const loadPlugins = async () => {
     // Fallback to hardcoded list if loading fails
     availablePlugins.value = [
       { id: 'subdomain_enumerator', name: 'Subdomain Enumerator', category: 'recon', description: 'Enumerate subdomains using multiple sources' },
+      { id: 'cidr_mapper', name: 'CIDR Mapper', category: 'recon', description: 'Expand IPv4 CIDR ranges and IP targets into typed surface assets' },
+      { id: 'dns_resolver', name: 'DNS Resolver', category: 'recon', description: 'Resolve DNS records and build domain to IP relationships' },
       { id: 'http_prober', name: 'HTTP Prober', category: 'recon', description: 'Probe HTTP/HTTPS endpoints' },
+      { id: 'favicon_fingerprinter', name: 'Favicon Fingerprinter', category: 'recon', description: 'Fetch favicons and emit web fingerprint artifacts' },
+      { id: 'service_fingerprinter', name: 'Service Fingerprinter', category: 'recon', description: 'Fingerprint exposed services from host and port targets' },
       { id: 'port_monitor', name: 'Port Monitor', category: 'monitoring', description: 'Monitor open ports' },
     ]
   } finally {

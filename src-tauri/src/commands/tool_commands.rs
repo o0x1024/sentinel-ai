@@ -10,20 +10,17 @@ use tokio::sync::RwLock;
 
 use sentinel_tools::buildin_tools::shell::ShellConfig;
 use sentinel_tools::buildin_tools::{
-    browser::constants as browser_constants, HttpRequestTool, LocalTimeTool, OcrTool, PortScanTool,
-    SearchExploitTool, ShellTool, SkillsTool, SubagentAwaitTool, SubagentChannelTool,
-    SubagentExecuteTool, TenthManTool, TodosTool,
+    HttpRequestTool, OcrTool, SearchExploitTool, ShellTool, SkillsTool, SubagentAwaitTool,
+    SubagentChannelTool, SubagentExecuteTool, TenthManTool, TodosTool,
 };
 use sentinel_tools::get_tool_server;
 use sentinel_tools::terminal::server::TerminalServer;
-
-use crate::engines::web_explorer::WebExplorerTool;
 
 use crate::agents::tool_router::{
     clear_tool_usage_records, get_tool_usage_statistics, ToolCategory, ToolMetadata, ToolRouter,
     ToolStatistics, ToolUsageStatistics,
 };
-/// Builtin tool info for frontend
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuiltinToolInfo {
     pub id: String,
@@ -48,14 +45,8 @@ pub struct ToolExecutionResult {
 static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     // All tools enabled by default
-    map.insert(PortScanTool::NAME.to_string(), true);
     map.insert(HttpRequestTool::NAME.to_string(), true);
-    map.insert(LocalTimeTool::NAME.to_string(), true);
     map.insert(ShellTool::NAME.to_string(), true);
-    map.insert(
-        sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
-        true,
-    );
     map.insert(
         sentinel_tools::buildin_tools::WebSearchTool::NAME.to_string(),
         true,
@@ -73,23 +64,6 @@ static TOOL_STATES: Lazy<RwLock<HashMap<String, bool>>> = Lazy::new(|| {
     map.insert(SubagentExecuteTool::NAME.to_string(), true);
     map.insert(SubagentAwaitTool::NAME.to_string(), true);
     map.insert(SubagentChannelTool::NAME.to_string(), true);
-    // Browser automation tools
-    map.insert(browser_constants::BROWSER_OPEN_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_SNAPSHOT_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_CLICK_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_FILL_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_TYPE_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_SELECT_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_SCROLL_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_WAIT_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_GET_TEXT_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_SCREENSHOT_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_BACK_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_PRESS_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_HOVER_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_EVALUATE_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_GET_URL_NAME.to_string(), true);
-    map.insert(browser_constants::BROWSER_CLOSE_NAME.to_string(), true);
     RwLock::new(map)
 });
 
@@ -99,41 +73,6 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
     let states = TOOL_STATES.read().await;
 
     let mut tools = vec![
-        BuiltinToolInfo {
-            id: PortScanTool::NAME.to_string(),
-            name: PortScanTool::NAME.to_string(),
-            description: PortScanTool::DESCRIPTION.to_string(),
-            category: "network".to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states.get(PortScanTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "description": "Target IP address to scan"
-                    },
-                    "ports": {
-                        "type": "string",
-                        "description": "Port range or list (e.g., '1-1000', '80,443,8080', or 'common')",
-                        "default": "common"
-                    },
-                    "threads": {
-                        "type": "integer",
-                        "description": "Number of concurrent threads (1-1000)",
-                        "default": 100,
-                        "minimum": 1,
-                        "maximum": 1000
-                    },
-                    "timeout_secs": {
-                        "type": "integer",
-                        "description": "Connection timeout in seconds",
-                        "default": 3
-                    }
-                },
-                "required": ["target"]
-            })),
-        },
         BuiltinToolInfo {
             id: HttpRequestTool::NAME.to_string(),
             name: HttpRequestTool::NAME.to_string(),
@@ -177,29 +116,6 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
         BuiltinToolInfo {
-            id: LocalTimeTool::NAME.to_string(),
-            name: LocalTimeTool::NAME.to_string(),
-            description: LocalTimeTool::DESCRIPTION.to_string(),
-            category: ToolCategory::System.to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states.get(LocalTimeTool::NAME).unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "timezone": {
-                        "type": "string",
-                        "description": "Timezone: 'local' or 'utc'",
-                        "default": "local"
-                    },
-                    "format": {
-                        "type": "string",
-                        "description": "Date format string (e.g., '%Y-%m-%d %H:%M:%S')",
-                        "default": "%Y-%m-%d %H:%M:%S"
-                    }
-                }
-            })),
-        },
-        BuiltinToolInfo {
             id: ShellTool::NAME.to_string(),
             name: ShellTool::NAME.to_string(),
             description: ShellTool::DESCRIPTION.to_string(),
@@ -224,59 +140,6 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
                     }
                 },
                 "required": ["command"]
-            })),
-        },
-        BuiltinToolInfo {
-            id: sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
-            name: sentinel_tools::buildin_tools::SubdomainBruteTool::NAME.to_string(),
-            description: sentinel_tools::buildin_tools::SubdomainBruteTool::DESCRIPTION.to_string(),
-            category: ToolCategory::Network.to_string(),
-            version: "1.0.0".to_string(),
-            enabled: *states
-                .get(sentinel_tools::buildin_tools::SubdomainBruteTool::NAME)
-                .unwrap_or(&true),
-            input_schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "domains": {
-                        "type": "string",
-                        "description": "Target domain(s) to scan, comma-separated for multiple domains"
-                    },
-                    "resolvers": {
-                        "type": "string",
-                        "description": "DNS resolvers (comma-separated, e.g., '8.8.8.8,1.1.1.1')",
-                        "default": "8.8.8.8,1.1.1.1,223.5.5.5"
-                    },
-                    "dictionary_file": {
-                        "type": "string",
-                        "description": "Dictionary file path (optional, uses built-in if not provided)"
-                    },
-                    "dictionary": {
-                        "type": "string",
-                        "description": "Dictionary words (comma-separated, e.g., 'www,mail,api,admin')"
-                    },
-                    "skip_wildcard": {
-                        "type": "boolean",
-                        "description": "Skip wildcard domains",
-                        "default": true
-                    },
-                    "bandwidth_limit": {
-                        "type": "string",
-                        "description": "Bandwidth limit (e.g., '5M', '10M')",
-                        "default": "5M"
-                    },
-                    "verify_mode": {
-                        "type": "boolean",
-                        "description": "Enable HTTP/HTTPS verification",
-                        "default": true
-                    },
-                    "resolve_records": {
-                        "type": "boolean",
-                        "description": "Enable DNS record resolution",
-                        "default": true
-                    }
-                },
-                "required": ["domains"]
             })),
         },
         BuiltinToolInfo {
@@ -421,31 +284,6 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
             })),
         },
     ];
-
-    // Add vision_explorer
-    tools.push(BuiltinToolInfo {
-        id: WebExplorerTool::NAME.to_string(),
-        name: WebExplorerTool::NAME.to_string(),
-        description: WebExplorerTool::DESCRIPTION.to_string(),
-        category: ToolCategory::AI.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(WebExplorerTool::NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to explore"
-                },
-                "max_iterations": {
-                    "type": "integer",
-                    "description": "Maximum number of exploration steps (default: 20)",
-                    "default": 20
-                }
-            },
-            "required": ["url"]
-        })),
-    });
 
     // Add interactive_shell
     tools.push(BuiltinToolInfo {
@@ -658,369 +496,6 @@ pub async fn get_builtin_tools_with_status() -> Result<Vec<BuiltinToolInfo>, Str
         })),
     });
 
-    // Browser automation tools
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_OPEN_NAME.to_string(),
-        name: browser_constants::BROWSER_OPEN_NAME.to_string(),
-        description: browser_constants::BROWSER_OPEN_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states.get(browser_constants::BROWSER_OPEN_NAME).unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL to open"
-                },
-                "wait_until": {
-                    "type": "string",
-                    "description": "Wait condition: 'load', 'domcontentloaded', or 'networkidle'",
-                    "default": "load",
-                    "enum": ["load", "domcontentloaded", "networkidle"]
-                },
-                "headless": {
-                    "type": "boolean",
-                    "description": "Whether to run in headless mode (true) or show browser window (false). Default is true (headless).",
-                    "default": true
-                }
-            },
-            "required": ["url"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
-        name: browser_constants::BROWSER_SNAPSHOT_NAME.to_string(),
-        description: browser_constants::BROWSER_SNAPSHOT_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_SNAPSHOT_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "interactive_only": {
-                    "type": "boolean",
-                    "description": "Only show interactive elements",
-                    "default": true
-                },
-                "compact": {
-                    "type": "boolean",
-                    "description": "Remove empty structural elements",
-                    "default": true
-                }
-            }
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_CLICK_NAME.to_string(),
-        name: browser_constants::BROWSER_CLICK_NAME.to_string(),
-        description: browser_constants::BROWSER_CLICK_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_CLICK_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "Element ref (e.g., '@e1') or CSS selector"
-                }
-            },
-            "required": ["target"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_FILL_NAME.to_string(),
-        name: browser_constants::BROWSER_FILL_NAME.to_string(),
-        description: browser_constants::BROWSER_FILL_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_FILL_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "Element ref or CSS selector"
-                },
-                "value": {
-                    "type": "string",
-                    "description": "Text to fill"
-                }
-            },
-            "required": ["target", "value"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_TYPE_NAME.to_string(),
-        name: browser_constants::BROWSER_TYPE_NAME.to_string(),
-        description: browser_constants::BROWSER_TYPE_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_TYPE_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "Element ref or CSS selector"
-                },
-                "text": {
-                    "type": "string",
-                    "description": "Text to type"
-                },
-                "delay_ms": {
-                    "type": "integer",
-                    "description": "Delay between keystrokes in ms"
-                }
-            },
-            "required": ["target", "text"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_SELECT_NAME.to_string(),
-        name: browser_constants::BROWSER_SELECT_NAME.to_string(),
-        description: browser_constants::BROWSER_SELECT_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_SELECT_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "Element ref or CSS selector"
-                },
-                "value": {
-                    "type": "string",
-                    "description": "Option value to select"
-                }
-            },
-            "required": ["target", "value"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_SCROLL_NAME.to_string(),
-        name: browser_constants::BROWSER_SCROLL_NAME.to_string(),
-        description: browser_constants::BROWSER_SCROLL_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_SCROLL_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "direction": {
-                    "type": "string",
-                    "description": "Scroll direction",
-                    "default": "down",
-                    "enum": ["up", "down", "left", "right"]
-                },
-                "amount": {
-                    "type": "integer",
-                    "description": "Scroll amount in pixels",
-                    "default": 300
-                }
-            }
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_WAIT_NAME.to_string(),
-        name: browser_constants::BROWSER_WAIT_NAME.to_string(),
-        description: browser_constants::BROWSER_WAIT_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_WAIT_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "selector": {
-                    "type": "string",
-                    "description": "CSS selector to wait for"
-                },
-                "timeout_ms": {
-                    "type": "integer",
-                    "description": "Maximum wait time in ms",
-                    "default": 30000
-                }
-            }
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
-        name: browser_constants::BROWSER_GET_TEXT_NAME.to_string(),
-        description: browser_constants::BROWSER_GET_TEXT_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_GET_TEXT_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "Element ref or CSS selector"
-                }
-            },
-            "required": ["target"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
-        name: browser_constants::BROWSER_SCREENSHOT_NAME.to_string(),
-        description: browser_constants::BROWSER_SCREENSHOT_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_SCREENSHOT_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "full_page": {
-                    "type": "boolean",
-                    "description": "Capture full page",
-                    "default": false
-                }
-            }
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_BACK_NAME.to_string(),
-        name: browser_constants::BROWSER_BACK_NAME.to_string(),
-        description: browser_constants::BROWSER_BACK_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_BACK_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {}
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_PRESS_NAME.to_string(),
-        name: browser_constants::BROWSER_PRESS_NAME.to_string(),
-        description: browser_constants::BROWSER_PRESS_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_PRESS_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "Key to press (e.g., 'Enter', 'Tab')"
-                },
-                "target": {
-                    "type": "string",
-                    "description": "Optional element to focus first"
-                }
-            },
-            "required": ["key"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_HOVER_NAME.to_string(),
-        name: browser_constants::BROWSER_HOVER_NAME.to_string(),
-        description: browser_constants::BROWSER_HOVER_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_HOVER_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "target": {
-                    "type": "string",
-                    "description": "Element ref or CSS selector"
-                }
-            },
-            "required": ["target"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
-        name: browser_constants::BROWSER_EVALUATE_NAME.to_string(),
-        description: browser_constants::BROWSER_EVALUATE_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_EVALUATE_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "script": {
-                    "type": "string",
-                    "description": "JavaScript code to execute"
-                }
-            },
-            "required": ["script"]
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_GET_URL_NAME.to_string(),
-        name: browser_constants::BROWSER_GET_URL_NAME.to_string(),
-        description: browser_constants::BROWSER_GET_URL_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_GET_URL_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {}
-        })),
-    });
-
-    tools.push(BuiltinToolInfo {
-        id: browser_constants::BROWSER_CLOSE_NAME.to_string(),
-        name: browser_constants::BROWSER_CLOSE_NAME.to_string(),
-        description: browser_constants::BROWSER_CLOSE_DESC.to_string(),
-        category: ToolCategory::Browser.to_string(),
-        version: "1.0.0".to_string(),
-        enabled: *states
-            .get(browser_constants::BROWSER_CLOSE_NAME)
-            .unwrap_or(&true),
-        input_schema: Some(serde_json::json!({
-            "type": "object",
-            "properties": {}
-        })),
-    });
-
     Ok(tools)
 }
 
@@ -1082,22 +557,6 @@ pub async fn unified_execute_tool(
 }
 
 #[allow(dead_code)]
-async fn execute_port_scan(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
-    use sentinel_tools::buildin_tools::port_scan::PortScanArgs;
-
-    let args: PortScanArgs = serde_json::from_value(inputs)
-        .map_err(|e| format!("Invalid port_scan arguments: {}", e))?;
-
-    let tool = PortScanTool;
-    let result = tool
-        .call(args)
-        .await
-        .map_err(|e| format!("Port scan failed: {}", e))?;
-
-    serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
-}
-
-#[allow(dead_code)]
 async fn execute_http_request(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
     use sentinel_tools::buildin_tools::http_request::HttpRequestArgs;
 
@@ -1109,22 +568,6 @@ async fn execute_http_request(inputs: serde_json::Value) -> Result<serde_json::V
         .call(args)
         .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
-}
-
-#[allow(dead_code)]
-async fn execute_local_time(inputs: serde_json::Value) -> Result<serde_json::Value, String> {
-    use sentinel_tools::buildin_tools::local_time::LocalTimeArgs;
-
-    let args: LocalTimeArgs = serde_json::from_value(inputs)
-        .map_err(|e| format!("Invalid local_time arguments: {}", e))?;
-
-    let tool = LocalTimeTool;
-    let result = tool
-        .call(args)
-        .await
-        .map_err(|e| format!("Local time failed: {}", e))?;
 
     serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
@@ -1679,11 +1122,7 @@ pub async fn get_all_tool_metadata(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router
-        .list_all_tools()
-        .into_iter()
-        .filter(|t| t.id != SkillsTool::NAME)
-        .collect())
+    Ok(router.list_all_tools())
 }
 
 /// Get tool metadata by category
@@ -1713,11 +1152,7 @@ pub async fn get_tools_by_category(
         _ => return Err(format!("Unknown category: {}", category)),
     };
 
-    Ok(router
-        .list_tools_by_category(category_enum)
-        .into_iter()
-        .filter(|t| t.id != SkillsTool::NAME)
-        .collect())
+    Ok(router.list_tools_by_category(category_enum))
 }
 
 /// Search tools by query
@@ -1727,11 +1162,7 @@ pub async fn search_tools(
     db_service: tauri::State<'_, Arc<sentinel_db::DatabaseService>>,
 ) -> Result<Vec<ToolMetadata>, String> {
     let router = ToolRouter::new_with_all_tools(Some(db_service.inner())).await;
-    Ok(router
-        .search_tools(&query)
-        .into_iter()
-        .filter(|t| t.id != SkillsTool::NAME)
-        .collect())
+    Ok(router.search_tools(&query))
 }
 
 /// Get tool statistics
