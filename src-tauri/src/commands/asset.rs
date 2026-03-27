@@ -50,6 +50,15 @@ pub async fn delete_asset(
     asset_service.delete_asset(&id).await
 }
 
+/// 批量删除资产
+#[tauri::command]
+pub async fn delete_assets(
+    asset_service: State<'_, AssetService>,
+    ids: Vec<String>,
+) -> Result<usize, String> {
+    asset_service.delete_assets(&ids).await
+}
+
 /// 查询资产列表
 #[tauri::command]
 pub async fn list_assets(

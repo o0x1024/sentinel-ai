@@ -2,42 +2,15 @@
   <div class="space-y-4">
     <div class="card bg-base-100 shadow-md">
       <div class="card-body">
-        <div class="flex justify-between items-center mb-4">
-          <div class="flex items-center gap-2">
-            <h2 class="card-title">{{ t('bugBounty.submissions.title') }}</h2>
-            <span v-if="selectedIds.length > 0" class="badge badge-primary">
-              {{ selectedIds.length }} {{ t('bugBounty.batch.selected') }}
-            </span>
-          </div>
+        <div class="flex flex-col gap-3 mb-4 xl:flex-row xl:items-center xl:justify-between">
+          <h2 class="card-title">{{ t('bugBounty.submissions.title') }}</h2>
           <div class="flex gap-2 flex-wrap">
-            <!-- Batch Actions -->
-            <div v-if="selectedIds.length > 0" class="flex gap-2">
-              <div class="dropdown dropdown-end">
-                <label tabindex="0" class="btn btn-sm btn-outline">
-                  <i class="fas fa-edit mr-2"></i>
-                  {{ t('bugBounty.batch.updateStatus') }}
-                </label>
-                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-44">
-                  <li><a @click="batchUpdateStatus('draft')">{{ t('bugBounty.submissionStatus.draft') }}</a></li>
-                  <li><a @click="batchUpdateStatus('submitted')">{{ t('bugBounty.submissionStatus.submitted') }}</a></li>
-                  <li><a @click="batchUpdateStatus('triaged')">{{ t('bugBounty.submissionStatus.triaged') }}</a></li>
-                  <li><a @click="batchUpdateStatus('accepted')">{{ t('bugBounty.submissionStatus.accepted') }}</a></li>
-                  <li><a @click="batchUpdateStatus('rejected')">{{ t('bugBounty.submissionStatus.rejected') }}</a></li>
-                  <li><a @click="batchUpdateStatus('duplicate')">{{ t('bugBounty.submissionStatus.duplicate') }}</a></li>
-                  <li><a @click="batchUpdateStatus('resolved')">{{ t('bugBounty.submissionStatus.resolved') }}</a></li>
-                </ul>
-              </div>
-              <button class="btn btn-sm btn-error btn-outline" @click="batchDelete">
-                <i class="fas fa-trash mr-2"></i>
-                {{ t('bugBounty.batch.delete') }}
-              </button>
-              <button class="btn btn-sm btn-ghost" @click="clearSelection">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-
-            <!-- Filters -->
-            <select v-model="filter.status" class="select select-sm select-bordered" @change="$emit('filter-change', filter)">
+            <select
+              v-model="filter.status"
+              class="select select-sm select-bordered"
+              :disabled="loading || selectionLoading || batchActionLoading"
+              @change="onFilterChange"
+            >
               <option value="">{{ t('bugBounty.filter.allStatuses') }}</option>
               <option value="draft">{{ t('bugBounty.submissionStatus.draft') }}</option>
               <option value="submitted">{{ t('bugBounty.submissionStatus.submitted') }}</option>
@@ -52,11 +25,65 @@
               type="text"
               class="input input-sm input-bordered w-48"
               :placeholder="t('bugBounty.search')"
-              @input="$emit('filter-change', filter)"
+              :disabled="loading || selectionLoading || batchActionLoading"
+              @input="onFilterChange"
             />
-            <button class="btn btn-sm btn-primary" @click="$emit('create')">
+            <button class="btn btn-sm btn-primary" :disabled="batchActionLoading" @click="$emit('create')">
               <i class="fas fa-plus mr-2"></i>
               {{ t('bugBounty.createSubmission') }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="total > 0"
+          class="mb-4 flex flex-col gap-3 rounded-lg border border-base-300 bg-base-200/40 p-3 lg:flex-row lg:items-center lg:justify-between"
+        >
+          <div class="space-y-1 text-sm text-base-content/70">
+            <div>
+              {{ t('bugBounty.batch.selectionSummary', { selected: selectedIds.length, page: filteredSubmissions.length, total }) }}
+            </div>
+            <div v-if="showSelectedTotalReward && selectedTotalReward > 0">
+              {{ t('bugBounty.batch.totalReward') }}:
+              <span class="font-medium text-success">${{ selectedTotalReward.toFixed(2) }}</span>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              class="btn btn-sm btn-outline"
+              :disabled="loading || selectionLoading || batchActionLoading || total === 0 || allFilteredSelected"
+              @click="selectAllFiltered"
+            >
+              <span v-if="selectionLoading" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-layer-group mr-2"></i>
+              {{ t('bugBounty.batch.selectAllFiltered') }}
+            </button>
+            <div class="dropdown dropdown-end">
+              <button
+                tabindex="0"
+                class="btn btn-sm btn-outline"
+                :disabled="selectedIds.length === 0 || loading || selectionLoading || batchActionLoading"
+              >
+                <i class="fas fa-edit mr-2"></i>
+                {{ t('bugBounty.batch.updateStatus') }}
+              </button>
+              <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-44">
+                <li><a @click="batchUpdateStatus('draft')">{{ t('bugBounty.submissionStatus.draft') }}</a></li>
+                <li><a @click="batchUpdateStatus('submitted')">{{ t('bugBounty.submissionStatus.submitted') }}</a></li>
+                <li><a @click="batchUpdateStatus('triaged')">{{ t('bugBounty.submissionStatus.triaged') }}</a></li>
+                <li><a @click="batchUpdateStatus('accepted')">{{ t('bugBounty.submissionStatus.accepted') }}</a></li>
+                <li><a @click="batchUpdateStatus('rejected')">{{ t('bugBounty.submissionStatus.rejected') }}</a></li>
+                <li><a @click="batchUpdateStatus('duplicate')">{{ t('bugBounty.submissionStatus.duplicate') }}</a></li>
+                <li><a @click="batchUpdateStatus('resolved')">{{ t('bugBounty.submissionStatus.resolved') }}</a></li>
+              </ul>
+            </div>
+            <button
+              class="btn btn-sm btn-error btn-outline"
+              :disabled="selectedIds.length === 0 || loading || selectionLoading || batchActionLoading"
+              @click="batchDelete"
+            >
+              <i class="fas fa-trash mr-2"></i>
+              {{ t('bugBounty.batch.delete') }}
             </button>
           </div>
         </div>
@@ -80,6 +107,7 @@
                     class="checkbox checkbox-sm"
                     :checked="isAllSelected"
                     :indeterminate="isPartialSelected"
+                    :disabled="loading || selectionLoading || batchActionLoading"
                     @change="toggleSelectAll"
                   />
                 </th>
@@ -99,6 +127,7 @@
                     type="checkbox" 
                     class="checkbox checkbox-sm"
                     :checked="isSelected(submission.id)"
+                    :disabled="loading || selectionLoading || batchActionLoading"
                     @change="toggleSelect(submission.id)"
                   />
                 </td>
@@ -156,31 +185,28 @@
           </div>
         </div>
 
-        <!-- Batch Summary -->
-        <div v-if="selectedIds.length > 0" class="mt-4 p-3 bg-primary/10 rounded-lg flex items-center justify-between">
-          <div class="text-sm">
-            <span class="font-medium">{{ selectedIds.length }}</span> {{ t('bugBounty.batch.itemsSelected') }}
-            <span v-if="selectedTotalReward > 0" class="ml-4">
-              {{ t('bugBounty.batch.totalReward') }}: <span class="text-success font-medium">${{ selectedTotalReward.toFixed(2) }}</span>
-            </span>
-          </div>
-        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '../../composables/useToast'
 
 const { t } = useI18n()
+const toast = useToast()
 
 const props = defineProps<{
   submissions: any[]
   loading: boolean
+  batchActionLoading: boolean
+  batchActionVersion: number
   page: number
   pageSize: number
+  total: number
   hasNext: boolean
 }>()
 
@@ -201,16 +227,24 @@ const filter = reactive({
 })
 
 const selectedIds = ref<string[]>([])
+const selectionLoading = ref(false)
 
 // Computed
 const filteredSubmissions = computed(() => props.submissions)
 
 const isAllSelected = computed(() => {
-  return filteredSubmissions.value.length > 0 && selectedIds.value.length === filteredSubmissions.value.length
+  return filteredSubmissions.value.length > 0 && filteredSubmissions.value.every(submission => selectedIds.value.includes(submission.id))
 })
 
 const isPartialSelected = computed(() => {
-  return selectedIds.value.length > 0 && selectedIds.value.length < filteredSubmissions.value.length
+  const selectedOnPage = filteredSubmissions.value.filter(submission => selectedIds.value.includes(submission.id)).length
+  return selectedOnPage > 0 && selectedOnPage < filteredSubmissions.value.length
+})
+const allFilteredSelected = computed(() => props.total > 0 && selectedIds.value.length >= props.total)
+const showSelectedTotalReward = computed(() => {
+  if (selectedIds.value.length === 0) return false
+  const visibleIds = new Set(props.submissions.map(submission => submission.id))
+  return selectedIds.value.every(id => visibleIds.has(id))
 })
 
 const selectedTotalReward = computed(() => {
@@ -221,6 +255,11 @@ const selectedTotalReward = computed(() => {
 
 // Methods
 const isSelected = (id: string) => selectedIds.value.includes(id)
+
+const onFilterChange = () => {
+  clearSelection()
+  emit('filter-change', { ...filter })
+}
 
 const toggleSelect = (id: string) => {
   const index = selectedIds.value.indexOf(id)
@@ -233,9 +272,14 @@ const toggleSelect = (id: string) => {
 
 const toggleSelectAll = () => {
   if (isAllSelected.value) {
-    selectedIds.value = []
+    const currentPageIds = new Set(filteredSubmissions.value.map(submission => submission.id))
+    selectedIds.value = selectedIds.value.filter(id => !currentPageIds.has(id))
   } else {
-    selectedIds.value = filteredSubmissions.value.map(s => s.id)
+    const next = new Set(selectedIds.value)
+    for (const submission of filteredSubmissions.value) {
+      next.add(submission.id)
+    }
+    selectedIds.value = [...next]
   }
 }
 
@@ -243,16 +287,41 @@ const clearSelection = () => {
   selectedIds.value = []
 }
 
+const selectAllFiltered = async () => {
+  if (props.total === 0 || allFilteredSelected.value || props.batchActionLoading) return
+
+  try {
+    selectionLoading.value = true
+    const filterPayload: Record<string, unknown> = {
+      sort_by: 'created_at',
+      sort_dir: 'desc',
+    }
+
+    if (filter.status) {
+      filterPayload.statuses = [filter.status]
+    }
+    if (filter.search) {
+      filterPayload.search = filter.search
+    }
+
+    const rows = await invoke<any[]>('bounty_list_submissions', { filter: filterPayload })
+    selectedIds.value = rows.map(row => row.id)
+  } catch (error) {
+    console.error('Failed to load submissions for batch selection:', error)
+    toast.error(t('bugBounty.errors.loadFailed'))
+  } finally {
+    selectionLoading.value = false
+  }
+}
+
 const batchUpdateStatus = (status: string) => {
-  if (selectedIds.value.length === 0) return
+  if (selectedIds.value.length === 0 || props.batchActionLoading) return
   emit('batch-update-status', [...selectedIds.value], status)
-  clearSelection()
 }
 
 const batchDelete = () => {
-  if (selectedIds.value.length === 0) return
+  if (selectedIds.value.length === 0 || props.batchActionLoading) return
   emit('batch-delete', [...selectedIds.value])
-  clearSelection()
 }
 
 const goToPrevPage = () => {
@@ -264,6 +333,15 @@ const goToNextPage = () => {
   if (!props.hasNext) return
   emit('page-change', props.page + 1)
 }
+
+watch(
+  () => props.batchActionVersion,
+  (_, previousValue) => {
+    if (previousValue !== undefined) {
+      clearSelection()
+    }
+  },
+)
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '-'

@@ -95,13 +95,23 @@
               </div>
             </div>
           </div>
-          <span class="text-sm font-semibold text-info">{{ progress.progress }}%</span>
+          <span v-if="!progress.indeterminate" class="text-sm font-semibold text-info">
+            {{ progress.progress }}%
+          </span>
+          <span v-else class="text-xs font-medium text-info/80">
+            Running
+          </span>
         </div>
 
         <progress
+          v-if="!progress.indeterminate"
           class="progress progress-info w-full mt-3"
           :value="progress.progress"
           max="100"
+        ></progress>
+        <progress
+          v-else
+          class="progress progress-info w-full mt-3"
         ></progress>
 
         <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-base-content/70">
@@ -122,6 +132,9 @@
           </span>
           <span v-else>
             {{ t('bugBounty.monitor.manualRun') }}
+          </span>
+          <span v-if="progress.updated_at">
+            Last update: {{ formatDateTime(progress.updated_at) }}
           </span>
         </div>
       </div>
@@ -204,8 +217,10 @@ interface MonitorTaskProgress {
   current_plugin?: string | null
   target_count: number
   imported_assets: number
+  indeterminate?: boolean
   message?: string | null
   execution_mode: string
+  updated_at?: string
 }
 
 interface MonitorTaskLog {
@@ -252,6 +267,9 @@ const progressStatusLabel = computed(() => {
 })
 
 const progressSummary = computed(() => {
+  if (props.progress?.message) {
+    return props.progress.message
+  }
   if (props.progress?.current_plugin) {
     return t('bugBounty.monitor.pluginRunning', { plugin: props.progress.current_plugin })
   }

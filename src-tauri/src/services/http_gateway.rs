@@ -993,6 +993,14 @@ window.__TAURI_INTERNALS__.invoke = async (cmd, payload) => {
         const j = await streamResp.json();
         if (j?.error?.message) err = j.error.message;
       } catch {}
+      __gwDispatch("agent:execution_finished", {
+        execution_id: execId,
+        outcome: "failed",
+        success: false,
+        error: err,
+        response: null,
+        message: null,
+      });
       __gwDispatch("agent:error", { execution_id: execId, error: err });
       throw new Error(err);
     }
@@ -1051,10 +1059,26 @@ window.__TAURI_INTERNALS__.invoke = async (cmd, payload) => {
           });
         } else if (evt.type === "error") {
           const err = evt.message || "agent_execute stream error";
+          __gwDispatch("agent:execution_finished", {
+            execution_id: execId,
+            outcome: "failed",
+            success: false,
+            error: err,
+            response: null,
+            message: null,
+          });
           __gwDispatch("agent:error", { execution_id: execId, error: err });
           throw new Error(err);
         } else if (evt.type === "done") {
           if (typeof evt.message === "string" && evt.message) finalText = evt.message;
+          __gwDispatch("agent:execution_finished", {
+            execution_id: execId,
+            outcome: evt.status === "failed" ? "failed" : "succeeded",
+            success: evt.status !== "failed",
+            error: evt.status === "failed" ? (evt.error || "agent execution failed") : null,
+            response: finalText,
+            message: null,
+          });
           __gwDispatch("agent:complete", {
             execution_id: execId,
             success: evt.status !== "failed",

@@ -73,6 +73,7 @@ pub async fn save_assistant_message(
                     "execution_id": conversation_id,
                     "message_id": message_id,
                     "content": content,
+                    "reasoning_content": msg.reasoning_content,
                     "timestamp": msg.timestamp.timestamp_millis(),
                     "tool_calls": tool_calls,
                 }),

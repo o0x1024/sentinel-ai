@@ -227,11 +227,17 @@ export const agentTeamApi = {
     })
   },
 
-  async startRun(sessionId: string, conversationId?: string, ragEnabled?: boolean): Promise<void> {
+  async startRun(
+    sessionId: string,
+    conversationId?: string,
+    ragEnabled?: boolean,
+    toolConfig?: unknown,
+  ): Promise<void> {
     return invoke('team_v3_start_execution', {
       sessionId,
       conversationId: conversationId ?? null,
       ragEnabled: ragEnabled ?? null,
+      toolConfig: toolConfig ?? null,
     })
   },
 

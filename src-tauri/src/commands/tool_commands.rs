@@ -678,6 +678,7 @@ async fn get_plugin_input_schema_async(
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: Some(format!("Agent tool plugin: {}", plugin_name)),
+        target_asset_types: Vec::new(),
     };
 
     // 运行时获取 schema
@@ -982,20 +983,35 @@ pub async fn build_node_catalog(
         }],
     });
 
-    // Prompt build node
+    // Raw data node
     catalog.push(NodeCatalogItem {
-        node_type: "prompt::build".to_string(),
-        label: "构建Prompt".to_string(),
+        node_type: "raw".to_string(),
+        label: "Raw数据".to_string(),
         category: "data".to_string(),
         params_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "build_type": {"type": "string", "enum": ["Planner", "Executor", "Replanner", "ReportGenerator"], "default": "Planner"},
-                "user_query": {"type": "string", "x-ui-widget": "textarea"}
-            }
+                "raw_type": {
+                    "type": "string",
+                    "enum": ["json", "text"],
+                    "default": "json",
+                    "description": "json 模式输出 JSON 值，text 模式原样输出文本"
+                },
+                "value": {
+                    "type": "string",
+                    "x-ui-widget": "textarea",
+                    "description": "json 模式下填写合法 JSON；text 模式下原样输出"
+                }
+            },
+            "required": ["value"]
         }),
-        input_ports: vec![PortDef { id: "in".to_string(), name: "输入".to_string(), port_type: "Json".to_string(), required: false }],
-        output_ports: vec![PortDef { id: "out".to_string(), name: "输出".to_string(), port_type: "Json".to_string(), required: false }],
+        input_ports: vec![],
+        output_ports: vec![PortDef {
+            id: "out".to_string(),
+            name: "输出".to_string(),
+            port_type: "Json".to_string(),
+            required: false,
+        }],
     });
 
     // MCP 工具节点 - 从已连接的 MCP 服务器获取

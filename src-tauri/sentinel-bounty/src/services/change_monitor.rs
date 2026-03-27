@@ -19,22 +19,35 @@ pub struct MonitorPluginConfig {
     /// Custom plugin parameters
     #[serde(default)]
     pub plugin_params: serde_json::Value,
+    /// Asset types the plugin expects as targets (web/domain/host/ip/service)
+    #[serde(default)]
+    pub target_asset_types: Vec<String>,
 }
 
 impl MonitorPluginConfig {
     pub fn new(plugin_id: String) -> Self {
+        let target_asset_types = default_target_asset_types_for_plugin(&plugin_id)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         Self {
             plugin_id,
             fallback_plugins: Vec::new(),
             plugin_params: serde_json::Value::Null,
+            target_asset_types,
         }
     }
 
     pub fn with_fallbacks(plugin_id: String, fallbacks: Vec<String>) -> Self {
+        let target_asset_types = default_target_asset_types_for_plugin(&plugin_id)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         Self {
             plugin_id,
             fallback_plugins: fallbacks,
             plugin_params: serde_json::Value::Null,
+            target_asset_types,
         }
     }
 
@@ -43,6 +56,44 @@ impl MonitorPluginConfig {
         let mut plugins = vec![self.plugin_id.clone()];
         plugins.extend(self.fallback_plugins.clone());
         plugins
+    }
+
+    pub fn resolved_target_asset_types(&self, plugin_metadata_target_asset_types: &[String]) -> Vec<String> {
+        if !self.target_asset_types.is_empty() {
+            return self
+                .target_asset_types
+                .iter()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect();
+        }
+
+        if !plugin_metadata_target_asset_types.is_empty() {
+            return plugin_metadata_target_asset_types
+                .iter()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect();
+        }
+
+        default_target_asset_types_for_plugin(&self.plugin_id)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
+    let normalized = plugin_id.strip_prefix("plugin__").unwrap_or(plugin_id);
+    match normalized {
+        "sensitive_file_scanner" | "http_prober" | "tech_fingerprinter"
+        | "favicon_fingerprinter" | "content_monitor" | "api_monitor" | "js_analyzer"
+        | "js_link_finder" | "risk_scanner" => vec!["web"],
+        "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" | "cert_monitor"
+        | "ssl_scanner" => vec!["domain"],
+        "port_monitor" | "service_fingerprinter" => vec!["service"],
+        "cidr_mapper" => vec!["ip"],
+        _ => vec![],
     }
 }
 

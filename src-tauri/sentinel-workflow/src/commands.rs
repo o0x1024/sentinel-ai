@@ -4,15 +4,17 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::data_nodes::execute_data_node_action;
+use crate::edge_mapping::{
+    default_edge_merge_mode, default_edge_source_scope, resolve_step_inputs,
+    EDGE_MERGE_MODE_APPEND, EDGE_MERGE_MODE_DEEP_MERGE, EDGE_MERGE_MODE_REPLACE,
+    EDGE_SOURCE_SCOPE_INPUT, EDGE_SOURCE_SCOPE_OUTPUT,
+};
 use crate::engine::{WorkflowDefinition, WorkflowEngine, WorkflowMetadata, WorkflowStep};
 use rig::tool::ToolSet;
 use sentinel_db::core::models::rag_config::RagConfig as CoreRagConfig;
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
-use sentinel_prompt::{
-    ExecutionContext, HistoryItem, PromptBuildContext, PromptBuilder, PromptConfigManager,
-    TargetInfo,
-};
 use sentinel_rag::{config::RagConfig, IngestRequest, RagQueryRequest, RagService};
 use sentinel_traffic::PluginManager;
 use serde::{Deserialize, Serialize};
@@ -70,6 +72,14 @@ pub struct EdgeDef {
     pub from_port: String,
     pub to_node: String,
     pub to_port: String,
+    #[serde(default = "default_edge_source_scope")]
+    pub source_scope: String,
+    #[serde(default)]
+    pub source_path: String,
+    #[serde(default)]
+    pub target_path: String,
+    #[serde(default = "default_edge_merge_mode")]
+    pub merge_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,6 +255,8 @@ pub async fn execute_workflow_steps(
     let total = order.len().max(1) as u32;
     let mut completed = 0u32;
     let mut branch_results: HashMap<String, bool> = HashMap::new();
+    let mut resolved_inputs_by_step: HashMap<String, HashMap<String, serde_json::Value>> =
+        HashMap::new();
 
     for node_id in order {
         let _ = app_handle_clone.emit(
@@ -309,6 +321,15 @@ pub async fn execute_workflow_steps(
 
         if let Some(step_def) = def_clone.steps.iter().find(|s| s.id == node_id) {
             let action = step_def.action.clone();
+            let resolved_inputs = resolve_step_inputs(
+                &execution_id_for_spawn,
+                step_def,
+                &graph.edges,
+                &resolved_inputs_by_step,
+                &engine_clone,
+            )
+            .await;
+            resolved_inputs_by_step.insert(node_id.clone(), resolved_inputs.clone());
             if action.starts_with("tool::") {
                 let mut tool_name = action;
                 if let Some(stripped) = tool_name.strip_prefix("tool::") {
@@ -316,7 +337,7 @@ pub async fn execute_workflow_steps(
                 }
 
                 // 先尝试使用 rig-core ToolSet 调用工具
-                let params_json = serde_json::to_string(&step_def.inputs).unwrap_or_default();
+                let params_json = serde_json::to_string(&resolved_inputs).unwrap_or_default();
                 let toolset_result = toolset_clone.call(&tool_name, params_json.clone()).await;
 
                 // 如果 ToolSet 找不到工具，回退到 ToolServer（包含 browser 等动态工具）
@@ -390,7 +411,7 @@ pub async fn execute_workflow_steps(
                 tracing::info!(
                     "Executing Agent plugin '{}' with inputs: {:?}",
                     plugin_id,
-                    step_def.inputs
+                    resolved_inputs
                 );
 
                 if let Some(ref pm) = plugin_manager_clone {
@@ -435,6 +456,7 @@ pub async fn execute_workflow_steps(
                                 description: description.map(|s| s.to_string()),
                                 default_severity: sentinel_traffic::types::Severity::Medium,
                                 tags,
+                                target_asset_types: Vec::new(),
                             };
 
                             // 注册到内存并缓存代码
@@ -454,7 +476,7 @@ pub async fn execute_workflow_steps(
                     }
 
                     // 构建输入参数
-                    let input_value = serde_json::json!(step_def.inputs);
+                    let input_value = serde_json::json!(resolved_inputs);
 
                     match pm.execute_agent(plugin_id, &input_value).await {
                         Ok((findings, output)) => {
@@ -558,8 +580,7 @@ pub async fn execute_workflow_steps(
                     wrote_result = true;
                 }
             } else if action == "branch" {
-                let expr = step_def
-                    .inputs
+                let expr = resolved_inputs
                     .get("expr")
                     .and_then(|v| v.as_str())
                     .unwrap_or("true");
@@ -575,47 +596,29 @@ pub async fn execute_workflow_steps(
                     .await;
                 wrote_result = true;
             } else if action == "merge" {
-                let inputs = graph
-                    .edges
-                    .iter()
-                    .filter(|e| e.to_node == node_id)
-                    .collect::<Vec<_>>();
-                let mut merged = serde_json::Map::new();
-                for e in inputs {
-                    if let Some(val) = engine_clone
-                        .get_step_result(&execution_id_for_spawn, &e.from_node)
-                        .await
-                    {
-                        merged.insert(e.from_port.clone(), val);
-                    }
-                }
                 engine_clone
                     .mark_step_completed_with_result(
                         &execution_id_for_spawn,
                         &node_id,
-                        serde_json::Value::Object(merged),
+                        serde_json::json!(resolved_inputs),
                     )
                     .await;
                 wrote_result = true;
             } else if action == "retry" {
-                let times = step_def
-                    .inputs
+                let times = resolved_inputs
                     .get("times")
                     .and_then(|v| v.as_u64())
                     .map(|n| n as u32)
                     .unwrap_or(3);
-                let delay_ms = step_def
-                    .inputs
+                let delay_ms = resolved_inputs
                     .get("delay_ms")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(500);
-                let tool_name = step_def
-                    .inputs
+                let tool_name = resolved_inputs
                     .get("tool_name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let tool_params = step_def
-                    .inputs
+                let tool_params = resolved_inputs
                     .get("tool_params")
                     .cloned()
                     .unwrap_or_default();
@@ -682,19 +685,27 @@ pub async fn execute_workflow_steps(
                         wrote_result = true;
                     }
                 }
+            } else if action == "raw" {
+                wrote_result = execute_data_node_action(
+                    &action,
+                    &resolved_inputs,
+                    &execution_id_for_spawn,
+                    &node_id,
+                    &engine_clone,
+                    &db_clone,
+                )
+                .await;
             } else if action == "rag::ingest" {
-                let file_path = step_def
-                    .inputs
+                let file_path = resolved_inputs
                     .get("file_path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let collection_id = step_def
-                    .inputs
+                let collection_id = resolved_inputs
                     .get("collection_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                let metadata_obj = step_def.inputs.get("metadata").and_then(|v| v.as_object());
+                let metadata_obj = resolved_inputs.get("metadata").and_then(|v| v.as_object());
                 let mut metadata: HashMap<String, String> = HashMap::new();
                 if let Some(obj) = metadata_obj {
                     for (k, v) in obj.iter() {
@@ -800,25 +811,22 @@ pub async fn execute_workflow_steps(
                     }
                 }
             } else if action == "rag::query" {
-                let query = step_def
-                    .inputs
+                let query = resolved_inputs
                     .get("query")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let collection_id = step_def
-                    .inputs
+                let collection_id = resolved_inputs
                     .get("collection_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                let top_k = step_def
-                    .inputs
+                let top_k = resolved_inputs
                     .get("top_k")
                     .and_then(|v| v.as_u64())
                     .map(|n| n as usize);
-                let use_mmr = step_def.inputs.get("use_mmr").and_then(|v| v.as_bool());
-                let mmr_lambda = step_def.inputs.get("mmr_lambda").and_then(|v| v.as_f64());
-                let filters_obj = step_def.inputs.get("filters").and_then(|v| v.as_object());
+                let use_mmr = resolved_inputs.get("use_mmr").and_then(|v| v.as_bool());
+                let mmr_lambda = resolved_inputs.get("mmr_lambda").and_then(|v| v.as_f64());
+                let filters_obj = resolved_inputs.get("filters").and_then(|v| v.as_object());
                 let mut filters: HashMap<String, String> = HashMap::new();
                 if let Some(obj) = filters_obj {
                     for (k, v) in obj.iter() {
@@ -928,184 +936,46 @@ pub async fn execute_workflow_steps(
                         wrote_result = true;
                     }
                 }
-            } else if action == "prompt::build" {
-                let build_type = step_def
-                    .inputs
-                    .get("build_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Planner");
-                let user_query = step_def
-                    .inputs
-                    .get("user_query")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let target_info = step_def
-                    .inputs
-                    .get("target_info")
-                    .cloned()
-                    .and_then(|v| serde_json::from_value::<TargetInfo>(v).ok());
-                let execution_context = step_def
-                    .inputs
-                    .get("execution_context")
-                    .cloned()
-                    .and_then(|v| serde_json::from_value::<ExecutionContext>(v).ok());
-                let history = step_def
-                    .inputs
-                    .get("history")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|item| {
-                                serde_json::from_value::<HistoryItem>(item.clone()).ok()
-                            })
-                            .collect::<Vec<HistoryItem>>()
-                    })
-                    .unwrap_or_default();
-                let custom_vars_obj = step_def
-                    .inputs
-                    .get("custom_variables")
-                    .and_then(|v| v.as_object());
-                let mut custom_variables: HashMap<String, serde_json::Value> = HashMap::new();
-                if let Some(obj) = custom_vars_obj {
-                    for (k, v) in obj.iter() {
-                        custom_variables.insert(k.clone(), v.clone());
-                    }
-                }
-
-                let cfg_mgr = PromptConfigManager::new();
-                let builder = PromptBuilder::new(cfg_mgr);
-                let ctx = PromptBuildContext {
-                    user_query,
-                    target_info,
-                    available_tools: vec![],
-                    execution_context,
-                    history,
-                    custom_variables,
-                    rag_context: None,
-                };
-                let build_res = match build_type {
-                    "Executor" => {
-                        builder
-                            .build_executor_prompt(
-                                &ctx,
-                                step_def
-                                    .inputs
-                                    .get("step_instructions")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(""),
-                            )
-                            .await
-                    }
-                    "Replanner" => {
-                        builder
-                            .build_replanner_prompt(
-                                &ctx,
-                                step_def
-                                    .inputs
-                                    .get("execution_results")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(""),
-                                step_def
-                                    .inputs
-                                    .get("original_plan")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(""),
-                            )
-                            .await
-                    }
-                    "ReportGenerator" => {
-                        builder
-                            .build_report_prompt(
-                                &ctx,
-                                step_def
-                                    .inputs
-                                    .get("execution_summary")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(""),
-                                step_def
-                                    .inputs
-                                    .get("target_audience")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(""),
-                            )
-                            .await
-                    }
-                    _ => builder.build_planner_prompt(&ctx).await,
-                };
-                match build_res {
-                    Ok(res) => {
-                        let result_json =
-                            serde_json::to_value(res).unwrap_or(serde_json::json!({"status":"ok"}));
-                        engine_clone
-                            .mark_step_completed_with_result(
-                                &execution_id_for_spawn,
-                                &node_id,
-                                result_json,
-                            )
-                            .await;
-                        wrote_result = true;
-                    }
-                    Err(e) => {
-                        tracing::warn!("prompt build failed: {}", e);
-                    }
-                }
             } else if action == "notify" {
                 // 通知节点处理
-                let notification_rule_id = step_def
-                    .inputs
+                let notification_rule_id = resolved_inputs
                     .get("notification_rule_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let use_input_as_content = step_def
-                    .inputs
+                let use_input_as_content = resolved_inputs
                     .get("use_input_as_content")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
                 // 获取通知内容
-                let title = step_def
-                    .inputs
+                let title = resolved_inputs
                     .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Workflow Notification")
                     .to_string();
-                let mut content = step_def
-                    .inputs
+                let mut content = resolved_inputs
                     .get("content")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                // 如果启用了使用输入作为内容，从上游节点获取数据
+                // 如果启用了使用输入作为内容，从统一解析后的 input 字段获取数据
                 if use_input_as_content {
-                    let input_edges = graph
-                        .edges
-                        .iter()
-                        .filter(|e| e.to_node == node_id)
-                        .collect::<Vec<_>>();
-                    if let Some(edge) = input_edges.first() {
-                        if let Some(upstream_result) = engine_clone
-                            .get_step_result(&execution_id_for_spawn, &edge.from_node)
-                            .await
-                        {
-                            content =
-                                serde_json::to_string_pretty(&upstream_result).unwrap_or(content);
-                        }
+                    if let Some(input_value) = resolved_inputs.get("input") {
+                        content =
+                            serde_json::to_string_pretty(input_value).unwrap_or(content);
                     }
                 }
 
                 // 发送通知
                 if !notification_rule_id.is_empty() {
                     // 从inputs中获取通知配置（前端保存workflow时已经附加）
-                    let channel = step_def
-                        .inputs
+                    let channel = resolved_inputs
                         .get("_notification_channel")
                         .and_then(|v| v.as_str())
                         .unwrap_or("webhook")
                         .to_string();
-                    let config = step_def
-                        .inputs
+                    let config = resolved_inputs
                         .get("_notification_config")
                         .cloned()
                         .unwrap_or_else(|| serde_json::json!({}));
@@ -1242,36 +1112,17 @@ pub async fn execute_workflow_steps(
                     "Executing AI node '{}' with action '{}', inputs: {:?}",
                     node_id,
                     action,
-                    step_def.inputs
+                    resolved_inputs
                 );
-
-                // 获取上游输入
-                let upstream_input = {
-                    let mut input_val = serde_json::Value::Null;
-                    for edge in &graph.edges {
-                        if edge.to_node == node_id && edge.to_port == "in" {
-                            if let Some(val) = engine_clone
-                                .get_step_result(&execution_id_for_spawn, &edge.from_node)
-                                .await
-                            {
-                                input_val = val;
-                                tracing::info!(
-                                    "AI node '{}' got upstream input from '{}'",
-                                    node_id,
-                                    edge.from_node
-                                );
-                                break;
-                            }
-                        }
-                    }
-                    input_val
-                };
+                let upstream_input = resolved_inputs
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
 
                 // 获取参数
-                let prompt_template = step_def
-                    .inputs
+                let prompt_template = resolved_inputs
                     .get("prompt")
-                    .or_else(|| step_def.inputs.get("message"))
+                    .or_else(|| resolved_inputs.get("message"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
@@ -1306,19 +1157,16 @@ pub async fn execute_workflow_steps(
                 tracing::info!("AI node '{}' prompt: '{}'", node_id, prompt_preview);
 
                 // 获取其他参数
-                let system_prompt = step_def
-                    .inputs
+                let system_prompt = resolved_inputs
                     .get("system_prompt")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                let provider = step_def
-                    .inputs
+                let provider = resolved_inputs
                     .get("provider")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
-                let model = step_def
-                    .inputs
+                let model = resolved_inputs
                     .get("model")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
@@ -1481,6 +1329,11 @@ pub async fn start_workflow_run(
         return Err("License required for this feature".to_string());
     }
 
+    let issues = validate_workflow_graph(graph.clone()).await?;
+    if let Some(issue) = issues.first() {
+        return Err(issue.message.clone());
+    }
+
     let def = graph_to_definition(&graph);
     let execution_id = engine
         .execute_workflow(&def, None)
@@ -1619,6 +1472,11 @@ pub async fn save_workflow_definition(
     is_tool: Option<bool>,
     db: State<'_, Arc<DatabaseService>>,
 ) -> Result<String, String> {
+    let issues = validate_workflow_graph(graph.clone()).await?;
+    if let Some(issue) = issues.first() {
+        return Err(issue.message.clone());
+    }
+
     let graph_json = serde_json::to_string(&graph).map_err(|e| e.to_string())?;
     let is_tool_flag = is_tool.unwrap_or(false);
 
@@ -1790,6 +1648,36 @@ pub async fn validate_workflow_graph(
 
     // 检查边的有效性
     for edge in &graph.edges {
+        if !matches!(
+            edge.source_scope.as_str(),
+            EDGE_SOURCE_SCOPE_OUTPUT | EDGE_SOURCE_SCOPE_INPUT
+        ) {
+            issues.push(WorkflowValidationIssue {
+                code: "edge_source_scope_invalid".to_string(),
+                message: format!("Invalid edge source_scope: {}", edge.source_scope),
+                edge_id: Some(edge.id.clone()),
+                node_id: None,
+            });
+        }
+        if !matches!(
+            edge.merge_mode.as_str(),
+            EDGE_MERGE_MODE_REPLACE | EDGE_MERGE_MODE_DEEP_MERGE | EDGE_MERGE_MODE_APPEND
+        ) {
+            issues.push(WorkflowValidationIssue {
+                code: "edge_merge_mode_invalid".to_string(),
+                message: format!("Invalid edge merge_mode: {}", edge.merge_mode),
+                edge_id: Some(edge.id.clone()),
+                node_id: None,
+            });
+        }
+        if edge.target_path.trim().is_empty() {
+            issues.push(WorkflowValidationIssue {
+                code: "edge_target_path_missing".to_string(),
+                message: "Edge target_path is required".to_string(),
+                edge_id: Some(edge.id.clone()),
+                node_id: Some(edge.to_node.clone()),
+            });
+        }
         // 检查from_node存在
         if !node_ids.contains(&edge.from_node) {
             issues.push(WorkflowValidationIssue {

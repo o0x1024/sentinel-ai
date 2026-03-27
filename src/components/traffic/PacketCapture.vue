@@ -1,247 +1,71 @@
 <template>
     <div class="h-full flex flex-col bg-base-100" @contextmenu.prevent>
-        <!-- 工具栏 -->
-        <div class="flex items-center gap-2 p-3 bg-base-200 border-b border-base-300">
-            <!-- 网卡选择 -->
-            <select v-model="selectedInterface" class="select select-sm select-bordered min-w-56"
-                :disabled="isCapturing">
-                <option value="">{{ $t('trafficAnalysis.packetCapture.toolbar.selectInterface') }}</option>
-                <option v-for="iface in interfaces" :key="iface.name" :value="iface.name">
-                    {{ getInterfaceDisplayName(iface) }}
-                </option>
-            </select>
+        <PacketCaptureToolbar
+            :selected-interface="selectedInterface"
+            :interfaces="interfaces"
+            :is-capturing="isCapturing"
+            :packet-count="packets.length"
+            :filtered-packet-count="filteredPackets.length"
+            :filter-text="filterText"
+            :filter-placeholder="filterPlaceholder"
+            :has-advanced-filter="hasAdvancedFilter"
+            :get-interface-display-name="getInterfaceDisplayName"
+            :on-toggle-capture="toggleCapture"
+            :on-clear-packets="clearPackets"
+            :on-open-pcap-file="openPcapFile"
+            :on-save-pcap-file="savePcapFile"
+            :on-open-extract-dialog="() => { showExtractDialog = true }"
+            :on-open-filter-dialog="() => { showFilterDialog = true }"
+            :on-apply-filter="applyFilter"
+            :on-clear-all-filters="clearAllFilters"
+            @update:selected-interface="selectedInterface = $event"
+            @update:filter-text="filterText = $event"
+        />
 
-            <!-- 开始/停止按钮 -->
-            <button class="btn btn-sm" :class="isCapturing ? 'btn-error' : 'btn-success'"
-                @click="toggleCapture" :disabled="!selectedInterface && !isCapturing">
-                <i :class="isCapturing ? 'fas fa-stop' : 'fas fa-play'" class="mr-1"></i>
-                {{ isCapturing ? $t('trafficAnalysis.packetCapture.toolbar.stop') : $t('trafficAnalysis.packetCapture.toolbar.start') }}
-            </button>
-
-            <!-- 清空按钮 -->
-            <button class="btn btn-sm btn-ghost" @click="clearPackets" :disabled="packets.length === 0">
-                <i class="fas fa-trash mr-1"></i>
-                {{ $t('trafficAnalysis.packetCapture.toolbar.clear') }}
-            </button>
-
-            <div class="divider divider-horizontal mx-0"></div>
-
-            <!-- 打开文件按钮 -->
-            <button class="btn btn-sm btn-ghost" @click="openPcapFile" :disabled="isCapturing">
-                <i class="fas fa-folder-open mr-1"></i>
-                {{ $t('trafficAnalysis.packetCapture.toolbar.open') }}
-            </button>
-
-            <!-- 保存文件按钮 -->
-            <button class="btn btn-sm btn-ghost" @click="savePcapFile" :disabled="packets.length === 0">
-                <i class="fas fa-save mr-1"></i>
-                {{ $t('trafficAnalysis.packetCapture.toolbar.save') }}
-            </button>
-
-            <!-- 导出文件按钮 -->
-            <button class="btn btn-sm btn-ghost" @click="showExtractDialog = true" :disabled="packets.length === 0">
-                <i class="fas fa-file-export mr-1"></i>
-                {{ $t('trafficAnalysis.packetCapture.toolbar.export') }}
-            </button>
-
-            <div class="divider divider-horizontal mx-0"></div>
-
-            <!-- 高级过滤按钮 -->
-            <button class="btn btn-sm btn-ghost" @click="showFilterDialog = true">
-                <i class="fas fa-sliders-h mr-1"></i>
-                {{ $t('trafficAnalysis.packetCapture.toolbar.advancedFilter') }}
-            </button>
-
-            <!-- 过滤器输入 -->
-            <div class="flex-1 flex items-center gap-2">
-                <div class="relative flex-1">
-                    <input v-model="filterText" type="text" 
-                        :placeholder="filterPlaceholder"
-                        class="input input-sm input-bordered w-full pr-20" 
-                        @keyup.enter="applyFilter" />
-                    <div class="absolute right-1 top-1/2 -translate-y-1/2 flex gap-1">
-                        <button v-if="filterText || hasAdvancedFilter" class="btn btn-xs btn-ghost btn-circle" @click="clearAllFilters">
-                            <i class="fas fa-times"></i>
-                        </button>
-                        <button class="btn btn-xs btn-primary" @click="applyFilter">
-                            <i class="fas fa-filter"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 统计信息 -->
-            <div class="flex items-center gap-2">
-                <span v-if="hasAdvancedFilter" class="badge badge-info badge-sm">{{ $t('trafficAnalysis.packetCapture.toolbar.advancedFilterBadge') }}</span>
-                <span class="badge badge-ghost">{{ filteredPackets.length }} / {{ packets.length }}</span>
-            </div>
-        </div>
-
-        <!-- 主内容区 -->
         <div class="flex-1 flex flex-col min-h-0">
-            <!-- 数据包列表 - 虚拟滚动 -->
-            <div 
+            <PacketCapturePacketList
                 ref="scrollContainer"
-                class="min-h-0 overflow-auto border-b border-base-300 relative" 
-                :style="{ flex: `0 0 ${listHeight}px` }"
-                @scroll="handleScroll"
-            >
-                <!-- 虚拟滚动容器 -->
-                <div 
-                    v-if="filteredPackets.length > 0"
-                    class="relative"
-                    :style="{ height: totalHeight + 'px', minWidth: '900px' }"
-                >
-                    <!-- 表头 -->
-                    <div class="sticky top-0 z-10 flex bg-base-200 border-b border-base-300" :style="{ height: headerHeight + 'px' }">
-                        <div class="flex items-center justify-center px-2 border-r border-base-300 relative column-header" :style="{ width: columnWidths.mark + 'px' }">
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'mark')"></div>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.no + 'px' }">
-                            {{ $t('trafficAnalysis.packetCapture.table.no') }}
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'no')"></div>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.time + 'px' }">
-                            {{ $t('trafficAnalysis.packetCapture.table.time') }}
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'time')"></div>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.source + 'px' }">
-                            {{ $t('trafficAnalysis.packetCapture.table.source') }}
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'source')"></div>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.dest + 'px' }">
-                            {{ $t('trafficAnalysis.packetCapture.table.destination') }}
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'dest')"></div>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.protocol + 'px' }">
-                            {{ $t('trafficAnalysis.packetCapture.table.protocol') }}
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'protocol')"></div>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 text-xs font-semibold relative column-header" :style="{ width: columnWidths.length + 'px' }">
-                            {{ $t('trafficAnalysis.packetCapture.table.length') }}
-                            <div class="column-resize-handle" @mousedown="startColumnResize($event, 'length')"></div>
-                        </div>
-                        <div class="flex-1 flex items-center px-2 text-xs font-semibold">{{ $t('trafficAnalysis.packetCapture.table.info') }}</div>
-                    </div>
+                :filtered-packets="filteredPackets"
+                :visible-items="visibleItems"
+                :total-height="totalHeight"
+                :header-height="headerHeight"
+                :row-height="rowHeight"
+                :list-height="listHeight"
+                :column-widths="columnWidths"
+                :selected-packet="selectedPacket"
+                :marked-packets="markedPackets"
+                :ignored-packets="ignoredPackets"
+                :is-loading="isLoading"
+                :load-error="loadError"
+                :is-capturing="isCapturing"
+                :format-time="formatTime"
+                :get-protocol-row-class="getProtocolRowClass"
+                :get-protocol-badge-class="getProtocolBadgeClass"
+                :on-handle-scroll="handleScroll"
+                :on-start-column-resize="startColumnResize"
+                :on-select-packet="selectPacket"
+                :on-show-context-menu="showContextMenu"
+            />
 
-                    <!-- 数据行 - 虚拟渲染 -->
-                    <div 
-                        v-for="item in visibleItems" 
-                        :key="item.data.id"
-                        class="absolute left-0 right-0 flex cursor-pointer packet-row"
-                        :class="[
-                            getProtocolRowClass(item.data.protocol),
-                            { 'selected-row': selectedPacket?.id === item.data.id },
-                            { 'marked-row': markedPackets.has(item.data.id) },
-                            { 'ignored-row': ignoredPackets.has(item.data.id) }
-                        ]"
-                        :style="{ 
-                            top: (item.offset + headerHeight) + 'px', 
-                            height: rowHeight + 'px'
-                        }"
-                        @click="selectPacket(item.data)"
-                        @contextmenu.prevent="showContextMenu($event, item.data)"
-                    >
-                        <div class="flex items-center justify-center px-2 border-r border-base-300" :style="{ width: columnWidths.mark + 'px' }">
-                            <i v-if="markedPackets.has(item.data.id)" class="fas fa-bookmark text-warning text-xs"></i>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.no + 'px' }">{{ item.data.id }}</div>
-                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.time + 'px' }">{{ formatTime(item.data.timestamp) }}</div>
-                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.source + 'px' }">{{ item.data.src }}</div>
-                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs truncate" :style="{ width: columnWidths.dest + 'px' }">{{ item.data.dst }}</div>
-                        <div class="flex items-center px-2 border-r border-base-300" :style="{ width: columnWidths.protocol + 'px' }">
-                            <span class="badge badge-sm" :class="getProtocolBadgeClass(item.data.protocol)">
-                                {{ item.data.protocol }}
-                            </span>
-                        </div>
-                        <div class="flex items-center px-2 border-r border-base-300 font-mono text-xs" :style="{ width: columnWidths.length + 'px' }">{{ item.data.length }}</div>
-                        <div class="flex-1 flex items-center px-2 text-xs truncate">{{ item.data.info }}</div>
-                    </div>
-                </div>
-
-                <!-- 空状态 -->
-                <div v-if="filteredPackets.length === 0" class="flex flex-col items-center justify-center h-full text-base-content/50 py-12">
-                    <template v-if="isLoading">
-                        <span class="loading loading-spinner loading-lg mb-4"></span>
-                        <p>{{ $t('trafficAnalysis.packetCapture.emptyState.loadingInterfaces') }}</p>
-                    </template>
-                    <template v-else-if="loadError === 'no_interfaces'">
-                        <i class="fas fa-exclamation-triangle text-4xl mb-4 text-warning"></i>
-                        <p class="mb-2">{{ $t('trafficAnalysis.packetCapture.emptyState.noInterfaces') }}</p>
-                        <p class="text-sm mb-4">{{ $t('trafficAnalysis.packetCapture.emptyState.npcapRequired') }}</p>
-                        <a href="https://nmap.org/npcap/" target="_blank" class="btn btn-sm btn-primary">
-                            <i class="fas fa-download mr-2"></i>{{ $t('trafficAnalysis.packetCapture.emptyState.downloadNpcap') }}
-                        </a>
-                    </template>
-                    <template v-else-if="loadError">
-                        <i class="fas fa-exclamation-circle text-4xl mb-4 text-error"></i>
-                        <p class="text-sm text-error">{{ loadError }}</p>
-                    </template>
-                    <template v-else>
-                        <i class="fas fa-broadcast-tower text-4xl mb-4"></i>
-                        <p v-if="!isCapturing">{{ $t('trafficAnalysis.packetCapture.emptyState.selectAndStart') }}</p>
-                        <p v-else>{{ $t('trafficAnalysis.packetCapture.emptyState.waitingForPackets') }}</p>
-                    </template>
-                </div>
-            </div>
-
-            <!-- 拖动条 -->
             <div v-if="selectedPacket" class="resize-handle" @mousedown="startResize">
                 <div class="resize-bar"></div>
             </div>
 
-            <!-- 数据包详情 - 树形展示 -->
-            <div v-if="selectedPacket" class="flex-1 flex min-h-0 overflow-hidden">
-                <!-- 协议详情 -->
-                <div class="w-1/2 overflow-auto border-r border-base-300 protocol-tree-panel">
-                    <!-- 协议层 -->
-                    <div v-for="(layer, idx) in selectedPacket.layers" :key="idx" class="protocol-layer">
-                        <div class="layer-header" :class="getLayerBgClass(layer.name)" @click="toggleLayer(`layer-${idx}`)">
-                            <i class="fas fa-caret-right layer-toggle" :class="{ 'expanded': expandedLayers[`layer-${idx}`] }"></i>
-                            <span class="layer-title">{{ layer.display }}</span>
-                        </div>
-                        <div v-show="expandedLayers[`layer-${idx}`]" class="layer-content">
-                            <template v-for="(field, fidx) in layer.fields" :key="fidx">
-                                <!-- 有子字段的字段 -->
-                                <div v-if="field.children && field.children.length > 0" class="field-group">
-                                    <div class="field-row field-parent" @click="toggleField(`layer-${idx}-field-${fidx}`)">
-                                        <i class="fas fa-caret-right field-toggle" :class="{ 'expanded': expandedFields[`layer-${idx}-field-${fidx}`] }"></i>
-                                        <span class="field-name">{{ field.name }}:</span>
-                                        <span class="field-value">{{ field.value }}</span>
-                                    </div>
-                                    <div v-show="expandedFields[`layer-${idx}-field-${fidx}`]" class="field-children">
-                                        <div v-for="(child, cidx) in field.children" :key="cidx" 
-                                             class="field-row field-child"
-                                             @contextmenu.prevent="showFieldContextMenu($event, child.name, child.value)">
-                                            <span class="field-name">{{ child.name }}:</span>
-                                            <span class="field-value">{{ child.value }}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!-- 普通字段 -->
-                                <div v-else class="field-row"
-                                     @contextmenu.prevent="showFieldContextMenu($event, field.name, field.value)">
-                                    <span class="field-name">{{ field.name }}:</span>
-                                    <span class="field-value" :class="{ 'highlight': isHighlightField(field.name) }">{{ field.value }}</span>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Hex 视图 -->
-                <div class="w-1/2 overflow-auto p-2 bg-base-200/30">
-                    <div class="tabs tabs-boxed bg-base-200 mb-2">
-                        <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'hex' }" @click="hexViewMode = 'hex'">Hex</a>
-                        <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'ascii' }" @click="hexViewMode = 'ascii'">ASCII</a>
-                        <a class="tab tab-sm" :class="{ 'tab-active': hexViewMode === 'raw' }" @click="hexViewMode = 'raw'">Raw</a>
-                    </div>
-                    <pre class="text-xs font-mono bg-base-100 p-2 rounded-lg overflow-auto">{{ getHexView() }}</pre>
-                </div>
-            </div>
+            <PacketCaptureDetails
+                :selected-packet="selectedPacket"
+                :expanded-layers="expandedLayers"
+                :expanded-fields="expandedFields"
+                :hex-view-mode="hexViewMode"
+                :get-layer-bg-class="getLayerBgClass"
+                :is-highlight-field="isHighlightField"
+                :get-hex-view="getHexView"
+                :on-toggle-layer="toggleLayer"
+                :on-toggle-field="toggleField"
+                :on-show-field-context-menu="showFieldContextMenu"
+                @update:hex-view-mode="hexViewMode = $event"
+            />
         </div>
 
-        <!-- 状态栏 -->
         <div class="flex items-center justify-between px-3 py-1 bg-base-200 text-xs text-base-content/70 border-t border-base-300">
             <div class="flex items-center gap-4">
                 <span v-if="selectedInterface">
@@ -258,413 +82,57 @@
             </div>
         </div>
 
-        <!-- 右键菜单 -->
-        <div v-if="contextMenu.visible" class="context-menu"
-             :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop>
-            <ul class="menu menu-sm bg-base-100 rounded-lg shadow-xl border border-base-300 p-1 w-44">
-                <li><a @click="toggleMark" class="text-xs"><i class="fas fa-bookmark w-3 mr-1"></i>{{ isCurrentPacketMarked ? $t('trafficAnalysis.packetCapture.contextMenu.unmark') : $t('trafficAnalysis.packetCapture.contextMenu.mark') }}</a></li>
-                <li><a @click="toggleIgnore" class="text-xs"><i class="fas fa-eye-slash w-3 mr-1"></i>{{ isCurrentPacketIgnored ? $t('trafficAnalysis.packetCapture.contextMenu.unignore') : $t('trafficAnalysis.packetCapture.contextMenu.ignore') }}</a></li>
-                <div class="divider my-0.5"></div>
-                <!-- 过滤 - 右侧弹出 -->
-                <li class="submenu-parent">
-                    <a class="text-xs justify-between">
-                        <span><i class="fas fa-filter w-3 mr-1"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.filter') }}</span>
-                        <i class="fas fa-chevron-right text-xs"></i>
-                    </a>
-                    <ul class="submenu">
-                        <li><a @click="filterByField('src')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.sourceAddress') }}</a></li>
-                        <li><a @click="filterByField('dst')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.destinationAddress') }}</a></li>
-                        <li><a @click="filterByField('protocol')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.protocol') }}</a></li>
-                        <li><a @click="filterByConversation" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.conversation') }}</a></li>
-                    </ul>
-                </li>
-                <!-- 追踪流 - 右侧弹出 -->
-                <li class="submenu-parent">
-                    <a class="text-xs justify-between">
-                        <span><i class="fas fa-stream w-3 mr-1"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.followStream') }}</span>
-                        <i class="fas fa-chevron-right text-xs"></i>
-                    </a>
-                    <ul class="submenu">
-                        <li><a @click="followStream('tcp')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowTcp }">{{ $t('trafficAnalysis.packetCapture.contextMenu.tcpStream') }}</a></li>
-                        <li><a @click="followStream('udp')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowUdp }">{{ $t('trafficAnalysis.packetCapture.contextMenu.udpStream') }}</a></li>
-                        <li><a @click="followStream('http')" class="text-xs" :class="{ 'opacity-40 pointer-events-none': !canFollowHttp }">{{ $t('trafficAnalysis.packetCapture.contextMenu.httpStream') }}</a></li>
-                    </ul>
-                </li>
-                <div class="divider my-0.5"></div>
-                <!-- 复制 - 右侧弹出 -->
-                <li class="submenu-parent">
-                    <a class="text-xs justify-between">
-                        <span><i class="fas fa-copy w-3 mr-1"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.copy') }}</span>
-                        <i class="fas fa-chevron-right text-xs"></i>
-                    </a>
-                    <ul class="submenu">
-                        <li><a @click="copyPacketInfo" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.summary') }}</a></li>
-                        <li><a @click="copyPacketHex" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.hex') }}</a></li>
-                        <li><a @click="copyField('src')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.sourceAddress') }}</a></li>
-                        <li><a @click="copyField('dst')" class="text-xs">{{ $t('trafficAnalysis.packetCapture.contextMenu.destinationAddress') }}</a></li>
-                    </ul>
-                </li>
-            </ul>
-        </div>
-
-        <!-- 字段右键菜单 -->
-        <div v-if="fieldContextMenu.visible" class="context-menu"
-             :style="{ left: fieldContextMenu.x + 'px', top: fieldContextMenu.y + 'px' }" @click.stop>
-            <ul class="menu bg-base-100 rounded-box shadow-xl border border-base-300 p-1 w-64">
-                <li><a @click="filterByFieldValue"><i class="fas fa-filter w-4"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.filterThisValue') }}</a></li>
-                <li><a @click="copyFieldValue"><i class="fas fa-copy w-4"></i>{{ $t('trafficAnalysis.packetCapture.contextMenu.copy') }}: {{ fieldContextMenu.value }}</a></li>
-            </ul>
-        </div>
-
-        <!-- 高级过滤对话框 -->
-        <div v-if="showFilterDialog" class="modal modal-open">
-            <div class="modal-box max-w-2xl">
-                <h3 class="font-bold text-lg mb-4">
-                    <i class="fas fa-sliders-h mr-2"></i>{{ $t('trafficAnalysis.packetCapture.filterDialog.title') }}
-                </h3>
-                
-                <div class="space-y-4">
-                    <!-- 协议过滤 -->
-                    <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.protocol') }}</span></label>
-                        <div class="flex flex-wrap gap-2">
-                            <label v-for="proto in ['TCP', 'UDP', 'HTTP', 'DNS', 'ICMP', 'ARP', 'TLS']" :key="proto"
-                                   class="label cursor-pointer gap-2 bg-base-200 px-3 py-1 rounded-lg">
-                                <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" 
-                                       v-model="advancedFilter.protocols" :value="proto" />
-                                <span class="label-text">{{ proto }}</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <!-- IP/端口过滤 -->
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.sourceIp') }}</span></label>
-                            <input type="text" class="input input-sm input-bordered" 
-                                   v-model="advancedFilter.srcIp" placeholder="192.168.1.1" />
-                        </div>
-                        <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.destinationIp') }}</span></label>
-                            <input type="text" class="input input-sm input-bordered" 
-                                   v-model="advancedFilter.dstIp" placeholder="10.0.0.1" />
-                        </div>
-                        <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.sourcePort') }}</span></label>
-                            <input type="text" class="input input-sm input-bordered" 
-                                   v-model="advancedFilter.srcPort" placeholder="80 或 1000-2000" />
-                        </div>
-                        <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.destinationPort') }}</span></label>
-                            <input type="text" class="input input-sm input-bordered" 
-                                   v-model="advancedFilter.dstPort" placeholder="443 或 8000-9000" />
-                        </div>
-                    </div>
-
-                    <!-- 内容过滤 -->
-                    <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.containsString') }}</span></label>
-                        <input type="text" class="input input-sm input-bordered" 
-                               v-model="advancedFilter.containsString" placeholder="GET /api, password" />
-                    </div>
-
-                    <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.containsHex') }}</span></label>
-                        <input type="text" class="input input-sm input-bordered" 
-                               v-model="advancedFilter.containsHex" placeholder="48 54 54 50 (HTTP)" />
-                    </div>
-
-                    <!-- 大小过滤 -->
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.minLength') }}</span></label>
-                            <input type="number" class="input input-sm input-bordered" 
-                                   v-model.number="advancedFilter.minLength" placeholder="0" />
-                        </div>
-                        <div class="form-control">
-                            <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.maxLength') }}</span></label>
-                            <input type="number" class="input input-sm input-bordered" 
-                                   v-model.number="advancedFilter.maxLength" placeholder="65535" />
-                        </div>
-                    </div>
-
-                    <!-- TCP 标志 -->
-                    <div class="form-control">
-                        <label class="label"><span class="label-text font-medium">{{ $t('trafficAnalysis.packetCapture.filterDialog.tcpFlags') }}</span></label>
-                        <div class="flex flex-wrap gap-2">
-                            <label v-for="flag in ['SYN', 'ACK', 'FIN', 'RST', 'PSH', 'URG']" :key="flag"
-                                   class="label cursor-pointer gap-2 bg-base-200 px-3 py-1 rounded-lg">
-                                <input type="checkbox" class="checkbox checkbox-sm checkbox-secondary" 
-                                       v-model="advancedFilter.tcpFlags" :value="flag" />
-                                <span class="label-text">{{ flag }}</span>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="modal-action">
-                    <button class="btn btn-ghost" @click="resetAdvancedFilter">{{ $t('trafficAnalysis.packetCapture.filterDialog.reset') }}</button>
-                    <button class="btn btn-ghost" @click="showFilterDialog = false">{{ $t('trafficAnalysis.packetCapture.filterDialog.cancel') }}</button>
-                    <button class="btn btn-primary" @click="applyAdvancedFilter">{{ $t('trafficAnalysis.packetCapture.filterDialog.apply') }}</button>
-                </div>
-            </div>
-            <div class="modal-backdrop" @click="showFilterDialog = false"></div>
-        </div>
-
-        <!-- 追踪流对话框 -->
-        <div v-if="streamDialog.visible" class="modal modal-open">
-            <div class="modal-box max-w-4xl h-[80vh] flex flex-col">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="font-bold text-lg">
-                        <i class="fas fa-stream mr-2"></i>{{ streamDialog.title }}
-                    </h3>
-                    <div class="flex items-center gap-2">
-                        <select v-model="streamDialog.displayMode" class="select select-sm select-bordered">
-                            <option value="ascii">{{ $t('trafficAnalysis.packetCapture.streamDialog.ascii') }}</option>
-                            <option value="hex">{{ $t('trafficAnalysis.packetCapture.streamDialog.hex') }}</option>
-                            <option value="raw">{{ $t('trafficAnalysis.packetCapture.streamDialog.raw') }}</option>
-                        </select>
-                        <button class="btn btn-sm btn-ghost" @click="copyStreamContent">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="flex-1 overflow-auto bg-base-200 rounded-lg p-2 stream-content">
-                    <template v-for="(segment, idx) in streamSegments" :key="idx">
-                        <div 
-                            class="stream-segment font-mono text-sm p-2 mb-1 rounded"
-                            :class="segment.isClient ? 'stream-client' : 'stream-server'"
-                        >
-                            <pre class="m-0 whitespace-pre-wrap break-all overflow-x-auto">{{ segment.content }}</pre>
-                        </div>
-                    </template>
-                    <div v-if="streamSegments.length === 0" class="text-center text-base-content/50 py-8">
-                        {{ $t('trafficAnalysis.packetCapture.streamDialog.noData') || '无有效数据' }}
-                    </div>
-                </div>
-
-                <div class="flex items-center justify-between mt-4">
-                    <div class="flex items-center gap-4 text-sm">
-                        <span class="flex items-center gap-1">
-                            <span class="w-3 h-3 rounded-full bg-error"></span> {{ $t('trafficAnalysis.packetCapture.streamDialog.clientToServer') }}
-                        </span>
-                        <span class="flex items-center gap-1">
-                            <span class="w-3 h-3 rounded-full bg-info"></span> {{ $t('trafficAnalysis.packetCapture.streamDialog.serverToClient') }}
-                        </span>
-                        <span class="badge badge-ghost">{{ streamDialog.packets.length }} {{ $t('trafficAnalysis.packetCapture.streamDialog.packets') }}</span>
-                    </div>
-                    <button class="btn" @click="closeStreamDialog">{{ $t('trafficAnalysis.packetCapture.streamDialog.close') }}</button>
-                </div>
-            </div>
-            <div class="modal-backdrop" @click="closeStreamDialog"></div>
-        </div>
-
-        <!-- 导出文件对话框 -->
-        <div v-if="showExtractDialog" class="modal modal-open">
-            <div class="modal-box max-w-5xl max-h-[90vh]">
-                <h3 class="font-bold text-lg mb-4 flex items-center justify-between">
-                    <span><i class="fas fa-file-export mr-2"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.title') }}</span>
-                    <span v-if="!extractLoading && extractedFiles.length > 0" class="text-sm font-normal text-base-content/70">
-                        {{ $t('trafficAnalysis.packetCapture.extractDialog.foundFiles', { count: extractedFiles.length }) }}
-                    </span>
-                </h3>
-                
-                <div v-if="extractLoading" class="flex flex-col items-center py-8">
-                    <span class="loading loading-spinner loading-lg mb-4"></span>
-                    <p>{{ $t('trafficAnalysis.packetCapture.extractDialog.analyzing') }}</p>
-                    <p class="text-sm text-base-content/50 mt-2">{{ $t('trafficAnalysis.packetCapture.extractDialog.supportedProtocols') }}</p>
-                </div>
-                
-                <div v-else-if="extractedFiles.length === 0" class="text-center py-8 text-base-content/50">
-                    <i class="fas fa-inbox text-4xl mb-4"></i>
-                    <p>{{ $t('trafficAnalysis.packetCapture.extractDialog.noFilesFound') }}</p>
-                    <p class="text-sm mt-2">{{ $t('trafficAnalysis.packetCapture.extractDialog.supportedProtocols') }}</p>
-                    <p class="text-xs mt-1">{{ $t('trafficAnalysis.packetCapture.extractDialog.protocolExamples') }}</p>
-                </div>
-                
-                <div v-else>
-                    <!-- 过滤器面板 -->
-                    <div class="bg-base-200 rounded-lg p-3 mb-3">
-                        <div class="flex items-center gap-2 mb-2">
-                            <i class="fas fa-filter text-sm text-base-content/50"></i>
-                            <span class="text-sm font-medium">{{ $t('trafficAnalysis.packetCapture.extractDialog.filterConditions') }}</span>
-                            <button v-if="hasExtractFilter" class="btn btn-xs btn-ghost text-error" @click="clearExtractFilter">
-                                <i class="fas fa-times mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.clearFilter') }}
-                            </button>
-                        </div>
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <!-- 文件名搜索 -->
-                            <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.filename') }}</span></label>
-                                <input type="text" v-model="extractFilter.filename" 
-                                       class="input input-xs input-bordered" placeholder="{{ $t('trafficAnalysis.packetCapture.extractDialog.searchFilename') }}" />
-                            </div>
-                            
-                            <!-- 文件类型 -->
-                            <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.fileType') }}</span></label>
-                                <select v-model="extractFilter.fileType" class="select select-xs select-bordered">
-                                    <option value="">{{ $t('trafficAnalysis.packetCapture.extractDialog.allTypes') }}</option>
-                                    <option value="image">{{ $t('trafficAnalysis.packetCapture.extractDialog.image') }}</option>
-                                    <option value="video">{{ $t('trafficAnalysis.packetCapture.extractDialog.video') }}</option>
-                                    <option value="audio">{{ $t('trafficAnalysis.packetCapture.extractDialog.audio') }}</option>
-                                    <option value="archive">{{ $t('trafficAnalysis.packetCapture.extractDialog.archive') }}</option>
-                                    <option value="document">{{ $t('trafficAnalysis.packetCapture.extractDialog.document') }}</option>
-                                    <option value="executable">{{ $t('trafficAnalysis.packetCapture.extractDialog.executable') }}</option>
-                                    <option value="other">{{ $t('trafficAnalysis.packetCapture.extractDialog.other') }}</option>
-                                </select>
-                            </div>
-                            
-                            <!-- 来源协议 -->
-                            <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.sourceProtocol') }}</span></label>
-                                <select v-model="extractFilter.sourceType" class="select select-xs select-bordered">
-                                    <option value="">{{ $t('trafficAnalysis.packetCapture.extractDialog.allSources') }}</option>
-                                    <option v-for="st in availableSourceTypes" :key="st" :value="st">{{ st }}</option>
-                                </select>
-                            </div>
-                            
-                            <!-- 文件大小 -->
-                            <div class="form-control">
-                                <label class="label py-0"><span class="label-text text-xs">{{ $t('trafficAnalysis.packetCapture.extractDialog.fileSize') }}</span></label>
-                                <select v-model="extractFilter.sizeRange" class="select select-xs select-bordered">
-                                    <option value="">{{ $t('trafficAnalysis.packetCapture.extractDialog.anySize') }}</option>
-                                    <option value="tiny">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeTiny') }}</option>
-                                    <option value="small">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeSmall') }}</option>
-                                    <option value="medium">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeMedium') }}</option>
-                                    <option value="large">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeLarge') }}</option>
-                                    <option value="huge">{{ $t('trafficAnalysis.packetCapture.extractDialog.sizeHuge') }}</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <!-- 快捷过滤按钮 -->
-                        <div class="flex flex-wrap gap-1 mt-2">
-                            <button class="btn btn-xs" :class="extractFilter.fileType === 'image' ? 'btn-success' : 'btn-ghost'" 
-                                    @click="extractFilter.fileType = extractFilter.fileType === 'image' ? '' : 'image'">
-                                <i class="fas fa-image mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.image') }}
-                            </button>
-                            <button class="btn btn-xs" :class="extractFilter.fileType === 'archive' ? 'btn-info' : 'btn-ghost'" 
-                                    @click="extractFilter.fileType = extractFilter.fileType === 'archive' ? '' : 'archive'">
-                                <i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.archive') }}
-                            </button>
-                            <button class="btn btn-xs" :class="extractFilter.fileType === 'document' ? 'btn-error' : 'btn-ghost'" 
-                                    @click="extractFilter.fileType = extractFilter.fileType === 'document' ? '' : 'document'">
-                                <i class="fas fa-file-pdf mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.document') }}
-                            </button>
-                            <button class="btn btn-xs" :class="extractFilter.fileType === 'executable' ? 'btn-warning' : 'btn-ghost'" 
-                                    @click="extractFilter.fileType = extractFilter.fileType === 'executable' ? '' : 'executable'">
-                                <i class="fas fa-cog mr-1"></i>{{ $t('trafficAnalysis.packetCapture.extractDialog.executable') }}
-                            </button>
-                            <span class="divider divider-horizontal mx-0"></span>
-                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'HTTP' ? 'btn-success' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'HTTP' ? '' : 'HTTP'">{{ $t('trafficAnalysis.packetCapture.extractDialog.http') }}</button>
-                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'FTP' ? 'btn-info' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'FTP' ? '' : 'FTP'">{{ $t('trafficAnalysis.packetCapture.extractDialog.ftp') }}</button>
-                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'EMAIL' ? 'btn-warning' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'EMAIL' ? '' : 'EMAIL'">{{ $t('trafficAnalysis.packetCapture.extractDialog.email') }}</button>
-                            <button class="btn btn-xs" :class="extractFilter.sourceType === 'DNS_TUNNEL' ? 'btn-error' : 'btn-ghost'" 
-                                    @click="extractFilter.sourceType = extractFilter.sourceType === 'DNS_TUNNEL' ? '' : 'DNS_TUNNEL'">{{ $t('trafficAnalysis.packetCapture.extractDialog.dnsTunnel') }}</button>
-                        </div>
-                    </div>
-
-                    <!-- 文件列表 -->
-                    <div class="overflow-x-auto max-h-[45vh]">
-                        <table class="table table-sm table-pin-rows">
-                            <thead>
-                                <tr>
-                                    <th class="w-10">
-                                        <input type="checkbox" class="checkbox checkbox-sm" 
-                                               v-model="selectAllFilteredFiles" @change="toggleSelectAllFilteredFiles" />
-                                    </th>
-                                    <th>{{ $t('trafficAnalysis.packetCapture.extractDialog.filename') }}</th>
-                                    <th class="w-20">{{ $t('trafficAnalysis.packetCapture.extractDialog.type') }}</th>
-                                    <th class="w-20">{{ $t('trafficAnalysis.packetCapture.extractDialog.size') }}</th>
-                                    <th class="w-20">{{ $t('trafficAnalysis.packetCapture.extractDialog.source') }}</th>
-                                    <th class="w-36">{{ $t('trafficAnalysis.packetCapture.extractDialog.traffic') }}</th>
-                                    <th class="w-28">{{ $t('trafficAnalysis.packetCapture.extractDialog.actions') }}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr v-for="file in filteredExtractedFiles" :key="file.id" 
-                                    class="hover" :class="{ 'bg-base-200': selectedExtractFileIds.has(file.id) }">
-                                    <td>
-                                        <input type="checkbox" class="checkbox checkbox-sm" 
-                                               :checked="selectedExtractFileIds.has(file.id)"
-                                               @change="toggleFileSelection(file.id)" />
-                                    </td>
-                                    <td class="font-mono text-sm max-w-48 truncate" :title="file.filename">
-                                        {{ file.filename }}
-                                    </td>
-                                    <td>
-                                        <span class="badge badge-sm" :class="getFileTypeBadgeClass(file.content_type)">
-                                            {{ getFileTypeLabel(file.content_type) }}
-                                        </span>
-                                    </td>
-                                    <td class="font-mono text-sm">{{ formatFileSize(file.size) }}</td>
-                                    <td>
-                                        <span class="badge badge-sm" :class="getSourceTypeBadgeClass(file.source_type)">
-                                            {{ file.source_type }}
-                                        </span>
-                                    </td>
-                                    <td class="text-xs text-base-content/70 truncate max-w-36" :title="`${file.src} → ${file.dst}`">
-                                        {{ file.src.split(':')[0] }} → {{ file.dst.split(':')[0] }}
-                                    </td>
-                                    <td class="flex gap-1">
-                                        <button class="btn btn-xs btn-ghost" @click="downloadSingleFile(file)" :title="$t('trafficAnalysis.packetCapture.extractDialog.downloadFile')">
-                                            <i class="fas fa-download"></i>
-                                        </button>
-                                        <button class="btn btn-xs btn-ghost" @click="followFileStream(file)" :title="$t('trafficAnalysis.packetCapture.extractDialog.traceTraffic')">
-                                            <i class="fas fa-stream"></i>
-                                        </button>
-                                        <button class="btn btn-xs btn-ghost" @click="locateFilePackets(file)" :title="$t('trafficAnalysis.packetCapture.extractDialog.locatePackets')">
-                                            <i class="fas fa-crosshairs"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        
-                        <!-- 过滤后无结果 -->
-                        <div v-if="filteredExtractedFiles.length === 0 && extractedFiles.length > 0" 
-                             class="text-center py-6 text-base-content/50">
-                            <i class="fas fa-filter text-2xl mb-2"></i>
-                            <p>{{ $t('trafficAnalysis.packetCapture.extractDialog.noMatchingFiles') }}</p>
-                        </div>
-                    </div>
-                    
-                    <!-- 状态栏 -->
-                    <div class="flex items-center justify-between mt-3 pt-3 border-t border-base-300">
-                        <div class="flex items-center gap-4">
-                            <span class="text-sm text-base-content/70">
-                                {{ $t('trafficAnalysis.packetCapture.extractDialog.selectedFiles', { count: selectedExtractFileIds.size }) }}
-                                <span v-if="hasExtractFilter" class="text-xs">({{ $t('trafficAnalysis.packetCapture.extractDialog.displaying', { filtered: filteredExtractedFiles.length, total: extractedFiles.length }) }})</span>
-                            </span>
-                            <div class="flex flex-wrap gap-1 text-xs text-base-content/50">
-                                <template v-for="st in sourceTypeStats" :key="st.type">
-                                    <span class="badge badge-xs" :class="getSourceTypeBadgeClass(st.type)">{{ st.type }}</span>
-                                    <span class="mr-2">{{ st.count }}</span>
-                                </template>
-                            </div>
-                        </div>
-                        <div class="text-sm text-base-content/50">
-                            {{ $t('trafficAnalysis.packetCapture.extractDialog.selectedSize') }}: {{ formatFileSize(selectedFilesTotalSize) }}
-                        </div>
-                    </div>
-                </div>
-
-                <div class="modal-action">
-                    <button class="btn btn-ghost" @click="closeExtractDialog">{{ $t('trafficAnalysis.packetCapture.extractDialog.close') }}</button>
-                    <button class="btn btn-primary" @click="saveExtractedFiles" 
-                            :disabled="selectedExtractFileIds.size === 0 || extractLoading">
-                        <i class="fas fa-folder-open mr-1"></i>
-                        {{ $t('trafficAnalysis.packetCapture.extractDialog.saveSelectedFiles', { count: selectedExtractFileIds.size }) }}
-                    </button>
-                </div>
-            </div>
-            <div class="modal-backdrop" @click="closeExtractDialog"></div>
-        </div>
+        <PacketCaptureDialogs
+            :context-menu="contextMenu"
+            :field-context-menu="fieldContextMenu"
+            :is-current-packet-marked="isCurrentPacketMarked"
+            :is-current-packet-ignored="isCurrentPacketIgnored"
+            :can-follow-tcp="canFollowTcp"
+            :can-follow-udp="canFollowUdp"
+            :can-follow-http="canFollowHttp"
+            :show-filter-dialog="showFilterDialog"
+            :advanced-filter="advancedFilter"
+            :stream-dialog="streamDialog"
+            :stream-segments="streamSegments"
+            :show-extract-dialog="showExtractDialog"
+            :extract-loading="extractLoading"
+            :extracted-files="extractedFiles"
+            :extract-filter="extractFilter"
+            :has-extract-filter="hasExtractFilter"
+            :available-source-types="availableSourceTypes"
+            :filtered-extracted-files="filteredExtractedFiles"
+            :selected-extract-file-ids="selectedExtractFileIds"
+            :select-all-filtered-files="selectAllFilteredFiles"
+            :source-type-stats="sourceTypeStats"
+            :selected-files-total-size="selectedFilesTotalSize"
+            :on-toggle-mark="toggleMark"
+            :on-toggle-ignore="toggleIgnore"
+            :on-filter-by-field="filterByField"
+            :on-filter-by-conversation="filterByConversation"
+            :on-follow-stream="followStream"
+            :on-copy-packet-info="copyPacketInfo"
+            :on-copy-packet-hex="copyPacketHex"
+            :on-copy-field="copyField"
+            :on-filter-by-field-value="filterByFieldValue"
+            :on-copy-field-value="copyFieldValue"
+            :on-reset-advanced-filter="resetAdvancedFilter"
+            :on-apply-advanced-filter="applyAdvancedFilter"
+            :on-copy-stream-content="copyStreamContent"
+            :on-close-stream-dialog="closeStreamDialog"
+            :on-toggle-select-all-filtered-files="toggleSelectAllFilteredFiles"
+            :on-toggle-file-selection="toggleFileSelection"
+            :on-clear-extract-filter="clearExtractFilter"
+            :on-close-extract-dialog="closeExtractDialog"
+            :on-save-extracted-files="saveExtractedFiles"
+            :on-download-single-file="downloadSingleFile"
+            :on-follow-file-stream="followFileStream"
+            :on-locate-file-packets="locateFilePackets"
+            :get-file-type-badge-class="getFileTypeBadgeClass"
+            :get-file-type-label="getFileTypeLabel"
+            :get-source-type-badge-class="getSourceTypeBadgeClass"
+            :format-file-size="formatFileSize"
+            @update:show-filter-dialog="showFilterDialog = $event"
+        />
     </div>
 </template>
 
@@ -674,70 +142,13 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import PacketCaptureDetails from './PacketCaptureDetails.vue'
+import PacketCaptureDialogs from './PacketCaptureDialogs.vue'
+import PacketCapturePacketList from './PacketCapturePacketList.vue'
+import PacketCaptureToolbar from './PacketCaptureToolbar.vue'
+import type { AdvancedFilter, ExtractedFileInfo, NetworkInterface, Packet, StreamSegment, VirtualItem } from './packetCaptureTypes'
 
 const { t } = useI18n()
-
-interface NetworkInterface {
-    name: string
-    description?: string
-    mac?: string
-    ipv4?: string
-}
-
-interface ProtocolField {
-    name: string
-    value: string
-    children?: ProtocolField[]
-}
-
-interface ProtocolLayer {
-    name: string
-    display: string
-    fields: ProtocolField[]
-}
-
-interface Packet {
-    id: number
-    timestamp: number
-    src: string
-    dst: string
-    protocol: string
-    length: number
-    info: string
-    layers: ProtocolLayer[]
-    raw: number[]
-}
-
-interface AdvancedFilter {
-    protocols: string[]
-    srcIp: string
-    dstIp: string
-    srcPort: string
-    dstPort: string
-    containsString: string
-    containsHex: string
-    minLength: number | null
-    maxLength: number | null
-    tcpFlags: string[]
-}
-
-interface ExtractedFileInfo {
-    id: string
-    filename: string
-    content_type: string
-    size: number
-    src: string
-    dst: string
-    packet_ids: number[]
-    stream_key: string
-    source_type: string
-}
-
-// 虚拟列表类型
-interface VirtualItem {
-    data: Packet
-    offset: number
-}
 
 // 状态
 const interfaces = ref<NetworkInterface[]>([])
@@ -771,13 +182,15 @@ const extractFilter = reactive({
 })
 
 // 虚拟滚动相关
-const scrollContainer = ref<HTMLElement | null>(null)
+const scrollContainer = ref<{ scrollContainerEl: HTMLElement | null } | null>(null)
 const rowHeight = 28 // 每行高度
 const headerHeight = 32 // 表头高度
 const scrollTop = ref(0)
 const containerHeight = ref(300)
 const bufferSize = 5 // 缓冲区大小
 let scrollTimer: number | null = null
+
+const getScrollContainerElement = () => scrollContainer.value?.scrollContainerEl ?? null
 
 // 列宽状态（可拖动调整）
 const columnWidths = reactive({
@@ -953,8 +366,9 @@ function handleScroll(e: Event) {
 
 // 更新容器高度
 function updateContainerHeight() {
-    if (scrollContainer.value) {
-        containerHeight.value = scrollContainer.value.clientHeight
+    const containerEl = getScrollContainerElement()
+    if (containerEl) {
+        containerHeight.value = containerEl.clientHeight
     }
 }
 
@@ -1076,8 +490,9 @@ function clearPackets() {
     markedPackets.clear()
     ignoredPackets.clear()
     scrollTop.value = 0
-    if (scrollContainer.value) {
-        scrollContainer.value.scrollTop = 0
+    const containerEl = getScrollContainerElement()
+    if (containerEl) {
+        containerEl.scrollTop = 0
     }
 }
 
@@ -1101,8 +516,9 @@ function applyFilter() {
     appliedFilter.value = filterText.value
     // 重置滚动位置
     scrollTop.value = 0
-    if (scrollContainer.value) {
-        scrollContainer.value.scrollTop = 0
+    const containerEl = getScrollContainerElement()
+    if (containerEl) {
+        containerEl.scrollTop = 0
     }
 }
 
@@ -1261,12 +677,6 @@ function closeStreamDialog() {
     streamDialog.packets = []
 }
 
-interface StreamSegment {
-    isClient: boolean
-    content: string
-    packetId: number
-}
-
 const streamSegments = computed<StreamSegment[]>(() => {
     const segments: StreamSegment[] = []
     
@@ -1411,8 +821,9 @@ async function openPcapFile() {
             }
             
             scrollTop.value = 0
-            if (scrollContainer.value) {
-                scrollContainer.value.scrollTop = 0
+            const containerEl = getScrollContainerElement()
+            if (containerEl) {
+                containerEl.scrollTop = 0
             }
         }
     } catch (e) {
@@ -1612,8 +1023,9 @@ async function locateFilePackets(file: ExtractedFileInfo) {
         
         // Scroll to the packet
         scrollTop.value = firstPacketIdx * rowHeight
-        if (scrollContainer.value) {
-            scrollContainer.value.scrollTop = scrollTop.value
+        const containerEl = getScrollContainerElement()
+        if (containerEl) {
+            containerEl.scrollTop = scrollTop.value
         }
         
         closeExtractDialog()
@@ -1870,12 +1282,13 @@ onMounted(() => {
     document.addEventListener('keydown', handleKeydown)
     
     // 监听容器大小变化
-    if (scrollContainer.value) {
+    const containerEl = getScrollContainerElement()
+    if (containerEl) {
         updateContainerHeight()
         resizeObserver = new ResizeObserver(() => {
             updateContainerHeight()
         })
-        resizeObserver.observe(scrollContainer.value)
+        resizeObserver.observe(containerEl)
     }
 })
 
@@ -1894,229 +1307,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 列宽拖拽手柄 */
-.column-header {
-    position: relative;
-    flex-shrink: 0;
-}
-.column-resize-handle {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 6px;
-    cursor: col-resize;
-    background: transparent;
-    z-index: 5;
-}
-.column-resize-handle:hover {
-    background: oklch(var(--p) / 0.3);
-}
-.column-resize-handle:active {
-    background: oklch(var(--p) / 0.5);
-}
-
-.packet-row { 
-    transition: background-color 0.1s;
-    border-bottom: 1px solid oklch(var(--bc) / 0.1);
-}
-.row-tcp { background-color: rgba(168, 162, 217, 0.15); }
-.row-udp { background-color: rgba(125, 211, 252, 0.15); }
-.row-http { background-color: rgba(134, 239, 172, 0.2); }
-.row-https { background-color: rgba(253, 224, 71, 0.15); }
-.row-dns { background-color: rgba(125, 211, 252, 0.2); }
-.row-icmp { background-color: rgba(251, 146, 150, 0.15); }
-.row-arp { background-color: rgba(253, 186, 116, 0.2); }
-.row-other { background-color: transparent; }
-.packet-row:hover { filter: brightness(0.95); }
-.selected-row { @apply bg-primary/20 outline outline-1 outline-primary/50; }
-.marked-row { @apply border-l-4 border-warning; }
-.ignored-row { @apply opacity-40; }
-
 .resize-handle { @apply flex items-center justify-center cursor-ns-resize bg-base-200 hover:bg-base-300 h-1.5; }
 .resize-bar { @apply bg-base-content/20 rounded-full w-16 h-1; }
 .resize-handle:hover .resize-bar { @apply bg-base-content/40; }
-
-.context-menu { @apply fixed z-50; }
-
-/* 协议树形面板 - Wireshark风格 */
-.protocol-tree-panel {
-    @apply text-xs font-mono;
-    background: var(--fallback-b1, oklch(var(--b1)));
-}
-
-.protocol-layer {
-    border-bottom: 1px solid oklch(var(--bc) / 0.1);
-}
-
-.layer-header {
-    @apply flex items-center gap-1 px-1 py-0.5 cursor-pointer select-none;
-    min-height: 20px;
-}
-.layer-header:hover { filter: brightness(0.95); }
-
-.layer-toggle {
-    @apply w-3 text-base-content/50 transition-transform duration-100;
-    font-size: 10px;
-}
-.layer-toggle.expanded { transform: rotate(90deg); }
-
-.layer-title {
-    @apply flex-1 truncate;
-}
-
-.layer-content {
-    @apply pl-3;
-}
-
-.field-row {
-    @apply flex gap-1 px-1 py-px hover:bg-base-200/50;
-    min-height: 18px;
-    line-height: 18px;
-}
-
-.field-parent {
-    @apply cursor-pointer;
-}
-
-.field-toggle {
-    @apply w-3 text-base-content/50 transition-transform duration-100;
-    font-size: 10px;
-}
-.field-toggle.expanded { transform: rotate(90deg); }
-
-.field-children {
-    @apply pl-4;
-}
-
-.field-child {
-    @apply text-base-content/80;
-}
-
-.field-name {
-    @apply text-base-content/60 whitespace-nowrap;
-}
-
-.field-value {
-    @apply text-base-content flex-1;
-}
-.field-value.highlight {
-    @apply text-primary font-semibold;
-}
-
-/* 协议层颜色 */
-.layer-frame { background-color: #f5f5f5; }
-.layer-eth { background-color: #e8f4e8; }
-.layer-ip { background-color: #e8f0f8; }
-.layer-tcp { background-color: #f0e8f8; }
-.layer-udp { background-color: #e8f8f8; }
-.layer-http { background-color: #f0f8e8; }
-.layer-dns { background-color: #f8f0e8; }
-.layer-icmp { background-color: #f8e8e8; }
-.layer-arp { background-color: #f8f8e8; }
-
-:global(.dark) .layer-frame { background-color: #2a2a2a; }
-:global(.dark) .layer-eth { background-color: #1a2a1a; }
-:global(.dark) .layer-ip { background-color: #1a1a2a; }
-:global(.dark) .layer-tcp { background-color: #2a1a2a; }
-:global(.dark) .layer-udp { background-color: #1a2a2a; }
-:global(.dark) .layer-http { background-color: #2a2a1a; }
-:global(.dark) .layer-dns { background-color: #2a1a1a; }
-:global(.dark) .layer-icmp { background-color: #2a1a1a; }
-:global(.dark) .layer-arp { background-color: #2a2a1a; }
-
-/* 右键子菜单 - 右侧弹出 */
-.submenu-parent { 
-    position: relative;
-}
-
-/* 保持 DaisyUI 原生菜单项的对齐和内边距，仅确保宽度填充 */
-.submenu-parent > a { 
-    width: 100%;
-    display: flex !important;
-    align-items: center;
-}
-
-.submenu { 
-    position: absolute;
-    visibility: hidden;
-    opacity: 0;
-    left: 100%;
-    top: 0;
-    margin-left: 2px;
-    min-width: 140px;
-    background: oklch(var(--b1));
-    border: 1px solid oklch(var(--bc) / 0.1);
-    border-radius: 0.5rem;
-    box-shadow: var(--shadow-xl);
-    padding: 0.25rem;
-    z-index: 100;
-    transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
-}
-.submenu li {
-    list-style: none;
-}
-.submenu li a {
-    display: block;
-    padding: 0.375rem 0.75rem;
-    font-size: 0.75rem;
-    border-radius: 0.25rem;
-    cursor: pointer;
-    white-space: nowrap;
-}
-.submenu li a:hover {
-    background: oklch(var(--bc) / 0.1);
-}
-.submenu-parent:hover > .submenu { 
-    visibility: visible;
-    opacity: 1;
-}
-
-/* 追踪流方向背景色 - Wireshark 风格 */
-.stream-content {
-    background-color: #f5f5f5;
-}
-.stream-segment {
-    border-left: 3px solid transparent;
-    max-width: 100%;
-    overflow: hidden;
-}
-.stream-segment pre {
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    word-break: break-all;
-    max-width: 100%;
-    overflow-wrap: break-word;
-}
-/* 客户端 -> 服务器: 红/粉色 */
-.stream-client {
-    background-color: rgba(255, 190, 190, 0.6);
-    border-left-color: #e57373;
-}
-/* 服务器 -> 客户端: 蓝色 */
-.stream-server {
-    background-color: rgba(187, 222, 251, 0.6);
-    border-left-color: #64b5f6;
-}
-/* 暗色模式 */
-:global(.dark) .stream-content {
-    background-color: #1a1a1a;
-}
-:global(.dark) .stream-client {
-    background-color: rgba(180, 80, 80, 0.35);
-    border-left-color: #ef5350;
-}
-:global(.dark) .stream-server {
-    background-color: rgba(66, 135, 180, 0.35);
-    border-left-color: #42a5f5;
-}
-
-:global(.dark) .row-tcp { background-color: rgba(100, 100, 160, 0.25); }
-:global(.dark) .row-udp { background-color: rgba(80, 120, 160, 0.25); }
-:global(.dark) .row-http { background-color: rgba(80, 160, 80, 0.25); }
-:global(.dark) .row-https { background-color: rgba(160, 160, 80, 0.25); }
-:global(.dark) .row-dns { background-color: rgba(80, 120, 160, 0.3); }
-:global(.dark) .row-icmp { background-color: rgba(160, 100, 100, 0.25); }
-:global(.dark) .row-arp { background-color: rgba(160, 140, 80, 0.25); }
 </style>

@@ -226,6 +226,8 @@
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -301,6 +303,8 @@
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -376,6 +380,8 @@
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -451,6 +457,8 @@
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -525,6 +533,8 @@
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -595,11 +605,13 @@
                       </label>
                       <select v-model="plugin.plugin_id" class="select select-sm select-bordered">
                         <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-                        <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
+                        <option v-for="p in getPluginsByType('web')" :key="p.id" :value="p.id">
                           {{ p.name }}
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -608,7 +620,7 @@
                       <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`web-fb-${idx}-${fIdx}`" class="flex gap-1">
                         <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1">
                           <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
-                          <option v-for="p in getPluginsByType('content')" :key="p.id" :value="p.id">
+                          <option v-for="p in getPluginsByType('web')" :key="p.id" :value="p.id">
                             {{ p.name }}
                           </option>
                         </select>
@@ -675,6 +687,8 @@
                         </option>
                       </select>
                     </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
                     
                     <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
                       <label class="label py-1">
@@ -868,6 +882,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useToast } from '../../composables/useToast'
 import { useMonitorTaskProgress } from '../../composables/useMonitorTaskProgress'
 import MonitorTaskCard from './MonitorTaskCard.vue'
+import MonitorTargetAssetSelector from './MonitorTargetAssetSelector.vue'
 import { formatInvokeError, formatUptime } from './monitorPanelUtils'
 
 const { t } = useI18n()
@@ -906,27 +921,88 @@ const {
   setupTaskProgressListener,
 } = useMonitorTaskProgress()
 
+const createEmptyPluginConfig = () => ({
+  plugin_id: '',
+  fallback_plugins: [] as string[],
+  plugin_params: {},
+  target_asset_types: [] as string[]
+})
+
+const createEmptyTaskConfig = () => ({
+  enable_dns_monitoring: false,
+  dns_plugins: [] as any[],
+  enable_cert_monitoring: false,
+  cert_plugins: [] as any[],
+  enable_content_monitoring: false,
+  content_plugins: [] as any[],
+  enable_api_monitoring: false,
+  api_plugins: [] as any[],
+  enable_port_monitoring: false,
+  port_plugins: [] as any[],
+  enable_web_monitoring: false,
+  web_plugins: [] as any[],
+  enable_risk_monitoring: false,
+  risk_plugins: [] as any[],
+  auto_trigger_enabled: true,
+})
+
+const normalizeTargetAssetTypes = (value: unknown) => Array.from(
+  new Set(
+    (Array.isArray(value) ? value : [])
+      .map(assetType => String(assetType || '').trim().toLowerCase())
+      .filter(Boolean)
+  )
+)
+
+const normalizePluginConfig = (plugin: any) => ({
+  plugin_id: plugin?.plugin_id || '',
+  fallback_plugins: Array.isArray(plugin?.fallback_plugins) ? plugin.fallback_plugins : [],
+  plugin_params: plugin?.plugin_params && typeof plugin.plugin_params === 'object' ? plugin.plugin_params : {},
+  target_asset_types: normalizeTargetAssetTypes(plugin?.target_asset_types),
+})
+
+const normalizePluginConfigList = (plugins: unknown) => Array.isArray(plugins)
+  ? plugins.map(plugin => normalizePluginConfig(plugin))
+  : []
+
+const normalizeTaskConfig = (config: any) => ({
+  ...createEmptyTaskConfig(),
+  ...(config || {}),
+  dns_plugins: normalizePluginConfigList(config?.dns_plugins),
+  cert_plugins: normalizePluginConfigList(config?.cert_plugins),
+  content_plugins: normalizePluginConfigList(config?.content_plugins),
+  api_plugins: normalizePluginConfigList(config?.api_plugins),
+  port_plugins: normalizePluginConfigList(config?.port_plugins),
+  web_plugins: normalizePluginConfigList(config?.web_plugins),
+  risk_plugins: normalizePluginConfigList(config?.risk_plugins),
+})
+
+const getPluginConfigs = (monitorType: string) => {
+  switch (monitorType) {
+    case 'dns':
+      return taskForm.config.dns_plugins
+    case 'cert':
+      return taskForm.config.cert_plugins
+    case 'content':
+      return taskForm.config.content_plugins
+    case 'api':
+      return taskForm.config.api_plugins
+    case 'port':
+      return taskForm.config.port_plugins
+    case 'web':
+      return taskForm.config.web_plugins
+    case 'risk':
+      return taskForm.config.risk_plugins
+    default:
+      return []
+  }
+}
+
 const taskForm = reactive({
   name: '',
   program_id: '',
   interval_secs: 6 * 3600, // 6 hours default
-  config: {
-    enable_dns_monitoring: true,
-    dns_plugins: [] as any[],
-    enable_cert_monitoring: true,
-    cert_plugins: [] as any[],
-    enable_content_monitoring: false,
-    content_plugins: [] as any[],
-    enable_api_monitoring: false,
-    api_plugins: [] as any[],
-    enable_port_monitoring: false,
-    port_plugins: [] as any[],
-    enable_web_monitoring: false,
-    web_plugins: [] as any[],
-    enable_risk_monitoring: false,
-    risk_plugins: [] as any[],
-    auto_trigger_enabled: true,
-  }
+  config: createEmptyTaskConfig()
 })
 
 const discoverForm = reactive({
@@ -1012,120 +1088,22 @@ const getPluginsByType = (monitorType: string) => {
 }
 
 const addPluginConfig = (monitorType: string) => {
-  const newPlugin = {
-    plugin_id: '',
-    fallback_plugins: [],
-    plugin_params: {}
-  }
-  
-  switch (monitorType) {
-    case 'dns':
-      taskForm.config.dns_plugins.push(newPlugin)
-      break
-    case 'cert':
-      taskForm.config.cert_plugins.push(newPlugin)
-      break
-    case 'content':
-      taskForm.config.content_plugins.push(newPlugin)
-      break
-    case 'api':
-      taskForm.config.api_plugins.push(newPlugin)
-      break
-    case 'port':
-      taskForm.config.port_plugins.push(newPlugin)
-      break
-    case 'web':
-      taskForm.config.web_plugins.push(newPlugin)
-      break
-    case 'risk':
-      taskForm.config.risk_plugins.push(newPlugin)
-      break
-  }
+  getPluginConfigs(monitorType).push(createEmptyPluginConfig())
 }
 
 const removePluginConfig = (monitorType: string, index: number) => {
-  switch (monitorType) {
-    case 'dns':
-      taskForm.config.dns_plugins.splice(index, 1)
-      break
-    case 'cert':
-      taskForm.config.cert_plugins.splice(index, 1)
-      break
-    case 'content':
-      taskForm.config.content_plugins.splice(index, 1)
-      break
-    case 'api':
-      taskForm.config.api_plugins.splice(index, 1)
-      break
-    case 'port':
-      taskForm.config.port_plugins.splice(index, 1)
-      break
-    case 'web':
-      taskForm.config.web_plugins.splice(index, 1)
-      break
-    case 'risk':
-      taskForm.config.risk_plugins.splice(index, 1)
-      break
-  }
+  getPluginConfigs(monitorType).splice(index, 1)
 }
 
 const addFallbackPlugin = (monitorType: string, pluginIndex: number) => {
-  let plugins: any[] = []
-  switch (monitorType) {
-    case 'dns':
-      plugins = taskForm.config.dns_plugins
-      break
-    case 'cert':
-      plugins = taskForm.config.cert_plugins
-      break
-    case 'content':
-      plugins = taskForm.config.content_plugins
-      break
-    case 'api':
-      plugins = taskForm.config.api_plugins
-      break
-    case 'port':
-      plugins = taskForm.config.port_plugins
-      break
-    case 'web':
-      plugins = taskForm.config.web_plugins
-      break
-    case 'risk':
-      plugins = taskForm.config.risk_plugins
-      break
-  }
-  
+  const plugins = getPluginConfigs(monitorType)
   if (plugins[pluginIndex]) {
     plugins[pluginIndex].fallback_plugins.push('')
   }
 }
 
 const removeFallbackPlugin = (monitorType: string, pluginIndex: number, fallbackIndex: number) => {
-  let plugins: any[] = []
-  switch (monitorType) {
-    case 'dns':
-      plugins = taskForm.config.dns_plugins
-      break
-    case 'cert':
-      plugins = taskForm.config.cert_plugins
-      break
-    case 'content':
-      plugins = taskForm.config.content_plugins
-      break
-    case 'api':
-      plugins = taskForm.config.api_plugins
-      break
-    case 'port':
-      plugins = taskForm.config.port_plugins
-      break
-    case 'web':
-      plugins = taskForm.config.web_plugins
-      break
-    case 'risk':
-      plugins = taskForm.config.risk_plugins
-      break
-  }
-  
+  const plugins = getPluginConfigs(monitorType)
   if (plugins[pluginIndex]) {
     plugins[pluginIndex].fallback_plugins.splice(fallbackIndex, 1)
   }
@@ -1197,6 +1175,7 @@ const saveTask = async () => {
 
   try {
     submitting.value = true
+    const normalizedConfig = normalizeTaskConfig(taskForm.config)
     
     if (editingTask.value) {
       // Update existing task
@@ -1205,7 +1184,7 @@ const saveTask = async () => {
         request: {
           name: taskForm.name,
           interval_secs: taskForm.interval_secs,
-          config: taskForm.config
+          config: normalizedConfig
         }
       })
       toast.success(t('bugBounty.monitor.taskUpdated'))
@@ -1216,7 +1195,7 @@ const saveTask = async () => {
           program_id: taskForm.program_id,
           name: taskForm.name,
           interval_secs: taskForm.interval_secs,
-          config: taskForm.config
+          config: normalizedConfig
         }
       })
       toast.success(t('bugBounty.monitor.taskCreated'))
@@ -1250,12 +1229,6 @@ const toggleTask = async (task: any) => {
 
 const triggerTask = async (task: any) => {
   try {
-    // Auto-start scheduler if not running
-    if (!schedulerRunning.value) {
-      toast.info(t('bugBounty.monitor.autoStartingScheduler'))
-      await startScheduler({ throwOnFail: true })
-    }
-    
     await invoke('monitor_trigger_task', { taskId: task.id })
     markTaskQueued(task, t('bugBounty.monitor.progressPreparing'))
     toast.success(t('bugBounty.monitor.taskTriggered'))
@@ -1298,7 +1271,7 @@ const editTask = (task: any) => {
   taskForm.name = task.name
   taskForm.program_id = task.program_id
   taskForm.interval_secs = task.interval_secs
-  taskForm.config = { ...task.config }
+  taskForm.config = normalizeTaskConfig(task.config)
 }
 
 const deleteTask = async (task: any) => {
@@ -1406,23 +1379,7 @@ const closeModal = () => {
   taskForm.name = ''
   taskForm.program_id = ''
   taskForm.interval_secs = 6 * 3600
-  taskForm.config = {
-    enable_dns_monitoring: true,
-    dns_plugins: [],
-    enable_cert_monitoring: true,
-    cert_plugins: [],
-    enable_content_monitoring: false,
-    content_plugins: [],
-    enable_api_monitoring: false,
-    api_plugins: [],
-    enable_port_monitoring: false,
-    port_plugins: [],
-    enable_web_monitoring: false,
-    web_plugins: [],
-    enable_risk_monitoring: false,
-    risk_plugins: [],
-    auto_trigger_enabled: true,
-  }
+  taskForm.config = createEmptyTaskConfig()
 }
 
 // Event listeners

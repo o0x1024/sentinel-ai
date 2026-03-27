@@ -26,7 +26,7 @@
     </div>
 
     <!-- Category Filter -->
-    <div class="tabs tabs-boxed mb-6 flex-wrap gap-2">
+    <div class="tabs tabs-boxed  flex-wrap gap-2">
       <button v-for="cat in categories" :key="cat.value" class="tab"
         :class="{ 'tab-active': selectedCategory === cat.value }" @click="selectedCategory = cat.value">
         <i :class="cat.icon" class="mr-2"></i>
@@ -54,7 +54,7 @@
 
     <!-- Plugin Manager Content -->
     <div class="card bg-base-100 shadow-xl">
-      <div class="card-body">
+      <div class="card-body p-4 md:p-5">
         <!-- Plugin Store Section -->
         <PluginStoreSection
           v-if="selectedCategory === 'store'"
@@ -100,6 +100,7 @@
           :plugin-view-mode="pluginViewMode"
           :filtered-plugins="filteredPlugins"
           :paginated-plugins="paginatedPlugins"
+          :selected-plugin-ids="selectedPluginIds"
           :pagination-info="pluginPaginationInfo"
           :current-page="pluginCurrentPage"
           :page-size="pluginPageSize"
@@ -110,9 +111,13 @@
           :available-sub-categories="getAvailableSubCategories()"
           :available-tags="getAvailableTags()"
           :batch-toggling="batchToggling"
+          :batch-deleting="pluginBatchDeleting"
+          :plugin-batch-processing="pluginBatchProcessing"
+          :is-all-current-page-selected="isAllCurrentPageSelected"
           :get-status-text="getStatusText"
           :get-category-label="getCategoryLabel"
           :get-category-icon="getCategoryIcon"
+          :is-plugin-selected="isRegularPluginSelected"
           :is-plugin-favorited="isPluginFavorited"
           :is-traffic-plugin-type="isTrafficPluginType"
           :is-agent-plugin-type="isAgentPluginType"
@@ -123,8 +128,13 @@
           @clear-filters="clearFilters"
           @batch-enable="batchEnableCurrent"
           @batch-disable="batchDisableCurrent"
+          @batch-enable-selected="batchEnableSelected"
+          @batch-disable-selected="batchDisableSelected"
+          @batch-delete-selected="batchDeleteSelected"
           @change-page-size="changePluginPageSize"
           @go-to-page="goToPluginPage"
+          @toggle-select-all-current-page="toggleSelectAllCurrentPlugins"
+          @toggle-selection="toggleRegularPluginSelection"
           @toggle-favorite="togglePluginFavorite"
           @test-plugin="testPlugin"
           @advanced-test="openAdvancedDialog"
@@ -249,7 +259,9 @@ const pluginPageSize = ref(10)
 const pluginSearchText = ref('')
 const selectedSubCategory = ref('')
 const selectedTag = ref('')
+const selectedPluginIds = ref<string[]>([])
 const batchToggling = ref(false)
+const pluginBatchDeleting = ref(false)
 
 // Upload State
 const selectedFile = ref<File | null>(null)
@@ -348,6 +360,11 @@ const pluginPaginationInfo = computed(() => {
   const end = Math.min(pluginCurrentPage.value * pluginPageSize.value, total)
   return { start, end, total }
 })
+const pluginBatchProcessing = computed(() => batchToggling.value || pluginBatchDeleting.value)
+const isAllCurrentPageSelected = computed(() => (
+  paginatedPlugins.value.length > 0
+  && paginatedPlugins.value.every(plugin => selectedPluginIds.value.includes(plugin.metadata.id))
+))
 
 const reviewStats = computed(() => reviewStatsData.value)
 const paginatedReviewPlugins = computed(() => reviewPlugins.value)
@@ -460,7 +477,10 @@ const refreshPluginStore = async (forceRefresh = true) => {
 const refreshPlugins = async () => {
   try {
     const response = await invoke<CommandResponse<PluginRecord[]>>('list_plugins')
-    if (response.success && response.data) plugins.value = response.data
+    if (response.success && response.data) {
+      plugins.value = response.data
+      syncSelectedPluginIds()
+    }
   } catch (error) {
     console.error('Error refreshing plugins:', error)
   }
@@ -551,6 +571,134 @@ const batchDisableCurrent = async () => {
     showToast(e?.message || '操作失败', 'error')
   } finally {
     batchToggling.value = false
+  }
+}
+
+const syncSelectedPluginIds = (preferredIds?: string[]) => {
+  const availableIds = new Set(filteredPlugins.value.map(plugin => plugin.metadata.id))
+  const sourceIds = preferredIds ?? selectedPluginIds.value
+  selectedPluginIds.value = sourceIds.filter(id => availableIds.has(id))
+}
+
+const isRegularPluginSelected = (plugin: PluginRecord): boolean => {
+  return selectedPluginIds.value.includes(plugin.metadata.id)
+}
+
+const toggleRegularPluginSelection = (plugin: PluginRecord) => {
+  const pluginId = plugin.metadata.id
+  if (!pluginId) return
+  selectedPluginIds.value = selectedPluginIds.value.includes(pluginId)
+    ? selectedPluginIds.value.filter(id => id !== pluginId)
+    : [...selectedPluginIds.value, pluginId]
+}
+
+const toggleSelectAllCurrentPlugins = () => {
+  const currentPageIds = paginatedPlugins.value.map(plugin => plugin.metadata.id)
+  if (currentPageIds.length === 0) return
+
+  if (isAllCurrentPageSelected.value) {
+    const currentIdSet = new Set(currentPageIds)
+    selectedPluginIds.value = selectedPluginIds.value.filter(id => !currentIdSet.has(id))
+    return
+  }
+
+  const nextIds = new Set(selectedPluginIds.value)
+  for (const id of currentPageIds) {
+    nextIds.add(id)
+  }
+  selectedPluginIds.value = [...nextIds]
+}
+
+const batchEnableSelected = async () => {
+  const ids = [...selectedPluginIds.value]
+  if (ids.length === 0) return
+
+  batchToggling.value = true
+  try {
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_enable_plugins', { pluginIds: ids })
+    if (!resp.success) {
+      showToast(resp.error || t('plugins.operationFailed', '操作失败'), 'error')
+      return
+    }
+
+    await refreshPlugins()
+    const failedIds = resp.data?.failed_ids || []
+    syncSelectedPluginIds(failedIds)
+    showToast(
+      t('plugins.batchEnableSelectedSuccess', { count: `${resp.data?.enabled_count ?? 0}/${ids.length}` }),
+      failedIds.length > 0 ? 'warning' : 'success'
+    )
+  } catch (error: any) {
+    showToast(error?.message || t('plugins.operationFailed', '操作失败'), 'error')
+  } finally {
+    batchToggling.value = false
+  }
+}
+
+const batchDisableSelected = async () => {
+  const ids = [...selectedPluginIds.value]
+  if (ids.length === 0) return
+
+  batchToggling.value = true
+  try {
+    const resp = await invoke<CommandResponse<BatchToggleResult>>('batch_disable_plugins', { pluginIds: ids })
+    if (!resp.success) {
+      showToast(resp.error || t('plugins.operationFailed', '操作失败'), 'error')
+      return
+    }
+
+    await refreshPlugins()
+    const failedIds = resp.data?.failed_ids || []
+    syncSelectedPluginIds(failedIds)
+    showToast(
+      t('plugins.batchDisableSelectedSuccess', { count: `${resp.data?.disabled_count ?? 0}/${ids.length}` }),
+      failedIds.length > 0 ? 'warning' : 'success'
+    )
+  } catch (error: any) {
+    showToast(error?.message || t('plugins.operationFailed', '操作失败'), 'error')
+  } finally {
+    batchToggling.value = false
+  }
+}
+
+const batchDeleteSelected = async () => {
+  const ids = [...selectedPluginIds.value]
+  if (ids.length === 0) return
+  if (!window.confirm(t('plugins.batchDeleteConfirm', { count: ids.length }))) return
+
+  pluginBatchDeleting.value = true
+  const failedIds: string[] = []
+  let deletedCount = 0
+
+  try {
+    for (const pluginId of ids) {
+      try {
+        const response = await invoke<CommandResponse<void>>('delete_plugin', { pluginId })
+        if (response.success) {
+          deletedCount += 1
+        } else {
+          failedIds.push(pluginId)
+        }
+      } catch (error) {
+        failedIds.push(pluginId)
+      }
+    }
+
+    await refreshPlugins()
+    syncSelectedPluginIds(failedIds)
+
+    if (deletedCount > 0) {
+      showToast(
+        t('plugins.batchDeleteSelectedSuccess', { count: `${deletedCount}/${ids.length}` }),
+        failedIds.length > 0 ? 'warning' : 'success'
+      )
+    }
+
+    if (failedIds.length > 0 && deletedCount === 0) {
+      showToast(t('plugins.batchDeleteSelectedFailed', '批量删除插件失败'), 'error')
+    }
+  } finally {
+    pluginBatchDeleting.value = false
   }
 }
 
@@ -1242,9 +1390,14 @@ watch(reviewEditMode, (newValue) => {
 
 watch(selectedCategory, async (newValue) => {
   pluginCurrentPage.value = 1
+  selectedPluginIds.value = []
   if (newValue === 'store') {
     await refreshPluginStore(true)
   }
+})
+
+watch(filteredPlugins, () => {
+  syncSelectedPluginIds()
 })
 
 // Lifecycle

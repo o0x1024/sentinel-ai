@@ -33,8 +33,9 @@ use services::{ai::AiServiceManager, database::DatabaseService};
 
 use crate::skills::scan_and_upsert_skills;
 use commands::{
-    ai, aisettings, asset, cleanup_expired_cache, config, database as db_commands, delete_cache,
-    dictionary, get_all_cache_keys, get_cache, llm_test_commands,
+    ai, ai_execution_state_support, aisettings, asset, cleanup_expired_cache, config,
+    database as db_commands, delete_cache, dictionary, get_all_cache_keys, get_cache,
+    llm_test_commands,
     monitor_commands::MonitorSchedulerState,
     packet_capture_commands::{self, PacketCaptureState},
     performance,
@@ -417,10 +418,45 @@ pub fn run() {
                 }
                 let db_service = Arc::new(db_service);
 
-                // Initialize dictionary pool for plugins
-                if let Ok(pool) = db_service.get_pool() {
-                    sentinel_plugins::init_dictionary_pool(pool.clone());
-                    tracing::info!("Dictionary pool initialized for plugins");
+                // Initialize dictionary pool for plugins using the active runtime backend.
+                tracing::info!("Preparing dictionary pool for plugins from runtime database");
+                match db_service.get_runtime_pool() {
+                    #[cfg(all(not(feature = "db-postgres"), not(feature = "db-mysql")))]
+                    Ok(sentinel_db::database_service::connection_manager::DatabasePool::SQLite(
+                        pool,
+                    )) => {
+                        sentinel_plugins::init_dictionary_pool(pool);
+                        tracing::info!("Dictionary pool initialized for plugins using SQLite");
+                    }
+                    #[cfg(feature = "db-postgres")]
+                    Ok(
+                        sentinel_db::database_service::connection_manager::DatabasePool::PostgreSQL(
+                            pool,
+                        ),
+                    ) => {
+                        sentinel_plugins::init_dictionary_pool(pool);
+                        tracing::info!(
+                            "Dictionary pool initialized for plugins using PostgreSQL"
+                        );
+                    }
+                    #[cfg(all(not(feature = "db-postgres"), feature = "db-mysql"))]
+                    Ok(sentinel_db::database_service::connection_manager::DatabasePool::MySQL(
+                        pool,
+                    )) => {
+                        sentinel_plugins::init_dictionary_pool(pool);
+                        tracing::info!("Dictionary pool initialized for plugins using MySQL");
+                    }
+                    Ok(other) => {
+                        tracing::warn!(
+                            "Skipping dictionary pool initialization for unsupported database type: {:?}",
+                            other.db_type()
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to initialize dictionary pool for plugins: {error:#}"
+                        );
+                    }
                 }
 
                 if let Err(e) =
@@ -784,9 +820,10 @@ pub fn run() {
             ai::save_ai_message,
             ai::cancel_ai_stream,
             ai::cancel_shell_execution,
-            ai::get_ai_conversations,
-            ai::get_ai_conversations_paginated,
-            ai::get_ai_conversations_count,
+            ai_execution_state_support::get_ai_conversation,
+            ai_execution_state_support::get_ai_conversations,
+            ai_execution_state_support::get_ai_conversations_paginated,
+            ai_execution_state_support::get_ai_conversations_count,
             ai::get_ai_turn_logs,
             ai::get_ai_turn_log_detail,
             ai::get_ai_messages_by_conversation,
@@ -868,6 +905,7 @@ pub fn run() {
             asset::get_asset_detail,
             asset::update_asset,
             asset::delete_asset,
+            asset::delete_assets,
             asset::list_assets,
             asset::get_asset_stats,
             asset::create_asset_relationship,
@@ -926,7 +964,6 @@ pub fn run() {
             commands::bounty_list_change_events,
             commands::bounty_get_change_event_stats,
             commands::bounty_update_change_event_status,
-            commands::bounty_add_triggered_workflow,
             commands::bounty_add_generated_finding,
             commands::bounty_import_traffic_finding,
             commands::bounty_batch_import_traffic_findings,
@@ -939,7 +976,10 @@ pub fn run() {
             commands::bounty_update_workflow_template,
             commands::bounty_run_workflow_template,
             commands::bounty_run_workflow_template_for_event,
+            commands::bounty_list_change_event_workflow_runs,
+            commands::bounty_retry_change_event_workflow_run,
             commands::bounty_create_workflow_binding,
+            commands::bounty_update_workflow_binding,
             commands::bounty_list_workflow_bindings,
             commands::bounty_delete_workflow_binding,
             commands::bounty_init_builtin_templates,
@@ -1002,6 +1042,11 @@ pub fn run() {
             commands::surface_get_overview,
             commands::surface_list_assets,
             commands::surface_list_inventory,
+            commands::surface_manual_import_assets,
+            commands::surface_update_asset,
+            commands::surface_delete_asset,
+            commands::surface_batch_delete_assets,
+            commands::surface_delete_inventory,
             commands::surface_list_relations,
             commands::surface_list_discovery_runs,
             commands::surface_get_topology,

@@ -3,231 +3,37 @@
  * 监听后端 Agent 执行事件
  */
 
-import { ref, onMounted, onUnmounted, type Ref, type ComputedRef, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, type Ref } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AgentMessage, MessageType } from '@/types/agent'
 import { useTodos } from '@/composables/useTodos'
 import { useTerminal } from '@/composables/useTerminal'
-
-// 后端发送的 agent:start 事件
-interface AgentStartEvent {
-  execution_id: string
-  task: string
-}
-
-// 后端发送的 agent:chunk 事件
-interface AgentChunkEvent {
-  execution_id: string
-  chunk_type: string  // 'text' | 'reasoning' | 'usage'
-  content?: string
-  input_tokens?: number
-  output_tokens?: number
-}
-
-// 后端发送的 agent:tool_call 事件（旧格式兼容）
-interface AgentToolCallEvent {
-  execution_id: string
-  tool_id: string
-  tool_name: string
-  tool_input: any
-}
-
-// 后端发送的 agent:tool_call_complete 事件（新格式 - rig-core）
-interface AgentToolCallCompleteEvent {
-  execution_id: string
-  tool_call_id: string
-  tool_name: string
-  arguments: string  // JSON 字符串格式的参数
-}
-
-// 后端发送的 agent:tool_result 事件（旧格式兼容）
-interface AgentToolResultEvent {
-  execution_id: string
-  tool_name: string
-  tool_input: any
-  tool_result: string
-}
-
-// 后端发送的 agent:tool_result 事件（新格式 - rig-core）
-interface AgentToolResultNewEvent {
-  execution_id: string
-  tool_call_id: string
-  result: string  // JSON 字符串格式的结果
-  success?: boolean
-}
-
-// 后端发送的 agent:tools_selected 事件
-interface AgentToolsSelectedEvent {
-  execution_id: string
-  tools: string[]
-}
-
-// 后端发送的 agent:tool_executed 事件
-interface AgentToolExecutedEvent {
-  execution_id: string
-  tool: string
-  arguments: any
-  result: string
-  success: boolean
-  iteration: number
-}
-
-// 后端发送的 agent:iteration 事件
-interface AgentIterationEvent {
-  execution_id: string
-  iteration: number
-  max_iterations: number
-}
-
-// 后端发送的 agent:complete 事件
-interface AgentCompleteEvent {
-  execution_id: string
-  success: boolean
-  response?: string
-}
-
-// 后端发送的 agent:error 事件
-interface AgentErrorEvent {
-  execution_id: string
-  error: string
-}
-
-// 后端发送的 agent:segment_summary_created 事件
-interface AgentSegmentSummaryCreatedEvent {
-  conversation_id: string
-  segment_index: number
-  summary: string
-  tokens: number
-}
-
-// 后端发送的 agent:global_summary_updated 事件
-interface AgentGlobalSummaryUpdatedEvent {
-  conversation_id: string
-  summary: string
-  tokens: number
-}
-
-// 后端发送的 agent:retry 事件
-interface AgentRetryEvent {
-  execution_id: string
-  retry_count: number
-  max_retries: number
-  error?: string
-}
-
-// 后端发送的 agent:completion_guard_failed 事件
-interface AgentCompletionGuardFailedEvent {
-  execution_id: string
-  reasons: string[]
-  required_artifact?: string | null
-  response_length?: number
-  tool_calls?: number
-}
-
-// 后端发送的 agent:tenth_man_critique 事件
-interface AgentTenthManCritiqueEvent {
-  execution_id: string
-  critique: string
-  message_id: string
-}
-
-interface SubagentStartEvent {
-  execution_id: string
-  parent_execution_id: string
-  role?: string
-  task: string
-}
-
-interface SubagentDoneEvent {
-  execution_id: string
-  parent_execution_id: string
-  success: boolean
-  output?: string
-}
-
-interface SubagentErrorEvent {
-  execution_id: string
-  parent_execution_id: string
-  error: string
-}
-
-type SubagentStatus = 'running' | 'queued' | 'completed' | 'failed'
-interface SubagentItem {
-  id: string
-  parentId: string
-  role?: string
-  status: SubagentStatus
-  progress?: number
-  summary?: string
-  tools?: string[]
-  task?: string
-  error?: string
-  startedAt?: number
-  duration?: number
-}
-
-// 后端发送的 OrderedMessageChunk 结构 (兼容旧格式)
-interface OrderedMessageChunk {
-  execution_id: string
-  message_id: string
-  conversation_id?: string
-  sequence: number
-  chunk_type: string
-  content: string
-  timestamp: { secs_since_epoch: number; nanos_since_epoch: number }
-  is_final: boolean
-  stage?: string
-  tool_name?: string
-  architecture?: string
-  structured_data?: any
-}
-
-// RAG元信息
-interface RagMetaInfo {
-  rag_applied: boolean
-  rag_sources_used: boolean
-  source_count: number
-  citations?: any[]
-}
-
-// Context usage info
-export interface ContextUsageInfo {
-  usedTokens: number
-  maxTokens: number
-  usagePercentage: number
-  systemPromptTokens: number
-  historyTokens: number
-  historyCount: number
-  summaryTokens: number
-  summaryGlobalTokens: number
-  summarySegmentTokens: number
-  summarySegmentCount: number
-}
-
-export interface UseAgentEventsReturn {
-  messages: Ref<AgentMessage[]>
-  isExecuting: Ref<boolean>
-  currentExecutionId: Ref<string | null>
-  error: Ref<string | null>
-  streamingContent: Ref<string>
-  subagents: Ref<SubagentItem[]>
-  hasMessages: ComputedRef<boolean>
-  lastMessage: ComputedRef<AgentMessage | undefined>
-  ragMetaInfo: Ref<RagMetaInfo | null>
-  contextUsage: Ref<ContextUsageInfo | null>
-  clearMessages: () => void
-  resetError: () => void
-  stopExecution: () => void
-  startListening: () => Promise<void>
-  stopListening: () => void
-  setPendingDocumentAttachments: (docs: any[]) => void
-}
-
-interface UseAgentEventsOptions {
-  suppressUserMessages?: Ref<boolean> | ComputedRef<boolean> | boolean
-  defaultMaxContextTokens?: Ref<number> | ComputedRef<number> | number
-  subagentParentExecutionMatcher?: (parentExecutionId: string) => boolean
-}
+import type {
+  AgentChunkEvent,
+  AgentCompletionGuardFailedEvent,
+  AgentExecutionFinishedEvent,
+  AgentGlobalSummaryUpdatedEvent,
+  AgentIterationEvent,
+  AgentRetryEvent,
+  AgentSegmentSummaryCreatedEvent,
+  AgentStartEvent,
+  AgentTenthManCritiqueEvent,
+  AgentToolCallCompleteEvent,
+  AgentToolCallEvent,
+  AgentToolExecutedEvent,
+  AgentToolResultEvent,
+  AgentToolResultNewEvent,
+  AgentToolsSelectedEvent,
+  ContextUsageInfo,
+  OrderedMessageChunk,
+  RagMetaInfo,
+  SubagentDoneEvent,
+  SubagentErrorEvent,
+  SubagentItem,
+  SubagentStartEvent,
+  UseAgentEventsOptions,
+  UseAgentEventsReturn,
+} from '@/composables/useAgentEventTypes'
 
 /**
  * Agent 事件监听
@@ -362,6 +168,48 @@ export function useAgentEvents(
     } catch {
       return null
     }
+  }
+
+  const resetExecutionBuffers = (): void => {
+    isExecuting.value = false
+    streamingContent.value = ''
+    thinkingBuffer.value = ''
+    currentThinkingMessageId.value = null
+    currentAssistantMessageId.value = null
+    assistantSegmentBuffer.value = ''
+    contentBuffer.value = ''
+  }
+
+  const handleExecutionFinished = (payload: AgentExecutionFinishedEvent): void => {
+    if (!matchesTarget(payload.execution_id)) return
+
+    resetExecutionBuffers()
+
+    if (payload.outcome === 'failed') {
+      const err = payload.error || 'Agent execution failed'
+      error.value = err
+      messages.value.push({
+        id: crypto.randomUUID(),
+        type: 'error',
+        content: err,
+        timestamp: Date.now(),
+      })
+      return
+    }
+
+    error.value = null
+
+    if (payload.outcome === 'succeeded') {
+      if (ragMetaInfo.value) {
+        const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
+        if (lastAssistant) {
+          lastAssistant.metadata = { ...(lastAssistant.metadata || {}), rag_info: ragMetaInfo.value }
+        }
+      }
+      return
+    }
+
+    console.log('[useAgentEvents] Execution cancelled:', payload.execution_id)
   }
 
   const buildShellFallbackNotice = (resultRaw: unknown): string | null => {
@@ -1098,12 +946,16 @@ export function useAgentEvents(
       execution_id: string
       message_id: string
       content: string
+      reasoning_content?: string | null
       timestamp: number
     }>('agent:assistant_message_saved', (event) => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id)) return
 
       console.log('[useAgentEvents] Assistant message saved:', payload.message_id)
+      const reasoningContent = typeof payload.reasoning_content === 'string'
+        ? payload.reasoning_content.trim()
+        : ''
 
       // 检测是否引用了知识库内容
       if (ragMetaInfo.value?.rag_applied) {
@@ -1123,7 +975,28 @@ export function useAgentEvents(
       // So we DO NOT overwrite earlier segments with the full final content here (that would "jump" above tool calls).
       // We only attach metadata to the latest assistant segment if present.
       if (messages.value.length > 0) {
-        const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
+        const lastAssistantIndex = (() => {
+          for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+            if (messages.value[i]?.type === 'final') return i
+          }
+          return -1
+        })()
+        const lastAssistant = lastAssistantIndex >= 0 ? messages.value[lastAssistantIndex] : null
+
+        if (lastAssistant && reasoningContent) {
+          const previousMessage = lastAssistantIndex > 0 ? messages.value[lastAssistantIndex - 1] : null
+          if (previousMessage?.type === 'thinking') {
+            previousMessage.content = reasoningContent
+          } else {
+            messages.value.splice(lastAssistantIndex, 0, {
+              id: `thinking:${payload.message_id}`,
+              type: 'thinking',
+              content: reasoningContent,
+              timestamp: payload.timestamp,
+            })
+          }
+        }
+
         if (lastAssistant) {
           lastAssistant.metadata = ragMetaInfo.value ? { rag_info: ragMetaInfo.value } : lastAssistant.metadata
         }
@@ -1192,37 +1065,10 @@ export function useAgentEvents(
     })
     unlisteners.push(unlistenRagComplete)
 
-    // 监听 agent:complete 事件
-    const unlistenComplete = await listen<AgentCompleteEvent>('agent:complete', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
-
-      isExecuting.value = false
-      streamingContent.value = ''
-      thinkingBuffer.value = ''
-      currentThinkingMessageId.value = null
-      currentAssistantMessageId.value = null
-      assistantSegmentBuffer.value = ''
-
-      // 只有当缓冲区有内容时才尝试添加消息
-      // 注意：agent:assistant_message_saved 事件已经会清空缓冲区，
-      // 所以如果消息已经通过那个事件添加，这里的 contentBuffer 应该是空的
-      const finalContent = contentBuffer.value.trim()
-      if (finalContent) {
-        // Do nothing: segments already reflect the streamed arrival order.
-        // We only attach metadata if needed.
-        if (ragMetaInfo.value) {
-          const lastAssistant = [...messages.value].reverse().find(m => m.type === 'final')
-          if (lastAssistant) {
-            lastAssistant.metadata = { ...(lastAssistant.metadata || {}), rag_info: ragMetaInfo.value }
-          }
-        }
-      }
-
-      // 始终清空缓冲区
-      contentBuffer.value = ''
+    const unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
+      handleExecutionFinished(event.payload)
     })
-    unlisteners.push(unlistenComplete)
+    unlisteners.push(unlistenExecutionFinished)
 
     const unlistenSubagentDone = await listen<SubagentDoneEvent>('subagent:done', (event) => {
       const payload = event.payload
@@ -1246,23 +1092,6 @@ export function useAgentEvents(
       }
     })
     unlisteners.push(unlistenSubagentDone)
-
-    // 监听 agent:error 事件
-    const unlistenError = await listen<AgentErrorEvent>('agent:error', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
-
-      error.value = payload.error
-      isExecuting.value = false
-
-      messages.value.push({
-        id: crypto.randomUUID(),
-        type: 'error',
-        content: payload.error,
-        timestamp: Date.now(),
-      })
-    })
-    unlisteners.push(unlistenError)
 
     const unlistenSubagentError = await listen<SubagentErrorEvent>('subagent:error', (event) => {
       const payload = event.payload
@@ -1521,30 +1350,6 @@ export function useAgentEvents(
       }
     })
     unlisteners.push(unlistenOldChunk)
-
-    // 监听 agent:cancelled 事件（用户取消执行）
-    const unlistenCancelled = await listen<{
-      execution_id: string
-      message: string
-    }>('agent:cancelled', (event) => {
-      const payload = event.payload
-      if (!matchesTarget(payload.execution_id)) return
-
-      console.log('[useAgentEvents] Execution cancelled:', payload.execution_id)
-
-      isExecuting.value = false
-      streamingContent.value = ''
-      contentBuffer.value = ''
-
-      // 可选：添加一条取消消息到聊天记录
-      // messages.value.push({
-      //   id: crypto.randomUUID(),
-      //   type: 'system',
-      //   content: '执行已被用户取消',
-      //   timestamp: Date.now(),
-      // })
-    })
-    unlisteners.push(unlistenCancelled)
 
     // 监听 agent:tenth_man_warning 事件（工具调用前的警告）
     const unlistenTenthManWarning = await listen<{

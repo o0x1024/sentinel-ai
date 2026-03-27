@@ -481,4 +481,20 @@ mod tests {
         assert!(task.enabled);
         assert!(task.next_run_at.is_some());
     }
+
+    #[tokio::test]
+    async fn test_manual_trigger_does_not_reenable_disabled_task() {
+        let scheduler = MonitorScheduler::new();
+
+        let task = MonitorTask::new("prog-1".to_string(), "Test Monitor".to_string(), 3600);
+        let task_id = task.id.clone();
+
+        scheduler.add_task(task).await.unwrap();
+        scheduler.disable_task(&task_id).await.unwrap();
+        scheduler.trigger_task(&task_id).await.unwrap();
+
+        let task = scheduler.get_task(&task_id).await.unwrap();
+        assert!(!task.enabled);
+        assert!(task.next_run_at.is_some());
+    }
 }

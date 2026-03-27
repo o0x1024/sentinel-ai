@@ -143,7 +143,7 @@
             :key="binding.id"
             class="flex items-center justify-between bg-base-200 p-3 rounded-lg"
           >
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 min-w-0">
               <div class="form-control">
                 <input 
                   type="checkbox" 
@@ -152,12 +152,24 @@
                   @change="toggleBinding(binding)"
                 />
               </div>
-              <div>
+              <div class="min-w-0">
                 <div class="font-medium">{{ getTemplateName(binding.workflow_template_id) }}</div>
-                <div class="text-xs text-base-content/60">
+                <div class="mt-1 flex flex-wrap gap-1">
+                  <span v-if="binding.scope_id" class="badge badge-outline badge-xs">
+                    {{ getScopeName(binding.program_id, binding.scope_id) }}
+                  </span>
                   <span v-if="binding.auto_run_on_change" class="badge badge-success badge-xs mr-1">
                     {{ t('bugBounty.workflowTemplates.autoRun') }}
                   </span>
+                  <span
+                    v-for="summary in getBindingConditionSummaries(binding)"
+                    :key="summary"
+                    class="badge badge-ghost badge-xs"
+                  >
+                    {{ summary }}
+                  </span>
+                </div>
+                <div class="text-xs text-base-content/60 mt-1">
                   <span v-if="binding.last_run_at">
                     {{ t('bugBounty.workflowTemplates.lastRun') }}: {{ formatDate(binding.last_run_at) }}
                   </span>
@@ -168,6 +180,9 @@
               <span class="badge badge-ghost badge-sm">
                 {{ binding.run_count }} {{ t('bugBounty.workflowTemplates.runs') }}
               </span>
+              <button class="btn btn-ghost btn-xs" :title="t('common.edit')" @click="openEditBinding(binding)">
+                <i class="fas fa-pen"></i>
+              </button>
               <button class="btn btn-ghost btn-xs text-error" @click="deleteBinding(binding)">
                 <i class="fas fa-unlink"></i>
               </button>
@@ -299,14 +314,168 @@
           </label>
         </div>
 
+        <div v-if="singleBindProgramId" class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.scope') }}</span></label>
+          <select v-model="bindForm.scope_id" class="select select-bordered">
+            <option value="">{{ t('bugBounty.workflowTemplates.allScopes') }}</option>
+            <option v-for="scope in singleBindProgramScopes" :key="scope.id" :value="scope.id">
+              {{ formatScopeOption(scope) }}
+            </option>
+          </select>
+          <label v-if="singleBindProgramScopes.length === 0" class="label">
+            <span class="label-text-alt text-base-content/60">{{ t('bugBounty.workflowTemplates.noScopes') }}</span>
+          </label>
+        </div>
+
+        <div v-else-if="bindForm.program_ids.length > 1" class="alert alert-info mb-4 text-sm">
+          <i class="fas fa-info-circle"></i>
+          <span>{{ t('bugBounty.workflowTemplates.scopeSingleProgramHint') }}</span>
+        </div>
+
+        <div class="divider">{{ t('bugBounty.workflowTemplates.triggerConditions') }}</div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.eventTypes') }}</span></label>
+          <div class="grid grid-cols-2 gap-2 rounded-lg border border-base-300 bg-base-200/40 p-3">
+            <label
+              v-for="option in triggerEventTypeOptions"
+              :key="option.value"
+              class="flex items-center gap-2 cursor-pointer text-sm"
+            >
+              <input
+                type="checkbox"
+                class="checkbox checkbox-primary checkbox-sm"
+                :checked="bindForm.trigger_event_types.includes(option.value)"
+                @change="toggleTriggerEventType(bindForm.trigger_event_types, option.value, ($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ option.label }}</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.minSeverity') }}</span></label>
+          <select v-model="bindForm.min_severity" class="select select-bordered">
+            <option value="">{{ t('common.all') }}</option>
+            <option v-for="option in severityOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </div>
+
+        <div class="form-control mb-4">
+          <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.assetTags') }}</span></label>
+          <input
+            v-model="bindForm.asset_tags"
+            type="text"
+            class="input input-bordered"
+            :placeholder="t('bugBounty.workflowTemplates.assetTagsPlaceholder')"
+          />
+        </div>
+
         <div class="modal-action">
-          <button class="btn btn-ghost" @click="showBindModal = false">{{ t('common.cancel') }}</button>
+          <button class="btn btn-ghost" @click="closeBindModal">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="createBinding" :disabled="bindForm.program_ids.length === 0">
             {{ t('bugBounty.workflowTemplates.bind') }}
           </button>
         </div>
       </div>
-      <div class="modal-backdrop" @click="showBindModal = false"></div>
+      <div class="modal-backdrop" @click="closeBindModal"></div>
+    </div>
+      </Transition>
+    </Teleport>
+
+    <!-- Edit Binding Modal -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showEditBindingModal" class="modal modal-open">
+          <div class="modal-box max-w-2xl">
+        <h3 class="font-bold text-lg mb-4">{{ t('common.edit') }} {{ getTemplateName(editingBinding?.workflow_template_id || '') }}</h3>
+
+        <div v-if="editingBinding" class="space-y-4">
+          <div class="flex flex-wrap gap-2">
+            <span class="badge badge-primary">{{ getProgramName(editingBinding.program_id) }}</span>
+            <span class="badge badge-outline">{{ editingBinding.id }}</span>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">{{ t('bugBounty.workflowTemplates.enabled') }}</span>
+              <input v-model="editForm.is_enabled" type="checkbox" class="checkbox checkbox-primary" />
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label cursor-pointer">
+              <span class="label-text">{{ t('bugBounty.workflowTemplates.autoRunOnChange') }}</span>
+              <input v-model="editForm.auto_run_on_change" type="checkbox" class="checkbox checkbox-primary" />
+            </label>
+          </div>
+
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.scope') }}</span></label>
+            <select v-model="editForm.scope_id" class="select select-bordered">
+              <option value="">{{ t('bugBounty.workflowTemplates.allScopes') }}</option>
+              <option v-for="scope in editingBindingScopes" :key="scope.id" :value="scope.id">
+                {{ formatScopeOption(scope) }}
+              </option>
+            </select>
+            <label v-if="editingBindingScopes.length === 0" class="label">
+              <span class="label-text-alt text-base-content/60">{{ t('bugBounty.workflowTemplates.noScopes') }}</span>
+            </label>
+          </div>
+
+          <div class="divider">{{ t('bugBounty.workflowTemplates.triggerConditions') }}</div>
+
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.eventTypes') }}</span></label>
+            <div class="grid grid-cols-2 gap-2 rounded-lg border border-base-300 bg-base-200/40 p-3">
+              <label
+                v-for="option in triggerEventTypeOptions"
+                :key="option.value"
+                class="flex items-center gap-2 cursor-pointer text-sm"
+              >
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-primary checkbox-sm"
+                  :checked="editForm.trigger_event_types.includes(option.value)"
+                  @change="toggleTriggerEventType(editForm.trigger_event_types, option.value, ($event.target as HTMLInputElement).checked)"
+                />
+                <span>{{ option.label }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.minSeverity') }}</span></label>
+            <select v-model="editForm.min_severity" class="select select-bordered">
+              <option value="">{{ t('common.all') }}</option>
+              <option v-for="option in severityOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-control">
+            <label class="label"><span class="label-text">{{ t('bugBounty.workflowTemplates.assetTags') }}</span></label>
+            <input
+              v-model="editForm.asset_tags"
+              type="text"
+              class="input input-bordered"
+              :placeholder="t('bugBounty.workflowTemplates.assetTagsPlaceholder')"
+            />
+          </div>
+        </div>
+
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeEditBindingModal">{{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" :disabled="savingBinding" @click="saveEditedBinding">
+            <span v-if="savingBinding" class="loading loading-spinner loading-sm mr-2"></span>
+            {{ t('common.save') }}
+          </button>
+        </div>
+      </div>
+      <div class="modal-backdrop" @click="closeEditBindingModal"></div>
     </div>
       </Transition>
     </Teleport>
@@ -314,10 +483,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
+import { computed, ref, reactive, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
+import { dialog } from '../../composables/useDialog'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -338,8 +508,26 @@ const bindings = ref<any[]>([])
 const allBindings = ref<any[]>([]) // All bindings for all templates
 const showCreateModal = ref(false)
 const showBindModal = ref(false)
+const showEditBindingModal = ref(false)
 const selectedTemplate = ref<any>(null)
+const editingBinding = ref<any>(null)
+const savingBinding = ref(false)
+const scopesByProgram = ref<Record<string, any[]>>({})
 const workflowTemplateCategories = ['recon', 'discovery', 'monitoring', 'risk', 'api']
+const triggerEventTypeOptions = [
+  { value: 'asset_discovered', label: t('bugBounty.changeEvents.types.assetDiscovered') },
+  { value: 'dns_change', label: t('bugBounty.changeEvents.types.dnsChange') },
+  { value: 'certificate_change', label: t('bugBounty.changeEvents.types.certificateChange') },
+  { value: 'content_change', label: t('bugBounty.changeEvents.types.contentChange') },
+  { value: 'technology_change', label: t('bugBounty.changeEvents.types.technologyChange') },
+  { value: 'api_change', label: t('bugBounty.changeEvents.types.apiChange') },
+]
+const severityOptions = [
+  { value: 'low', label: t('bugBounty.severity.low') },
+  { value: 'medium', label: t('bugBounty.severity.medium') },
+  { value: 'high', label: t('bugBounty.severity.high') },
+  { value: 'critical', label: t('bugBounty.severity.critical') },
+]
 
 const filter = reactive({
   category: '',
@@ -357,7 +545,35 @@ const createLoading = ref(false)
 
 const bindForm = reactive({
   program_ids: [] as string[],
+  scope_id: '',
   auto_run_on_change: false,
+  trigger_event_types: [] as string[],
+  min_severity: '',
+  asset_tags: '',
+})
+
+const editForm = reactive({
+  scope_id: '',
+  is_enabled: true,
+  auto_run_on_change: false,
+  trigger_event_types: [] as string[],
+  min_severity: '',
+  asset_tags: '',
+})
+
+const singleBindProgramId = computed(() =>
+  bindForm.program_ids.length === 1 ? bindForm.program_ids[0] : '',
+)
+
+const singleBindProgramScopes = computed(() => {
+  if (!singleBindProgramId.value) return []
+  return scopesByProgram.value[singleBindProgramId.value] || []
+})
+
+const editingBindingScopes = computed(() => {
+  const programId = editingBinding.value?.program_id
+  if (!programId) return []
+  return scopesByProgram.value[programId] || []
 })
 
 // Methods
@@ -385,7 +601,10 @@ const ensureBuiltinTemplates = async () => {
 }
 
 const loadBindings = async () => {
-  if (!props.selectedProgram) return
+  if (!props.selectedProgram) {
+    bindings.value = []
+    return
+  }
   try {
     bindings.value = await invoke('bounty_list_workflow_bindings', {
       programId: props.selectedProgram.id,
@@ -394,6 +613,23 @@ const loadBindings = async () => {
     })
   } catch (error) {
     console.error('Failed to load bindings:', error)
+  }
+}
+
+const loadScopesForProgram = async (programId?: string) => {
+  if (!programId || scopesByProgram.value[programId]) return
+  try {
+    const scopes = await invoke<any[]>('bounty_list_scopes', {
+      filter: {
+        program_ids: [programId],
+      },
+    })
+    scopesByProgram.value = {
+      ...scopesByProgram.value,
+      [programId]: scopes,
+    }
+  } catch (error) {
+    console.error('Failed to load program scopes:', error)
   }
 }
 
@@ -486,9 +722,24 @@ const deleteTemplate = async (template: any) => {
 
 const bindToProgram = (template: any) => {
   selectedTemplate.value = template
+  resetBindForm()
   bindForm.program_ids = props.selectedProgram?.id ? [props.selectedProgram.id] : []
-  bindForm.auto_run_on_change = false
   showBindModal.value = true
+}
+
+const closeBindModal = () => {
+  showBindModal.value = false
+  selectedTemplate.value = null
+  resetBindForm()
+}
+
+const resetBindForm = () => {
+  bindForm.program_ids = []
+  bindForm.scope_id = ''
+  bindForm.auto_run_on_change = false
+  bindForm.trigger_event_types = []
+  bindForm.min_severity = ''
+  bindForm.asset_tags = ''
 }
 
 const createBinding = async () => {
@@ -509,9 +760,11 @@ const createBinding = async () => {
     await Promise.all(pendingProgramIds.map(programId => invoke('bounty_create_workflow_binding', {
       request: {
         program_id: programId,
+        scope_id: targetProgramIds.length === 1 ? normalizeScopeId(bindForm.scope_id) : null,
         workflow_template_id: selectedTemplate.value.id,
         is_enabled: true,
         auto_run_on_change: bindForm.auto_run_on_change,
+        trigger_conditions: buildTriggerConditionsPayload(bindForm),
       },
     })))
 
@@ -519,7 +772,7 @@ const createBinding = async () => {
     if (existingProgramIds.length > 0) {
       toast.info(t('bugBounty.workflowTemplates.bindingSkippedCount', { count: existingProgramIds.length }))
     }
-    showBindModal.value = false
+    closeBindModal()
     await loadBindings()
     await loadAllBindings() // Reload all bindings to update template cards
   } catch (error) {
@@ -529,12 +782,81 @@ const createBinding = async () => {
 }
 
 const toggleBinding = async (binding: any) => {
-  // TODO: Update binding enabled state
-  toast.info(t('bugBounty.comingSoon'))
+  try {
+    await invoke('bounty_update_workflow_binding', {
+      id: binding.id,
+      request: buildBindingUpdateRequest(binding, {
+        is_enabled: !binding.is_enabled,
+      }),
+    })
+    await loadBindings()
+    await loadAllBindings()
+  } catch (error) {
+    console.error('Failed to update workflow binding:', error)
+    toast.error(t('bugBounty.errors.updateFailed'))
+  }
+}
+
+const openEditBinding = async (binding: any) => {
+  editingBinding.value = binding
+  await loadScopesForProgram(binding.program_id)
+  populateEditForm(binding)
+  showEditBindingModal.value = true
+}
+
+const closeEditBindingModal = () => {
+  showEditBindingModal.value = false
+  editingBinding.value = null
+  resetEditForm()
+}
+
+const resetEditForm = () => {
+  editForm.scope_id = ''
+  editForm.is_enabled = true
+  editForm.auto_run_on_change = false
+  editForm.trigger_event_types = []
+  editForm.min_severity = ''
+  editForm.asset_tags = ''
+}
+
+const populateEditForm = (binding: any) => {
+  const conditions = parseTriggerConditions(binding.trigger_conditions_json)
+  editForm.scope_id = binding.scope_id || ''
+  editForm.is_enabled = binding.is_enabled
+  editForm.auto_run_on_change = binding.auto_run_on_change
+  editForm.trigger_event_types = [...conditions.event_types]
+  editForm.min_severity = conditions.min_severity
+  editForm.asset_tags = conditions.asset_tags
+}
+
+const saveEditedBinding = async () => {
+  if (!editingBinding.value) return
+  try {
+    savingBinding.value = true
+    await invoke('bounty_update_workflow_binding', {
+      id: editingBinding.value.id,
+      request: {
+        scope_id: normalizeScopeId(editForm.scope_id),
+        is_enabled: editForm.is_enabled,
+        auto_run_on_change: editForm.auto_run_on_change,
+        trigger_conditions: buildTriggerConditionsPayload(editForm),
+        schedule_cron: editingBinding.value.schedule_cron || null,
+      },
+    })
+    toast.success(t('bugBounty.workflowTemplates.bindingUpdated'))
+    closeEditBindingModal()
+    await loadBindings()
+    await loadAllBindings()
+  } catch (error) {
+    console.error('Failed to save workflow binding:', error)
+    toast.error(t('bugBounty.errors.updateFailed'))
+  } finally {
+    savingBinding.value = false
+  }
 }
 
 const deleteBinding = async (binding: any) => {
-  if (!confirm(t('bugBounty.workflowTemplates.confirmUnbind'))) return
+  if (!(await dialog.confirm(t('bugBounty.workflowTemplates.confirmUnbind')))) return
   try {
     await invoke('bounty_delete_workflow_binding', { id: binding.id })
     toast.success(t('bugBounty.workflowTemplates.unbindSuccess'))
@@ -589,6 +911,16 @@ const toggleBindProgram = (programId: string, checked: boolean) => {
   bindForm.program_ids = bindForm.program_ids.filter(id => id !== programId)
 }
 
+const toggleTriggerEventType = (values: string[], eventType: string, checked: boolean) => {
+  if (checked) {
+    values.push(eventType)
+    return
+  }
+
+  const index = values.indexOf(eventType)
+  if (index >= 0) values.splice(index, 1)
+}
+
 const selectAllPrograms = () => {
   bindForm.program_ids = props.programs.map(program => program.id)
 }
@@ -600,6 +932,88 @@ const clearSelectedPrograms = () => {
 const getTemplateName = (templateId: string) => {
   const template = templates.value.find(t => t.id === templateId)
   return template?.name || templateId
+}
+
+const getProgramName = (programId: string) => {
+  const program = props.programs.find(p => p.id === programId)
+  return program?.name || programId
+}
+
+const normalizeScopeId = (scopeId: string) => {
+  const trimmed = scopeId.trim()
+  return trimmed ? trimmed : null
+}
+
+const parseTriggerConditions = (conditionsJson?: string | null) => {
+  if (!conditionsJson) {
+    return {
+      event_types: [] as string[],
+      min_severity: '',
+      asset_tags: '',
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(conditionsJson)
+    return {
+      event_types: Array.isArray(parsed?.event_types) ? parsed.event_types : [],
+      min_severity: parsed?.min_severity || '',
+      asset_tags: Array.isArray(parsed?.asset_tags) ? parsed.asset_tags.join(', ') : '',
+    }
+  } catch {
+    return {
+      event_types: [] as string[],
+      min_severity: '',
+      asset_tags: '',
+    }
+  }
+}
+
+const buildTriggerConditionsPayload = (form: {
+  trigger_event_types: string[]
+  min_severity: string
+  asset_tags: string
+}) => {
+  const payload: Record<string, unknown> = {}
+  const eventTypes = [...new Set(form.trigger_event_types)].filter(Boolean)
+  const assetTags = form.asset_tags
+    .split(',')
+    .map(tag => tag.trim())
+    .filter(Boolean)
+
+  if (eventTypes.length > 0) payload.event_types = eventTypes
+  if (form.min_severity) payload.min_severity = form.min_severity
+  if (assetTags.length > 0) payload.asset_tags = assetTags
+
+  return Object.keys(payload).length > 0 ? payload : null
+}
+
+const buildBindingUpdateRequest = (binding: any, overrides: Record<string, any> = {}) => {
+  const conditions = parseTriggerConditions(binding.trigger_conditions_json)
+  return {
+    scope_id: binding.scope_id || null,
+    is_enabled: binding.is_enabled,
+    auto_run_on_change: binding.auto_run_on_change,
+    trigger_conditions: buildTriggerConditionsPayload({
+      trigger_event_types: conditions.event_types,
+      min_severity: conditions.min_severity,
+      asset_tags: conditions.asset_tags,
+    }),
+    schedule_cron: binding.schedule_cron || null,
+    ...overrides,
+  }
+}
+
+const getScopeName = (programId: string, scopeId?: string | null) => {
+  if (!scopeId) return ''
+  const scopes = scopesByProgram.value[programId] || []
+  const scope = scopes.find(item => item.id === scopeId)
+  return scope ? formatScopeOption(scope) : scopeId
+}
+
+const formatScopeOption = (scope: any) => {
+  const target = scope.target || scope.id
+  return scope.description ? `${target} (${scope.description})` : target
 }
 
 const formatDate = (date: string) => {
@@ -617,6 +1031,21 @@ const getBoundPrograms = (templateId: string) => {
   return [...new Set(programNames)]
 }
 
+const getBindingConditionSummaries = (binding: any) => {
+  const conditions = parseTriggerConditions(binding.trigger_conditions_json)
+  const summaries: string[] = []
+  if (conditions.event_types.length > 0) {
+    summaries.push(`${conditions.event_types.length} ${t('bugBounty.workflowTemplates.eventTypes')}`)
+  }
+  if (conditions.min_severity) {
+    summaries.push(`${t('bugBounty.workflowTemplates.minSeverity')}: ${conditions.min_severity}`)
+  }
+  if (conditions.asset_tags) {
+    summaries.push(conditions.asset_tags)
+  }
+  return summaries
+}
+
 // Lifecycle
 onMounted(async () => {
   await ensureBuiltinTemplates()
@@ -624,11 +1053,18 @@ onMounted(async () => {
   await loadAllBindings()
   if (props.selectedProgram) {
     await loadBindings()
+    await loadScopesForProgram(props.selectedProgram.id)
   }
 })
 
 watch(() => props.selectedProgram?.id, async () => {
   await loadBindings()
+  await loadScopesForProgram(props.selectedProgram?.id)
+})
+
+watch(singleBindProgramId, async programId => {
+  bindForm.scope_id = ''
+  await loadScopesForProgram(programId)
 })
 </script>
 

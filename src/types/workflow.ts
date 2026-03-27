@@ -2,6 +2,7 @@ export type PortType = 'String' | 'Integer' | 'Float' | 'Boolean' | 'Json' | 'Ar
 
 export interface JsonSchema {
   type?: string
+  description?: string
   properties?: Record<string, JsonSchema>
   items?: JsonSchema
   enum?: string[]
@@ -39,12 +40,19 @@ export interface NodeDef {
   output_ports: PortDef[]
 }
 
+export type EdgeSourceScope = 'output' | 'input'
+export type EdgeMergeMode = 'replace' | 'deep_merge' | 'append'
+
 export interface EdgeDef {
   id: string
   from_node: string
   from_port: string
   to_node: string
   to_port: string
+  source_scope?: EdgeSourceScope
+  source_path?: string
+  target_path?: string
+  merge_mode?: EdgeMergeMode
 }
 
 export interface WorkflowGraph {
@@ -87,6 +95,15 @@ export function validate_workflow_graph(graph: WorkflowGraph): WorkflowValidatio
   })
 
   graph.edges.forEach(e => {
+    if (e.source_scope && !['output', 'input'].includes(e.source_scope)) {
+      issues.push({ code: 'edge_source_scope_invalid', message: `invalid source_scope: ${e.source_scope}`, edge_id: e.id })
+    }
+    if (e.merge_mode && !['replace', 'deep_merge', 'append'].includes(e.merge_mode)) {
+      issues.push({ code: 'edge_merge_mode_invalid', message: `invalid merge_mode: ${e.merge_mode}`, edge_id: e.id })
+    }
+    if (!e.target_path?.trim()) {
+      issues.push({ code: 'edge_target_path_missing', message: 'target_path is required', edge_id: e.id, node_id: e.to_node })
+    }
     if (!node_ids.has(e.from_node)) {
       issues.push({ code: 'edge_from_missing', message: `from_node not found: ${e.from_node}`, edge_id: e.id })
     } else if (!node_port_map[e.from_node].outputs.has(e.from_port)) {

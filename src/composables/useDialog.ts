@@ -156,21 +156,39 @@ class DialogService {
       ? `<input id="dialog-input" class="input input-bordered w-full" placeholder="${options.placeholder || ''}" value="${options.defaultValue || ''}" />`
       : '';
     const cancelHtml = options.type === 'confirm' || isInput
-      ? `<button id="dialog-cancel-btn" class="btn">${options.cancelText}</button>`
+      ? `<button id="dialog-cancel-btn" class="btn btn-ghost">${options.cancelText}</button>`
       : '';
+    
+    // 确定确认按钮的样式
+    let confirmBtnClass = 'btn';
+    switch (options.variant) {
+      case 'error':
+      case 'warning':
+        confirmBtnClass += ' btn-error';
+        break;
+      case 'success':
+        confirmBtnClass += ' btn-success';
+        break;
+      case 'info':
+        confirmBtnClass += ' btn-info';
+        break;
+      default:
+        confirmBtnClass += ' btn-primary';
+    }
+
     const modalContent = `
       <div class="modal-box">
-        <div class="flex items-center gap-3 mb-4">
-          ${icon ? `<div class="text-${options.variant} text-2xl">${icon}</div>` : ''}
-          <h3 class="font-bold text-lg">${options.title || ''}</h3>
-        </div>
+        ${options.title ? `<div class="flex items-center gap-3 mb-4">
+          ${icon ? `<div class="text-2xl">${icon}</div>` : ''}
+          <h3 class="font-bold text-lg">${options.title}</h3>
+        </div>` : ''}
         <div class="py-2 space-y-3">
           <p>${options.message}</p>
           ${inputHtml}
         </div>
         <div class="modal-action">
           ${cancelHtml}
-          <button id="dialog-confirm-btn" class="btn ${options.variant ? 'btn-' + options.variant : ''}">${options.confirmText}</button>
+          <button id="dialog-confirm-btn" class="${confirmBtnClass}">${options.confirmText}</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
@@ -185,7 +203,17 @@ class DialogService {
     const modal = this.modalContainer as HTMLDialogElement;
     modal.showModal();
 
-    // 添加事件监听
+    // 移除旧事件监听器
+    const oldConfirmBtn = document.getElementById('dialog-confirm-btn');
+    const oldCancelBtn = document.getElementById('dialog-cancel-btn');
+    if (oldConfirmBtn) {
+      oldConfirmBtn.replaceWith(oldConfirmBtn.cloneNode(true));
+    }
+    if (oldCancelBtn) {
+      oldCancelBtn.replaceWith(oldCancelBtn.cloneNode(true));
+    }
+
+    // 添加新事件监听
     const confirmBtn = document.getElementById('dialog-confirm-btn');
     if (confirmBtn) {
       confirmBtn.addEventListener('click', () => {

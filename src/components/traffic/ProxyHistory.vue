@@ -72,6 +72,13 @@
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="sendToIntruder"
+      >
+        <i class="fas fa-crosshairs text-secondary"></i>
+        {{ $t('trafficAnalysis.history.contextMenu.sendToIntruder') }}
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
         @click="sendRequestToAssistantFromMenu"
       >
         <i class="fas fa-upload text-accent"></i>
@@ -182,6 +189,13 @@
       >
         <i class="fas fa-redo text-primary"></i>
         {{ $t('trafficAnalysis.history.contextMenu.sendToRepeater') }}
+      </button>
+      <button 
+        class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+        @click="detailSendToIntruder"
+      >
+        <i class="fas fa-crosshairs text-secondary"></i>
+        {{ $t('trafficAnalysis.history.contextMenu.sendToIntruder') }}
       </button>
       <button 
         class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
@@ -485,121 +499,22 @@
       </form>
     </dialog>
 
-    <!-- 筛选器工具栏 -->
-    <div class="bg-base-100 border-b border-base-300 p-2 flex-shrink-0">
-      <div class="flex items-center gap-2">
-        <!-- 协议类型切换 -->
-        <div class="tabs tabs-boxed tabs-xs bg-base-200 p-0.5">
-          <a 
-            class="tab tab-xs"
-            :class="{ 'tab-active': protocolFilter === 'all' }"
-            @click="protocolFilter = 'all'"
-          >All</a>
-          <a 
-            class="tab tab-xs"
-            :class="{ 'tab-active': protocolFilter === 'http' }"
-            @click="protocolFilter = 'http'"
-          >HTTP</a>
-          <a 
-            class="tab tab-xs"
-            :class="{ 'tab-active': protocolFilter === 'websocket' }"
-            @click="protocolFilter = 'websocket'"
-          >
-            <i class="fas fa-plug mr-1"></i>WS
-          </a>
-        </div>
-        
-        <!-- 筛选器状态按钮 -->
-        <button 
-          @click="openFilterDialog" 
-          class="btn btn-sm btn-ghost gap-2 border border-base-300 flex-1 justify-start"
-          :class="{ 'border-primary': hasActiveFilters }"
-        >
-          <i class="fas fa-filter" :class="{ 'text-primary': hasActiveFilters }"></i>
-          <span class="text-xs truncate">{{ filterSummary }}</span>
-        </button>
-        
-        <!-- 多选模式按钮 -->
-        <button 
-          @click="toggleMultiSelectMode" 
-          class="btn btn-sm btn-ghost"
-          :class="{ 'btn-active btn-primary': isMultiSelectMode }"
-          :title="$t('trafficAnalysis.history.toolbar.filter')"
-        >
-          <i class="fas fa-check-square"></i>
-        </button>
-        
-        <!-- 多选模式下的操作按钮 -->
-        <template v-if="isMultiSelectMode">
-          <button 
-            @click="selectAllVisible" 
-            class="btn btn-sm btn-ghost"
-            :title="$t('trafficAnalysis.history.toolbar.clear')"
-          >
-            <i class="fas fa-check-double"></i>
-          </button>
-          <button 
-            @click="clearSelection" 
-            class="btn btn-sm btn-ghost"
-            :title="$t('trafficAnalysis.history.toolbar.refresh')"
-            :disabled="selectedRequests.size === 0"
-          >
-            <i class="fas fa-times"></i>
-          </button>
-          <div class="dropdown dropdown-end">
-            <label 
-              tabindex="0" 
-              class="btn btn-sm btn-accent gap-1"
-              :class="{ 'btn-disabled': selectedRequests.size === 0 }"
-            >
-              <i class="fas fa-brain"></i>
-              <span class="text-xs">{{ $t('trafficAnalysis.history.toolbar.export') }} ({{ selectedRequests.size }})</span>
-              <i class="fas fa-chevron-down text-xs"></i>
-            </label>
-            <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow bg-base-100 rounded-box w-56">
-              <li class="menu-title"><span>{{ $t('trafficAnalysis.history.export.sendToAssistant') }}</span></li>
-              <li>
-                <a @click="sendSelectedToAssistant('request')" class="flex items-center gap-2">
-                  <i class="fas fa-upload text-accent"></i>
-                  {{ $t('trafficAnalysis.history.contextMenu.sendRequestToAssistant') }}
-                </a>
-              </li>
-              <li>
-                <a @click="sendSelectedToAssistant('response')" class="flex items-center gap-2">
-                  <i class="fas fa-download text-accent"></i>
-                  {{ $t('trafficAnalysis.history.contextMenu.sendResponseToAssistant') }}
-                </a>
-              </li>
-              <div class="divider my-1"></div>
-              <li class="menu-title"><span>{{ $t('trafficAnalysis.history.export.exportToFile') }}</span></li>
-              <li>
-                <a @click="exportSelectedToFile('request')" class="flex items-center gap-2">
-                  <i class="fas fa-file-export text-info"></i>
-                  {{ $t('trafficAnalysis.history.export.exportRequest') }}
-                </a>
-              </li>
-              <li>
-                <a @click="exportSelectedToFile('response')" class="flex items-center gap-2">
-                  <i class="fas fa-file-download text-info"></i>
-                  {{ $t('trafficAnalysis.history.export.exportResponse') }}
-                </a>
-              </li>
-              <li>
-                <a @click="exportAsHAR" class="flex items-center gap-2">
-                  <i class="fas fa-file-code text-success"></i>
-                  {{ $t('trafficAnalysis.history.export.exportHAR') }}
-                </a>
-              </li>
-            </ul>
-          </div>
-        </template>
-        
-        <!-- 快捷操作按钮 -->
-        <button @click="refreshRequests" class="btn btn-sm btn-ghost" :title="$t('trafficAnalysis.history.toolbar.refresh')">
-          <i :class="['fas fa-sync-alt', { 'fa-spin': isLoading }]"></i>
-        </button>
-      </div>
-    </div>
+    <ProxyHistoryToolbar
+      :protocol-filter="protocolFilter"
+      :has-active-filters="hasActiveFilters"
+      :filter-summary="filterSummary"
+      :is-multi-select-mode="isMultiSelectMode"
+      :open-filter-dialog="openFilterDialog"
+      :toggle-multi-select-mode="toggleMultiSelectMode"
+      :select-all-visible="selectAllVisible"
+      :clear-selection="clearSelection"
+      :send-selected-to-assistant="sendSelectedToAssistant"
+      :export-selected-to-file="exportSelectedToFile"
+      :export-as-har="exportAsHAR"
+      :refresh-requests="refreshRequests"
+      :clear-history="clearHistory"
+      @update:protocol-filter="protocolFilter = $event"
+    />
 
     <!-- 可调整大小的上下分割布局 -->
     <div ref="mainContainer" class="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -638,242 +553,43 @@
         </div>
 
         <!-- 虚拟滚动列表容器 -->
-        <div 
-          ref="scrollContainer" 
-          class="flex-1 overflow-auto min-h-0"
-          @scroll="handleScroll"
-        >
-          <div v-if="isLoading || isLoadingWs" class="flex items-center justify-center h-full">
-            <i class="fas fa-spinner fa-spin text-2xl"></i>
-          </div>
-
-          <!-- WebSocket 连接列表 -->
-          <div v-else-if="protocolFilter === 'websocket'" class="p-2">
-            <div v-if="wsConnections.length === 0" class="flex flex-col items-center justify-center h-32 text-base-content/50">
-              <i class="fas fa-plug text-3xl mb-2"></i>
-              <span class="text-sm">No WebSocket connections yet</span>
-            </div>
-            <div v-else class="space-y-2">
-              <div 
-                v-for="conn in wsConnections" 
-                :key="conn.id"
-                class="bg-base-100 border border-base-300 rounded-lg overflow-hidden"
-              >
-                <!-- 连接头部 -->
-                <div 
-                  class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-base-200"
-                  @click="toggleWsConnection(conn.id)"
-                >
-                  <i 
-                    class="fas fa-chevron-right transition-transform duration-200"
-                    :class="{ 'rotate-90': expandedWsConnections.has(conn.id) }"
-                  ></i>
-                  <span 
-                    class="badge badge-xs"
-                    :class="{
-                      'badge-success': conn.status === 'open',
-                      'badge-ghost': conn.status === 'closed',
-                      'badge-error': conn.status === 'error'
-                    }"
-                  >
-                    {{ conn.status }}
-                  </span>
-                  <span class="text-xs font-mono text-primary truncate flex-1">{{ conn.url }}</span>
-                  <span class="text-xs text-base-content/50">{{ conn.host }}</span>
-                  <span class="text-xs text-base-content/40">{{ formatWsTime(conn.opened_at) }}</span>
-                </div>
-                
-                <!-- 展开区域 -->
-                <div 
-                  v-if="expandedWsConnections.has(conn.id)"
-                  class="border-t border-base-300 bg-base-200/30"
-                >
-                  <!-- 内部 Tabs -->
-                  <div class="tabs tabs-boxed tabs-xs bg-transparent p-2 justify-start rounded-none border-b border-base-300/50">
-                    <a 
-                      class="tab tab-xs" 
-                      :class="{ 'tab-active': getWsActiveTab(conn.id) === 'messages' }"
-                      @click.stop="setWsActiveTab(conn.id, 'messages')"
-                    >
-                      Messages ({{ conn.message_ids?.length || 0 }})
-                    </a>
-                    <a 
-                      class="tab tab-xs" 
-                      :class="{ 'tab-active': getWsActiveTab(conn.id) === 'handshake' }"
-                      @click.stop="setWsActiveTab(conn.id, 'handshake')"
-                    >
-                      Handshake
-                    </a>
-                  </div>
-
-                  <!-- 消息列表 -->
-                  <div v-if="getWsActiveTab(conn.id) === 'messages'" class="max-h-64 overflow-y-auto">
-                    <div 
-                      v-for="msg in getWsMessagesForConnection(conn.id)"
-                      :key="msg.id"
-                      class="flex items-start gap-2 px-4 py-1.5 text-xs border-b border-base-300/50 last:border-0 hover:bg-base-200/50 transition-colors"
-                      :class="{
-                        'bg-success/5': msg.direction === 'send',
-                        'bg-info/5': msg.direction === 'receive'
-                      }"
-                    >
-                      <i 
-                        class="text-base"
-                        :class="{
-                          'fas fa-arrow-up text-success': msg.direction === 'send',
-                          'fas fa-arrow-down text-info': msg.direction === 'receive'
-                        }"
-                        :title="msg.direction === 'send' ? $t('trafficAnalysis.history.websocket.toServer') : $t('trafficAnalysis.history.websocket.fromServer')"
-                      ></i>
-                      <span 
-                        class="badge badge-xs font-mono"
-                        :class="{
-                          'badge-primary': msg.message_type === 'text',
-                          'badge-secondary': msg.message_type === 'binary',
-                          'badge-ghost': ['ping', 'pong'].includes(msg.message_type),
-                          'badge-warning': msg.message_type === 'close'
-                        }"
-                      >{{ msg.message_type }}</span>
-                      <div class="flex-1 min-w-0 font-mono break-all select-text">
-                        {{ truncateWsContent(msg.content) }}
-                      </div>
-                      <span class="text-base-content/40 whitespace-nowrap">{{ msg.content_length }}B</span>
-                      <span class="text-base-content/40 whitespace-nowrap">{{ formatWsTime(msg.timestamp) }}</span>
-                    </div>
-                    <div v-if="getWsMessagesForConnection(conn.id).length === 0" class="text-center py-4 text-base-content/50 text-xs">
-                      No messages recorded yet
-                    </div>
-                  </div>
-
-                  <!-- 握手详情 -->
-                  <div v-else class="p-4 grid grid-cols-2 gap-4 text-xs font-mono">
-                    <div class="bg-base-100 p-3 rounded border border-base-300">
-                      <div class="font-bold mb-2 text-base-content/70">Request Headers</div>
-                      <pre class="whitespace-pre-wrap break-all select-text overflow-x-auto max-h-48">{{ conn.request_headers || 'No headers captured' }}</pre>
-                    </div>
-                    <div class="bg-base-100 p-3 rounded border border-base-300">
-                      <div class="font-bold mb-2 text-base-content/70">Response Headers</div>
-                      <pre class="whitespace-pre-wrap break-all select-text overflow-x-auto max-h-48">{{ conn.response_headers || 'No headers captured' }}</pre>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- HTTP 请求列表 -->
-          <div v-else-if="filteredRequests.length > 0" :style="{ height: totalHeight + 'px', position: 'relative' }">
-            <!-- 表头 -->
-            <div 
-              class="sticky top-0 z-10 flex bg-base-200 border-b-2 border-base-300 font-semibold table-row-text"
-              :style="{ height: headerHeight + 'px', minWidth: 'max-content' }"
-            >
-              <!-- 多选复选框列 -->
-              <div 
-                v-if="isMultiSelectMode"
-                class="flex items-center justify-center px-2 border-r border-base-300"
-                style="width: 40px; min-width: 40px;"
-              >
-                <input 
-                  type="checkbox" 
-                  class="checkbox checkbox-xs checkbox-primary"
-                  :checked="selectedRequests.size > 0 && selectedRequests.size === filteredRequests.length"
-                  :indeterminate="selectedRequests.size > 0 && selectedRequests.size < filteredRequests.length"
-                  @change="selectedRequests.size === filteredRequests.length ? clearSelection() : selectAllVisible()"
-                />
-              </div>
-              <div 
-                v-for="col in visibleColumns" 
-                :key="col.id"
-                class="flex items-center px-2 border-r border-base-300 relative"
-                :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }"
-              >
-                <span class="truncate">{{ col.label }}</span>
-                <div 
-                  class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30"
-                  @mousedown="startResize(col.id, $event)"
-                ></div>
-              </div>
-            </div>
-
-            <!-- 数据行 -->
-              <div 
-                v-for="item in visibleItems" 
-                :key="item.data.id"
-                class="absolute left-0 right-0 flex hover:bg-base-200 cursor-pointer border-b border-base-300 table-row-text"
-                :class="{ 
-                  'bg-primary/10': selectedRequest?.id === item.data.id,
-                  'bg-accent/10': isMultiSelectMode && isRequestSelected(item.data),
-                  'bg-error/10 hover:bg-error/20': item.data.status_code === 0
-                }"
-                :style="{ 
-                  top: (item.offset + headerHeight) + 'px', 
-                  height: itemHeight + 'px',
-                  minWidth: 'max-content'
-                }"
-                @click="isMultiSelectMode ? toggleSelectRequest(item.data) : (item.data.status_code === 0 ? showCertificateError(item.data) : selectRequest(item.data))"
-                @contextmenu.prevent="showContextMenu($event, item.data)"
-              >
-              <!-- 多选复选框列 -->
-              <div 
-                v-if="isMultiSelectMode"
-                class="flex items-center justify-center px-2 border-r border-base-300"
-                style="width: 40px; min-width: 40px;"
-                @click.stop="toggleSelectRequest(item.data)"
-              >
-                <input 
-                  type="checkbox" 
-                  class="checkbox checkbox-xs checkbox-accent"
-                  :checked="isRequestSelected(item.data)"
-                  @click.stop
-                  @change="toggleSelectRequest(item.data)"
-                />
-              </div>
-              <div 
-                v-for="col in visibleColumns" 
-                :key="col.id"
-                class="flex items-center px-2 border-r border-base-300 overflow-hidden"
-                :style="{ width: col.width + 'px', minWidth: col.minWidth + 'px' }"
-              >
-                <template v-if="col.id === 'method'">
-                  <span :class="['badge badge-xs', getMethodClass(item.data.method)]">
-                    {{ item.data.method }}
-                  </span>
-                </template>
-                <template v-else-if="col.id === 'status'">
-                  <div class="flex items-center gap-1">
-                    <span :class="['badge badge-xs', getStatusClass(item.data.status_code)]" :title="getStatusTitle(item.data.status_code)">
-                      {{ getStatusText(item.data.status_code) }}
-                    </span>
-                    <i 
-                      v-if="item.data.status_code === 0" 
-                      class="fas fa-exclamation-circle text-error text-xs cursor-help"
-                      :title="$t('trafficAnalysis.history.certificateError.title')"
-                      @click.stop="showCertificateError(item.data)"
-                    ></i>
-                  </div>
-                </template>
-                <template v-else-if="col.id === 'params'">
-                  <span v-if="hasParams(item.data.url)" class="text-success">✓</span>
-                </template>
-                <template v-else-if="col.id === 'tls'">
-                  <span v-if="item.data.protocol === 'https'" class="text-success">✓</span>
-                </template>
-                <template v-else>
-                  <span class="truncate" :title="getColumnValue(item.data, col.id)">
-                    {{ getColumnValue(item.data, col.id) }}
-                  </span>
-                </template>
-              </div>
-            </div>
-          </div>
-
-          <div v-else class="flex items-center justify-center h-full text-base-content/50">
-            <div class="text-center">
-              <i class="fas fa-inbox text-4xl mb-2"></i>
-              <p>{{ $t('trafficAnalysis.history.emptyState.noRequests') }}</p>
-            </div>
-          </div>
+        <div ref="scrollContainer" class="flex-1 overflow-auto min-h-0" @scroll="handleScroll">
+          <ProxyHistoryTopContent
+            :is-loading="isLoading"
+            :is-loading-ws="isLoadingWs"
+            :protocol-filter="protocolFilter"
+            :ws-connections="wsConnections"
+            :expanded-ws-connections="expandedWsConnections"
+            :toggle-ws-connection="toggleWsConnection"
+            :format-ws-time="formatWsTime"
+            :get-ws-active-tab="getWsActiveTab"
+            :set-ws-active-tab="setWsActiveTab"
+            :get-ws-messages-for-connection="getWsMessagesForConnection"
+            :truncate-ws-content="truncateWsContent"
+            :filtered-requests="filteredRequests"
+            :total-height="totalHeight"
+            :header-height="headerHeight"
+            :item-height="itemHeight"
+            :is-multi-select-mode="isMultiSelectMode"
+            :selected-requests="selectedRequests"
+            :clear-selection="clearSelection"
+            :select-all-visible="selectAllVisible"
+            :visible-columns="visibleColumns"
+            :start-resize="startResize"
+            :visible-items="visibleItems"
+            :selected-request="selectedRequest"
+            :is-request-selected="isRequestSelected"
+            :toggle-select-request="toggleSelectRequest"
+            :show-certificate-error="showCertificateError"
+            :select-request="selectRequest"
+            :show-context-menu="showContextMenu"
+            :get-method-class="getMethodClass"
+            :get-status-class="getStatusClass"
+            :get-status-title="getStatusTitle"
+            :get-status-text="getStatusText"
+            :has-params="hasParams"
+            :get-column-value="getColumnValue"
+          />
         </div>
       </div>
 
@@ -891,177 +607,21 @@
         ref="bottomPanel"
         class="bg-base-100 overflow-hidden flex flex-col flex-1 min-h-0"
       >
-        <div class="flex items-center justify-between px-4 py-2 border-b border-base-300 flex-shrink-0">
-          <h3 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.requestDetails') }} - ID: {{ selectedRequest.id }}</h3>
-          <button @click="closeDetails" class="btn btn-xs btn-ghost">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-
-        <div class="flex-1 flex min-h-0 overflow-hidden relative">
-          <!-- 左侧：Request -->
-          <div class="flex flex-col overflow-hidden" :style="{ width: leftPanelWidth + 'px' }">
-            <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
-              <div class="flex items-center gap-2">
-                <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.request') }}</h4>
-                <!-- Original/Edited 切换下拉 -->
-                <div v-if="selectedRequest?.was_edited" class="dropdown dropdown-bottom">
-                  <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
-                    <span :class="requestViewMode === 'edited' ? 'text-warning' : ''">
-                      {{ requestViewMode === 'original' ? $t('trafficAnalysis.history.detailsPanel.originalRequest') : $t('trafficAnalysis.history.detailsPanel.editedRequest') }}
-                    </span>
-                    <i class="fas fa-chevron-down text-xs"></i>
-                  </label>
-                  <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
-                    <li>
-                      <a 
-                        :class="{ 'active': requestViewMode === 'original' }"
-                        @click="requestViewMode = 'original'"
-                      >
-                        {{ $t('trafficAnalysis.history.detailsPanel.originalRequest') }}
-                      </a>
-                    </li>
-                    <li>
-                      <a 
-                        :class="{ 'active': requestViewMode === 'edited' }"
-                        @click="requestViewMode = 'edited'"
-                      >
-                        <span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedRequest') }}</span>
-                      </a>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-              <div class="btn-group btn-group-xs">
-                <button 
-                  :class="['btn btn-xs', requestTab === 'pretty' ? 'btn-active' : '']"
-                  @click="requestTab = 'pretty'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}
-                </button>
-                <button 
-                  :class="['btn btn-xs', requestTab === 'raw' ? 'btn-active' : '']"
-                  @click="requestTab = 'raw'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.raw') }}
-                </button>
-                <button 
-                  :class="['btn btn-xs', requestTab === 'hex' ? 'btn-active' : '']"
-                  @click="requestTab = 'hex'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}
-                </button>
-              </div>
-            </div>
-            <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent="showDetailContextMenu($event)">
-              <template v-if="requestTab !== 'hex'">
-                <HttpCodeEditor
-                  :modelValue="formatRequest(selectedRequest, requestTab, requestViewMode)"
-                  :readonly="true"
-                  height="100%"
-                />
-              </template>
-              <template v-else>
-                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                  <pre>{{ stringToHex(formatRequestRaw(selectedRequest, requestViewMode)) }}</pre>
-                </div>
-              </template>
-            </div>
-          </div>
-
-          <!-- 垂直分割条 -->
-          <div 
-            ref="verticalResizer"
-            class="w-1 bg-base-300 cursor-col-resize hover:bg-primary/50 transition-colors flex-shrink-0"
-            @mousedown="startVerticalResize"
-          ></div>
-
-          <!-- 右侧：Response -->
-          <div class="flex-1 flex flex-col overflow-hidden min-w-0">
-            <div class="bg-base-200 px-4 py-2 border-b border-base-300 flex items-center justify-between flex-shrink-0">
-              <div class="flex items-center gap-2">
-                <h4 class="font-semibold text-sm">{{ $t('trafficAnalysis.history.detailsPanel.response') }}</h4>
-                <span v-if="isResponseCompressed(selectedRequest)" class="badge badge-xs badge-info" title="响应已自动解压">
-                  <i class="fas fa-file-archive mr-1"></i>{{ $t('trafficAnalysis.history.detailsPanel.decompressed') }}
-                </span>
-                <!-- Original/Edited 切换下拉 -->
-                <div v-if="selectedRequest?.was_edited && hasEditedResponse(selectedRequest)" class="dropdown dropdown-bottom">
-                  <label tabindex="0" class="btn btn-xs btn-ghost gap-1">
-                    <span :class="responseViewMode === 'edited' ? 'text-warning' : ''">
-                      {{ responseViewMode === 'original' ? $t('trafficAnalysis.history.detailsPanel.originalResponse') : $t('trafficAnalysis.history.detailsPanel.editedResponse') }}
-                    </span>
-                    <i class="fas fa-chevron-down text-xs"></i>
-                  </label>
-                  <ul tabindex="0" class="dropdown-content z-[1] menu p-1 shadow-lg bg-base-100 rounded-box w-40 border border-base-300">
-                    <li>
-                      <a 
-                        :class="{ 'active': responseViewMode === 'original' }"
-                        @click="responseViewMode = 'original'"
-                      >
-                        {{ $t('trafficAnalysis.history.detailsPanel.originalResponse') }}
-                      </a>
-                    </li>
-                    <li>
-                      <a 
-                        :class="{ 'active': responseViewMode === 'edited' }"
-                        @click="responseViewMode = 'edited'"
-                      >
-                        <span class="text-warning">{{ $t('trafficAnalysis.history.detailsPanel.editedResponse') }}</span>
-                      </a>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-              <div class="btn-group btn-group-xs">
-                <button 
-                  :class="['btn btn-xs', responseTab === 'pretty' ? 'btn-active' : '']"
-                  @click="responseTab = 'pretty'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.pretty') }}
-                </button>
-                <button 
-                  :class="['btn btn-xs', responseTab === 'raw' ? 'btn-active' : '']"
-                  @click="responseTab = 'raw'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.raw') }}
-                </button>
-                <button 
-                  :class="['btn btn-xs', responseTab === 'hex' ? 'btn-active' : '']"
-                  @click="responseTab = 'hex'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.hex') }}
-                </button>
-                <button 
-                  :class="['btn btn-xs', responseTab === 'render' ? 'btn-active' : '']"
-                  @click="responseTab = 'render'"
-                >
-                  {{ $t('trafficAnalysis.history.detailsPanel.tabs.render') }}
-                </button>
-              </div>
-            </div>
-            <div class="flex-1 overflow-hidden min-h-0" @contextmenu.prevent>
-              <template v-if="responseTab === 'render'">
-                <iframe 
-                  :srcdoc="getResponseBody(selectedRequest, responseViewMode)"
-                  class="w-full h-full border-0 bg-white"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                ></iframe>
-              </template>
-              <template v-else-if="responseTab === 'hex'">
-                <div class="h-full overflow-auto p-2 font-mono text-xs bg-base-100">
-                  <pre>{{ stringToHex(formatResponseRaw(selectedRequest, responseViewMode)) }}</pre>
-                </div>
-              </template>
-              <template v-else>
-                <HttpCodeEditor
-                  :modelValue="formatResponse(selectedRequest, responseTab, responseViewMode)"
-                  :readonly="true"
-                  height="100%"
-                />
-              </template>
-            </div>
-          </div>
-        </div>
+        <ProxyHistoryDetailsPanel
+          :selected-request="selectedRequest"
+          :left-panel-width="leftPanelWidth"
+          :request-tab="requestTab"
+          :response-tab="responseTab"
+          :request-view-mode="requestViewMode"
+          :response-view-mode="responseViewMode"
+          :close-details="closeDetails"
+          :show-detail-context-menu="showDetailContextMenu"
+          :start-vertical-resize="startVerticalResize"
+          @update:request-tab="requestTab = $event"
+          @update:response-tab="responseTab = $event"
+          @update:request-view-mode="requestViewMode = $event"
+          @update:response-view-mode="responseViewMode = $event"
+        />
       </div>
     </div>
   </div>
@@ -1072,11 +632,67 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch, inject } from '
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit as tauriEmit } from '@tauri-apps/api/event';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { useRouter } from 'vue-router';
 import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+import ProxyHistoryDetailsPanel from './ProxyHistoryDetailsPanel.vue';
+import ProxyHistoryTopContent from './ProxyHistoryTopContent.vue';
+import {
+  buildDefaultProxyHistoryFilterConfig,
+  buildProxyHistoryFilterCache,
+  buildProxyHistoryFilterSummary,
+  convertProxyHistoryFilterConfigToBambda,
+  filterProxyRequests,
+  getExtension,
+  getMimeTypeCategory,
+  hasActiveProxyHistoryFilters,
+  hasParams,
+  hideAllProxyHistoryFilters,
+  mergeStoredProxyHistoryFilterConfig,
+  showAllProxyHistoryFilters,
+} from './proxyHistoryFilterSupport';
+import {
+  formatBytes,
+  formatRequest,
+  formatRequestRaw,
+  formatResponse,
+  formatResponseRaw,
+  getColumnValue,
+  getMethodClass,
+  getResponseBody,
+  getStatusClass,
+  getStatusText,
+  getStatusTitle,
+  hasEditedResponse,
+  isResponseCompressed,
+  stringToHex,
+  truncateText,
+} from './proxyHistoryFormattingSupport';
+import {
+  buildProxyHistoryVisibleItems,
+  defaultProxyHistoryColumns,
+  loadProxyHistoryColumnsFromStorage,
+  PROXY_HISTORY_BUFFER_SIZE,
+  PROXY_HISTORY_COLUMNS_STORAGE_KEY,
+  PROXY_HISTORY_HEADER_HEIGHT,
+  PROXY_HISTORY_ITEM_HEIGHT,
+  translateProxyHistoryColumns,
+} from './proxyHistoryTableSupport';
+import { useProxyHistoryActions } from './useProxyHistoryActions';
+import { useProxyHistoryData } from './useProxyHistoryData';
+import type {
+  Column,
+  ProxyHistoryFilterCache,
+  ProxyHistoryProtocolFilter,
+  ProxyHistoryRequestTab,
+  ProxyHistoryResponseTab,
+  ProxyHistoryViewMode,
+  ProxyHistoryWsTab,
+  ProxyRequest,
+  VirtualItem,
+  WebSocketConnection,
+  WebSocketMessage,
+} from './proxyHistoryTypes';
 
 const router = useRouter();
 const { t } = useI18n();
@@ -1092,6 +708,7 @@ defineOptions({
 // Emit 声明
 const emit = defineEmits<{
   (e: 'sendToRepeater', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
+  (e: 'sendToIntruder', request: { method: string; url: string; headers: Record<string, string>; body?: string }): void
   (e: 'sendToAssistant', requests: ProxyRequest[]): void
   (e: 'addFilterRule', rule: { matchType: string; condition: string; relationship?: string }): void
 }>();
@@ -1117,82 +734,11 @@ const detailContextMenu = ref({
   y: 0,
 });
 
-// 类型定义
-interface ProxyRequest {
-  id: number;
-  url: string;
-  host: string;
-  protocol: string;
-  method: string;
-  status_code: number;
-  request_headers?: string;
-  request_body?: string;
-  response_headers?: string;
-  response_body?: string;
-  response_size: number;
-  response_time: number;
-  timestamp: string;
-  ip?: string;
-  listener?: string;
-  extension?: string;
-  title?: string;
-  mime_type?: string;
-  // Edited 字段（经过拦截修改后的数据）
-  was_edited?: boolean;
-  edited_request_headers?: string;
-  edited_request_body?: string;
-  edited_method?: string;
-  edited_url?: string;
-  edited_response_headers?: string;
-  edited_response_body?: string;
-  edited_status_code?: number;
-}
-
-interface VirtualItem {
-  data: ProxyRequest;
-  offset: number;
-}
-
-interface Column {
-  id: string;
-  label: string;
-  visible: boolean;
-  width: number;
-  minWidth: number;
-}
-
-// WebSocket 连接记录
-interface WebSocketConnection {
-  id: string;
-  url: string;
-  host: string;
-  protocol: string;
-  request_headers?: string;
-  response_headers?: string;
-  status: 'open' | 'closed' | 'error';
-  opened_at: string;
-  closed_at?: string;
-  close_code?: number;
-  close_reason?: string;
-  message_ids?: number[];
-}
-
-// WebSocket 消息记录
-interface WebSocketMessage {
-  id: number;
-  connection_id: string;
-  direction: 'send' | 'receive';
-  message_type: 'text' | 'binary' | 'ping' | 'pong' | 'close';
-  content?: string;
-  content_length: number;
-  timestamp: string;
-}
-
 // 响应式状态
 const requests = ref<ProxyRequest[]>([]);
 const selectedRequest = ref<ProxyRequest | null>(null);
 // 协议类型过滤: 'all' | 'http' | 'websocket'
-const protocolFilter = ref<'all' | 'http' | 'websocket'>('all');
+const protocolFilter = ref<ProxyHistoryProtocolFilter>('all');
 
 // WebSocket 状态
 const wsConnections = ref<WebSocketConnection[]>([]);
@@ -1200,7 +746,7 @@ const wsMessages = ref<WebSocketMessage[]>([]);
 const selectedWsConnection = ref<WebSocketConnection | null>(null);
 const expandedWsConnections = ref<Set<string>>(new Set());
 // WebSocket 连接内部 Tab 状态: connectionId -> 'messages' | 'handshake'
-const activeWsTabs = ref<Map<string, 'messages' | 'handshake'>>(new Map());
+const activeWsTabs = ref<Map<string, ProxyHistoryWsTab>>(new Map());
 const isLoadingWs = ref(false);
 // WebSocket 消息缓存：connectionId -> messages
 const wsMessagesCache = ref<Map<string, WebSocketMessage[]>>(new Map());
@@ -1238,20 +784,18 @@ const maxRequestsInMemory = 1000; // 增加到 1000 条
 const initialLoadLimit = 100; // 初次加载 100 条
 const batchUpdateThreshold = 10; // 批量更新阈值（增加到 10）
 const loadMoreSize = 50; // 每次加载更多的数量
-let pendingUpdates: ProxyRequest[] = []; // 待处理的新请求
-let updateTimer: number | null = null; // 批量更新定时器
 const hasMore = ref(true); // 是否还有更多数据
 const isLoadingMore = ref(false); // 是否正在加载更多
 // 请求 ID 集合（用于快速去重）
 const requestIdSet = ref<Set<number>>(new Set());
 
 // 详情面板的标签页
-const requestTab = ref<'pretty' | 'raw' | 'hex'>('pretty');
-const responseTab = ref<'pretty' | 'raw' | 'hex' | 'render'>('pretty');
+const requestTab = ref<ProxyHistoryRequestTab>('pretty');
+const responseTab = ref<ProxyHistoryResponseTab>('pretty');
 
 // Original/Edited 切换（类似 Burp Suite）
-const requestViewMode = ref<'original' | 'edited'>('edited');
-const responseViewMode = ref<'original' | 'edited'>('edited');
+const requestViewMode = ref<ProxyHistoryViewMode>('edited');
+const responseViewMode = ref<ProxyHistoryViewMode>('edited');
 
 const stats = ref({
   total: 0,
@@ -1271,49 +815,7 @@ const certErrorInfo = ref<{host: string; url: string; error?: string} | null>(nu
 const filterMode = ref<'settings' | 'bambda'>('settings');
 
 // 默认筛选器配置
-const defaultFilterConfig = () => ({
-  requestType: {
-    showOnlyInScope: false,
-    showOnlyWithParams: false,
-    hideWithoutResponse: false,
-  },
-  mimeType: {
-    html: true,
-    script: true,
-    xml: true,
-    css: false,
-    otherText: true,
-    images: false,
-    flash: true,
-    otherBinary: false,
-  },
-  statusCode: {
-    s2xx: true,
-    s3xx: true,
-    s4xx: true,
-    s5xx: true,
-  },
-  search: {
-    term: '',
-    regex: false,
-    caseSensitive: false,
-    negative: false,
-  },
-  extension: {
-    showOnlyEnabled: false,
-    showOnly: '',
-    hideEnabled: true,
-    hide: 'js,gif,jpg,png,css,ico,woff,woff2,ttf,svg',
-  },
-  annotation: {
-    showOnlyWithNotes: false,
-    showOnlyHighlighted: false,
-  },
-  listener: {
-    port: '',
-  },
-  bambdaExpression: '',
-});
+const defaultFilterConfig = buildDefaultProxyHistoryFilterConfig;
 
 // 筛选器配置（可编辑）
 const filterConfig = ref(defaultFilterConfig());
@@ -1331,45 +833,7 @@ const filters = ref({
 });
 
 // 列配置（从 localStorage 恢复或使用默认值）
-const STORAGE_KEY_COLUMNS = 'proxyHistory.columns';
-
-const defaultColumns: Column[] = [
-  { id: 'id', label: 'ID', visible: true, width: 60, minWidth: 50 },
-  { id: 'host', label: 'Host', visible: true, width: 180, minWidth: 100 },
-  { id: 'method', label: 'Method', visible: true, width: 80, minWidth: 60 },
-  { id: 'url', label: 'URL', visible: true, width: 300, minWidth: 150 },
-  { id: 'params', label: 'Params', visible: true, width: 70, minWidth: 60 },
-  { id: 'status', label: 'Status', visible: true, width: 90, minWidth: 80 },
-  { id: 'length', label: 'Length', visible: true, width: 80, minWidth: 60 },
-  { id: 'mime', label: 'MIME Type', visible: true, width: 100, minWidth: 80 },
-  { id: 'extension', label: 'Extension', visible: true, width: 90, minWidth: 70 },
-  { id: 'title', label: 'Title', visible: true, width: 150, minWidth: 100 },
-  { id: 'tls', label: 'TLS', visible: true, width: 60, minWidth: 50 },
-  { id: 'ip', label: 'IP', visible: true, width: 120, minWidth: 100 },
-  { id: 'time', label: 'Time', visible: true, width: 160, minWidth: 120 },
-  { id: 'listener', label: 'Listener', visible: true, width: 100, minWidth: 80 },
-  { id: 'responseTimer', label: 'Response Timer', visible: true, width: 120, minWidth: 100 },
-];
-
-// 从 localStorage 加载列配置
-function loadColumnsFromStorage(): Column[] {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY_COLUMNS);
-    if (saved) {
-      const savedColumns = JSON.parse(saved) as Column[];
-      // 合并保存的配置和默认配置（防止新增列丢失）
-      return defaultColumns.map(defCol => {
-        const savedCol = savedColumns.find(c => c.id === defCol.id);
-        return savedCol ? { ...defCol, ...savedCol } : defCol;
-      });
-    }
-  } catch (e) {
-    console.error('Failed to load columns from storage:', e);
-  }
-  return defaultColumns;
-}
-
-const columns = ref<Column[]>(loadColumnsFromStorage());
+const columns = ref<Column[]>(loadProxyHistoryColumnsFromStorage());
 
 // 列调整相关
 const resizingColumn = ref<string | null>(null);
@@ -1377,284 +841,114 @@ const columnResizeStartX = ref(0);
 const resizeStartWidth = ref(0);
 
 // 虚拟滚动相关
-const itemHeight = 32;
-const headerHeight = 34;
+const itemHeight = PROXY_HISTORY_ITEM_HEIGHT;
+const headerHeight = PROXY_HISTORY_HEADER_HEIGHT;
 const scrollTop = ref(0);
 const containerHeight = ref(600);
-const bufferSize = 5;
+const bufferSize = PROXY_HISTORY_BUFFER_SIZE;
 
-// 事件监听器
-let unlistenRequest: (() => void) | null = null;
-
-// 过滤器缓存（用于预编译正则和扩展名集合）
-const filterCache = ref<{
-  config: any;
-  searchRegex: RegExp | null;
-  searchTerm: string;
-  showExts: Set<string> | null;
-  hideExts: Set<string> | null;
-}>({
-  config: null,
-  searchRegex: null,
-  searchTerm: '',
-  showExts: null,
-  hideExts: null,
+const filterCache = computed<ProxyHistoryFilterCache>(() => buildProxyHistoryFilterCache(appliedFilterConfig.value));
+const filteredRequests = computed(() =>
+  filterProxyRequests(requests.value, appliedFilterConfig.value, filterCache.value),
+);
+const hasActiveFilters = computed(() => hasActiveProxyHistoryFilters(appliedFilterConfig.value));
+const filterSummary = computed(() => buildProxyHistoryFilterSummary(appliedFilterConfig.value));
+const translatedColumns = computed(() => translateProxyHistoryColumns(columns.value, t));
+const visibleColumns = computed(() => translatedColumns.value.filter((col) => col.visible));
+const totalHeight = computed(() => filteredRequests.value.length * itemHeight + headerHeight);
+const visibleItems = computed((): VirtualItem[] =>
+  buildProxyHistoryVisibleItems(filteredRequests.value, scrollTop.value, containerHeight.value),
+);
+const {
+  cleanupDataRuntime,
+  formatWsTime,
+  getWsActiveTab,
+  getWsMessagesForConnection,
+  loadMoreRequests,
+  loadWsConnections,
+  refreshRequests,
+  setWsActiveTab,
+  setupEventListeners,
+  toggleWsConnection,
+  truncateWsContent,
+  updateStats,
+} = useProxyHistoryData({
+  requests,
+  isLoading,
+  hasMore,
+  isLoadingMore,
+  requestIdSet,
+  stats,
+  wsConnections,
+  wsMessages,
+  expandedWsConnections,
+  activeWsTabs,
+  isLoadingWs,
+  wsMessagesCache,
+  initialLoadLimit,
+  loadMoreSize,
+  maxRequestsInMemory,
+  batchUpdateThreshold,
+  t,
 });
-
-// 更新过滤器缓存
-function updateFilterCache(config: any) {
-  // 预编译搜索正则
-  let searchRegex: RegExp | null = null;
-  if (config.search.term && config.search.regex) {
-    try {
-      searchRegex = new RegExp(config.search.term, config.search.caseSensitive ? '' : 'i');
-    } catch {
-      searchRegex = null;
-    }
-  }
-  
-  // 预处理扩展名集合
-  let showExts: Set<string> | null = null;
-  if (config.extension.showOnlyEnabled && config.extension.showOnly) {
-    showExts = new Set(config.extension.showOnly.toLowerCase().split(',').map((e: string) => e.trim()));
-  }
-  
-  let hideExts: Set<string> | null = null;
-  if (config.extension.hideEnabled && config.extension.hide) {
-    hideExts = new Set(config.extension.hide.toLowerCase().split(',').map((e: string) => e.trim()));
-  }
-  
-  filterCache.value = {
-    config,
-    searchRegex,
-    searchTerm: config.search.term ? (config.search.caseSensitive ? config.search.term : config.search.term.toLowerCase()) : '',
-    showExts,
-    hideExts,
-  };
-}
-
-// 计算属性 - 优化为单次遍历
-const filteredRequests = computed(() => {
-  const config = appliedFilterConfig.value;
-  
-  // 更新缓存（仅在配置变化时）
-  if (filterCache.value.config !== config) {
-    updateFilterCache(config);
-  }
-  
-  const cache = filterCache.value;
-  
-  // 单次遍历完成所有过滤
-  return requests.value.filter(r => {
-    // Filter by request type
-    if (config.requestType.showOnlyWithParams && !hasParams(r.url)) {
-      return false;
-    }
-    if (config.requestType.hideWithoutResponse && r.status_code === 0) {
-      return false;
-    }
-
-    // Filter by status code
-    const code = r.status_code;
-    if (code !== 0) {
-      if (code >= 200 && code < 300 && !config.statusCode.s2xx) return false;
-      if (code >= 300 && code < 400 && !config.statusCode.s3xx) return false;
-      if (code >= 400 && code < 500 && !config.statusCode.s4xx) return false;
-      if (code >= 500 && code < 600 && !config.statusCode.s5xx) return false;
-    }
-
-    // Filter by MIME type
-    const mime = getMimeTypeCategory(r);
-    if (mime === 'html' && !config.mimeType.html) return false;
-    if (mime === 'script' && !config.mimeType.script) return false;
-    if (mime === 'xml' && !config.mimeType.xml) return false;
-    if (mime === 'css' && !config.mimeType.css) return false;
-    if (mime === 'image' && !config.mimeType.images) return false;
-    if (mime === 'flash' && !config.mimeType.flash) return false;
-    if (mime === 'text' && !config.mimeType.otherText) return false;
-    if (mime === 'binary' && !config.mimeType.otherBinary) return false;
-
-    // Filter by file extension
-    const ext = getExtension(r.url).toLowerCase();
-    if (cache.showExts && ext && !cache.showExts.has(ext)) {
-      return false;
-    }
-    if (cache.hideExts && ext && cache.hideExts.has(ext)) {
-      return false;
-    }
-
-    // Filter by search term
-    if (cache.searchTerm) {
-      const text = r.url + ' ' + r.host;
-      let match = false;
-      
-      if (cache.searchRegex) {
-        match = cache.searchRegex.test(text);
-      } else {
-        if (config.search.caseSensitive) {
-          match = text.includes(cache.searchTerm);
-        } else {
-          match = text.toLowerCase().includes(cache.searchTerm);
-        }
-      }
-      
-      if (config.search.negative ? match : !match) {
-        return false;
-      }
-    }
-
-    // Filter by listener port
-    if (config.listener.port) {
-      const listenerPort = r.listener || '';
-      if (!listenerPort.includes(config.listener.port)) {
-        return false;
-      }
-    }
-
-    return true;
-  });
-});
-
-// 获取 MIME 类型分类
-function getMimeTypeCategory(request: ProxyRequest): string {
-  let contentType = '';
-  
-  if (request.response_headers) {
-    try {
-      const headers = JSON.parse(request.response_headers);
-      contentType = (headers['content-type'] || headers['Content-Type'] || '').toLowerCase();
-    } catch {
-      // ignore
-    }
-  }
-  
-  if (!contentType) {
-    // 根据扩展名推断
-    const ext = getExtension(request.url).toLowerCase();
-    const extMap: Record<string, string> = {
-      'html': 'html', 'htm': 'html',
-      'js': 'script', 'mjs': 'script',
-      'xml': 'xml',
-      'css': 'css',
-      'png': 'image', 'jpg': 'image', 'jpeg': 'image', 'gif': 'image', 'webp': 'image', 'svg': 'image', 'ico': 'image',
-      'swf': 'flash',
-      'txt': 'text', 'json': 'text',
-      'woff': 'binary', 'woff2': 'binary', 'ttf': 'binary', 'eot': 'binary', 'pdf': 'binary', 'zip': 'binary',
-    };
-    return extMap[ext] || 'unknown';
-  }
-  
-  if (contentType.includes('html')) return 'html';
-  if (contentType.includes('javascript') || contentType.includes('ecmascript')) return 'script';
-  if (contentType.includes('xml')) return 'xml';
-  if (contentType.includes('css')) return 'css';
-  if (contentType.includes('image')) return 'image';
-  if (contentType.includes('flash') || contentType.includes('shockwave')) return 'flash';
-  if (contentType.includes('text') || contentType.includes('json')) return 'text';
-  if (contentType.includes('octet-stream') || contentType.includes('binary') || 
-      contentType.includes('font') || contentType.includes('application')) return 'binary';
-  
-  return 'unknown';
-}
-
-// 检查是否有激活的筛选器
-const hasActiveFilters = computed(() => {
-  const config = appliedFilterConfig.value;
-  const def = defaultFilterConfig();
-  
-  // 检查是否与默认配置不同
-  return (
-    config.requestType.showOnlyWithParams !== def.requestType.showOnlyWithParams ||
-    config.requestType.hideWithoutResponse !== def.requestType.hideWithoutResponse ||
-    !config.statusCode.s2xx || !config.statusCode.s3xx || !config.statusCode.s4xx || !config.statusCode.s5xx ||
-    !config.mimeType.html || !config.mimeType.script || !config.mimeType.xml ||
-    config.mimeType.css || config.mimeType.images || !config.mimeType.otherText ||
-    config.mimeType.otherBinary ||
-    config.search.term !== '' ||
-    config.extension.showOnlyEnabled ||
-    config.listener.port !== ''
-  );
-});
-
-// 筛选器摘要
-const filterSummary = computed(() => {
-  const config = appliedFilterConfig.value;
-  const parts: string[] = [];
-  
-  // MIME 类型过滤
-  const hiddenMime: string[] = [];
-  if (!config.mimeType.css) hiddenMime.push('CSS');
-  if (!config.mimeType.images) hiddenMime.push('image');
-  if (!config.mimeType.otherBinary) hiddenMime.push('binary');
-  
-  if (hiddenMime.length > 0) {
-    parts.push(`Hiding ${hiddenMime.join(', ')}`);
-  }
-  
-  // 扩展名过滤
-  if (config.extension.hideEnabled && config.extension.hide) {
-    parts.push(`hiding extensions`);
-  }
-  
-  if (config.search.term) {
-    parts.push(`search: "${config.search.term}"`);
-  }
-  
-  if (parts.length === 0) {
-    return 'Filter settings: Showing all content';
-  }
-  
-  return `Filter settings: ${parts.join(' and ')}`;
-});
-
-const translatedColumns = computed(() => {
-  return columns.value.map(col => ({
-    ...col,
-    label: col.id === 'id' ? t('trafficAnalysis.history.table.id') :
-           col.id === 'host' ? t('trafficAnalysis.history.table.host') :
-           col.id === 'method' ? t('trafficAnalysis.history.table.method') :
-           col.id === 'url' ? t('trafficAnalysis.history.table.url') :
-           col.id === 'status' ? t('trafficAnalysis.history.table.status') :
-           col.id === 'length' ? t('trafficAnalysis.history.table.length') :
-           col.id === 'mime' ? t('trafficAnalysis.history.table.mimeType') :
-           col.id === 'time' ? t('trafficAnalysis.history.table.time') :
-           col.id === 'extension' ? t('trafficAnalysis.history.table.actions') :
-           col.id === 'title' ? t('trafficAnalysis.history.table.actions') :
-           col.id === 'tls' ? t('trafficAnalysis.history.table.actions') :
-           col.id === 'ip' ? t('trafficAnalysis.history.table.actions') :
-           col.id === 'listener' ? t('trafficAnalysis.history.table.actions') :
-           col.id === 'responseTimer' ? t('trafficAnalysis.history.table.actions') :
-           col.id === 'params' ? t('trafficAnalysis.history.table.actions') : col.label
-  }));
-});
-
-const visibleColumns = computed(() => {
-  return translatedColumns.value.filter(col => col.visible);
-});
-
-// 虚拟滚动计算
-const totalHeight = computed(() => {
-  return filteredRequests.value.length * itemHeight + headerHeight;
-});
-
-const visibleItems = computed((): VirtualItem[] => {
-  // 计算可见区域的起始和结束索引
-  const startIndex = Math.max(0, Math.floor(scrollTop.value / itemHeight) - bufferSize);
-  const visibleCount = Math.ceil(containerHeight.value / itemHeight);
-  
-  // 计算需要渲染的项目数量，确保覆盖可见区域 + 缓冲区
-  const neededCount = visibleCount + bufferSize * 2;
-  const endIndex = Math.min(filteredRequests.value.length, startIndex + neededCount);
-  
-  const items: VirtualItem[] = [];
-  for (let i = startIndex; i < endIndex; i++) {
-    items.push({
-      data: filteredRequests.value[i],
-      offset: i * itemHeight,
-    });
-  }
-  
-  return items;
+const {
+  addFilterToDomain,
+  addFilterToExtension,
+  addFilterToMethod,
+  addFilterToUrl,
+  cleanupActionRuntime,
+  clearHistory,
+  clearHistoryFromMenu,
+  clearSelection,
+  closeDetails,
+  copyAsCurl,
+  copyUrl,
+  detailCopyAsCurl,
+  detailCopyRequest,
+  detailCopyUrl,
+  detailSendRequestToAssistant,
+  detailSendResponseToAssistant,
+  detailSendToIntruder,
+  detailSendToRepeater,
+  exportAsHAR,
+  exportSelectedToFile,
+  hideContextMenu,
+  hideDetailContextMenu,
+  isRequestSelected,
+  openDetails,
+  openInBrowser,
+  selectAllVisible,
+  selectRequest,
+  sendRequestToAssistantFromMenu,
+  sendResponseToAssistantFromMenu,
+  sendSelectedToAssistant,
+  sendToIntruder,
+  sendToRepeater,
+  showContextMenu,
+  showDetailContextMenu,
+  toggleMultiSelectMode,
+  toggleSelectRequest,
+} = useProxyHistoryActions({
+  contextMenu,
+  detailContextMenu,
+  showFilterSubmenu,
+  selectedRequest,
+  selectedRequests,
+  isMultiSelectMode,
+  filteredRequests,
+  requests,
+  stats,
+  requestTab,
+  responseTab,
+  requestViewMode,
+  topPanelHeight,
+  mainContainer,
+  emitSendToRepeater: (request) => emit('sendToRepeater', request),
+  emitSendToIntruder: (request) => emit('sendToIntruder', request),
+  emitSendToAssistant: (requests) => emit('sendToAssistant', requests),
+  emitAddFilterRule: (rule) => emit('addFilterRule', rule),
+  updateStats,
+  t,
 });
 
 // 方法
@@ -1721,7 +1015,7 @@ function stopResize() {
   document.removeEventListener('mouseup', stopResize);
   
   // 保存列配置到 localStorage
-  localStorage.setItem(STORAGE_KEY_COLUMNS, JSON.stringify(columns.value));
+  localStorage.setItem(PROXY_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(columns.value));
 }
 
 // 水平分割条调整（上下面板）
@@ -1795,144 +1089,14 @@ function toggleColumn(columnId: string) {
   if (column) {
     column.visible = !column.visible;
     // 保存列配置到 localStorage
-    localStorage.setItem(STORAGE_KEY_COLUMNS, JSON.stringify(columns.value));
+    localStorage.setItem(PROXY_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(columns.value));
   }
 }
 
 function resetColumns() {
-  columns.value = [...defaultColumns];
+  columns.value = [...defaultProxyHistoryColumns];
   // 清除保存的配置
-  localStorage.removeItem(STORAGE_KEY_COLUMNS);
-}
-
-function getColumnValue(request: ProxyRequest, columnId: string): string {
-  switch (columnId) {
-    case 'id':
-      return String(request.id);
-    case 'host':
-      return request.host;
-    case 'method':
-      return request.method;
-    case 'url':
-      return request.url;
-    case 'params':
-      return hasParams(request.url) ? '✓' : '';
-    case 'status':
-      return String(request.status_code);
-    case 'length':
-      return formatBytes(request.response_size);
-    case 'mime':
-      return request.mime_type || getMimeType(request);
-    case 'extension':
-      return request.extension || getExtension(request.url);
-    case 'title':
-      return request.title || '';
-    case 'tls':
-      return request.protocol === 'https' ? '✓' : '';
-    case 'ip':
-      return request.ip || '';
-    case 'time':
-      return formatTime(request.timestamp);
-    case 'listener':
-      return request.listener || 'Proxy';
-    case 'responseTimer':
-      return `${request.response_time}ms`;
-    default:
-      return '';
-  }
-}
-
-function hasParams(url: string): boolean {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.search.length > 0;
-  } catch {
-    return url.includes('?');
-  }
-}
-
-function getExtension(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    const parts = pathname.split('.');
-    if (parts.length > 1) {
-      const ext = parts[parts.length - 1].split(/[?#]/)[0];
-      return ext.toLowerCase();
-    }
-    return '';
-  } catch {
-    return '';
-  }
-}
-
-function getMimeType(request: ProxyRequest): string {
-  // 尝试从响应头中获取 Content-Type
-  if (request.response_headers) {
-    try {
-      const headers = JSON.parse(request.response_headers);
-      const contentType = headers['content-type'] || headers['Content-Type'];
-      if (contentType) {
-        return contentType.split(';')[0].trim();
-      }
-    } catch {
-      // 忽略解析错误
-    }
-  }
-  
-  // 根据扩展名推断
-  const ext = getExtension(request.url);
-  const mimeMap: Record<string, string> = {
-    'html': 'HTML',
-    'htm': 'HTML',
-    'json': 'JSON',
-    'xml': 'XML',
-    'js': 'JavaScript',
-    'css': 'CSS',
-    'png': 'image',
-    'jpg': 'image',
-    'jpeg': 'image',
-    'gif': 'image',
-    'svg': 'image',
-    'ico': 'image',
-    'pdf': 'application/pdf',
-    'txt': 'text',
-  };
-  
-  return mimeMap[ext] || '';
-}
-
-function getMethodClass(method: string) {
-  switch (method.toUpperCase()) {
-    case 'GET': return 'badge-info';
-    case 'POST': return 'badge-success';
-    case 'PUT': return 'badge-warning';
-    case 'DELETE': return 'badge-error';
-    case 'PATCH': return 'badge-accent';
-    default: return 'badge-ghost';
-  }
-}
-
-function getStatusClass(statusCode: number) {
-  if (statusCode === -1) return 'badge-warning'; // 等待响应（CONNECT 隧道）
-  if (statusCode === 0) return 'badge-error'; // TLS 握手失败
-  if (statusCode >= 200 && statusCode < 300) return 'badge-success';
-  if (statusCode >= 300 && statusCode < 400) return 'badge-info';
-  if (statusCode >= 400 && statusCode < 500) return 'badge-warning';
-  if (statusCode >= 500) return 'badge-error';
-  return 'badge-ghost';
-}
-
-function getStatusText(statusCode: number): string {
-  if (statusCode === -1) return 'TUNNEL';
-  if (statusCode === 0) return 'TLS ERR';
-  return String(statusCode);
-}
-
-function getStatusTitle(statusCode: number): string {
-  if (statusCode === -1) return 'HTTPS Tunnel (CONNECT) - TLS handshake may have failed';
-  if (statusCode === 0) return 'TLS Handshake Failed - Certificate Error';
-  return '';
+  localStorage.removeItem(PROXY_HISTORY_COLUMNS_STORAGE_KEY);
 }
 
 // 显示证书错误弹窗
@@ -1964,277 +1128,6 @@ async function checkCAInstallation() {
     console.error('Failed to check CA installation:', error);
     dialog.toast.error(`Failed to check certificate: ${error}`);
   }
-}
-
-function formatBytes(bytes: number) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-}
-
-function formatHeaders(headers: string) {
-  try {
-    const parsed = JSON.parse(headers);
-    return Object.entries(parsed)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join('\n');
-  } catch {
-    return headers;
-  }
-}
-
-function truncateText(text: string, maxLength: number) {
-  if (!text) return '';
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength) + '...';
-}
-
-function formatTime(timestamp: string) {
-  const date = new Date(timestamp);
-  return date.toLocaleString('zh-CN');
-}
-
-async function refreshRequests() {
-  isLoading.value = true;
-  try {
-    const response = await invoke<any>('list_proxy_requests', {
-      limit: initialLoadLimit,
-      offset: 0,
-    });
-
-    if (response.success && response.data) {
-      requests.value = response.data;
-      hasMore.value = response.data.length === initialLoadLimit;
-      
-      // 重建 ID 集合
-      requestIdSet.value.clear();
-      response.data.forEach((req: ProxyRequest) => requestIdSet.value.add(req.id));
-      
-      updateStats();
-    }
-  } catch (error: any) {
-    console.error('Failed to refresh requests:', error);
-    dialog.toast.error(`${t('trafficAnalysis.history.errors.loadFailed')}: ${error}`);
-  } finally {
-    isLoading.value = false;
-  }
-}
-
-// 加载更多请求
-async function loadMoreRequests() {
-  if (isLoadingMore.value || !hasMore.value) return;
-  
-  isLoadingMore.value = true;
-  try {
-    const response = await invoke<any>('list_proxy_requests', {
-      limit: loadMoreSize,
-      offset: requests.value.length,
-    });
-
-    if (response.success && response.data) {
-      if (response.data.length > 0) {
-        requests.value = [...requests.value, ...response.data];
-        hasMore.value = response.data.length === loadMoreSize;
-        
-        // 限制最大数量
-        if (requests.value.length > maxRequestsInMemory) {
-          requests.value = requests.value.slice(0, maxRequestsInMemory);
-          hasMore.value = false;
-        }
-      } else {
-        hasMore.value = false;
-      }
-    }
-  } catch (error: any) {
-    console.error('Failed to load more requests:', error);
-    dialog.toast.error(`加载更多失败: ${error}`);
-  } finally {
-    isLoadingMore.value = false;
-  }
-}
-
-// 优化统计计算 - 使用增量更新
-function updateStats() {
-  const total = requests.value.length;
-  const https = requests.value.filter(r => r.protocol === 'https').length;
-  const http = requests.value.filter(r => r.protocol === 'http').length;
-  
-  const totalResponseTime = requests.value.reduce((sum, r) => sum + r.response_time, 0);
-  const avgResponseTime = total > 0 ? Math.round(totalResponseTime / total) : 0;
-
-  stats.value = {
-    total,
-    http,
-    https,
-    avgResponseTime,
-  };
-}
-
-// ========================================
-// WebSocket 相关函数
-// ========================================
-
-// 切换 WebSocket 连接展开状态
-function toggleWsConnection(connectionId: string) {
-  if (expandedWsConnections.value.has(connectionId)) {
-    expandedWsConnections.value.delete(connectionId);
-  } else {
-    expandedWsConnections.value.add(connectionId);
-    // 默认选中 Messages 标签
-    if (!activeWsTabs.value.has(connectionId)) {
-      activeWsTabs.value.set(connectionId, 'messages');
-    }
-    // 加载该连接的消息
-    loadWsMessages(connectionId);
-  }
-  // 触发响应式更新
-  expandedWsConnections.value = new Set(expandedWsConnections.value);
-}
-
-// 获取 WebSocket 连接的当前活动标签页
-function getWsActiveTab(connectionId: string): 'messages' | 'handshake' {
-  return activeWsTabs.value.get(connectionId) || 'messages';
-}
-
-// 设置 WebSocket 连接的当前活动标签页
-function setWsActiveTab(connectionId: string, tab: 'messages' | 'handshake') {
-  activeWsTabs.value.set(connectionId, tab);
-  // 触发响应式更新
-  activeWsTabs.value = new Map(activeWsTabs.value);
-}
-
-// 格式化 WebSocket 时间
-function formatWsTime(timestamp: string): string {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  } catch {
-    return timestamp;
-  }
-}
-
-// 获取特定连接的消息（优先使用缓存）
-function getWsMessagesForConnection(connectionId: string): WebSocketMessage[] {
-  // 优先从缓存获取
-  const cached = wsMessagesCache.value.get(connectionId);
-  if (cached) {
-    return cached;
-  }
-  // 回退到过滤全局列表
-  return wsMessages.value.filter(msg => msg.connection_id === connectionId);
-}
-
-// 截断 WebSocket 消息内容
-function truncateWsContent(content?: string, maxLength: number = 100): string {
-  if (!content) return '[empty]';
-  if (content.startsWith('[BASE64]')) {
-    return '[binary data]';
-  }
-  if (content.length <= maxLength) return content;
-  return content.substring(0, maxLength) + '...';
-}
-
-// 加载 WebSocket 连接列表
-async function loadWsConnections() {
-  isLoadingWs.value = true;
-  try {
-    const response = await invoke<any>('list_websocket_connections', {
-      limit: 100,
-      offset: 0,
-    });
-    
-    if (response.success && response.data) {
-      wsConnections.value = response.data;
-    }
-  } catch (error: any) {
-    console.error('Failed to load WebSocket connections:', error);
-  } finally {
-    isLoadingWs.value = false;
-  }
-}
-
-// 加载特定连接的消息（带缓存）
-async function loadWsMessages(connectionId: string) {
-  // 检查缓存
-  if (wsMessagesCache.value.has(connectionId)) {
-    return;
-  }
-  
-  try {
-    const response = await invoke<any>('list_websocket_messages', {
-      connectionId,
-      limit: 100,
-      offset: 0,
-    });
-    
-    if (response.success && response.data) {
-      const messages = response.data as WebSocketMessage[];
-      // 缓存消息
-      wsMessagesCache.value.set(connectionId, messages);
-      
-      // 合并到全局消息列表（避免重复）
-      const existingIds = new Set(wsMessages.value.map(m => m.id));
-      const newMessages = messages.filter(m => !existingIds.has(m.id));
-      wsMessages.value = [...wsMessages.value, ...newMessages];
-    }
-  } catch (error: any) {
-    console.error('Failed to load WebSocket messages:', error);
-  }
-}
-
-// 增量更新统计（用于新请求）
-function updateStatsIncremental(newRequest: ProxyRequest) {
-  stats.value.total++;
-  if (newRequest.protocol === 'https') {
-    stats.value.https++;
-  } else if (newRequest.protocol === 'http') {
-    stats.value.http++;
-  }
-  // 简单平均，不完全准确但足够快
-  if (stats.value.total > 0) {
-    stats.value.avgResponseTime = Math.round(
-      (stats.value.avgResponseTime * (stats.value.total - 1) + newRequest.response_time) / stats.value.total
-    );
-  }
-}
-
-
-
-// 批量处理待更新的请求（优化去重）
-function processPendingUpdates() {
-  if (pendingUpdates.length === 0) return;
-  
-  console.log(`Processing ${pendingUpdates.length} pending updates`);
-  
-  // 使用 Set 快速去重
-  const newRequests = pendingUpdates.filter(req => !requestIdSet.value.has(req.id));
-  
-  if (newRequests.length > 0) {
-    // 批量添加到列表头部
-    requests.value = [...newRequests, ...requests.value];
-    
-    // 更新 ID 集合
-    newRequests.forEach(req => requestIdSet.value.add(req.id));
-    
-    // 限制最大数量
-    if (requests.value.length > maxRequestsInMemory) {
-      const removed = requests.value.slice(maxRequestsInMemory);
-      requests.value = requests.value.slice(0, maxRequestsInMemory);
-      // 从 ID 集合中移除被删除的请求
-      removed.forEach(req => requestIdSet.value.delete(req.id));
-    }
-    
-    // 批量更新统计
-    newRequests.forEach(req => updateStatsIncremental(req));
-    
-    console.log(`Added ${newRequests.length} new requests, total: ${requests.value.length}`);
-  }
-  
-  // 清空待处理队列
-  pendingUpdates = [];
-  updateTimer = null;
 }
 
 function applyFilters() {
@@ -2272,102 +1165,16 @@ function revertFilterChanges() {
 }
 
 function showAllFilters() {
-  filterConfig.value.mimeType = {
-    html: true,
-    script: true,
-    xml: true,
-    css: true,
-    otherText: true,
-    images: true,
-    flash: true,
-    otherBinary: true,
-  };
-  filterConfig.value.statusCode = {
-    s2xx: true,
-    s3xx: true,
-    s4xx: true,
-    s5xx: true,
-  };
-  filterConfig.value.extension.showOnlyEnabled = false;
-  filterConfig.value.extension.hideEnabled = false;
-  filterConfig.value.requestType.showOnlyInScope = false;
-  filterConfig.value.requestType.showOnlyWithParams = false;
-  filterConfig.value.requestType.hideWithoutResponse = false;
-  filterConfig.value.annotation.showOnlyWithNotes = false;
-  filterConfig.value.annotation.showOnlyHighlighted = false;
+  filterConfig.value = showAllProxyHistoryFilters(filterConfig.value);
 }
 
 function hideAllFilters() {
-  filterConfig.value.mimeType = {
-    html: false,
-    script: false,
-    xml: false,
-    css: false,
-    otherText: false,
-    images: false,
-    flash: false,
-    otherBinary: false,
-  };
+  filterConfig.value = hideAllProxyHistoryFilters(filterConfig.value);
 }
 
 // Convert current settings to Bambda expression
 function convertToBambda() {
-  const conditions: string[] = [];
-  
-  // MIME type filters
-  const enabledMimes = Object.entries(filterConfig.value.mimeType)
-    .filter(([_, enabled]) => enabled)
-    .map(([type]) => type);
-  
-  if (enabledMimes.length > 0 && enabledMimes.length < 8) {
-    const mimeConditions = enabledMimes.map(type => {
-      const mimeMap: Record<string, string> = {
-        html: 'text/html',
-        script: 'javascript',
-        xml: 'xml',
-        css: 'text/css',
-        otherText: 'text/',
-        images: 'image/',
-        flash: 'flash',
-        otherBinary: 'application/octet-stream'
-      };
-      return `response.mimeType().contains('${mimeMap[type]}')`;
-    }).join(' || ');
-    conditions.push(`(${mimeConditions})`);
-  }
-  
-  // Status code filters
-  const statusCodes: string[] = [];
-  if (filterConfig.value.statusCode.s2xx) statusCodes.push('response.statusCode() >= 200 && response.statusCode() < 300');
-  if (filterConfig.value.statusCode.s3xx) statusCodes.push('response.statusCode() >= 300 && response.statusCode() < 400');
-  if (filterConfig.value.statusCode.s4xx) statusCodes.push('response.statusCode() >= 400 && response.statusCode() < 500');
-  if (filterConfig.value.statusCode.s5xx) statusCodes.push('response.statusCode() >= 500 && response.statusCode() < 600');
-  
-  if (statusCodes.length > 0 && statusCodes.length < 4) {
-    conditions.push(`(${statusCodes.join(' || ')})`);
-  }
-  
-  // Search term
-  if (filterConfig.value.search.term) {
-    const term = filterConfig.value.search.term;
-    const method = filterConfig.value.search.regex ? 'matches' : 'contains';
-    const target = filterConfig.value.search.caseSensitive ? 'request.url()' : 'request.url().toLowerCase()';
-    const searchTerm = filterConfig.value.search.caseSensitive ? term : term.toLowerCase();
-    const condition = `${target}.${method}('${searchTerm}')`;
-    conditions.push(filterConfig.value.search.negative ? `!${condition}` : condition);
-  }
-  
-  // File extension
-  if (filterConfig.value.extension.hideEnabled && filterConfig.value.extension.hide) {
-    const exts = filterConfig.value.extension.hide.split(',').map(e => e.trim());
-    const extConditions = exts.map(ext => `!request.url().endsWith('.${ext}')`).join(' && ');
-    conditions.push(`(${extConditions})`);
-  }
-  
-  filterConfig.value.bambdaExpression = conditions.length > 0 
-    ? conditions.join(' && ') 
-    : '// No filters configured';
-    
+  filterConfig.value.bambdaExpression = convertProxyHistoryFilterConfigToBambda(filterConfig.value);
   dialog.toast.success('Converted to Bambda expression');
 }
 
@@ -2377,961 +1184,12 @@ function loadFilterConfig() {
     const saved = localStorage.getItem('proxyHistory.filterConfig');
     if (saved) {
       const parsed = JSON.parse(saved);
-      // 合并默认配置和保存的配置
-      appliedFilterConfig.value = { ...defaultFilterConfig(), ...parsed };
+      appliedFilterConfig.value = mergeStoredProxyHistoryFilterConfig(parsed);
       filterConfig.value = JSON.parse(JSON.stringify(appliedFilterConfig.value));
     }
   } catch (e) {
     console.error('Failed to load filter config:', e);
   }
-}
-
-async function clearHistory() {
-
-  try {
-    const response = await invoke<any>('clear_proxy_requests');
-    if (response.success) {
-      requests.value = [];
-      updateStats();
-      closeDetails();
-      dialog.toast.success('请求历史已清空');
-    }
-  } catch (error: any) {
-    console.error('Failed to clear requests:', error);
-    dialog.toast.error(`清空失败: ${error}`);
-  }
-}
-
-function openDetails(request: ProxyRequest) {
-  selectedRequest.value = request;
-  showDetailsModal.value = true;
-}
-
-function closeDetails() {
-  showDetailsModal.value = false;
-  selectedRequest.value = null;
-  requestTab.value = 'pretty';
-  responseTab.value = 'pretty';
-}
-
-function selectRequest(request: ProxyRequest) {
-  if (selectedRequest.value?.id === request.id) {
-    // 如果点击同一个请求，关闭详情
-    closeDetails();
-  } else {
-    // 否则选中新请求并自动调整面板高度
-    selectedRequest.value = request;
-    requestTab.value = 'pretty';
-    responseTab.value = 'pretty';
-    
-    // 自动调整面板高度比例（基于容器高度）
-    const containerHeight = mainContainer.value?.clientHeight || 600;
-    topPanelHeight.value = Math.floor(containerHeight * 0.4);
-  }
-}
-
-// 右键菜单相关函数
-function showContextMenu(event: MouseEvent, request: ProxyRequest) {
-  contextMenu.value = {
-    visible: true,
-    x: event.clientX,
-    y: event.clientY,
-    request,
-  };
-  
-  // 添加点击外部关闭菜单的监听
-  setTimeout(() => {
-    document.addEventListener('click', hideContextMenu);
-    document.addEventListener('contextmenu', hideContextMenu);
-  }, 0);
-}
-
-function hideContextMenu() {
-  contextMenu.value.visible = false;
-  contextMenu.value.request = null;
-  showFilterSubmenu.value = false;
-  document.removeEventListener('click', hideContextMenu);
-  document.removeEventListener('contextmenu', hideContextMenu);
-}
-
-// 请求详情区域右键菜单
-function showDetailContextMenu(event: MouseEvent) {
-  if (!selectedRequest.value) return;
-  
-  detailContextMenu.value = {
-    visible: true,
-    x: Math.min(event.clientX, window.innerWidth - 200),
-    y: Math.min(event.clientY, window.innerHeight - 200),
-  };
-  
-  setTimeout(() => {
-    document.addEventListener('click', hideDetailContextMenu);
-    document.addEventListener('contextmenu', hideDetailContextMenu);
-  }, 0);
-}
-
-function hideDetailContextMenu() {
-  detailContextMenu.value.visible = false;
-  document.removeEventListener('click', hideDetailContextMenu);
-  document.removeEventListener('contextmenu', hideDetailContextMenu);
-}
-
-function detailSendToRepeater() {
-  hideDetailContextMenu();
-  if (!selectedRequest.value) return;
-  
-  const req = selectedRequest.value;
-  let headers: Record<string, string> = {};
-  
-  if (req.request_headers) {
-    try {
-      headers = JSON.parse(req.request_headers);
-    } catch {
-      // ignore
-    }
-  }
-  
-  emit('sendToRepeater', {
-    method: req.method,
-    url: req.url,
-    headers,
-    body: req.request_body || undefined,
-  });
-}
-
-function detailCopyUrl() {
-  hideDetailContextMenu();
-  if (!selectedRequest.value) return;
-  
-  navigator.clipboard.writeText(selectedRequest.value.url)
-    .then(() => dialog.toast.success('URL 已复制'))
-    .catch(() => dialog.toast.error('复制失败'));
-}
-
-function detailCopyRequest() {
-  hideDetailContextMenu();
-  if (!selectedRequest.value) return;
-  
-  const requestText = formatRequest(selectedRequest.value, requestTab.value, requestViewMode.value);
-  navigator.clipboard.writeText(requestText)
-    .then(() => dialog.toast.success('请求已复制'))
-    .catch(() => dialog.toast.error('复制失败'));
-}
-
-function detailCopyAsCurl() {
-  hideDetailContextMenu();
-  if (!selectedRequest.value) return;
-  
-  const req = selectedRequest.value;
-  let curl = `curl -X ${req.method} '${req.url}'`;
-  
-  if (req.request_headers) {
-    try {
-      const headers = JSON.parse(req.request_headers);
-      for (const [key, value] of Object.entries(headers)) {
-        curl += ` \\\n  -H '${key}: ${value}'`;
-      }
-    } catch {
-      // ignore
-    }
-  }
-  
-  if (req.request_body) {
-    curl += ` \\\n  -d '${req.request_body.replace(/'/g, "'\\''")}'`;
-  }
-  
-  navigator.clipboard.writeText(curl)
-    .then(() => dialog.toast.success('cURL 命令已复制'))
-    .catch(() => dialog.toast.error('复制失败'));
-}
-
-function sendToRepeater() {
-  if (!contextMenu.value.request) return;
-  
-  const req = contextMenu.value.request;
-  let headers: Record<string, string> = {};
-  
-  if (req.request_headers) {
-    try {
-      headers = JSON.parse(req.request_headers);
-    } catch {
-      // 忽略解析错误
-    }
-  }
-  
-  emit('sendToRepeater', {
-    method: req.method,
-    url: req.url,
-    headers,
-    body: req.request_body || undefined,
-  });
-  
-  hideContextMenu();
-}
-
-function copyUrl() {
-  if (!contextMenu.value.request) return;
-  
-  navigator.clipboard.writeText(contextMenu.value.request.url)
-    .then(() => dialog.toast.success('URL 已复制'))
-    .catch(() => dialog.toast.error('复制失败'));
-  
-  hideContextMenu();
-}
-
-function copyAsCurl() {
-  if (!contextMenu.value.request) return;
-  
-  const req = contextMenu.value.request;
-  let curl = `curl -X ${req.method} '${req.url}'`;
-  
-  if (req.request_headers) {
-    try {
-      const headers = JSON.parse(req.request_headers);
-      for (const [key, value] of Object.entries(headers)) {
-        curl += ` \\\n  -H '${key}: ${value}'`;
-      }
-    } catch {
-      // 忽略解析错误
-    }
-  }
-  
-  if (req.request_body) {
-    curl += ` \\\n  -d '${req.request_body.replace(/'/g, "'\\''")}'`;
-  }
-  
-  navigator.clipboard.writeText(curl)
-    .then(() => dialog.toast.success('cURL 命令已复制'))
-    .catch(() => dialog.toast.error('复制失败'));
-  
-  hideContextMenu();
-}
-
-function openInBrowser() {
-  if (!contextMenu.value.request) return;
-  
-  window.open(contextMenu.value.request.url, '_blank');
-  hideContextMenu();
-}
-
-function clearHistoryFromMenu() {
-  hideContextMenu();
-  clearHistory();
-}
-
-// 添加过滤规则到拦截配置
-function addFilterToDomain() {
-  if (!contextMenu.value.request) return;
-  
-  const req = contextMenu.value.request;
-  // Extract domain from URL
-  try {
-    const url = new URL(req.url);
-    const domain = url.hostname;
-    
-    emit('addFilterRule', {
-      matchType: 'domain_name',
-      condition: domain,
-      relationship: 'matches'
-    });
-    
-    dialog.toast.success(`Added domain filter: ${domain}`);
-  } catch (e) {
-    dialog.toast.error('Failed to parse URL');
-  }
-  
-  hideContextMenu();
-}
-
-function addFilterToUrl() {
-  if (!contextMenu.value.request) return;
-  
-  const req = contextMenu.value.request;
-  // Use the full URL or path as pattern
-  const urlPattern = req.url;
-  
-  emit('addFilterRule', {
-    matchType: 'url',
-    condition: urlPattern,
-    relationship: 'matches'
-  });
-  
-  dialog.toast.success(`Added URL filter: ${urlPattern}`);
-  hideContextMenu();
-}
-
-function addFilterToMethod() {
-  if (!contextMenu.value.request) return;
-  
-  const req = contextMenu.value.request;
-  const method = req.method.toLowerCase();
-  
-  emit('addFilterRule', {
-    matchType: 'http_method',
-    condition: method,
-    relationship: 'matches'
-  });
-  
-  dialog.toast.success(`Added method filter: ${method}`);
-  hideContextMenu();
-}
-
-function addFilterToExtension() {
-  if (!contextMenu.value.request) return;
-  
-  const req = contextMenu.value.request;
-  // Extract file extension from URL
-  try {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
-    const lastDot = pathname.lastIndexOf('.');
-    
-    if (lastDot > 0) {
-      const extension = pathname.substring(lastDot + 1).split('?')[0]; // Remove query params
-      
-      emit('addFilterRule', {
-        matchType: 'file_extension',
-        condition: `^${extension}$`,
-        relationship: 'matches'
-      });
-      
-      dialog.toast.success(`Added extension filter: ${extension}`);
-    } else {
-      dialog.toast.warning('No file extension found in URL');
-    }
-  } catch (e) {
-    dialog.toast.error('Failed to parse URL');
-  }
-  
-  hideContextMenu();
-}
-
-// 多选相关方法
-function toggleMultiSelectMode() {
-  isMultiSelectMode.value = !isMultiSelectMode.value;
-  if (!isMultiSelectMode.value) {
-    selectedRequests.value.clear();
-  }
-}
-
-function toggleSelectRequest(request: ProxyRequest) {
-  if (selectedRequests.value.has(request.id)) {
-    selectedRequests.value.delete(request.id);
-  } else {
-    selectedRequests.value.add(request.id);
-  }
-}
-
-function selectAllVisible() {
-  filteredRequests.value.forEach(req => {
-    selectedRequests.value.add(req.id);
-  });
-}
-
-function clearSelection() {
-  selectedRequests.value.clear();
-}
-
-function isRequestSelected(request: ProxyRequest): boolean {
-  return selectedRequests.value.has(request.id);
-}
-
-// 发送到 AI 助手 - type: 'request' | 'response' | 'both'
-type SendType = 'request' | 'response' | 'both';
-
-async function sendSelectedToAssistant(type: SendType = 'both') {
-  const selected = filteredRequests.value.filter(req => selectedRequests.value.has(req.id));
-  if (selected.length === 0) {
-    dialog.toast.warning('请先选择要发送的请求');
-    return;
-  }
-  
-  // 发送全局事件通知 AI 助手
-  await tauriEmit('traffic:send-to-assistant', { requests: selected, type });
-  emit('sendToAssistant', selected);
-  
-  const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量';
-  dialog.toast.success(`已发送 ${selected.length} 条${typeText}到 AI 助手`);
-  
-  // 清除选择
-  selectedRequests.value.clear();
-  isMultiSelectMode.value = false;
-  
-  // 跳转到 AI 助手页面
-  router.push('/ai-assistant');
-}
-
-async function sendSingleToAssistant(request: ProxyRequest, type: SendType = 'both') {
-  // 发送全局事件通知 AI 助手
-  await tauriEmit('traffic:send-to-assistant', { requests: [request], type });
-  emit('sendToAssistant', [request]);
-  
-  const typeText = type === 'request' ? '请求' : type === 'response' ? '响应' : '流量';
-  dialog.toast.success(`已发送${typeText}到 AI 助手`);
-  
-  // 跳转到 AI 助手页面
-  router.push('/ai-assistant');
-}
-
-function sendRequestToAssistantFromMenu() {
-  if (!contextMenu.value.request) return;
-  sendSingleToAssistant(contextMenu.value.request, 'request');
-  hideContextMenu();
-}
-
-function sendResponseToAssistantFromMenu() {
-  if (!contextMenu.value.request) return;
-  sendSingleToAssistant(contextMenu.value.request, 'response');
-  hideContextMenu();
-}
-
-function detailSendRequestToAssistant() {
-  hideDetailContextMenu();
-  if (!selectedRequest.value) return;
-  sendSingleToAssistant(selectedRequest.value, 'request');
-}
-
-function detailSendResponseToAssistant() {
-  hideDetailContextMenu();
-  if (!selectedRequest.value) return;
-  sendSingleToAssistant(selectedRequest.value, 'response');
-}
-
-// Export selected requests/responses to file
-async function exportSelectedToFile(type: 'request' | 'response') {
-  const selected = filteredRequests.value.filter(req => selectedRequests.value.has(req.id));
-  if (selected.length === 0) {
-    dialog.toast.warning(t('trafficAnalysis.history.export.noSelection'));
-    return;
-  }
-  
-  try {
-    // Generate filename
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const defaultFilename = `${type}-export-${timestamp}.txt`;
-    
-    // Open save dialog with JSON support
-    const filePath = await save({
-      defaultPath: defaultFilename,
-      filters: [{
-        name: 'Text Files',
-        extensions: ['txt']
-      }, {
-        name: 'HTTP Files',
-        extensions: ['http']
-      }, {
-        name: 'JSON Files',
-        extensions: ['json']
-      }, {
-        name: 'All Files',
-        extensions: ['*']
-      }]
-    });
-    
-    if (!filePath) {
-      return; // User cancelled
-    }
-    
-    // Format content based on file extension
-    let content = '';
-    
-    if (filePath.endsWith('.json')) {
-      // JSON format export
-      const exportData = selected.map(req => ({
-        id: req.id,
-        url: req.url,
-        method: req.method,
-        host: req.host,
-        protocol: req.protocol,
-        status_code: req.status_code,
-        request_headers: req.request_headers,
-        request_body: req.request_body,
-        response_headers: req.response_headers,
-        response_body: req.response_body,
-        response_size: req.response_size,
-        response_time: req.response_time,
-        timestamp: req.timestamp,
-        was_edited: req.was_edited,
-      }));
-      content = JSON.stringify(exportData, null, 2);
-    } else {
-      // Text format export
-      for (let i = 0; i < selected.length; i++) {
-        const req = selected[i];
-        
-        if (i > 0) {
-          content += '\n\n' + '='.repeat(80) + '\n\n';
-        }
-        
-        // Add metadata header
-        content += `# ${type.toUpperCase()} ${i + 1}/${selected.length}\n`;
-        content += `# URL: ${req.url}\n`;
-        content += `# Method: ${req.method}\n`;
-        content += `# Status: ${req.status_code || 'N/A'}\n`;
-        content += `# Timestamp: ${req.timestamp}\n`;
-        if (req.was_edited) {
-          content += `# Modified: Yes\n`;
-        }
-        content += '\n';
-        
-        // Add request or response content
-        if (type === 'request') {
-          content += formatRequestRaw(req, 'edited');
-        } else {
-          content += formatResponseRaw(req, 'edited');
-        }
-      }
-    }
-    
-    // Write to file
-    await writeTextFile(filePath, content);
-    
-    const typeText = type === 'request' 
-      ? t('trafficAnalysis.history.export.request')
-      : t('trafficAnalysis.history.export.response');
-    dialog.toast.success(t('trafficAnalysis.history.export.success', { 
-      count: selected.length, 
-      type: typeText 
-    }));
-    
-    // Clear selection
-    selectedRequests.value.clear();
-    isMultiSelectMode.value = false;
-    
-  } catch (error) {
-    console.error('Export failed:', error);
-    dialog.toast.error(t('trafficAnalysis.history.export.failed', { 
-      error: String(error) 
-    }));
-  }
-}
-
-// 导出为 HAR 格式
-async function exportAsHAR() {
-  const selected = Array.from(selectedRequests.value).map(id => 
-    requests.value.find(r => r.id === id)
-  ).filter(r => r !== undefined) as ProxyRequest[];
-  
-  if (selected.length === 0) {
-    dialog.toast.warning(t('trafficAnalysis.history.export.noSelection'));
-    return;
-  }
-  
-  try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const defaultFilename = `traffic-export-${timestamp}.har`;
-    
-    const filePath = await save({
-      defaultPath: defaultFilename,
-      filters: [{
-        name: 'HAR Files',
-        extensions: ['har']
-      }, {
-        name: 'All Files',
-        extensions: ['*']
-      }]
-    });
-    
-    if (!filePath) {
-      return;
-    }
-    
-    // 构建 HAR 格式
-    const har = {
-      log: {
-        version: '1.2',
-        creator: {
-          name: 'Sentinel AI',
-          version: '1.0.0'
-        },
-        entries: selected.map(req => {
-          // 解析请求头
-          let requestHeaders: Record<string, string> = {};
-          if (req.request_headers) {
-            try {
-              requestHeaders = JSON.parse(req.request_headers);
-            } catch {
-              // Ignore parse errors
-            }
-          }
-          
-          // 解析响应头
-          let responseHeaders: Record<string, string> = {};
-          if (req.response_headers) {
-            try {
-              responseHeaders = JSON.parse(req.response_headers);
-            } catch {
-              // Ignore parse errors
-            }
-          }
-          
-          // 提取查询参数
-          const urlObj = new URL(req.url);
-          const queryString = Array.from(urlObj.searchParams.entries()).map(([name, value]) => ({
-            name,
-            value
-          }));
-          
-          return {
-            startedDateTime: req.timestamp,
-            time: req.response_time || 0,
-            request: {
-              method: req.method,
-              url: req.url,
-              httpVersion: 'HTTP/1.1',
-              headers: Object.entries(requestHeaders).map(([name, value]) => ({
-                name,
-                value
-              })),
-              queryString,
-              cookies: [],
-              headersSize: -1,
-              bodySize: req.request_body ? req.request_body.length : 0,
-              postData: req.request_body ? {
-                mimeType: requestHeaders['content-type'] || 'text/plain',
-                text: req.request_body
-              } : undefined
-            },
-            response: {
-              status: req.status_code || 0,
-              statusText: getHarStatusText(req.status_code),
-              httpVersion: 'HTTP/1.1',
-              headers: Object.entries(responseHeaders).map(([name, value]) => ({
-                name,
-                value
-              })),
-              cookies: [],
-              content: {
-                size: req.response_size || 0,
-                mimeType: responseHeaders['content-type'] || 'text/plain',
-                text: req.response_body || ''
-              },
-              redirectURL: '',
-              headersSize: -1,
-              bodySize: req.response_size || 0
-            },
-            cache: {},
-            timings: {
-              send: 0,
-              wait: req.response_time || 0,
-              receive: 0
-            }
-          };
-        })
-      }
-    };
-    
-    await writeTextFile(filePath, JSON.stringify(har, null, 2));
-    
-    dialog.toast.success(t('trafficAnalysis.history.messages.exportSuccess'));
-    
-    selectedRequests.value.clear();
-    isMultiSelectMode.value = false;
-    
-  } catch (error) {
-    console.error('HAR export failed:', error);
-    dialog.toast.error(t('trafficAnalysis.history.export.failed', { 
-      error: String(error) 
-    }));
-  }
-}
-
-// 获取 HTTP 状态文本（复用上面的函数）
-function getHarStatusText(code: number): string {
-  const statusTexts: Record<number, string> = {
-    200: 'OK',
-    201: 'Created',
-    204: 'No Content',
-    301: 'Moved Permanently',
-    302: 'Found',
-    304: 'Not Modified',
-    400: 'Bad Request',
-    401: 'Unauthorized',
-    403: 'Forbidden',
-    404: 'Not Found',
-    500: 'Internal Server Error',
-    502: 'Bad Gateway',
-    503: 'Service Unavailable'
-  };
-  return statusTexts[code] || 'Unknown';
-}
-
-function formatRequest(request: ProxyRequest, tab: string, viewMode: 'original' | 'edited' = 'edited'): string {
-  if (tab === 'hex') {
-    return stringToHex(formatRequestRaw(request, viewMode));
-  }
-  
-  if (tab === 'raw') {
-    return formatRequestRaw(request, viewMode);
-  }
-  
-  // 根据 viewMode 选择使用原始或修改后的数据
-  const useEdited = viewMode === 'edited' && request.was_edited;
-  const method = useEdited && request.edited_method ? request.edited_method : request.method;
-  const url = useEdited && request.edited_url ? request.edited_url : request.url;
-  const headers = useEdited && request.edited_request_headers ? request.edited_request_headers : request.request_headers;
-  const body = useEdited && request.edited_request_body ? request.edited_request_body : request.request_body;
-  
-  // Pretty format - 从完整URL提取路径
-  const requestPath = getRequestPath(url);
-  let result = `${method} ${requestPath} HTTP/1.1\n`;
-  const hostValue = request.host || getHostFromUrl(url);
-  if (hostValue) result += `Host: ${hostValue}\n`;
-  result += formatHeaderBlock(headers, { skipHost: !!hostValue });
-  
-  if (body) {
-    result += '\n';
-    // JSON body 格式化显示
-    result += formatJsonBody(body);
-  }
-  
-  return result;
-}
-
-function formatRequestRaw(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
-  // 根据 viewMode 选择使用原始或修改后的数据
-  const useEdited = viewMode === 'edited' && request.was_edited;
-  const method = useEdited && request.edited_method ? request.edited_method : request.method;
-  const url = useEdited && request.edited_url ? request.edited_url : request.url;
-  const headers = useEdited && request.edited_request_headers ? request.edited_request_headers : request.request_headers;
-  const body = useEdited && request.edited_request_body ? request.edited_request_body : request.request_body;
-  
-  // 从完整URL提取路径
-  const requestPath = getRequestPath(url);
-  let result = `${method} ${requestPath} HTTP/1.1\n`;
-  const hostValue = request.host || getHostFromUrl(url);
-  if (hostValue) result += `Host: ${hostValue}\n`;
-  // Raw tab should still be an HTTP-like text block; if stored headers are JSON, render as header lines.
-  result += formatHeaderBlock(headers, { skipHost: !!hostValue });
-  
-  if (body) {
-    result += '\n' + body;
-  }
-  
-  return result;
-}
-
-// 从完整URL提取路径部分
-function getRequestPath(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.pathname + urlObj.search || '/';
-  } catch {
-    // 如果URL解析失败，尝试提取路径部分
-    const match = url.match(/^https?:\/\/[^/]+(\/.*)?$/);
-    if (match) {
-      return match[1] || '/';
-    }
-    return url;
-  }
-}
-
-function getHostFromUrl(url: string): string | null {
-  try {
-    return new URL(url).host || null;
-  } catch {
-    return null;
-  }
-}
-
-function formatHeaderBlock(
-  headersJsonOrRaw: string | undefined,
-  opts: { skipHost?: boolean } = {}
-): string {
-  if (!headersJsonOrRaw) return '';
-  const skip = new Set<string>();
-  if (opts.skipHost) skip.add('host');
-
-  // Prefer JSON -> header lines (avoid showing JSON in "raw" tab)
-  try {
-    const parsed = JSON.parse(headersJsonOrRaw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      let out = '';
-      for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
-        const key = String(k);
-        const keyLower = key.toLowerCase();
-        if (skip.has(keyLower)) continue;
-        if (Array.isArray(v)) {
-          for (const item of v) out += `${key}: ${String(item)}\n`;
-        } else {
-          out += `${key}: ${String(v)}\n`;
-        }
-      }
-      return out;
-    }
-  } catch {
-    // fallthrough
-  }
-
-  const lines = headersJsonOrRaw
-    .split(/\r?\n/)
-    .map(l => l.trimEnd())
-    .filter(l => l.trim().length > 0)
-    .filter(line => {
-      const idx = line.indexOf(':');
-      if (idx <= 0) return true;
-      const name = line.slice(0, idx).trim().toLowerCase();
-      return !skip.has(name);
-    });
-
-  return lines.length ? lines.join('\n') + '\n' : '';
-}
-
-// 格式化JSON body
-function formatJsonBody(body: string): string {
-  if (!body) return '';
-  try {
-    const json = JSON.parse(body);
-    return JSON.stringify(json, null, 2);
-  } catch {
-    return body;
-  }
-}
-
-function formatResponse(request: ProxyRequest, tab: string, viewMode: 'original' | 'edited' = 'edited'): string {
-  if (tab === 'hex') {
-    return stringToHex(formatResponseRaw(request, viewMode));
-  }
-  
-  if (tab === 'raw') {
-    return formatResponseRaw(request, viewMode);
-  }
-  
-  // 根据 viewMode 选择使用原始或修改后的数据
-  const useEdited = viewMode === 'edited' && request.was_edited;
-  const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code;
-  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers;
-  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body;
-  
-  // Pretty format
-  let result = `HTTP/1.2 ${statusCode} OK\n`;
-  result += formatHeaderBlock(headers);
-  
-  if (body) {
-    result += '\n';
-    
-    // 检测内容类型
-    const contentType = getResponseContentType(request, viewMode);
-    
-    // 尝试根据 Content-Type 格式化
-    if (contentType.includes('json') || contentType.includes('application/json')) {
-      try {
-        const json = JSON.parse(body);
-        result += JSON.stringify(json, null, 2);
-      } catch {
-        result += body;
-      }
-    } else if (contentType.includes('html') || contentType.includes('xml')) {
-      // HTML/XML 直接显示
-      result += body;
-    } else if (contentType.includes('text/')) {
-      // 其他文本类型
-      result += body;
-    } else {
-      // 二进制或未知类型
-      const bodySize = new Blob([body]).size;
-      result += `[Binary data - ${formatBytes(bodySize)}]\n`;
-      result += `Content-Type: ${contentType}\n`;
-      result += `\nFirst 200 characters:\n${body.substring(0, 200)}...`;
-    }
-  }
-  
-  return result;
-}
-
-function getResponseContentType(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
-  const useEdited = viewMode === 'edited' && request.was_edited;
-  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers;
-  
-  if (headers) {
-    try {
-      const parsed = JSON.parse(headers);
-      return parsed['content-type'] || parsed['Content-Type'] || '';
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
-function isResponseCompressed(request: ProxyRequest): boolean {
-  if (request.response_headers) {
-    try {
-      const headers = JSON.parse(request.response_headers);
-      const encoding = headers['content-encoding'] || headers['Content-Encoding'];
-      return encoding && (encoding.includes('gzip') || encoding.includes('br') || encoding.includes('deflate'));
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function formatResponseRaw(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
-  // 根据 viewMode 选择使用原始或修改后的数据
-  const useEdited = viewMode === 'edited' && request.was_edited;
-  const statusCode = useEdited && request.edited_status_code ? request.edited_status_code : request.status_code;
-  const headers = useEdited && request.edited_response_headers ? request.edited_response_headers : request.response_headers;
-  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body;
-  
-  let result = `HTTP/1.2 ${statusCode} OK\n`;
-  result += formatHeaderBlock(headers);
-  
-  if (body) {
-    result += '\n' + body;
-  }
-  
-  return result;
-}
-
-// 检查响应是否有 edited 数据
-function hasEditedResponse(request: ProxyRequest): boolean {
-  return !!(request.edited_response_headers || request.edited_response_body || request.edited_status_code);
-}
-
-function stringToHex(str: string): string {
-  let hex = '';
-  for (let i = 0; i < str.length; i++) {
-    const charCode = str.charCodeAt(i);
-    const hexValue = charCode.toString(16).padStart(2, '0');
-    hex += hexValue + ' ';
-    
-    if ((i + 1) % 16 === 0) {
-      hex += '\n';
-    }
-  }
-  return hex;
-}
-
-// 获取响应体用于渲染
-function getResponseBody(request: ProxyRequest, viewMode: 'original' | 'edited' = 'edited'): string {
-  const useEdited = viewMode === 'edited' && request.was_edited;
-  const body = useEdited && request.edited_response_body ? request.edited_response_body : request.response_body;
-  return body || '';
-}
-
-async function setupEventListeners() {
-  // 监听新的代理请求事件
-  unlistenRequest = await listen<ProxyRequest>('proxy:request', (event) => {
-    console.log('Received proxy request event:', event.payload);
-    
-    // 添加到待处理队列
-    pendingUpdates.push(event.payload);
-    
-    // 如果达到批量更新阈值，立即处理
-    if (pendingUpdates.length >= batchUpdateThreshold) {
-      if (updateTimer !== null) {
-        clearTimeout(updateTimer);
-      }
-      processPendingUpdates();
-    } 
-    // 否则设置定时器，在 50ms 后批量处理（降低延迟）
-    else if (updateTimer === null) {
-      updateTimer = window.setTimeout(() => {
-        processPendingUpdates();
-      }, 50);
-    }
-  });
 }
 
 // 初始化面板高度（基于容器实际高度）
@@ -3424,8 +1282,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  // 清理事件监听器
-  if (unlistenRequest) unlistenRequest();
+  cleanupDataRuntime();
   
   // 清理 ResizeObserver
   if (resizeObserver && scrollContainer.value) {
@@ -3434,9 +1291,6 @@ onUnmounted(() => {
   }
   if (mainContainerResizeObserver) {
     mainContainerResizeObserver.disconnect();
-  }
-  if (updateTimer !== null) {
-    clearTimeout(updateTimer);
   }
   // 清理拖拽事件监听
   document.removeEventListener('mousemove', handleResize);
@@ -3450,20 +1304,6 @@ onUnmounted(() => {
   
   // 清理内存 - 防止泄漏
   selectedRequests.value.clear();
-  requestIdSet.value.clear();
-  wsMessagesCache.value.clear();
-  expandedWsConnections.value.clear();
-  activeWsTabs.value.clear();
-  filterCache.value = {
-    config: null,
-    searchRegex: null,
-    searchTerm: '',
-    showExts: null,
-    hideExts: null,
-  };
-  
-  // 清理待处理更新
-  pendingUpdates = [];
 });
 
 // 监听详情面板的打开/关闭，更新容器高度

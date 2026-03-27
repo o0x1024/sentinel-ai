@@ -45,15 +45,53 @@
 
       <!-- Batch Toggle Buttons -->
       <div v-if="['all', 'traffic', 'agents'].includes(selectedCategory)" class="ml-auto flex gap-2">
-        <button class="btn btn-sm btn-success" :disabled="filteredPlugins.length === 0 || batchToggling"
+        <button class="btn btn-sm btn-success" :disabled="filteredPlugins.length === 0 || pluginBatchProcessing"
           @click="$emit('batchEnable')">
           <span v-if="batchToggling" class="loading loading-spinner"></span>
           全部开启
         </button>
-        <button class="btn btn-sm btn-warning" :disabled="filteredPlugins.length === 0 || batchToggling"
+        <button class="btn btn-sm btn-warning" :disabled="filteredPlugins.length === 0 || pluginBatchProcessing"
           @click="$emit('batchDisable')">
           <span v-if="batchToggling" class="loading loading-spinner"></span>
           全部停止
+        </button>
+      </div>
+    </div>
+
+    <div
+      v-if="selectedPluginIds.length > 0"
+      class="mb-4 flex flex-col gap-3 rounded-lg border border-base-300 bg-base-200/40 p-3 lg:flex-row lg:items-center lg:justify-between"
+    >
+      <div class="text-sm text-base-content/70">
+        {{ $t('plugins.selectionSummary', { selected: selectedPluginIds.length, page: paginatedPlugins.length, total: filteredPlugins.length }) }}
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          class="btn btn-sm btn-success btn-outline"
+          :disabled="selectedPluginIds.length === 0 || pluginBatchProcessing"
+          @click="$emit('batchEnableSelected')"
+        >
+          <span v-if="batchToggling" class="loading loading-spinner loading-xs"></span>
+          <i v-else class="fas fa-play mr-2"></i>
+          {{ $t('plugins.batchEnableSelected', '启用选中') }}
+        </button>
+        <button
+          class="btn btn-sm btn-warning btn-outline"
+          :disabled="selectedPluginIds.length === 0 || pluginBatchProcessing"
+          @click="$emit('batchDisableSelected')"
+        >
+          <span v-if="batchToggling" class="loading loading-spinner loading-xs"></span>
+          <i v-else class="fas fa-pause mr-2"></i>
+          {{ $t('plugins.batchDisableSelected', '停用选中') }}
+        </button>
+        <button
+          class="btn btn-sm btn-error"
+          :disabled="selectedPluginIds.length === 0 || pluginBatchProcessing"
+          @click="$emit('batchDeleteSelected')"
+        >
+          <span v-if="batchDeleting" class="loading loading-spinner loading-xs"></span>
+          <i v-else class="fas fa-trash mr-2"></i>
+          {{ $t('plugins.batchDeleteSelected', '删除选中') }}
         </button>
       </div>
     </div>
@@ -86,6 +124,15 @@
       <table class="table table-zebra w-full">
         <thead>
           <tr>
+            <th class="w-12">
+              <input
+                type="checkbox"
+                class="checkbox checkbox-sm"
+                :checked="isAllCurrentPageSelected"
+                :disabled="paginatedPlugins.length === 0 || pluginBatchProcessing"
+                @change="$emit('toggleSelectAllCurrentPage')"
+              />
+            </th>
             <th class="w-12">{{ $t('common.status', '状态') }}</th>
             <th class="w-40">{{ $t('plugins.pluginName', '插件名称') }}</th>
             <th class="w-24">{{ $t('plugins.version', '版本') }}</th>
@@ -97,6 +144,15 @@
         </thead>
         <tbody>
           <tr v-for="plugin in paginatedPlugins" :key="plugin.metadata.id">
+            <td>
+              <input
+                type="checkbox"
+                class="checkbox checkbox-sm"
+                :checked="isPluginSelected(plugin)"
+                :disabled="pluginBatchProcessing"
+                @change="$emit('toggleSelection', plugin)"
+              />
+            </td>
             <!-- Status Indicator -->
             <td>
               <div class="flex items-center gap-2">
@@ -165,7 +221,7 @@
                 <!-- Favorite Button -->
                 <div v-if="isTrafficPluginType(plugin) || isAgentPluginType(plugin)" class="tooltip"
                   :data-tip="isPluginFavorited(plugin) ? $t('plugins.unfavorite', '取消收藏') : $t('plugins.favorite', '收藏插件')">
-                  <button class="btn btn-sm btn-ghost" @click="$emit('toggleFavorite', plugin)">
+                  <button class="btn btn-sm btn-ghost" :disabled="pluginBatchProcessing" @click="$emit('toggleFavorite', plugin)">
                     <i :class="isPluginFavorited(plugin) ? 'fas fa-star text-yellow-500' : 'far fa-star'"></i>
                   </button>
                 </div>
@@ -173,31 +229,32 @@
                 <!-- Test Plugin -->
                 <div class="tooltip"
                   :data-tip="isAgentPluginType(plugin) ? '测试 Agent 工具 (analyze)' : '测试流量分析 (scan_request/scan_response)'">
-                  <button class="btn btn-sm btn-outline" @click="$emit('testPlugin', plugin)">
+                  <button class="btn btn-sm btn-outline" :disabled="pluginBatchProcessing" @click="$emit('testPlugin', plugin)">
                     <i class="fas fa-vial mr-1"></i>
                   </button>
                 </div>
 
                 <!-- Advanced Test -->
                 <div class="tooltip" :data-tip="isAgentPluginType(plugin) ? 'Agent 高级测试' : '流量分析高级测试'">
-                  <button class="btn btn-sm btn-outline" @click="$emit('advancedTest', plugin)">
+                  <button class="btn btn-sm btn-outline" :disabled="pluginBatchProcessing" @click="$emit('advancedTest', plugin)">
                     <i class="fas fa-gauge-high mr-1"></i>
                   </button>
                 </div>
 
                 <!-- Enable/Disable Toggle -->
                 <button class="btn btn-sm" :class="plugin.status === 'Enabled' ? 'btn-warning' : 'btn-success'"
+                  :disabled="pluginBatchProcessing"
                   @click="$emit('togglePlugin', plugin)">
                   <i :class="plugin.status === 'Enabled' ? 'fas fa-pause' : 'fas fa-play'" class="mr-1"></i>
                 </button>
 
                 <!-- View/Edit Code -->
-                <button class="btn btn-sm btn-info" @click="$emit('viewCode', plugin)">
+                <button class="btn btn-sm btn-info" :disabled="pluginBatchProcessing" @click="$emit('viewCode', plugin)">
                   <i class="fas fa-code mr-1"></i>
                 </button>
 
                 <!-- Delete -->
-                <button class="btn btn-sm btn-error" @click="$emit('deletePlugin', plugin)">
+                <button class="btn btn-sm btn-error" :disabled="pluginBatchProcessing" @click="$emit('deletePlugin', plugin)">
                   <i class="fas fa-trash"></i>
                 </button>
               </div>
@@ -246,6 +303,7 @@ const props = defineProps<{
   pluginViewMode: 'favorited' | 'all'
   filteredPlugins: PluginRecord[]
   paginatedPlugins: PluginRecord[]
+  selectedPluginIds: string[]
   paginationInfo: { start: number; end: number; total: number }
   currentPage: number
   pageSize: number
@@ -256,9 +314,13 @@ const props = defineProps<{
   availableSubCategories: string[]
   availableTags: string[]
   batchToggling: boolean
+  batchDeleting: boolean
+  pluginBatchProcessing: boolean
+  isAllCurrentPageSelected: boolean
   getStatusText: (status: string) => string
   getCategoryLabel: (category: string) => string
   getCategoryIcon: (category: string) => string
+  isPluginSelected: (plugin: PluginRecord) => boolean
   isPluginFavorited: (plugin: PluginRecord) => boolean
   isTrafficPluginType: (plugin: PluginRecord) => boolean
   isAgentPluginType: (plugin: PluginRecord) => boolean
@@ -272,8 +334,13 @@ const emit = defineEmits<{
   clearFilters: []
   batchEnable: []
   batchDisable: []
+  batchEnableSelected: []
+  batchDisableSelected: []
+  batchDeleteSelected: []
   changePageSize: [size: number]
   goToPage: [page: number]
+  toggleSelectAllCurrentPage: []
+  toggleSelection: [plugin: PluginRecord]
   toggleFavorite: [plugin: PluginRecord]
   testPlugin: [plugin: PluginRecord]
   advancedTest: [plugin: PluginRecord]

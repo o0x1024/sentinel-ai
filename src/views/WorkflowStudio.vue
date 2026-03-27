@@ -1,1050 +1,265 @@
 <template>
   <div class="p-4 space-y-4 h-full flex flex-col">
-      <div class="flex items-center justify-between flex-shrink-0">
-        <div class="flex items-center gap-3">
-        <h1 class="text-2xl font-bold">{{ t('trafficAnalysis.workflowStudio.title') }}</h1>
-          <input v-model="workflow_name" class="input input-bordered input-sm w-48" :placeholder="t('trafficAnalysis.workflowStudio.header.namePlaceholder')" />
-          <button class="btn btn-xs btn-ghost" @click="show_meta_dialog = true" :title="t('trafficAnalysis.workflowStudio.header.editMetadataTooltip')">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
-          
-          <div class="text-xs text-base-content/60 ml-2" v-if="workflow_name.trim()">
-            <span v-if="is_auto_saving" class="flex items-center gap-1">
-              <span class="loading loading-spinner loading-xs"></span>
-              {{ t('trafficAnalysis.workflowStudio.status.saving') }}
-            </span>
-            <span v-else-if="has_unsaved_changes" class="text-warning">
-              {{ t('trafficAnalysis.workflowStudio.status.unsaved') }}
-            </span>
-            <span v-else class="text-success">
-              {{ t('trafficAnalysis.workflowStudio.status.saved') }}
-            </span>
-          </div>
-        </div>
-        <div class="flex gap-2">
-          <button 
-            class="btn btn-sm" 
-            :class="show_workflow_list_panel ? 'btn-primary' : 'btn-outline'" 
-            @click="toggle_workflow_list_panel" 
-            :title="t('trafficAnalysis.workflowStudio.toolbar.workflowListTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.workflowList') }}
-          </button>
-          <button class="btn btn-sm btn-primary" @click="on_save_workflow_click" :disabled="!workflow_name.trim()" :title="t('trafficAnalysis.workflowStudio.toolbar.saveTooltip')">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.save') }}
-          </button>
-          <div class="dropdown dropdown-end">
-            <button tabindex="0" class="btn btn-sm btn-outline" :title="t('trafficAnalysis.workflowStudio.toolbar.exportImportTooltip')">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-              </svg>
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50">
-              <li><a @click="export_workflow_json">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                {{ t('trafficAnalysis.workflowStudio.export.exportJson') }}
-              </a></li>
-              <li><a @click="trigger_import_file">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                {{ t('trafficAnalysis.workflowStudio.export.importJson') }}
-              </a></li>
-              <li><a @click="export_workflow_image">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                {{ t('trafficAnalysis.workflowStudio.export.exportImage') }}
-              </a></li>
-            </ul>
-          </div>
-          <input ref="import_file_input" type="file" accept=".json" class="hidden" @change="import_workflow_json" />
-          <button class="btn btn-sm btn-outline" @click="refresh_catalog" :title="t('trafficAnalysis.workflowStudio.toolbar.refreshCatalogTooltip')">{{ t('trafficAnalysis.workflowStudio.toolbar.refreshCatalog') }}</button>
-          <button class="btn btn-sm btn-outline" @click="reset_canvas" :title="t('trafficAnalysis.workflowStudio.toolbar.resetCanvasTooltip')">{{ t('trafficAnalysis.workflowStudio.toolbar.resetCanvas') }}</button>
-          <button 
-            v-if="!workflow_running" 
-            class="btn btn-sm btn-success" 
-            @click="start_run" 
-            :title="t('trafficAnalysis.workflowStudio.toolbar.runTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.run') }}
-          </button>
-          <button 
-            v-else 
-            class="btn btn-sm btn-error" 
-            @click="stop_run" 
-            :title="t('trafficAnalysis.workflowStudio.toolbar.stopTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.stop') }}
-          </button>
-          <!-- 定时调度按钮 -->
-          <button 
-            v-if="!schedule_running" 
-            class="btn btn-sm btn-warning" 
-            @click="start_schedule" 
-            :disabled="!workflow_name.trim() || !has_schedule_trigger"
-            :title="has_schedule_trigger ? t('trafficAnalysis.workflowStudio.toolbar.startScheduleTooltip') : t('trafficAnalysis.workflowStudio.toolbar.startScheduleDisabledTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.schedule') }}
-          </button>
-          <button 
-            v-else 
-            class="btn btn-sm btn-error" 
-            @click="stop_schedule" 
-            :title="t('trafficAnalysis.workflowStudio.toolbar.stopScheduleTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.stop') }}
-          </button>
-          <button 
-            class="btn btn-sm" 
-            :class="show_logs ? 'btn-primary' : 'btn-ghost'" 
-            @click="show_logs = !show_logs" 
-            :title="t('trafficAnalysis.workflowStudio.toolbar.toggleLogsTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.logs') }}
-          </button>
-          <button 
-            class="btn btn-sm" 
-            :class="show_execution_history ? 'btn-secondary' : 'btn-ghost'" 
-            @click="toggle_execution_history" 
-            :title="t('trafficAnalysis.workflowStudio.toolbar.executionHistoryTooltip')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.toolbar.history') }}
-            <span v-if="execution_history.length" class="badge badge-xs badge-primary ml-1">{{ execution_history.length }}</span>
-          </button>
-        </div>
-      </div>
+    <WorkflowStudioHeader
+      :workflow-name="workflow_name"
+      :is-auto-saving="is_auto_saving"
+      :has-unsaved-changes="has_unsaved_changes"
+      :show-workflow-list-panel="show_workflow_list_panel"
+      :workflow-running="workflow_running"
+      :schedule-running="schedule_running"
+      :has-schedule-trigger="has_schedule_trigger"
+      :show-logs="show_logs"
+      :show-execution-history="show_execution_history"
+      :execution-history-count="execution_history.length"
+      :on-open-meta-dialog="() => { show_meta_dialog = true }"
+      :on-toggle-workflow-list-panel="toggle_workflow_list_panel"
+      :on-save-workflow="handle_save_workflow_click"
+      :on-export-workflow-json="export_workflow_json"
+      :on-trigger-import-file="trigger_import_file"
+      :on-export-workflow-image="export_workflow_image"
+      :on-refresh-catalog="refresh_catalog"
+      :on-reset-canvas="reset_canvas"
+      :on-start-run="start_run"
+      :on-stop-run="stop_run"
+      :on-start-schedule="start_schedule"
+      :on-stop-schedule="stop_schedule"
+      :on-toggle-logs="() => { show_logs = !show_logs }"
+      :on-toggle-execution-history="toggle_execution_history"
+      @update:workflow-name="workflow_name = $event"
+    />
+    <input ref="import_file_input" type="file" accept=".json" class="hidden" @change="import_workflow_json" />
 
     <div class="flex-1 flex gap-4 min-h-0 overflow-hidden relative">
-      <!-- 工作流列表抽屉 -->
-      <Transition name="drawer">
-        <div 
-          v-if="show_workflow_list_panel" 
-          class="absolute top-0 left-0 bottom-0 w-[300px] bg-base-100 shadow-xl border-r border-base-300 z-20 flex flex-col"
-        >
-          <div class="p-3 flex items-center justify-between border-b border-base-300 flex-shrink-0">
-            <h2 class="text-sm font-semibold">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.title') }}</h2>
-            <button class="btn btn-xs btn-ghost" @click="show_workflow_list_panel = false">✕</button>
-          </div>
-          
-          <!-- Tab 切换 -->
-          <div class="tabs tabs-boxed mx-3 mt-3 flex-shrink-0">
-            <a 
-              class="tab tab-xs flex-1" 
-              :class="{ 'tab-active': workflow_list_tab === 'workflows' }"
-              @click="switch_workflow_list_tab('workflows')"
-            >{{ t('trafficAnalysis.workflowStudio.workflowListPanel.myWorkflows') }}</a>
-            <a 
-              class="tab tab-xs flex-1" 
-              :class="{ 'tab-active': workflow_list_tab === 'templates' }"
-              @click="switch_workflow_list_tab('templates')"
-            >{{ t('trafficAnalysis.workflowStudio.workflowListPanel.templates') }}</a>
-          </div>
-          
-          <!-- 搜索框 -->
-          <div class="px-3 pt-3 flex-shrink-0">
-            <div class="relative">
-              <input 
-                v-model="workflow_list_search" 
-                class="input input-bordered input-xs w-full pr-7" 
-                :placeholder="t('trafficAnalysis.workflowStudio.workflowListPanel.searchPlaceholder')" 
-              />
-              <button 
-                v-if="workflow_list_search" 
-                class="btn btn-xs btn-ghost absolute right-0.5 top-1/2 -translate-y-1/2 h-5 w-5 min-h-0 p-0" 
-                @click="workflow_list_search = ''"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          
-          <!-- 列表内容 -->
-          <div class="flex-1 overflow-y-auto p-3 space-y-2">
-            <!-- 工作流列表 -->
-            <template v-if="workflow_list_tab === 'workflows'">
-              <div v-if="filtered_workflow_list.length === 0" class="text-center text-base-content/60 py-6">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <p class="text-xs">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.emptyWorkflows') }}</p>
-              </div>
-              <div 
-                v-for="wf in filtered_workflow_list" 
-                :key="wf.id" 
-                class="card bg-base-200 hover:bg-base-300 cursor-pointer transition-colors"
-                :class="{ 'ring-2 ring-primary': wf.id === workflow_id }"
-                @click="load_workflow_from_panel(wf.id)"
-              >
-                <div class="card-body p-2">
-                  <div class="flex items-start justify-between gap-1">
-                    <div class="flex-1 min-w-0">
-                      <h4 class="font-semibold text-xs truncate">{{ wf.name }}</h4>
-                      <p v-if="wf.description" class="text-xs text-base-content/70 mt-0.5 line-clamp-1">{{ wf.description }}</p>
-                      <div class="flex flex-wrap gap-1 mt-1 text-xs text-base-content/60">
-                        <span class="badge badge-xs badge-ghost">{{ wf.version }}</span>
-                        <span v-if="wf.is_tool" class="badge badge-xs badge-secondary">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.aiTool') }}</span>
-                      </div>
-                    </div>
-                    <div class="flex gap-0.5">
-                      <button
-                        class="btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0"
-                        @click.stop="edit_workflow_metadata(wf.id)"
-                        :title="t('trafficAnalysis.workflowStudio.header.editMetadataTooltip')"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5M18.586 3.586a2 2 0 112.828 2.828L12 15.828l-4 1 1-4 9.586-9.242z" />
-                        </svg>
-                      </button>
-                      <button 
-                        class="btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0" 
-                        @click.stop="clone_workflow(wf.id)" 
-                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.duplicate')"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      </button>
-                      <button 
-                        class="btn btn-xs btn-ghost text-error h-6 w-6 min-h-0 p-0" 
-                        @click.stop="delete_workflow(wf.id)" 
-                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.delete')"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </template>
-            
-            <!-- 模板列表 -->
-            <template v-else>
-              <div v-if="filtered_template_list.length === 0" class="text-center text-base-content/60 py-6">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-                <p class="text-xs">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.emptyTemplates') }}</p>
-              </div>
-              <div 
-                v-for="tpl in filtered_template_list" 
-                :key="tpl.id" 
-                class="card bg-base-200 hover:bg-base-300 cursor-pointer transition-colors"
-              >
-                <div class="card-body p-2">
-                  <div class="flex items-start justify-between gap-1">
-                    <div class="flex-1 min-w-0">
-                      <h4 class="font-semibold text-xs truncate flex items-center gap-1">
-                        {{ tpl.name }}
-                        <span class="badge badge-primary badge-xs">{{ t('trafficAnalysis.workflowStudio.workflowListPanel.templateBadge') }}</span>
-                      </h4>
-                      <p v-if="tpl.description" class="text-xs text-base-content/70 mt-0.5 line-clamp-1">{{ tpl.description }}</p>
-                      <div class="flex flex-wrap gap-1 mt-1 text-xs text-base-content/60">
-                        <span>{{ t('trafficAnalysis.workflowStudio.workflowListPanel.nodeCount', { count: tpl.node_count || 0 }) }}</span>
-                      </div>
-                    </div>
-                    <div class="flex gap-0.5">
-                      <button 
-                        class="btn btn-xs btn-primary h-6 w-6 min-h-0 p-0" 
-                        @click.stop="use_template(tpl.id)" 
-                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.useTemplate')"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                        </svg>
-                      </button>
-                      <button 
-                        class="btn btn-xs btn-ghost text-error h-6 w-6 min-h-0 p-0" 
-                        @click.stop="delete_template(tpl.id)" 
-                        :title="t('trafficAnalysis.workflowStudio.workflowListPanel.deleteTemplate')"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-          
-          <!-- 底部操作 -->
-          <div class="p-3 border-t border-base-300 flex-shrink-0">
-            <button 
-              v-if="workflow_list_tab === 'workflows'"
-              class="btn btn-xs btn-primary w-full" 
-              @click="create_new_workflow"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              {{ t('trafficAnalysis.workflowStudio.workflowListPanel.newWorkflow') }}
-            </button>
-            <button 
-              v-if="workflow_list_tab === 'templates'"
-              class="btn btn-xs btn-primary w-full" 
-              @click="save_current_as_template"
-              :disabled="!workflow_name.trim()"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-              </svg>
-              {{ t('trafficAnalysis.workflowStudio.workflowListPanel.saveAsTemplate') }}
-            </button>
-          </div>
-        </div>
-      </Transition>
-      
-      <!-- 抽屉遮罩 -->
-      <Transition name="fade">
-        <div 
-          v-if="show_workflow_list_panel" 
-          class="absolute inset-0 bg-black/20 z-10"
-          @click="show_workflow_list_panel = false"
-        ></div>
-      </Transition>
-      
-      <!-- 主内容区域 -->
-      <div class="flex-1 flex gap-4 min-w-0">
-        <!-- 节点库侧边栏 -->
-        <div
-          :style="sidebar_collapsed ? undefined : { width: `${sidebar_width}px` }"
-          :class="[
-            sidebar_collapsed ? 'w-12' : '',
-            show_workflow_list_panel || is_resizing_sidebar ? 'transition-none no-node-lib-anim' : 'transition-[width] duration-300'
-          ]"
-          class="relative flex-shrink-0 flex flex-col"
-        >
-          <div
-            v-if="!sidebar_collapsed"
-            class="absolute top-0 right-0 h-full w-1.5 cursor-col-resize z-20 group"
-            @mousedown="start_sidebar_resize"
-          >
-            <div
-              class="h-full w-full"
-              :class="is_resizing_sidebar ? 'bg-primary/30' : 'bg-transparent group-hover:bg-base-content/10'"
-            ></div>
-          </div>
-          <div class="card bg-base-100 shadow-xl flex-1 flex flex-col overflow-hidden">
-            <div class="card-body p-3 flex flex-col flex-1 overflow-hidden">
-              <div class="flex items-center justify-between mb-2 flex-shrink-0">
-                <h2 v-if="!sidebar_collapsed" class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.sidebar.nodeLibrary') }}</h2>
-                <button class="btn btn-xs btn-ghost" @click="sidebar_collapsed = !sidebar_collapsed" :title="sidebar_collapsed ? t('trafficAnalysis.workflowStudio.sidebar.expandSidebar') : t('trafficAnalysis.workflowStudio.sidebar.collapseSidebar')">
-                  <svg v-if="sidebar_collapsed" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                  </svg>
-                  <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-                  </svg>
-                </button>
-              </div>
-              <div v-if="!sidebar_collapsed" class="flex flex-col flex-1 overflow-hidden">
-                <div class="relative mb-2 flex-shrink-0">
-                  <input v-model="search_query" class="input input-bordered input-sm w-full pr-16" :placeholder="t('trafficAnalysis.workflowStudio.sidebar.searchPlaceholder')" @input="on_search_change" />
-                  <button v-if="search_query" class="btn btn-xs btn-ghost absolute right-8 top-1/2 -translate-y-1/2" @click="clear_search" :title="t('trafficAnalysis.workflowStudio.sidebar.clearSearchTooltip')">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                  <button class="btn btn-xs btn-ghost absolute right-1 top-1" @click="search_in_canvas" :title="t('trafficAnalysis.workflowStudio.sidebar.searchInCanvasTooltip')" :disabled="!search_query">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </button>
-                </div>
-                <div class="form-control mb-2 flex-shrink-0">
-                  <label class="label cursor-pointer py-1">
-                    <span class="label-text text-xs">{{ t('trafficAnalysis.workflowStudio.sidebar.favoritesOnly') }}</span>
-                    <input type="checkbox" v-model="show_favorites_only" class="checkbox checkbox-xs" />
-                  </label>
-                </div>
-                <div class="space-y-2 overflow-y-auto flex-1">
-                  <div v-if="filtered_groups.length === 0" class="text-center text-sm text-base-content/60 py-4">
-                    {{ t('trafficAnalysis.workflowStudio.sidebar.noMatchingNodes') }}
-                  </div>
-                  <div v-for="group in filtered_groups" :key="group.name" class="collapse collapse-arrow bg-base-200">
-                    <input type="checkbox" :checked="group.name === 'tool'" />
-                    <div class="collapse-title text-sm font-medium py-2">
-                      {{ group.label }} ({{ group.items.length }})
-                    </div>
-                    <div class="collapse-content">
-                      <!-- MCP/Plugin 单列显示，其他双列 -->
-                      <div :class="['mcp', 'plugin'].includes(group.name) ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-2'">
-                        <div
-                          v-for="item in group.items"
-                          :key="item.node_type"
-                          class="btn btn-xs relative text-left justify-start"
-                          @click="add_node(item)"
-                          @keydown.enter.prevent="add_node(item)"
-                          @keydown.space.prevent="add_node(item)"
-                          :title="item.node_type"
-                          role="button"
-                          tabindex="0"
-                        >
-                          <span class="truncate flex-1">{{ item.label }}</span>
-                          <button 
-                            class="btn btn-ghost btn-xs p-0 w-4 h-4 ml-1 flex-shrink-0"
-                            @click.stop="toggle_favorite(item.node_type)"
-                            :title="is_favorite(item.node_type) ? t('trafficAnalysis.workflowStudio.sidebar.unfavorite') : t('trafficAnalysis.workflowStudio.sidebar.favorite')"
-                          >
-                            <span v-if="is_favorite(item.node_type)">⭐</span>
-                            <span v-else class="opacity-40">☆</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <WorkflowStudioWorkflowListPanel
+        :show-workflow-list-panel="show_workflow_list_panel"
+        :workflow-list-tab="workflow_list_tab"
+        :workflow-list-search="workflow_list_search"
+        :workflow-id="workflow_id"
+        :workflow-name="workflow_name"
+        :filtered-workflow-list="filtered_workflow_list"
+        :filtered-template-list="filtered_template_list"
+        :on-close="() => { show_workflow_list_panel = false }"
+        :on-switch-tab="switch_workflow_list_tab"
+        :on-load-workflow="load_workflow_from_panel"
+        :on-edit-workflow-metadata="edit_workflow_metadata"
+        :on-clone-workflow="clone_workflow"
+        :on-delete-workflow="delete_workflow"
+        :on-use-template="use_template"
+        :on-delete-template="delete_template"
+        :on-create-new-workflow="create_new_workflow"
+        :on-save-current-as-template="save_current_as_template"
+        @update:workflow-list-search="workflow_list_search = $event"
+      />
 
-        <!-- 画布区域 -->
-        <div class="flex-1 min-w-0">
-          <FlowchartVisualization ref="flow_ref" @nodeClick="on_node_click" @newWorkflow="on_new_workflow" @change="on_flowchart_change" :highlightedNodes="highlighted_nodes" />
-        </div>
-      </div>
+      <WorkflowStudioCanvasLayout
+        :sidebar-collapsed="sidebar_collapsed"
+        :sidebar-width="sidebar_width"
+        :sidebar-transition-ready="sidebar_transition_ready"
+        :is-resizing-sidebar="is_resizing_sidebar"
+        :show-workflow-list-panel="show_workflow_list_panel"
+        :search-query="search_query"
+        :show-favorites-only="show_favorites_only"
+        :filtered-groups="filtered_groups"
+        :is-favorite="is_favorite"
+        :on-toggle-sidebar-collapsed="() => { sidebar_collapsed = !sidebar_collapsed }"
+        :on-start-sidebar-resize="start_sidebar_resize"
+        :on-search-change="on_search_change"
+        :on-clear-search="clear_search"
+        :on-search-in-canvas="search_in_canvas"
+        :on-add-node="add_node"
+        :on-toggle-favorite="toggle_favorite"
+        @update:search-query="search_query = $event"
+        @update:show-favorites-only="show_favorites_only = $event"
+      >
+        <template #canvas>
+          <FlowchartVisualization
+            ref="flow_ref"
+            @node-click="on_node_click"
+            @connection-click="on_connection_click"
+            @new-workflow="on_new_workflow"
+            @change="on_flowchart_change"
+            :highlightedNodes="highlighted_nodes"
+          />
+        </template>
+      </WorkflowStudioCanvasLayout>
     </div>
 
-    <!-- 执行日志面板 -->
-    <div v-if="show_logs" class="card bg-base-100 shadow-xl mt-4 flex-shrink-0">
-      <div class="card-body p-3">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.logs.title') }}</h2>
-          <div class="flex gap-2">
-            <button class="btn btn-xs btn-outline" @click="clear_logs">{{ t('trafficAnalysis.workflowStudio.logs.clear') }}</button>
-            <button class="btn btn-xs btn-ghost" @click="show_logs = false">✕</button>
-          </div>
-        </div>
-        <div ref="logs_container_ref" class="overflow-y-auto bg-base-200 rounded p-2 font-mono text-xs" style="max-height: 120px">
-          <div v-if="execution_logs.length === 0" class="text-center text-base-content/60 py-4">
-            {{ t('trafficAnalysis.workflowStudio.logs.empty') }}
-          </div>
-          <div v-for="(log, idx) in execution_logs" :key="idx" class="mb-1">
-            <div :class="get_log_class(log.level)">
-              <span class="opacity-60">[{{ format_time(log.timestamp) }}]</span>
-              <span class="font-semibold">[{{ log.level }}]</span>
-              <span v-if="log.node_id" class="text-primary">[{{ log.node_id }}]</span>
-              <span>{{ log.message }}</span>
-              <button v-if="log.details" 
-                class="btn btn-xs btn-ghost ml-2" 
-                @click="toggle_log_details(idx)"
-                :title="expanded_logs.has(idx) ? t('trafficAnalysis.workflowStudio.logs.collapseDetails') : t('trafficAnalysis.workflowStudio.logs.expandDetails')">
-                {{ expanded_logs.has(idx) ? '▼' : '▶' }}
-              </button>
-            </div>
-            <pre v-if="log.details && expanded_logs.has(idx)" 
-              class="ml-4 mt-1 text-xs opacity-80 bg-base-300 p-2 rounded overflow-x-auto max-h-60">{{ log.details }}</pre>
-          </div>
-        </div>
-      </div>
-    </div>
+    <WorkflowStudioPanels
+      ref="workflow_panels_ref"
+      :show-logs="show_logs"
+      :execution-logs="execution_logs"
+      :expanded-logs="expanded_logs"
+      :get-log-class="get_log_class"
+      :format-time="format_time"
+      :show-new-workflow-confirm="show_new_workflow_confirm"
+      :show-meta-dialog="show_meta_dialog"
+      :workflow-name="workflow_name"
+      :workflow-description="workflow_description"
+      :workflow-tags="workflow_tags"
+      :workflow-version="workflow_version"
+      :workflow-is-tool="workflow_is_tool"
+      :node-count="flow_ref?.getFlowchartNodes().length || 0"
+      :edge-count="flow_ref?.getFlowchartEdges().length || 0"
+      :drawer-open="drawer_open"
+      :selected-node="selected_node"
+      :selected-schema="selected_schema"
+      :param-values="param_values"
+      :notification-rules="notification_rules"
+      :available-tools="available_tools"
+      :json-errors="json_errors"
+      :has-validation-errors="has_validation_errors"
+      :show-detail-dialog="show_detail_dialog"
+      :detail-dialog-fullscreen="detail_dialog_fullscreen"
+      :detail-loading="detail_loading"
+      :detail-data="detail_data"
+      :show-result-panel="show_result_panel"
+      :selected-step-result="selected_step_result"
+      :selected-node-name="selected_node?.name || ''"
+      :format-datetime="format_datetime"
+      :format-duration="format_duration"
+      :get-status-badge-class="get_status_badge_class"
+      :get-status-text="get_status_text"
+      :format-result="format_result"
+      :get-enabled-providers="get_enabled_providers"
+      :get-provider-models="get_provider_models"
+      :on-clear-logs="clear_logs"
+      :on-toggle-log-details="toggle_log_details"
+      :on-confirm-new-workflow-save="confirm_new_workflow_save"
+      :on-confirm-new-workflow-discard="confirm_new_workflow_discard"
+      :on-close-drawer="close_drawer"
+      :on-toggle-tool-selection="toggle_tool_selection"
+      :on-validate-json="validate_json"
+      :on-save-params-and-close="save_params_and_close"
+      :on-copy-detail-result="copy_detail_result"
+      :on-copy-result-to-clipboard="copy_result_to_clipboard"
+      :on-close-result-panel="close_result_panel"
+      :on-edit-node-params="edit_node_params"
+      @update:show-logs="show_logs = $event"
+      @update:show-new-workflow-confirm="show_new_workflow_confirm = $event"
+      @update:show-meta-dialog="show_meta_dialog = $event"
+      @update:workflow-name="workflow_name = $event"
+      @update:workflow-description="workflow_description = $event"
+      @update:workflow-tags="workflow_tags = $event"
+      @update:workflow-version="workflow_version = $event"
+      @update:workflow-is-tool="workflow_is_tool = $event"
+      @update:show-detail-dialog="show_detail_dialog = $event"
+      @update:detail-dialog-fullscreen="detail_dialog_fullscreen = $event"
+    />
 
-    <!-- 新建工作流确认对话框 -->
-    <dialog :open="show_new_workflow_confirm" class="modal">
-      <div class="modal-box">
-        <h3 class="font-bold text-lg mb-4">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.title') }}</h3>
-        <p class="text-base-content/80">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.message') }}</p>
-        <div class="modal-action">
-          <button class="btn btn-primary btn-sm" @click="confirm_new_workflow_save">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.saveAndNew') }}</button>
-          <button class="btn btn-warning btn-sm" @click="confirm_new_workflow_discard">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.discardAndNew') }}</button>
-          <button class="btn btn-ghost btn-sm" @click="show_new_workflow_confirm = false">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.cancel') }}</button>
-        </div>
-      </div>
-      <form method="dialog" class="modal-backdrop">
-        <button @click="show_new_workflow_confirm = false">{{ t('trafficAnalysis.workflowStudio.newWorkflowConfirm.close') }}</button>
-      </form>
-    </dialog>
+    <WorkflowStudioEdgeMappingDialog
+      :open="show_edge_mapping_dialog"
+      :edge-label="selected_edge_label"
+      :source-path-options="edge_source_path_options"
+      :target-path-options="edge_target_path_options"
+      :form="edge_mapping_form"
+      @close="close_edge_mapping_dialog"
+      @save="save_edge_mapping"
+    />
 
-    <!-- 工作流元数据对话框 -->
-    <dialog :open="show_meta_dialog" class="modal" @click.self="show_meta_dialog = false">
-      <div class="modal-box">
-        <h3 class="font-bold text-lg mb-4">{{ t('trafficAnalysis.workflowStudio.metaDialog.title') }}</h3>
-        <div class="space-y-3">
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('trafficAnalysis.workflowStudio.metaDialog.name') }} <span class="text-error">*</span></span>
-            </label>
-            <input v-model="workflow_name" class="input input-bordered" :placeholder="t('trafficAnalysis.workflowStudio.metaDialog.namePlaceholder')" />
-          </div>
-          
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('trafficAnalysis.workflowStudio.metaDialog.description') }}</span>
-            </label>
-            <textarea v-model="workflow_description" class="textarea textarea-bordered" rows="3" :placeholder="t('trafficAnalysis.workflowStudio.metaDialog.descriptionPlaceholder')"></textarea>
-          </div>
-          
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('trafficAnalysis.workflowStudio.metaDialog.tags') }}</span>
-            </label>
-            <input v-model="workflow_tags" class="input input-bordered" :placeholder="t('trafficAnalysis.workflowStudio.metaDialog.tagsPlaceholder')" />
-          </div>
-          
-          <div class="form-control">
-            <label class="label">
-              <span class="label-text">{{ t('trafficAnalysis.workflowStudio.metaDialog.version') }}</span>
-            </label>
-            <input v-model="workflow_version" class="input input-bordered" placeholder="v1.0.0" />
-          </div>
-          
-          <!-- 设置为工具 -->
-          <div class="form-control">
-            <label class="label cursor-pointer">
-              <span class="label-text">{{ t('trafficAnalysis.workflowStudio.metaDialog.asAiTool') }}</span>
-              <input type="checkbox" v-model="workflow_is_tool" class="toggle toggle-primary" />
-            </label>
-            <label class="label py-0">
-              <span class="label-text-alt text-base-content/60">{{ t('trafficAnalysis.workflowStudio.metaDialog.asAiToolHelp') }}</span>
-            </label>
-          </div>
-          
-          <div class="stats shadow w-full">
-            <div class="stat py-2">
-              <div class="stat-title text-xs">{{ t('trafficAnalysis.workflowStudio.metaDialog.stats.nodes') }}</div>
-              <div class="stat-value text-2xl">{{ flow_ref?.getFlowchartNodes().length || 0 }}</div>
-            </div>
-            <div class="stat py-2">
-              <div class="stat-title text-xs">{{ t('trafficAnalysis.workflowStudio.metaDialog.stats.edges') }}</div>
-              <div class="stat-value text-2xl">{{ flow_ref?.getFlowchartEdges().length || 0 }}</div>
-            </div>
-          </div>
-        </div>
-        <div class="modal-action">
-          <button class="btn btn-sm btn-primary" @click="show_meta_dialog = false" :disabled="!workflow_name.trim()">{{ t('trafficAnalysis.workflowStudio.metaDialog.confirm') }}</button>
-          <button class="btn btn-sm" @click="show_meta_dialog = false">{{ t('trafficAnalysis.workflowStudio.metaDialog.cancel') }}</button>
-        </div>
-      </div>
-    </dialog>
-
-    <!-- 参数编辑抽屉遮罩 -->
-    <Transition name="fade">
-      <div v-if="drawer_open" class="fixed inset-0 bg-black/20 z-40" @click="close_drawer"></div>
-    </Transition>
+    <WorkflowStudioHistoryPanel
+      ref="execution_history_ref"
+      :show-execution-history="show_execution_history"
+      :history-search-query="history_search_query"
+      :history-loading="history_loading"
+      :history-data="history_data"
+      :history-total="history_total"
+      :history-page="history_page"
+      :history-page-size="history_page_size"
+      :format-datetime="format_datetime"
+      :format-duration="format_duration"
+      :get-status-badge-class="get_status_badge_class"
+      :get-status-text="get_status_text"
+      :on-load-history="load_history_from_backend"
+      :on-view-execution-detail="view_execution_detail"
+      :on-delete-history-record="delete_history_record"
+      :on-close="() => { show_execution_history = false }"
+      @update:history-search-query="history_search_query = $event"
+      @update:history-page="history_page = $event"
+      @update:history-page-size="history_page_size = $event"
+    />
+      
     
-    <!-- 参数编辑抽屉 -->
-    <Transition name="drawer-right">
-      <div v-if="drawer_open" ref="drawer_ref" class="fixed inset-y-0 right-0 w-[350px] bg-base-100 shadow-xl border-l border-base-300 z-50">
-      <div class="p-3 flex items-center justify-between border-b border-base-300">
-        <h2 class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.paramsEditor.title') }}</h2>
-        <button class="btn btn-xs btn-ghost" @click="close_drawer">✕</button>
-      </div>
-      <div class="p-3 border-b border-base-300">
-        <div class="text-sm font-semibold">{{ selected_node?.name }}</div>
-        <div class="text-xs text-base-content/60 mt-1">{{ selected_node?.type }}</div>
-      </div>
-      <div class="p-3 space-y-3 overflow-auto h-[calc(100%-140px)]" v-if="selected_schema">
-        <div v-if="!selected_schema.properties || Object.keys(selected_schema.properties).length === 0" class="text-center text-sm text-base-content/60 py-4">
-          {{ t('trafficAnalysis.workflowStudio.paramsEditor.noParams') }}
-        </div>
-        <div v-for="(prop, key) in selected_schema.properties" :key="key" class="form-control">
-          <label class="label py-1">
-            <span class="label-text text-xs font-semibold">
-              {{ key }}
-              <span v-if="selected_schema.required?.includes(key)" class="text-error">*</span>
-            </span>
-            <span v-if="prop.description" class="label-text-alt text-xs opacity-60" :title="prop.description">?</span>
-          </label>
-          
-          <!-- 通知规则选择器 (特殊处理) -->
-          <div v-if="String(key) === 'notification_rule_id' && selected_node?.type === 'notify'" class="space-y-2">
-            <select 
-              class="select select-bordered select-sm w-full" 
-              v-model="param_values[key]"
-              :class="{ 'select-error': selected_schema.required?.includes(key) && !param_values[key] }"
-            >
-              <option value="">{{ t('trafficAnalysis.workflowStudio.paramsEditor.selectNotificationRule') }}</option>
-              <option v-for="rule in notification_rules" :key="rule.id" :value="rule.id">
-                {{ rule.type_name }} ({{ rule.channel }})
-              </option>
-            </select>
-            <div v-if="notification_rules.length === 0" class="text-xs text-warning">
-              <span>{{ t('trafficAnalysis.workflowStudio.paramsEditor.noNotificationRules') }}</span>
-              <router-link to="/notification-management" class="link link-primary">{{ t('trafficAnalysis.workflowStudio.paramsEditor.goToConfigure') }}</router-link>
-            </div>
-          </div>
-          
-          <!-- AI 提供商选择器 -->
-          <div v-else-if="prop['x-ui-widget'] === 'ai-provider-select'" class="space-y-2">
-            <select 
-              class="select select-bordered select-sm w-full" 
-              v-model="param_values[key]"
-            >
-              <option value="">{{ t('trafficAnalysis.workflowStudio.paramsEditor.useDefaultConfig') }}</option>
-              <option v-for="provider in get_enabled_providers()" :key="provider" :value="provider">
-                {{ provider }}
-              </option>
-            </select>
-            <div v-if="get_enabled_providers().length === 0" class="text-xs text-warning">
-              <span>{{ t('trafficAnalysis.workflowStudio.paramsEditor.noAiProviders') }}</span>
-              <router-link to="/settings" class="link link-primary">{{ t('trafficAnalysis.workflowStudio.paramsEditor.goToConfigure') }}</router-link>
-            </div>
-          </div>
-          
-          <!-- AI 模型选择器 -->
-          <div v-else-if="prop['x-ui-widget'] === 'ai-model-select'" class="space-y-2">
-            <select 
-              class="select select-bordered select-sm w-full" 
-              v-model="param_values[key]"
-              :disabled="!param_values['provider']"
-            >
-              <option value="">-- {{ param_values['provider'] ? t('trafficAnalysis.workflowStudio.paramsEditor.selectModel') : t('trafficAnalysis.workflowStudio.paramsEditor.selectProviderFirst') }} --</option>
-              <option v-for="model in get_provider_models(param_values['provider'])" :key="model.id" :value="model.id">
-                {{ model.name }}{{ model.description ? ' - ' + model.description : '' }}
-              </option>
-            </select>
-          </div>
-          
-          <!-- 工具多选器 -->
-          <div v-else-if="prop['x-ui-widget'] === 'tools-multiselect'" class="space-y-2">
-            <div class="max-h-48 overflow-y-auto border border-base-300 rounded-lg p-2 space-y-1">
-              <div v-if="available_tools.length === 0" class="text-xs text-base-content/60 text-center py-2">
-                {{ t('trafficAnalysis.workflowStudio.paramsEditor.noTools') }}
-              </div>
-              <label v-for="tool in available_tools" :key="tool.name" class="flex items-center gap-2 p-1 hover:bg-base-200 rounded cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  class="checkbox checkbox-sm checkbox-primary" 
-                  :value="tool.name"
-                  :checked="(param_values[key] || []).includes(tool.name)"
-                  @change="toggle_tool_selection(String(key), tool.name)"
-                />
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium truncate">{{ tool.name }}</div>
-                  <div v-if="tool.description" class="text-xs text-base-content/60 truncate">{{ tool.description }}</div>
-                </div>
-              </label>
-            </div>
-            <div class="text-xs text-base-content/60">
-              {{ t('trafficAnalysis.workflowStudio.paramsEditor.selectedToolsCount', { count: (param_values[key] || []).length }) }}
-            </div>
-          </div>
-          
-          <!-- Textarea 类型 -->
-          <textarea 
-            v-else-if="prop['x-ui-widget'] === 'textarea'" 
-            class="textarea textarea-bordered textarea-sm w-full" 
-            v-model="param_values[key]"
-            :placeholder="prop.default || t('trafficAnalysis.workflowStudio.paramsEditor.enterField', { key: String(key) })"
-            :class="{ 'textarea-error': selected_schema.required?.includes(key) && !param_values[key] }"
-            rows="3"
-          ></textarea>
-          
-          <!-- Textarea-lines 类型（每行一个值） -->
-          <div v-else-if="prop['x-ui-widget'] === 'textarea-lines'" class="space-y-1">
-            <textarea 
-              class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" 
-              v-model="param_values[key]"
-              :placeholder="prop.description || t('trafficAnalysis.workflowStudio.paramsEditor.onePerLine')"
-              :class="{ 'textarea-error': selected_schema.required?.includes(key) && !param_values[key] }"
-              rows="4"
-            ></textarea>
-            <div class="text-xs text-base-content/50">{{ t('trafficAnalysis.workflowStudio.paramsEditor.onePerLine') }}</div>
-          </div>
-          
-          <!-- 字符串类型 -->
-          <input 
-            v-else-if="prop.type === 'string' && !prop.enum" 
-            class="input input-bordered input-sm w-full" 
-            v-model="param_values[key]"
-            :placeholder="prop.default || t('trafficAnalysis.workflowStudio.paramsEditor.enterField', { key: String(key) })"
-            :class="{ 'input-error': selected_schema.required?.includes(key) && !param_values[key] }"
-          />
-          
-          <!-- 数字类型 -->
-          <input 
-            v-else-if="prop.type === 'integer' || prop.type === 'float' || prop.type === 'number'" 
-            type="number" 
-            class="input input-bordered input-sm w-full" 
-            v-model.number="param_values[key]"
-            :placeholder="prop.default?.toString() || '0'"
-            :min="prop.minimum"
-            :max="prop.maximum"
-            :step="prop.type === 'integer' ? 1 : 0.1"
-          />
-          
-          <!-- 枚举类型 -->
-          <select 
-            v-else-if="prop.enum && prop.enum.length" 
-            class="select select-bordered select-sm" 
-            v-model="param_values[key]"
-          >
-            <option value="">{{ t('trafficAnalysis.workflowStudio.paramsEditor.pleaseSelect') }}</option>
-            <option v-for="opt in prop.enum" :key="opt" :value="opt">{{ opt }}</option>
-          </select>
-          
-          <!-- 布尔类型 -->
-          <div v-else-if="prop.type === 'boolean'" class="flex items-center gap-2">
-            <input type="checkbox" class="toggle toggle-sm toggle-primary" v-model="param_values[key]" />
-            <span class="text-xs">{{ param_values[key] ? t('trafficAnalysis.workflowStudio.paramsEditor.booleanYes') : t('trafficAnalysis.workflowStudio.paramsEditor.booleanNo') }}</span>
-          </div>
-          
-          <!-- 数组类型：每行一个 -->
-          <div v-else-if="prop.type === 'array'" class="space-y-1">
-            <textarea 
-              class="textarea textarea-bordered textarea-sm font-mono text-xs w-full" 
-              v-model="param_values[key]"
-              :placeholder="t('trafficAnalysis.workflowStudio.paramsEditor.arrayPlaceholder')"
-              rows="4"
-            ></textarea>
-            <div class="text-xs text-base-content/50">{{ t('trafficAnalysis.workflowStudio.paramsEditor.onePerLine') }}</div>
-          </div>
-          
-          <!-- 对象类型：JSON格式 -->
-          <div v-else-if="prop.type === 'object'" class="space-y-1">
-            <textarea 
-              class="textarea textarea-bordered textarea-sm font-mono text-xs" 
-              v-model="param_values[key]"
-              placeholder='{ "key": "value" }'
-              rows="4"
-              @blur="validate_json(String(key))"
-            ></textarea>
-            <div v-if="json_errors[key]" class="text-xs text-error">{{ json_errors[key] }}</div>
-          </div>
-          
-          <!-- 其他类型 -->
-          <textarea 
-            v-else 
-            class="textarea textarea-bordered textarea-sm" 
-            v-model="param_values[key]"
-            rows="2"
-          ></textarea>
-          
-          <!-- 参数说明 -->
-          <label v-if="prop.description && prop.description.trim() && prop.description.trim() !== '/'" class="label py-0">
-            <span class="label-text-alt text-xs opacity-60">{{ prop.description }}</span>
-          </label>
-          
-          <!-- 默认值提示 -->
-          <label v-if="prop.default !== undefined && !param_values[key]" class="label py-0">
-            <span class="label-text-alt text-xs text-info">{{ t('trafficAnalysis.workflowStudio.paramsEditor.defaultValue', { value: String(prop.default) }) }}</span>
-          </label>
-        </div>
-      </div>
-      <div class="p-3 flex gap-2 border-t border-base-300">
-        <button class="btn btn-primary btn-sm flex-1" @click="save_params_and_close" :disabled="has_validation_errors">
-          {{ t('trafficAnalysis.workflowStudio.paramsEditor.save') }}
-        </button>
-        <button class="btn btn-outline btn-sm" @click="close_drawer">{{ t('trafficAnalysis.workflowStudio.paramsEditor.cancel') }}</button>
-      </div>
-    </div>
-    </Transition>
-
-    <!-- 执行历史面板 -->
-    <div v-if="show_execution_history" ref="execution_history_ref" class="fixed inset-y-0 right-0 w-[700px] bg-base-100 shadow-xl border-l border-base-300 z-50 flex flex-col" @click.stop>
-      <div class="p-3 flex items-center justify-between border-b border-base-300">
-        <h2 class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.executionHistory.title') }}</h2>
-        <button class="btn btn-xs btn-ghost" @click="show_execution_history = false">✕</button>
-      </div>
-      
-      <!-- 搜索栏 -->
-      <div class="p-3 border-b border-base-300">
-        <div class="flex gap-2">
-          <input 
-            v-model="history_search_query" 
-            class="input input-bordered input-sm flex-1" 
-            :placeholder="t('trafficAnalysis.workflowStudio.executionHistory.searchPlaceholder')"
-            @keyup.enter="load_history_from_backend"
-          />
-          <button class="btn btn-sm btn-primary" @click="load_history_from_backend">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      
-      <!-- 表格 -->
-      <div class="flex-1 overflow-auto p-3">
-        <table class="table table-sm table-zebra w-full">
-          <thead class="sticky top-0 bg-base-100 z-10">
-            <tr>
-              <th class="w-48">{{ t('trafficAnalysis.workflowStudio.executionHistory.table.name') }}</th>
-              <th class="w-40">{{ t('trafficAnalysis.workflowStudio.executionHistory.table.startTime') }}</th>
-              <th class="w-24 text-right">{{ t('trafficAnalysis.workflowStudio.executionHistory.table.duration') }}</th>
-              <th class="w-24 text-center">{{ t('trafficAnalysis.workflowStudio.executionHistory.table.status') }}</th>
-              <th class="w-28 text-center">{{ t('trafficAnalysis.workflowStudio.executionHistory.table.actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="history_loading">
-              <td colspan="5" class="text-center py-8">
-                <span class="loading loading-spinner loading-md"></span>
-              </td>
-            </tr>
-            <tr v-else-if="history_data.length === 0">
-              <td colspan="5" class="text-center py-8 text-base-content/50">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p class="text-sm">{{ t('trafficAnalysis.workflowStudio.executionHistory.emptyTitle') }}</p>
-              </td>
-            </tr>
-            <tr v-for="(exec, idx) in history_data" :key="exec.execution_id" class="hover">
-              <td 
-                class="truncate max-w-[180px] cursor-pointer hover:text-primary font-medium" 
-                :title="exec.workflow_name"
-                @click.stop="view_execution_detail(exec.execution_id)"
-              >
-                {{ exec.workflow_name }} #{{ history_total - (history_page - 1) * history_page_size - idx }}
-              </td>
-              <td class="text-xs text-base-content/70">{{ format_datetime(exec.started_at) }}</td>
-              <td class="text-right text-xs">{{ format_duration(exec.duration_ms) }}</td>
-              <td class="text-center">
-                <span :class="get_status_badge_class(exec.status)" class="badge badge-sm">
-                  {{ get_status_text(exec.status) }}
-                </span>
-              </td>
-              <td class="text-center">
-                <div class="flex justify-center gap-1">
-                <button 
-                    class="btn btn-xs btn-ghost" 
-                    @click.stop="view_execution_detail(exec.execution_id)"
-                    :title="t('trafficAnalysis.workflowStudio.executionHistory.table.viewDetail')"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  </button>
-                  <button 
-                    class="btn btn-xs btn-ghost text-error" 
-                    @click.stop="delete_history_record(exec.execution_id)"
-                    :title="t('trafficAnalysis.workflowStudio.executionHistory.table.delete')"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-            </div>
-      
-      <!-- 分页 -->
-      <div class="p-3 border-t border-base-300 flex items-center justify-between">
-        <span class="text-sm text-base-content/60">
-          {{ t('trafficAnalysis.workflowStudio.executionHistory.pagination.total', { total: history_total }) }}
-        </span>
-        <div class="join">
-          <button 
-            class="join-item btn btn-sm" 
-            :disabled="history_page <= 1"
-            @click="history_page--; load_history_from_backend()"
-          >«</button>
-          <button class="join-item btn btn-sm">{{ history_page }} / {{ Math.max(1, Math.ceil(history_total / history_page_size)) }}</button>
-          <button 
-            class="join-item btn btn-sm" 
-            :disabled="history_page >= Math.ceil(history_total / history_page_size)"
-            @click="history_page++; load_history_from_backend()"
-          >»</button>
-          </div>
-        <select class="select select-bordered select-sm w-24" v-model="history_page_size" @change="history_page = 1; load_history_from_backend()">
-          <option :value="10">10</option>
-          <option :value="20">20</option>
-          <option :value="50">50</option>
-        </select>
-        </div>
-      </div>
-      
-    <!-- 执行详情对话框 -->
-    <dialog ref="detail_dialog_ref" :open="show_detail_dialog" class="modal" @click.self="show_detail_dialog = false">
-      <div :class="[
-        'modal-box',
-        detail_dialog_fullscreen ? 'max-w-[95vw] w-[95vw] max-h-[95vh] h-[95vh]' : 'max-w-3xl max-h-[80vh]'
-      ]">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="font-bold text-lg">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.title') }}</h3>
-          <div class="flex gap-2">
-            <button 
-              class="btn btn-sm btn-ghost" 
-              @click="detail_dialog_fullscreen = !detail_dialog_fullscreen"
-              :title="detail_dialog_fullscreen ? t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.exitFullscreen') : t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.fullscreen')"
-            >
-              <svg v-if="!detail_dialog_fullscreen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-              </svg>
-              <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-            <button class="btn btn-sm btn-ghost" @click="show_detail_dialog = false">✕</button>
-          </div>
-        </div>
-          
-        <div v-if="detail_loading" class="flex justify-center py-8">
-          <span class="loading loading-spinner loading-lg"></span>
-        </div>
-        
-        <div v-else-if="detail_data" class="space-y-4">
-          <!-- 基本信息 -->
-          <div class="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span class="text-base-content/60">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.workflowName') }}:</span>
-              <span class="font-medium ml-2">{{ detail_data.workflow_name }}</span>
-          </div>
-            <div>
-              <span class="text-base-content/60">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.status') }}:</span>
-              <span :class="get_status_badge_class(detail_data.status)" class="badge badge-sm ml-2">{{ get_status_text(detail_data.status) }}</span>
-        </div>
-            <div>
-              <span class="text-base-content/60">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.startTime') }}:</span>
-              <span class="ml-2">{{ format_datetime(detail_data.started_at) }}</span>
-            </div>
-            <div>
-              <span class="text-base-content/60">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.duration') }}:</span>
-              <span class="ml-2">{{ format_duration(detail_data.duration_ms) }}</span>
-            </div>
-            <div v-if="detail_data.error_message" class="col-span-2">
-              <span class="text-base-content/60">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.error') }}:</span>
-              <span class="text-error ml-2">{{ detail_data.error_message }}</span>
-      </div>
-    </div>
-          
-          <!-- 步骤列表 -->
-          <div class="divider">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.steps') }}</div>
-          <div :class="[
-            'space-y-2 overflow-y-auto',
-            detail_dialog_fullscreen ? 'max-h-[calc(95vh-280px)]' : 'max-h-[40vh]'
-          ]">
-            <div v-if="!detail_data.steps || detail_data.steps.length === 0" class="text-center text-base-content/50 py-4">
-              {{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.noSteps') }}
-            </div>
-            <div 
-              v-for="(step, idx) in detail_data.steps" 
-              :key="step.step_id" 
-              class="collapse collapse-arrow bg-base-200"
-            >
-              <input type="checkbox" :checked="idx === 0" />
-              <div class="collapse-title text-sm font-medium flex items-center gap-2">
-                <span class="badge badge-xs" :class="get_status_badge_class(step.status)">{{ idx + 1 }}</span>
-                <span>{{ step.step_name || step.step_id }}</span>
-                <span class="text-xs text-base-content/50 ml-auto mr-4">{{ format_duration(step.duration_ms) }}</span>
-              </div>
-              <div class="collapse-content">
-                <div v-if="step.error_message" class="text-error text-xs mb-2">{{ step.error_message }}</div>
-                <pre v-if="step.result !== undefined && step.result !== null" :class="[
-                  'text-xs bg-base-300 p-2 rounded overflow-x-auto',
-                  detail_dialog_fullscreen ? 'max-h-[60vh]' : 'max-h-48'
-                ]">{{ format_result(step.result) }}</pre>
-                <div v-else class="text-xs text-base-content/50">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.noResult') }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="modal-action">
-          <button class="btn btn-sm btn-ghost" @click="copy_detail_result" :title="t('trafficAnalysis.workflowStudio.executionHistory.copyResultsTooltip')">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-            {{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.copy') }}
-          </button>
-          <button class="btn btn-sm" @click="show_detail_dialog = false">{{ t('trafficAnalysis.workflowStudio.executionHistory.detailDialog.close') }}</button>
-        </div>
-      </div>
-    </dialog>
-
-    <!-- 步骤结果查看面板（保留用于点击节点时查看当前执行结果） -->
-    <div v-if="show_result_panel" ref="result_panel_ref" class="fixed inset-y-0 right-0 w-[500px] bg-base-100 shadow-xl border-l border-base-300 z-50">
-      <div class="p-3 flex items-center justify-between border-b border-base-300">
-        <h2 class="text-base font-semibold">{{ t('trafficAnalysis.workflowStudio.resultPanel.title') }}</h2>
-        <div class="flex gap-2">
-          <button class="btn btn-xs btn-outline" @click="copy_result_to_clipboard" :title="t('trafficAnalysis.workflowStudio.resultPanel.copyTooltip')">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            </svg>
-          </button>
-          <button class="btn btn-xs btn-ghost" @click="close_result_panel">✕</button>
-        </div>
-      </div>
-      <div class="p-3 border-b border-base-300">
-        <div class="text-sm font-semibold">{{ t('trafficAnalysis.workflowStudio.resultPanel.nodeId') }}</div>
-        <div class="text-xs text-base-content/60 mt-1 font-mono">{{ selected_step_result?.step_id }}</div>
-        <div class="text-sm font-semibold mt-2">{{ t('trafficAnalysis.workflowStudio.resultPanel.nodeName') }}</div>
-        <div class="text-xs text-base-content/60 mt-1">{{ selected_node?.name || t('trafficAnalysis.workflowStudio.resultPanel.unknown') }}</div>
-      </div>
-      <div class="p-3 overflow-auto h-[calc(100%-140px)]">
-        <div class="text-sm font-semibold mb-2">{{ t('trafficAnalysis.workflowStudio.resultPanel.executionResult') }}</div>
-        <pre class="bg-base-200 p-3 rounded text-xs font-mono overflow-x-auto">{{ format_result(selected_step_result?.result) }}</pre>
-      </div>
-      <div class="p-3 flex gap-2 border-t border-base-300">
-        <button class="btn btn-primary btn-sm flex-1" @click="edit_node_params">
-          {{ t('trafficAnalysis.workflowStudio.resultPanel.editParams') }}
-        </button>
-        <button class="btn btn-outline btn-sm" @click="close_result_panel">{{ t('trafficAnalysis.workflowStudio.resultPanel.close') }}</button>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useWorkflowEvents } from '@/composables/useWorkflowEvents'
 import FlowchartVisualization from '@/components/workflow/FlowchartVisualization.vue'
-import type { NodeCatalogItem, WorkflowGraph, NodeDef, EdgeDef } from '@/types/workflow'
+import WorkflowStudioCanvasLayout from './WorkflowStudioCanvasLayout.vue'
+import WorkflowStudioEdgeMappingDialog from './WorkflowStudioEdgeMappingDialog.vue'
+import WorkflowStudioHeader from './WorkflowStudioHeader.vue'
+import WorkflowStudioHistoryPanel from './WorkflowStudioHistoryPanel.vue'
+import WorkflowStudioPanels from './WorkflowStudioPanels.vue'
+import WorkflowStudioWorkflowListPanel from './WorkflowStudioWorkflowListPanel.vue'
+import type { EdgeDef, EdgeMergeMode, EdgeSourceScope, NodeCatalogItem, WorkflowGraph } from '@/types/workflow'
+import { validate_workflow_graph as validate_workflow_graph_client } from '@/types/workflow'
 import { useToast } from '@/composables/useToast'
+import { dialog } from '@/composables/useDialog'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import { applyWorkflowStudioGraphToCanvas, buildWorkflowStudioGraph } from './workflowStudioCanvasSupport'
+import {
+  buildSourcePathOptions,
+  buildTargetPathOptions,
+  type EdgeMappingOption,
+} from './workflowStudioEdgeMappingSupport'
+import {
+  addWorkflowExecutionLog,
+  clearWorkflowExecutionHistoryState,
+  clearWorkflowExecutionLogs,
+  completeWorkflowExecutionRecord,
+  deleteWorkflowExecutionRecord,
+  formatWorkflowDatetime,
+  formatWorkflowDuration,
+  formatWorkflowLogTime,
+  formatWorkflowResult,
+  formatWorkflowShortDate,
+  getWorkflowLogClass,
+  getWorkflowStatusBadgeClass,
+  loadWorkflowExecutionHistory,
+  saveWorkflowExecutionHistory,
+  startWorkflowExecutionRecord,
+  toggleWorkflowLogDetails,
+  truncateWorkflowLogDetails,
+  type DetailData,
+  type ExecutionLog,
+  type ExecutionRecord,
+  type HistoryItem,
+  updateWorkflowExecutionStepResult,
+} from './workflowStudioExecutionSupport'
 
 const { t } = useI18n()
+const route = useRoute()
 
 const flow_ref = ref<InstanceType<typeof FlowchartVisualization> | null>(null)
 const catalog = ref<NodeCatalogItem[]>([])
 const search_query = ref('')
 const selected_node = ref<any | null>(null)
+const selected_edge_id = ref<string | null>(null)
+const selected_edge_label = ref('')
+const show_edge_mapping_dialog = ref(false)
+const edge_source_path_options = ref<EdgeMappingOption[]>([])
+const edge_target_path_options = ref<EdgeMappingOption[]>([])
+const edge_mapping_form = ref<{
+  source_scope: EdgeSourceScope
+  source_path: string
+  target_path: string
+  merge_mode: EdgeMergeMode
+}>({
+  source_scope: 'output',
+  source_path: '',
+  target_path: '',
+  merge_mode: 'replace',
+})
 const param_values = ref<Record<string, any>>({})
 const drawer_open = ref(false)
 const ignore_close_once = ref(false)
 const drawer_ref = ref<HTMLElement | null>(null)
-const result_panel_ref = ref<HTMLElement | null>(null)
+const workflow_panels_ref = ref<{ logsContainerRef: HTMLElement | null; detailDialogRef: HTMLDialogElement | null; resultPanelRef: HTMLElement | null } | null>(null)
 const ignore_result_panel_close_once = ref(false)
-const execution_history_ref = ref<HTMLElement | null>(null)
-const detail_dialog_ref = ref<HTMLElement | null>(null)
-const logs_container_ref = ref<HTMLElement | null>(null)
+const execution_history_ref = ref<{ historyPanelRef: HTMLElement | null } | null>(null)
 const ignore_execution_history_close_once = ref(false)
 const sidebar_collapsed = ref(false)
 const show_logs = ref(true) // 默认显示日志
@@ -1084,73 +299,42 @@ const AUTO_SAVE_DELAY = 1000 // 1秒防抖延迟
 const MAX_EXECUTION_LOGS = 500
 const MAX_LOG_DETAILS_LENGTH = 2000
 const SIDEBAR_WIDTH_KEY = 'workflow_studio_sidebar_width'
-const SIDEBAR_DEFAULT_WIDTH = 320
-const SIDEBAR_MIN_WIDTH = 220
-const SIDEBAR_MAX_WIDTH = 560
-const sidebar_width = ref(SIDEBAR_DEFAULT_WIDTH)
+const SIDEBAR_DEFAULT_WIDTH = 360
+const SIDEBAR_MIN_WIDTH = 260
+const SIDEBAR_MAX_WIDTH = 520
+const clamp_sidebar_width = (w: number) => {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w))
+}
+
+const get_initial_sidebar_width = () => {
+  const saved_sidebar_width = localStorage.getItem(SIDEBAR_WIDTH_KEY)
+  if (!saved_sidebar_width) return SIDEBAR_DEFAULT_WIDTH
+
+  const parsed = Number(saved_sidebar_width)
+  return Number.isNaN(parsed) ? SIDEBAR_DEFAULT_WIDTH : clamp_sidebar_width(parsed)
+}
+
+const sidebar_width = ref(get_initial_sidebar_width())
+const sidebar_transition_ready = ref(false)
 const is_resizing_sidebar = ref(false)
 const sidebar_resize_start_x = ref(0)
-const sidebar_resize_start_width = ref(SIDEBAR_DEFAULT_WIDTH)
+const sidebar_resize_start_width = ref(sidebar_width.value)
+
+const getExecutionHistoryElement = () => execution_history_ref.value?.historyPanelRef ?? null
+const getWorkflowPanelsLogsElement = () => workflow_panels_ref.value?.logsContainerRef ?? null
+const getWorkflowPanelsDetailDialogElement = () => workflow_panels_ref.value?.detailDialogRef ?? null
+const getWorkflowPanelsResultPanelElement = () => workflow_panels_ref.value?.resultPanelRef ?? null
+const logs_container_ref = computed(() => getWorkflowPanelsLogsElement())
 
 defineOptions({
   name: 'WorkflowStudio'
 });
 
 
-// 执行历史
-interface ExecutionRecord {
-  id: string
-  start_time: string
-  end_time?: string
-  duration?: number
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  step_results: Record<string, any>
-}
 const show_execution_history = ref(false)
 const execution_history = ref<ExecutionRecord[]>([])
 const selected_execution = ref<ExecutionRecord | null>(null)
 const current_execution_id = ref<string | null>(null)
-
-// 执行历史表格相关
-interface HistoryItem {
-  execution_id: string
-  workflow_id: string
-  workflow_name: string
-  version: string
-  status: string
-  started_at: string
-  completed_at?: string
-  duration_ms?: number
-  progress: number
-  total_steps: number
-  completed_steps: number
-  error_message?: string
-}
-interface DetailData {
-  execution_id: string
-  workflow_id: string
-  workflow_name: string
-  version: string
-  status: string
-  started_at: string
-  completed_at?: string
-  duration_ms?: number
-  progress: number
-  total_steps: number
-  completed_steps: number
-  error_message?: string
-  steps: Array<{
-    step_id: string
-    step_name?: string
-    step_order?: number
-    status: string
-    started_at?: string
-    completed_at?: string
-    duration_ms?: number
-    result?: any
-    error_message?: string
-  }>
-}
 const history_search_query = ref('')
 const history_page = ref(1)
 const history_page_size = ref(10)
@@ -1161,14 +345,7 @@ const show_detail_dialog = ref(false)
 const detail_dialog_fullscreen = ref(false)
 const detail_loading = ref(false)
 const detail_data = ref<DetailData | null>(null)
-
-interface ExecutionLog {
-  timestamp: Date
-  level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS'
-  message: string
-  node_id?: string
-  details?: string
-}
+const last_route_execution_id = ref<string | null>(null)
 
 const execution_logs = ref<ExecutionLog[]>([])
 const json_errors = ref<Record<string, string>>({})
@@ -1284,6 +461,7 @@ const add_node = (item: NodeCatalogItem) => {
 }
 
 const reset_canvas = () => {
+  close_edge_mapping_dialog()
   flow_ref.value?.resetFlowchart()
 }
 
@@ -1349,248 +527,99 @@ const do_new_workflow = () => {
 const build_graph = (): WorkflowGraph => {
   const nodes = flow_ref.value?.getFlowchartNodes() || []
   const edges_detailed = (flow_ref.value as any)?.getFlowchartEdgesDetailed?.() || []
-  const node_defs: NodeDef[] = nodes.map(n => ({
-    id: n.id,
-    node_type: n.type,
-    node_name: n.name,
-    x: Math.round(n.x),
-    y: Math.round(n.y),
-    params: n.params || {},
-    input_ports: (() => {
-      const item = catalog_index.value.get(n.type)
-      return item?.input_ports?.length
-        ? item.input_ports
-        : [{ id: 'in', name: t('trafficAnalysis.workflowStudio.flowchart.ports.input'), port_type: 'Json', required: false }]
-    })(),
-    output_ports: (() => {
-      const item = catalog_index.value.get(n.type)
-      return item?.output_ports?.length
-        ? item.output_ports
-        : [{ id: 'out', name: t('trafficAnalysis.workflowStudio.flowchart.ports.output'), port_type: 'Json', required: false }]
-    })()
-  }))
-  const edge_defs: EdgeDef[] = edges_detailed.length
-    ? edges_detailed.map((e: any, idx: number) => ({
-        id: `e_${idx}_${e.from_node}_${e.to_node}`,
-        from_node: e.from_node,
-        from_port: e.from_port || 'out',
-        to_node: e.to_node,
-        to_port: e.to_port || 'in'
-      }))
-    : ((flow_ref.value?.getFlowchartEdges() || []).map((e, idx) => ({
-        id: `e_${idx}_${e.from_node}_${e.to_node}`,
-        from_node: e.from_node,
-        from_port: 'out',
-        to_node: e.to_node,
-        to_port: 'in'
-      })))
-  
-  // 生成 input_schema：优先从起始节点推断，其次从入口节点兜底
-  // 这样 Agent 调用工作流工具时可以知道需要什么输入参数
-  const build_input_schema = (): Record<string, any> | null => {
-    const to_json_schema_type = (port_type?: string) => {
-      switch ((port_type || 'string').toLowerCase()) {
-        case 'integer':
-        case 'int':
-        case 'number':
-          return 'number'
-        case 'boolean':
-        case 'bool':
-          return 'boolean'
-        case 'array':
-          return 'array'
-        case 'object':
-        case 'json':
-          return 'object'
-        default:
-          return 'string'
-      }
-    }
-
-    const build_schema_from_node = (node: NodeDef): Record<string, any> | null => {
-      const params = node.params || {}
-      if (params.input_schema && typeof params.input_schema === 'object') {
-        return params.input_schema
-      }
-
-      const properties: Record<string, any> = {}
-      const required: string[] = []
-      const ports = node.input_ports || []
-
-      for (const port of ports) {
-        if (['in', 'flow', 'trigger', 'input'].includes(port.id)) continue
-
-        properties[port.id] = {
-          type: to_json_schema_type(port.port_type),
-          description: port.name || port.id
-        }
-
-        if (port.required) {
-          required.push(port.id)
-        }
-      }
-
-      if (!Object.keys(properties).length) return null
-
-      const schema: Record<string, any> = {
-        type: 'object',
-        properties
-      }
-      if (required.length > 0) {
-        schema.required = required
-      }
-      return schema
-    }
-
-    const start_like_nodes = node_defs.filter(n =>
-      ['start', 'trigger', 'input', 'webhook', 'trigger_schedule'].includes(n.node_type)
-    )
-
-    for (const node of start_like_nodes) {
-      const schema = build_schema_from_node(node)
-      if (schema) return schema
-    }
-
-    const indegree = new Map<string, number>()
-    node_defs.forEach(n => indegree.set(n.id, 0))
-    edge_defs.forEach(e => indegree.set(e.to_node, (indegree.get(e.to_node) || 0) + 1))
-
-    const entry_nodes = node_defs.filter(n => (indegree.get(n.id) || 0) === 0)
-    for (const node of entry_nodes) {
-      const schema = build_schema_from_node(node)
-      if (schema) return schema
-    }
-
-    for (const node of node_defs) {
-      const schema = build_schema_from_node(node)
-      if (schema) return schema
-    }
-
-    return null
-  }
-
-  const build_output_schema = (): Record<string, any> | null => {
-    const to_json_schema_type = (port_type?: string) => {
-      switch ((port_type || 'string').toLowerCase()) {
-        case 'integer':
-        case 'int':
-        case 'number':
-          return 'number'
-        case 'boolean':
-        case 'bool':
-          return 'boolean'
-        case 'array':
-          return 'array'
-        case 'object':
-        case 'json':
-          return 'object'
-        default:
-          return 'string'
-      }
-    }
-
-    const node_outgoing = new Map<string, number>()
-    node_defs.forEach(n => node_outgoing.set(n.id, 0))
-    edge_defs.forEach(e => {
-      node_outgoing.set(e.from_node, (node_outgoing.get(e.from_node) || 0) + 1)
-    })
-
-    const terminal_nodes = node_defs.filter(n => (node_outgoing.get(n.id) || 0) === 0)
-    const schemas: Record<string, any>[] = []
-
-    for (const node of terminal_nodes) {
-      const params = node.params || {}
-      if (params.output_schema && typeof params.output_schema === 'object') {
-        schemas.push(params.output_schema)
-        continue
-      }
-
-      const properties: Record<string, any> = {}
-      const required: string[] = []
-      const ports = node.output_ports?.length ? node.output_ports : (node.input_ports || [])
-
-      for (const port of ports) {
-        if (['out', 'flow'].includes(port.id)) continue
-        properties[port.id] = {
-          type: to_json_schema_type(port.port_type),
-          description: port.name || port.id
-        }
-        if (port.required) {
-          required.push(port.id)
-        }
-      }
-
-      if (Object.keys(properties).length > 0) {
-        const schema: Record<string, any> = {
-          type: 'object',
-          properties
-        }
-        if (required.length > 0) {
-          schema.required = required
-        }
-        schemas.push(schema)
-      }
-    }
-
-    if (schemas.length === 1) {
-      return schemas[0]
-    }
-    if (schemas.length > 1) {
-      return { oneOf: schemas }
-    }
-
-    return null
-  }
-  
-  let input_schema = build_input_schema()
-  let output_schema = build_output_schema()
-
-  if (workflow_is_tool.value) {
-    if (!input_schema) {
-      input_schema = {
-        type: 'object',
-        properties: {
-          inputs: {
-            type: 'object',
-            description: 'Workflow input parameters'
-          }
-        }
-      }
-    }
-
-    if (!output_schema) {
-      output_schema = {
-        type: 'object',
-        properties: {
-          result: {
-            type: 'object',
-            description: 'Workflow execution result'
-          }
-        }
-      }
-    }
-  }
-  
-  const graph: Record<string, any> = {
-    id: workflow_id.value,
-    name: workflow_name.value || t('trafficAnalysis.workflowStudio.defaults.unnamedWorkflow'),
-    version: workflow_version.value || 'v1.0.0',
-    nodes: node_defs,
-    edges: edge_defs,
-    variables: [],
-    credentials: []
-  }
-  
-  // 添加 input_schema（如果有）
-  if (input_schema) {
-    graph.input_schema = input_schema
-  }
-  if (output_schema) {
-    graph.output_schema = output_schema
-  }
-  
-  return graph as WorkflowGraph
+  return buildWorkflowStudioGraph({
+    workflowId: workflow_id.value,
+    workflowName: workflow_name.value,
+    workflowVersion: workflow_version.value,
+    workflowIsTool: workflow_is_tool.value,
+    nodes,
+    edgesDetailed: edges_detailed,
+    fallbackEdges: flow_ref.value?.getFlowchartEdges() || [],
+    catalogIndex: catalog_index.value,
+    unnamedWorkflowLabel: t('trafficAnalysis.workflowStudio.defaults.unnamedWorkflow'),
+    inputPortLabel: t('trafficAnalysis.workflowStudio.flowchart.ports.input'),
+    outputPortLabel: t('trafficAnalysis.workflowStudio.flowchart.ports.output'),
+  })
 }
+
+const get_current_edges = (): EdgeDef[] => {
+  return ((flow_ref.value as any)?.getFlowchartEdgesDetailed?.() || []) as EdgeDef[]
+}
+
+const refresh_edge_mapping_options = (edge: EdgeDef | null) => {
+  if (!edge) {
+    edge_source_path_options.value = []
+    edge_target_path_options.value = []
+    return
+  }
+
+  const nodes = flow_ref.value?.getFlowchartNodes() || []
+  edge_source_path_options.value = buildSourcePathOptions({
+    edge,
+    nodes,
+    catalogIndex: catalog_index.value,
+    stepResults: step_results.value,
+  })
+  edge_target_path_options.value = buildTargetPathOptions(edge, nodes, catalog_index.value)
+}
+
+const close_edge_mapping_dialog = () => {
+  show_edge_mapping_dialog.value = false
+  selected_edge_id.value = null
+  selected_edge_label.value = ''
+  edge_source_path_options.value = []
+  edge_target_path_options.value = []
+}
+
+const on_connection_click = (connection: { edgeId?: string }) => {
+  if (!connection?.edgeId) return
+
+  const edge = get_current_edges().find(item => item.id === connection.edgeId)
+  if (!edge) return
+
+  const nodes = flow_ref.value?.getFlowchartNodes() || []
+  const fromNode = nodes.find(node => node.id === edge.from_node)
+  const toNode = nodes.find(node => node.id === edge.to_node)
+  refresh_edge_mapping_options(edge)
+
+  selected_edge_id.value = edge.id
+  selected_edge_label.value = `${fromNode?.name || edge.from_node} -> ${toNode?.name || edge.to_node}`
+  edge_mapping_form.value = {
+    source_scope: edge.source_scope || 'output',
+    source_path: edge.source_path || '',
+    target_path: edge.target_path || '',
+    merge_mode: edge.merge_mode || 'replace',
+  }
+  drawer_open.value = false
+  show_result_panel.value = false
+  show_edge_mapping_dialog.value = true
+}
+
+const save_edge_mapping = (value: {
+  source_scope: EdgeSourceScope
+  source_path: string
+  target_path: string
+  merge_mode: EdgeMergeMode
+}) => {
+  if (!selected_edge_id.value) return
+
+  ;(flow_ref.value as any)?.updateEdgeMapping?.(selected_edge_id.value, value)
+  trigger_auto_save()
+  close_edge_mapping_dialog()
+}
+
+watch(
+  () => [show_edge_mapping_dialog.value, selected_edge_id.value, edge_mapping_form.value.source_scope] as const,
+  ([open, edgeId, sourceScope]) => {
+    if (!open || !edgeId) return
+    const edge = get_current_edges().find(item => item.id === edgeId)
+    if (!edge) return
+    refresh_edge_mapping_options({
+      ...edge,
+      source_scope: sourceScope,
+    })
+  },
+)
 
 const has_nonempty_schema = (schema: any): boolean => {
   if (!schema || typeof schema !== 'object') return false
@@ -1621,68 +650,30 @@ const validate_tool_schemas = (graph: WorkflowGraph, silent: boolean): boolean =
   return false
 }
 
-const stringify_for_log = (value: any): string => {
-  try {
-    if (typeof value === 'string') return value
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
-const truncate_log_details = (value: any): string => {
-  const text = stringify_for_log(value)
-  if (text.length <= MAX_LOG_DETAILS_LENGTH) return text
-  return `${text.slice(0, MAX_LOG_DETAILS_LENGTH)}\n... (truncated)`
-}
-
 const add_log = (level: ExecutionLog['level'], message: string, node_id?: string, details?: string) => {
-  execution_logs.value.push({
-    timestamp: new Date(),
+  addWorkflowExecutionLog({
+    executionLogs: execution_logs,
+    expandedLogs: expanded_logs,
+    logsContainerRef: logs_container_ref,
+    maxExecutionLogs: MAX_EXECUTION_LOGS,
+    maxLogDetailsLength: MAX_LOG_DETAILS_LENGTH,
     level,
     message,
-    node_id,
-    details: details ? truncate_log_details(details) : undefined
-  })
-
-  if (execution_logs.value.length > MAX_EXECUTION_LOGS) {
-    const overflow = execution_logs.value.length - MAX_EXECUTION_LOGS
-    execution_logs.value.splice(0, overflow)
-    const nextExpanded = new Set<number>()
-    expanded_logs.value.forEach(idx => {
-      const mapped = idx - overflow
-      if (mapped >= 0) nextExpanded.add(mapped)
-    })
-    expanded_logs.value = nextExpanded
-  }
-
-  requestAnimationFrame(() => {
-    const logContainer = logs_container_ref.value
-    if (logContainer) {
-      logContainer.scrollTop = logContainer.scrollHeight
-    }
+    nodeId: node_id,
+    details,
   })
 }
 
 const clear_logs = () => {
-  execution_logs.value = []
-  expanded_logs.value.clear()
+  clearWorkflowExecutionLogs(execution_logs, expanded_logs)
 }
 
 const toggle_log_details = (idx: number) => {
-  if (expanded_logs.value.has(idx)) {
-    expanded_logs.value.delete(idx)
-  } else {
-    expanded_logs.value.add(idx)
-  }
+  toggleWorkflowLogDetails(expanded_logs, idx)
 }
 
 const format_result = (result: any) => {
-  if (result === undefined || result === null) return t('trafficAnalysis.workflowStudio.resultPanel.noResult')
-  if (typeof result === 'object') {
-    return JSON.stringify(result, null, 2)
-  }
-  return String(result)
+  return formatWorkflowResult(result, t('trafficAnalysis.workflowStudio.resultPanel.noResult'))
 }
 
 const copy_result_to_clipboard = async () => {
@@ -1769,6 +760,19 @@ const view_execution_detail = async (runId: string) => {
   }
 }
 
+const open_execution_from_route = async (executionId: string) => {
+  if (!executionId || last_route_execution_id.value === executionId) return
+  last_route_execution_id.value = executionId
+  history_search_query.value = executionId
+  history_page.value = 1
+  if (!show_execution_history.value) {
+    ignore_execution_history_close_once.value = true
+    show_execution_history.value = true
+  }
+  await load_history_from_backend()
+  await view_execution_detail(executionId)
+}
+
 // 删除执行记录（不需要确认）
 const delete_history_record = async (runId: string) => {
   try {
@@ -1796,37 +800,11 @@ const copy_detail_result = async () => {
 }
 
 // 格式化日期时间
-const format_datetime = (dateStr?: string) => {
-  if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
-}
+const format_datetime = formatWorkflowDatetime
 
-// 格式化耗时
-const format_duration = (ms?: number) => {
-  if (ms === undefined || ms === null) return '-'
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
-}
+const format_duration = formatWorkflowDuration
 
-// 获取状态徽章样式
-const get_status_badge_class = (status: string) => {
-  switch (status) {
-    case 'completed': return 'badge-success'
-    case 'failed': return 'badge-error'
-    case 'running': return 'badge-warning'
-    case 'pending': return 'badge-ghost'
-    case 'cancelled': return 'badge-neutral'
-    default: return 'badge-ghost'
-  }
-}
+const get_status_badge_class = getWorkflowStatusBadgeClass
 
 // 获取状态文本
 const get_status_text = (status: string) => {
@@ -1845,22 +823,12 @@ const select_execution = (exec: ExecutionRecord) => {
 }
 
 const clear_execution_history = () => {
-  execution_history.value = []
-  selected_execution.value = null
-  localStorage.removeItem(`workflow_execution_history_${workflow_id.value}`)
+  clearWorkflowExecutionHistoryState(workflow_id.value, execution_history, selected_execution)
 }
 
 // 删除单条执行记录
 const delete_single_execution = (execId: string) => {
-  const idx = execution_history.value.findIndex(e => e.id === execId)
-  if (idx === -1) return
-  
-  // 如果删除的是当前选中的记录，清除选中状态
-  if (selected_execution.value?.id === execId) {
-    selected_execution.value = null
-  }
-  
-  execution_history.value.splice(idx, 1)
+  deleteWorkflowExecutionRecord(execution_history, selected_execution, execId)
   save_execution_history()
 }
 
@@ -1884,44 +852,15 @@ const get_node_name = (nodeId: string): string => {
 }
 
 const start_new_execution = (): string => {
-  const id = `exec_${Date.now()}`
-  const now = new Date().toLocaleString('zh-CN')
-  
-  const record: ExecutionRecord = {
-    id,
-    start_time: now,
-    status: 'running',
-    step_results: {}
-  }
-  
-  execution_history.value.unshift(record)
-  current_execution_id.value = id
-  
-  // 限制历史记录数量
-  if (execution_history.value.length > 20) {
-    execution_history.value = execution_history.value.slice(0, 20)
-  }
-  
-  return id
+  return startWorkflowExecutionRecord(execution_history, current_execution_id)
 }
 
 const update_execution_step_result = (stepId: string, result: any) => {
-  const exec = execution_history.value.find(e => e.id === current_execution_id.value)
-  if (exec) {
-    exec.step_results[stepId] = result
-  }
+  updateWorkflowExecutionStepResult(execution_history, current_execution_id, stepId, result)
 }
 
 const complete_execution = (success: boolean) => {
-  const exec = execution_history.value.find(e => e.id === current_execution_id.value)
-  if (exec) {
-    exec.status = success ? 'completed' : 'failed'
-    exec.end_time = new Date().toLocaleString('zh-CN')
-    const start = new Date(exec.start_time).getTime()
-    exec.duration = Date.now() - start
-  }
-  
-  // 保存到 localStorage
+  completeWorkflowExecutionRecord(execution_history, current_execution_id, success)
   save_execution_history()
 }
 
@@ -1935,10 +874,7 @@ const reset_node_status = () => {
 
 const save_execution_history = () => {
   try {
-    localStorage.setItem(
-      `workflow_execution_history_${workflow_id.value}`,
-      JSON.stringify(execution_history.value.slice(0, 10)) // 只保存最近10条
-    )
+    saveWorkflowExecutionHistory(workflow_id.value, execution_history.value)
   } catch (e) {
     console.error('Failed to save execution history:', e)
   }
@@ -1946,37 +882,15 @@ const save_execution_history = () => {
 
 const load_execution_history = () => {
   try {
-    const saved = localStorage.getItem(`workflow_execution_history_${workflow_id.value}`)
-    if (saved) {
-      execution_history.value = JSON.parse(saved)
-    }
+    execution_history.value = loadWorkflowExecutionHistory(workflow_id.value)
   } catch (e) {
     console.error('Failed to load execution history:', e)
   }
 }
 
-const get_log_class = (level: string) => {
-  switch (level) {
-    case 'ERROR': return 'text-error'
-    case 'WARN': return 'text-warning'
-    case 'SUCCESS': return 'text-success'
-    default: return 'text-base-content'
-  }
-}
-
-const format_time = (date: Date) => {
-  return date.toLocaleTimeString('zh-CN', { hour12: false })
-}
-
-const format_date = (dateStr: string) => {
-  return new Date(dateStr).toLocaleString('zh-CN', { 
-    year: 'numeric', 
-    month: '2-digit', 
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
+const get_log_class = getWorkflowLogClass
+const format_time = formatWorkflowLogTime
+const format_date = formatWorkflowShortDate
 
 const start_run = async () => {
   const toast = useToast()
@@ -2139,8 +1053,26 @@ const save_workflow = async (silent = false): Promise<boolean> => {
   graph.id = workflow_id.value
   graph.name = workflow_name.value
   if (!validate_tool_schemas(graph, silent)) return false
+  const client_issues = validate_workflow_graph_client(graph)
+  if (client_issues.length) {
+    const first_issue = client_issues[0]
+    if (!silent) {
+      add_log('ERROR', t('trafficAnalysis.workflowStudio.logs.validationFailed', { message: first_issue.message }), first_issue.node_id)
+      toast.error(t('trafficAnalysis.workflowStudio.toasts.validationFailed', { message: first_issue.message }))
+    }
+    return false
+  }
   
   try {
+    const issues = await invoke<any[]>('validate_workflow_graph', { graph })
+    if (issues.length) {
+      if (!silent) {
+        add_log('ERROR', t('trafficAnalysis.workflowStudio.logs.validationFailed', { message: issues[0].message }), issues[0].node_id)
+        toast.error(t('trafficAnalysis.workflowStudio.toasts.validationFailed', { message: issues[0].message }))
+      }
+      return false
+    }
+
     await invoke('save_workflow_definition', {
       graph,
       description: workflow_description.value || null,
@@ -2179,6 +1111,10 @@ const save_workflow = async (silent = false): Promise<boolean> => {
 
 const on_save_workflow_click = (_evt: MouseEvent) => {
   void save_workflow(false)
+}
+
+const handle_save_workflow_click = () => {
+  on_save_workflow_click(new MouseEvent('click'))
 }
 
 // 自动保存（防抖）
@@ -2220,25 +1156,8 @@ const on_flowchart_change = () => {
 const apply_graph_to_canvas = (graph: WorkflowGraph) => {
   is_loading_graph.value = true
   try {
-    flow_ref.value?.resetFlowchart()
-    graph.nodes.forEach((n: NodeDef) => {
-      const node: any = {
-        id: n.id,
-        name: n.node_name,
-        description: n.node_type,
-        status: 'pending',
-        x: n.x,
-        y: n.y,
-        type: n.node_type,
-        dependencies: [],
-        params: n.params || {},
-        metadata: { input_ports: n.input_ports || [], output_ports: n.output_ports || [] }
-      }
-      flow_ref.value?.addNode(node)
-    })
-    graph.edges.forEach((e: EdgeDef) => {
-      flow_ref.value?.addConnectionWithPorts(e.from_node, e.to_node, e.from_port, e.to_port)
-    })
+    close_edge_mapping_dialog()
+    applyWorkflowStudioGraphToCanvas(flow_ref.value as any, graph)
   } finally {
     is_loading_graph.value = false
   }
@@ -2275,7 +1194,7 @@ const load_workflow = async (id: string) => {
 
 const delete_workflow = async (id: string) => {
   const toast = useToast()
-  if (!confirm(t('trafficAnalysis.workflowStudio.confirm.deleteWorkflow'))) return
+  if (!(await dialog.confirm(t('trafficAnalysis.workflowStudio.confirm.deleteWorkflow')))) return
   
   try {
     await invoke('delete_workflow_definition', { id })
@@ -2386,7 +1305,7 @@ const clone_workflow = async (id: string) => {
 // 删除模板
 const delete_template = async (id: string) => {
   const toast = useToast()
-  if (!confirm(t('trafficAnalysis.workflowStudio.confirm.deleteTemplate'))) return
+  if (!(await dialog.confirm(t('trafficAnalysis.workflowStudio.confirm.deleteTemplate')))) return
   
   try {
     await invoke('delete_workflow_definition', { id })
@@ -2419,10 +1338,6 @@ const toggle_favorite = (node_type: string) => {
   }
   // 保存到localStorage
   localStorage.setItem('workflow_favorites', JSON.stringify(Array.from(favorites.value)))
-}
-
-const clamp_sidebar_width = (w: number) => {
-  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w))
 }
 
 const on_sidebar_resize_mousemove = (e: MouseEvent) => {
@@ -2626,7 +1541,7 @@ const setup_event_listeners = async () => {
         step_results.value[step_id] = result
         update_execution_step_result(step_id, result)
         
-        const result_preview = truncate_log_details(result)
+        const result_preview = truncateWorkflowLogDetails(result, MAX_LOG_DETAILS_LENGTH)
         add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.nodeCompleted'), step_id, result_preview)
       } else {
         add_log('SUCCESS', t('trafficAnalysis.workflowStudio.logs.nodeCompleted'), step_id)
@@ -2667,6 +1582,7 @@ const setup_event_listeners = async () => {
 }
 
 const on_node_click = (node: any) => {
+  close_edge_mapping_dialog()
   ignore_close_once.value = true
   selected_node.value = node
   const current = node.params || {}
@@ -2929,7 +1845,7 @@ const handle_global_click = (e: MouseEvent) => {
   // 栈式关闭逻辑：先开后关
   // 如果详情对话框打开了，优先处理对话框的关闭
   if (show_detail_dialog.value) {
-    const dialogEl = detail_dialog_ref.value
+    const dialogEl = getWorkflowPanelsDetailDialogElement()
     // 检查点击是否在对话框的 modal-box 内部
     const modalBox = dialogEl?.querySelector('.modal-box')
     if (modalBox && !modalBox.contains(e.target as Node)) {
@@ -2947,7 +1863,7 @@ const handle_global_click = (e: MouseEvent) => {
     if (ignore_execution_history_close_once.value) {
       ignore_execution_history_close_once.value = false
     } else {
-      const historyPanel = execution_history_ref.value
+      const historyPanel = getExecutionHistoryElement()
       if (!historyPanel || !historyPanel.contains(e.target as Node)) {
         show_execution_history.value = false
       }
@@ -2959,7 +1875,7 @@ const handle_global_click = (e: MouseEvent) => {
     if (ignore_result_panel_close_once.value) {
       ignore_result_panel_close_once.value = false
     } else {
-      const panel = result_panel_ref.value
+      const panel = getWorkflowPanelsResultPanelElement()
       if (!panel || !panel.contains(e.target as Node)) {
         close_result_panel()
       }
@@ -2989,13 +1905,8 @@ onMounted(async () => {
     }
   }
 
-  const saved_sidebar_width = localStorage.getItem(SIDEBAR_WIDTH_KEY)
-  if (saved_sidebar_width) {
-    const parsed = Number(saved_sidebar_width)
-    if (!Number.isNaN(parsed)) {
-      sidebar_width.value = clamp_sidebar_width(parsed)
-    }
-  }
+  await nextTick()
+  sidebar_transition_ready.value = true
   
   // 加载上次运行的工作流
   const last_workflow_id = localStorage.getItem('last_run_workflow_id')
@@ -3012,7 +1923,32 @@ onMounted(async () => {
   window.addEventListener('click', handle_global_click)
   window.addEventListener('mousedown', handle_global_mousedown)
   window.addEventListener('keydown', handle_keydown)
+
+  const routeExecutionId = typeof route.query.execution_id === 'string'
+    ? route.query.execution_id
+    : typeof route.query.executionId === 'string'
+      ? route.query.executionId
+      : ''
+  if (routeExecutionId) {
+    await open_execution_from_route(routeExecutionId)
+  }
 })
+
+watch(
+  () => [route.query.execution_id, route.query.executionId],
+  async ([executionId, executionIdCamel]) => {
+    const nextExecutionId = typeof executionId === 'string'
+      ? executionId
+      : typeof executionIdCamel === 'string'
+        ? executionIdCamel
+        : ''
+    if (!nextExecutionId) {
+      last_route_execution_id.value = null
+      return
+    }
+    await open_execution_from_route(nextExecutionId)
+  },
+)
 
 onUnmounted(() => {
   wf_events.unsubscribe_all()

@@ -1,6 +1,6 @@
 use crate::commands::tool_commands;
 use crate::commands::traffic_analysis_commands::TrafficAnalysisState;
-use crate::models::database::{AiConversation, AiMessage, SubagentMessage, SubagentRun};
+use crate::models::database::{AiMessage, SubagentMessage, SubagentRun};
 use crate::services::ai::{AiConfig, AiServiceManager, AiServiceWrapper, AiToolCall};
 use crate::services::database::DatabaseService;
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
@@ -713,6 +713,7 @@ async fn stream_chat_with_llm(
                     "execution_id": conversation_id,
                     "message_id": message_id,
                     "content": content,
+                    "reasoning_content": msg.reasoning_content,
                     "timestamp": msg.timestamp.timestamp_millis(),
                 }),
             );
@@ -803,6 +804,93 @@ pub struct StopStreamRequest {
     pub conversation_id: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentExecutionOutcome {
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentExecutionFinishedEvent {
+    pub execution_id: String,
+    pub outcome: AgentExecutionOutcome,
+    pub success: bool,
+    pub error: Option<String>,
+    pub response: Option<String>,
+    pub message: Option<String>,
+}
+
+pub fn emit_agent_execution_finished(
+    app_handle: &AppHandle,
+    execution_id: &str,
+    outcome: AgentExecutionOutcome,
+    error: Option<String>,
+    response: Option<String>,
+    message: Option<String>,
+) {
+    let success = matches!(outcome, AgentExecutionOutcome::Succeeded);
+    let finished_payload = AgentExecutionFinishedEvent {
+        execution_id: execution_id.to_string(),
+        outcome,
+        success,
+        error: error.clone(),
+        response: response.clone(),
+        message: message.clone(),
+    };
+
+    let persist_payload = finished_payload.clone();
+    let persist_handle = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::commands::ai_execution_state_support::persist_agent_execution_state(
+            &persist_handle,
+            &persist_payload,
+        )
+        .await
+        {
+            tracing::warn!(
+                "Failed to persist execution state for {}: {}",
+                persist_payload.execution_id,
+                e
+            );
+        }
+    });
+
+    let _ = app_handle.emit("agent:execution_finished", &finished_payload);
+
+    match outcome {
+        AgentExecutionOutcome::Succeeded => {
+            let _ = app_handle.emit(
+                "agent:complete",
+                &serde_json::json!({
+                    "execution_id": execution_id,
+                    "success": true,
+                    "response": response,
+                }),
+            );
+        }
+        AgentExecutionOutcome::Failed => {
+            let _ = app_handle.emit(
+                "agent:error",
+                &serde_json::json!({
+                    "execution_id": execution_id,
+                    "error": error.unwrap_or_else(|| "Agent execution failed".to_string()),
+                }),
+            );
+        }
+        AgentExecutionOutcome::Cancelled => {
+            let _ = app_handle.emit(
+                "agent:cancelled",
+                &serde_json::json!({
+                    "execution_id": execution_id,
+                    "message": message.unwrap_or_else(|| "Execution cancelled by user".to_string()),
+                }),
+            );
+        }
+    }
+}
+
 // 列出所有AI服务
 #[tauri::command]
 pub async fn list_ai_services(
@@ -824,13 +912,13 @@ pub async fn cancel_ai_stream(
     // conversation_id is used as execution_id across the app.
     let _ = crate::managers::cancellation_manager::cancel_execution(&conversation_id).await;
 
-    // 发送取消事件通知前端
-    let _ = app_handle.emit(
-        "agent:cancelled",
-        &serde_json::json!({
-            "execution_id": conversation_id,
-            "message": "Execution cancelled by user"
-        }),
+    emit_agent_execution_finished(
+        &app_handle,
+        &conversation_id,
+        AgentExecutionOutcome::Cancelled,
+        None,
+        None,
+        Some("Execution cancelled by user".to_string()),
     );
 
     Ok(())
@@ -1543,59 +1631,6 @@ pub async fn archive_ai_conversation(
 }
 
 // 获取AI对话列表
-#[tauri::command]
-pub async fn get_ai_conversations(
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-) -> Result<Vec<AiConversation>, String> {
-    // 获取默认服务的对话列表
-    let services = ai_manager.list_services();
-    if let Some(service_name) = services.first() {
-        if let Some(service) = ai_manager.get_service(service_name) {
-            return service
-                .list_conversations()
-                .await
-                .map_err(|e| e.to_string());
-        }
-    }
-    Ok(vec![])
-}
-
-// 分页获取AI对话列表
-#[tauri::command]
-pub async fn get_ai_conversations_paginated(
-    limit: i64,
-    offset: i64,
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-) -> Result<Vec<AiConversation>, String> {
-    let services = ai_manager.list_services();
-    if let Some(service_name) = services.first() {
-        if let Some(service) = ai_manager.get_service(service_name) {
-            return service
-                .list_conversations_paginated(limit, offset)
-                .await
-                .map_err(|e| e.to_string());
-        }
-    }
-    Ok(vec![])
-}
-
-// 获取AI对话总数
-#[tauri::command]
-pub async fn get_ai_conversations_count(
-    ai_manager: State<'_, Arc<AiServiceManager>>,
-) -> Result<i64, String> {
-    let services = ai_manager.list_services();
-    if let Some(service_name) = services.first() {
-        if let Some(service) = ai_manager.get_service(service_name) {
-            return service
-                .get_conversations_count()
-                .await
-                .map_err(|e| e.to_string());
-        }
-    }
-    Ok(0)
-}
-
 fn resolve_turn_log_date(date: Option<&str>) -> String {
     date.map(str::trim)
         .filter(|v| !v.is_empty())
@@ -2110,7 +2145,17 @@ Schema:
     }}
   ],
   "edges": [
-    {{"id":"string","from_node":"string","from_port":"out","to_node":"string","to_port":"in"}}
+    {{
+      "id":"string",
+      "from_node":"string",
+      "from_port":"out",
+      "to_node":"string",
+      "to_port":"in",
+      "source_scope":"output",
+      "source_path":"response",
+      "target_path":"prompt",
+      "merge_mode":"replace"
+    }}
   ],
   "variables": [],
   "credentials": []
@@ -2123,14 +2168,16 @@ CRITICAL RULES:
    - Use "tool::http_request" for HTTP API calls
    - Use "ai_chat" for AI text generation/summarization
    - Use "notify" for sending notifications/emails
+   - Use "raw" for static JSON/text input data
    - Use "start" for manual trigger entry point
 
 2) params MUST contain actual values extracted from user description:
    - For "trigger_schedule": {{"trigger_type":"daily","hour":8,"minute":0,"second":0,"weekdays":"1,2,3,4,5"}}
    - For "tool::browser": {{"url":"https://example.com","action":"navigate","wait_until":"networkidle"}}
    - For "tool::http_request": {{"url":"https://api.example.com","method":"GET"}}
-   - For "ai_chat": {{"prompt":"Summarize the following content: {{{{input}}}}","system_prompt":"You are a helpful assistant"}}
-   - For "notify": {{"title":"Notification","content":"{{{{input}}}}","use_input_as_content":true}}
+    - For "ai_chat": {{"prompt":"Summarize the following content: {{{{input}}}}","system_prompt":"You are a helpful assistant"}}
+    - For "notify": {{"title":"Notification","content":"{{{{input}}}}","use_input_as_content":true}}
+   - For "raw": {{"raw_type":"json","value":"{{\"query\":\"漏洞情报\"}}"}}
 
 3) Extract specific values from user description:
    - Times like "8点" -> hour:8, minute:0
@@ -2142,6 +2189,8 @@ CRITICAL RULES:
 5) Keep variables and credentials as empty arrays []
 
 6) Every node MUST have meaningful params filled based on its purpose in the workflow
+7) Every edge MUST include a non-empty target_path that maps data into the downstream node params
+8) source_scope must be "output" or "input"; merge_mode must be "replace", "deep_merge", or "append"
 "#,
         tools_summary, catalog_summary
     );
@@ -2609,6 +2658,19 @@ pub async fn agent_execute(
             .unwrap_or(false)
     );
 
+    if let Err(e) = crate::commands::ai_execution_state_support::clear_persisted_agent_execution_state(
+        &app_handle,
+        &conversation_id,
+    )
+    .await
+    {
+        tracing::warn!(
+            "Failed to clear persisted execution state for conversation {}: {}",
+            conversation_id,
+            e
+        );
+    }
+
     // 优先使用本次请求模型覆盖（仅 AI 助手生效），否则使用全局默认模型
     let requested_override = config
         .model_override
@@ -3035,12 +3097,16 @@ pub async fn agent_execute(
                         .await {
                             Ok(path) => path,
                             Err(e) => {
-                                let _ = app_handle.emit(
-                                    "agent:error",
-                                    &serde_json::json!({
-                                        "execution_id": conv_id,
-                                        "error": format!("Failed to resolve uploaded file {}: {}", d.file_id, e)
-                                    }),
+                                emit_agent_execution_finished(
+                                    &app_handle,
+                                    &conv_id,
+                                    AgentExecutionOutcome::Failed,
+                                    Some(format!(
+                                        "Failed to resolve uploaded file {}: {}",
+                                        d.file_id, e
+                                    )),
+                                    None,
+                                    None,
                                 );
                                 return;
                             }
@@ -3084,33 +3150,41 @@ pub async fn agent_execute(
 
                 // 调用工具支持的代理执行器
                 match crate::agents::executor::execute_agent(&app_handle, executor_params).await {
-                    Ok(_) => {
+                    Ok(response) => {
+                        if is_conversation_cancelled(&conv_id) {
+                            tracing::info!(
+                                "Agent execution ended after cancellation for conversation: {}",
+                                conv_id
+                            );
+                            return;
+                        }
                         tracing::info!("Agent with tools completed for conversation: {}", conv_id);
-                        let _ = app_handle.emit(
-                            "agent:complete",
-                            &serde_json::json!({
-                                "execution_id": conv_id,
-                                "success": true
-                            }),
+                        emit_agent_execution_finished(
+                            &app_handle,
+                            &conv_id,
+                            AgentExecutionOutcome::Succeeded,
+                            None,
+                            Some(response),
+                            None,
                         );
-
-                        // Cleanup todos for this execution
-                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id)
-                            .await;
                     }
                     Err(e) => {
+                        if is_conversation_cancelled(&conv_id) {
+                            tracing::info!(
+                                "Agent execution failed after cancellation for conversation: {}",
+                                conv_id
+                            );
+                            return;
+                        }
                         tracing::error!("Agent with tools execution failed: {}", e);
-                        let _ = app_handle.emit(
-                            "agent:error",
-                            &serde_json::json!({
-                                "execution_id": conv_id,
-                                "error": e.to_string()
-                            }),
+                        emit_agent_execution_finished(
+                            &app_handle,
+                            &conv_id,
+                            AgentExecutionOutcome::Failed,
+                            Some(e.to_string()),
+                            None,
+                            None,
                         );
-
-                        // Cleanup todos for this execution even on error
-                        sentinel_tools::buildin_tools::todos::cleanup_execution_todos(&conv_id)
-                            .await;
                     }
                 }
 

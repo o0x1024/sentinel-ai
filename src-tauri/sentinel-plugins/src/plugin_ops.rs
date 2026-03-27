@@ -8,7 +8,8 @@
 use deno_core::{extension, op2, OpState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -17,6 +18,7 @@ use tracing::{debug, error, info, warn};
 use x509_parser::extensions::GeneralName;
 use x509_parser::parse_x509_certificate;
 
+use crate::dictionary_runtime;
 use crate::types::{Confidence, Finding, Severity};
 
 /// 插件执行上下文（用于收集插件发现的漏洞）
@@ -290,6 +292,10 @@ pub struct FetchOptions {
     pub body: Option<String>,
     #[serde(default)]
     pub timeout: Option<u64>, // timeout in milliseconds
+    #[serde(default)]
+    pub redirect: Option<String>,
+    #[serde(default)]
+    pub max_redirects: Option<usize>,
 }
 
 /// Fetch response to JavaScript
@@ -300,7 +306,79 @@ pub struct FetchResponse {
     pub headers: std::collections::HashMap<String, String>,
     pub body: String,
     pub ok: bool,
+    pub redirected: bool,
+    pub final_url: String,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct FetchClientKey {
+    proxy_url: Option<String>,
+    follow_redirects: bool,
+    max_redirects: usize,
+}
+
+static FETCH_CLIENTS: OnceLock<Mutex<HashMap<FetchClientKey, reqwest::Client>>> = OnceLock::new();
+
+fn fetch_client_cache() -> &'static Mutex<HashMap<FetchClientKey, reqwest::Client>> {
+    FETCH_CLIENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn get_fetch_client(
+    follow_redirects: bool,
+    max_redirects: usize,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let proxy_config = sentinel_core::global_proxy::get_global_proxy().await;
+    let key = FetchClientKey {
+        proxy_url: if proxy_config.enabled {
+            proxy_config.build_proxy_url()
+        } else {
+            None
+        },
+        follow_redirects,
+        max_redirects,
+    };
+
+    if let Some(client) = fetch_client_cache().lock().unwrap().get(&key).cloned() {
+        return Ok(client);
+    }
+
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    default_headers.insert(
+        reqwest::header::HeaderName::from_static("x-sentinel-internal"),
+        reqwest::header::HeaderValue::from_static("true"),
+    );
+
+    let redirect_policy = if follow_redirects {
+        reqwest::redirect::Policy::limited(max_redirects)
+    } else {
+        reqwest::redirect::Policy::none()
+    };
+
+    let mut builder = reqwest::Client::builder()
+        .default_headers(default_headers)
+        .redirect(redirect_policy);
+
+    if let Some(proxy_url) = &key.proxy_url {
+        match reqwest::Proxy::all(proxy_url) {
+            Ok(proxy) => {
+                builder = builder.proxy(proxy);
+            }
+            Err(error) => {
+                warn!(
+                    "Failed to create proxy for plugin fetch client: {}, using direct connection",
+                    error
+                );
+            }
+        }
+    }
+
+    let client = builder.build()?;
+    fetch_client_cache()
+        .lock()
+        .unwrap()
+        .insert(key, client.clone());
+    Ok(client)
 }
 
 /// Op: HTTP fetch (网络请求)
@@ -313,17 +391,16 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         method: "GET".to_string(),
         headers: std::collections::HashMap::new(),
         body: None,
-        timeout: Some(30000), // 30s default
+        timeout: Some(5000), // 5s default
+        redirect: Some("follow".to_string()),
+        max_redirects: Some(10),
     });
 
     let method = opts.method.to_uppercase();
-    let timeout_ms = opts.timeout.unwrap_or(30000);
-
-    // Build reqwest client with proxy support
-    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_millis(timeout_ms));
-    let builder: reqwest::ClientBuilder =
-        sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
-    let client = match builder.build() {
+    let timeout_ms = opts.timeout.unwrap_or(5000);
+    let follow_redirects = !matches!(opts.redirect.as_deref(), Some("manual"));
+    let max_redirects = opts.max_redirects.unwrap_or(10);
+    let client = match get_fetch_client(follow_redirects, max_redirects).await {
         Ok(c) => c,
         Err(e) => {
             return FetchResponse {
@@ -332,6 +409,8 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
                 headers: std::collections::HashMap::new(),
                 body: String::new(),
                 ok: false,
+                redirected: false,
+                final_url: url.clone(),
                 error: Some(format!("Failed to build HTTP client: {}", e)),
             };
         }
@@ -353,6 +432,8 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         req_builder = req_builder.header(&key, &value);
     }
 
+    req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
+
     // Add body if present
     if let Some(body) = opts.body {
         req_builder = req_builder.body(body);
@@ -368,6 +449,8 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
                 headers: std::collections::HashMap::new(),
                 body: String::new(),
                 ok: false,
+                redirected: false,
+                final_url: url.clone(),
                 error: Some(format!("HTTP request failed: {}", e)),
             };
         }
@@ -375,6 +458,8 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
 
     let status = response.status().as_u16();
     let ok = response.status().is_success();
+    let final_url = response.url().to_string();
+    let redirected = final_url != url;
 
     // Extract headers
     let mut headers = std::collections::HashMap::new();
@@ -394,6 +479,8 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
                 headers,
                 body: String::new(),
                 ok: false,
+                redirected,
+                final_url,
                 error: Some(format!("Failed to read response body: {}", e)),
             };
         }
@@ -407,6 +494,8 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         headers,
         body,
         ok,
+        redirected,
+        final_url,
         error: None,
     }
 }
@@ -1221,105 +1310,13 @@ fn get_line_col(source: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
-// ============================================================
-// Dictionary Operations
-// ============================================================
-
-use std::sync::OnceLock;
-
-#[cfg(feature = "db-postgres")]
-type DictionaryPool = sqlx::PgPool;
-#[cfg(not(feature = "db-postgres"))]
-type DictionaryPool = sqlx::SqlitePool;
-
-/// Global database pool for dictionary operations
-static DICTIONARY_POOL: OnceLock<DictionaryPool> = OnceLock::new();
-
-/// Initialize dictionary database pool (call from main app)
-pub fn init_dictionary_pool(pool: DictionaryPool) {
-    let _ = DICTIONARY_POOL.set(pool);
-}
-
-/// Get dictionary pool
-#[allow(dead_code)]
-fn get_dictionary_pool() -> Option<&'static DictionaryPool> {
-    DICTIONARY_POOL.get()
-}
-
-/// Dictionary info returned to JavaScript
-#[derive(Serialize)]
-struct JsDictionary {
-    id: String,
-    name: String,
-    description: Option<String>,
-    dict_type: String,
-    service_type: Option<String>,
-    category: Option<String>,
-    word_count: i64,
-    tags: Option<String>,
-}
-
-#[derive(Serialize)]
-struct JsDictionaryEntry {
-    word: String,
-    weight: f64,
-    category: Option<String>,
-    metadata: Option<serde_json::Value>,
-}
-
 /// Get dictionary by ID or name
 #[op2(async)]
 #[serde]
 async fn op_get_dictionary(
     #[string] id_or_name: String,
-) -> Result<Option<JsDictionary>, deno_error::JsErrorBox> {
-    #[cfg(feature = "db-postgres")]
-    {
-        let pool = get_dictionary_pool().ok_or_else(|| {
-            deno_error::JsErrorBox::generic("Dictionary database not initialized")
-        })?;
-
-        // Try by ID first
-        let dict: Option<(
-            String,
-            String,
-            Option<String>,
-            String,
-            Option<String>,
-            Option<String>,
-            i64,
-            Option<String>,
-        )> =
-            sqlx::query_as("SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE id = $1 OR name = $2")
-                .bind(&id_or_name)
-                .bind(&id_or_name)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        return Ok(dict.map(
-            |(id, name, description, dict_type, service_type, category, word_count, tags)| {
-                JsDictionary {
-                    id,
-                    name,
-                    description,
-                    dict_type,
-                    service_type,
-                    category,
-                    word_count,
-                    tags,
-                }
-            },
-        ));
-    }
-
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = id_or_name;
-        Err(deno_error::JsErrorBox::generic(
-            "Dictionary operations require `db-postgres` feature",
-        ))
-    }
+) -> Result<Option<dictionary_runtime::JsDictionary>, deno_error::JsErrorBox> {
+    dictionary_runtime::get_dictionary(id_or_name).await
 }
 
 /// Get the configured default dictionary ID for a type
@@ -1328,32 +1325,7 @@ async fn op_get_dictionary(
 async fn op_get_default_dictionary_id(
     #[string] dict_type: String,
 ) -> Result<String, deno_error::JsErrorBox> {
-    #[cfg(feature = "db-postgres")]
-    {
-        let pool = get_dictionary_pool().ok_or_else(|| {
-            deno_error::JsErrorBox::generic("Dictionary database not initialized")
-        })?;
-
-        let dict_id: Option<String> = sqlx::query_scalar(
-            "SELECT value FROM configurations WHERE category = 'dictionary_default' AND key = $1"
-        )
-        .bind(&dict_type)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        return Ok(dict_id
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_default());
-    }
-
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = dict_type;
-        Err(deno_error::JsErrorBox::generic(
-            "Dictionary operations require `db-postgres` feature",
-        ))
-    }
+    dictionary_runtime::get_default_dictionary_id(dict_type).await
 }
 
 /// Get words from a dictionary by ID or name
@@ -1363,47 +1335,7 @@ async fn op_get_dictionary_words(
     #[string] id_or_name: String,
     #[smi] limit: Option<i32>,
 ) -> Result<Vec<String>, deno_error::JsErrorBox> {
-    #[cfg(feature = "db-postgres")]
-    {
-        let pool = get_dictionary_pool().ok_or_else(|| {
-            deno_error::JsErrorBox::generic("Dictionary database not initialized")
-        })?;
-
-        // First get dictionary ID
-        let dict_id: Option<String> =
-            sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
-                .bind(&id_or_name)
-                .bind(&id_or_name)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        let dict_id = match dict_id {
-            Some(id) => id,
-            None => return Ok(vec![]),
-        };
-
-        // Get words
-        let limit_val = limit.unwrap_or(10000) as i64;
-        let words: Vec<String> = sqlx::query_scalar(
-            "SELECT word FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2"
-        )
-            .bind(&dict_id)
-            .bind(limit_val)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        return Ok(words);
-    }
-
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = (id_or_name, limit);
-        Err(deno_error::JsErrorBox::generic(
-            "Dictionary operations require `db-postgres` feature",
-        ))
-    }
+    dictionary_runtime::get_dictionary_words(id_or_name, limit).await
 }
 
 /// Get structured entries from a dictionary by ID or name
@@ -1412,54 +1344,8 @@ async fn op_get_dictionary_words(
 async fn op_get_dictionary_entries(
     #[string] id_or_name: String,
     #[smi] limit: Option<i32>,
-) -> Result<Vec<JsDictionaryEntry>, deno_error::JsErrorBox> {
-    #[cfg(feature = "db-postgres")]
-    {
-        let pool = get_dictionary_pool().ok_or_else(|| {
-            deno_error::JsErrorBox::generic("Dictionary database not initialized")
-        })?;
-
-        let dict_id: Option<String> =
-            sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
-                .bind(&id_or_name)
-                .bind(&id_or_name)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        let dict_id = match dict_id {
-            Some(id) => id,
-            None => return Ok(vec![]),
-        };
-
-        let limit_val = limit.unwrap_or(10000) as i64;
-        let rows: Vec<(String, f64, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT word, weight, category, metadata FROM dictionary_words WHERE dictionary_id = $1 ORDER BY weight DESC, word ASC LIMIT $2"
-        )
-        .bind(&dict_id)
-        .bind(limit_val)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        return Ok(rows
-            .into_iter()
-            .map(|(word, weight, category, metadata)| JsDictionaryEntry {
-                word,
-                weight,
-                category,
-                metadata: metadata.and_then(|raw| serde_json::from_str(&raw).ok()),
-            })
-            .collect());
-    }
-
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = (id_or_name, limit);
-        Err(deno_error::JsErrorBox::generic(
-            "Dictionary operations require `db-postgres` feature",
-        ))
-    }
+) -> Result<Vec<dictionary_runtime::JsDictionaryEntry>, deno_error::JsErrorBox> {
+    dictionary_runtime::get_dictionary_entries(id_or_name, limit).await
 }
 
 /// List dictionaries with optional filter
@@ -1468,78 +1354,8 @@ async fn op_get_dictionary_entries(
 async fn op_list_dictionaries(
     #[string] dict_type: Option<String>,
     #[string] category: Option<String>,
-) -> Result<Vec<JsDictionary>, deno_error::JsErrorBox> {
-    #[cfg(feature = "db-postgres")]
-    {
-        let pool = get_dictionary_pool().ok_or_else(|| {
-            deno_error::JsErrorBox::generic("Dictionary database not initialized")
-        })?;
-
-        let mut query = "SELECT id, name, description, dict_type, service_type, category, word_count, tags FROM dictionaries WHERE 1=1".to_string();
-
-        let mut params_count = 0;
-        if let Some(_) = dict_type {
-            params_count += 1;
-            query.push_str(&format!(" AND dict_type = ${}", params_count));
-        }
-        if let Some(_) = category {
-            params_count += 1;
-            query.push_str(&format!(" AND category = ${}", params_count));
-        }
-        query.push_str(" ORDER BY name ASC");
-
-        let mut sql_query = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<String>,
-                Option<String>,
-                i64,
-                Option<String>,
-            ),
-        >(&query);
-
-        if let Some(ref dt) = dict_type {
-            sql_query = sql_query.bind(dt);
-        }
-        if let Some(ref cat) = category {
-            sql_query = sql_query.bind(cat);
-        }
-
-        let rows = sql_query
-            .fetch_all(pool)
-            .await
-            .map_err(|e| deno_error::JsErrorBox::generic(format!("Query error: {}", e)))?;
-
-        return Ok(rows
-            .into_iter()
-            .map(
-                |(id, name, description, dict_type, service_type, category, word_count, tags)| {
-                    JsDictionary {
-                        id,
-                        name,
-                        description,
-                        dict_type,
-                        service_type,
-                        category,
-                        word_count,
-                        tags,
-                    }
-                },
-            )
-            .collect());
-    }
-
-    #[cfg(not(feature = "db-postgres"))]
-    {
-        let _ = (dict_type, category);
-        Err(deno_error::JsErrorBox::generic(
-            "Dictionary operations require `db-postgres` feature",
-        ))
-    }
+) -> Result<Vec<dictionary_runtime::JsDictionary>, deno_error::JsErrorBox> {
+    dictionary_runtime::list_dictionaries(dict_type, category).await
 }
 
 // ============================================================

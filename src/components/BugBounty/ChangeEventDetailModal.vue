@@ -19,7 +19,7 @@
         </a>
         <a class="tab" :class="{ 'tab-active': activeTab === 'workflows' }" @click="activeTab = 'workflows'">
           {{ t('bugBounty.changeEvents.workflowsTab') }}
-          <span v-if="triggeredWorkflows.length > 0" class="badge badge-sm ml-1">{{ triggeredWorkflows.length }}</span>
+          <span v-if="workflowRuns.length > 0" class="badge badge-sm ml-1">{{ workflowRuns.length }}</span>
         </a>
         <a class="tab" :class="{ 'tab-active': activeTab === 'findings' }" @click="activeTab = 'findings'">
           {{ t('bugBounty.tabs.findings') }}
@@ -133,7 +133,6 @@
         <div class="flex justify-between items-center">
           <span class="text-sm text-base-content/70">{{ t('bugBounty.changeEvents.triggeredWorkflows') }}</span>
           <button 
-            v-if="event?.auto_trigger_enabled" 
             class="btn btn-sm btn-primary"
             @click="$emit('trigger-workflow', event)"
           >
@@ -142,20 +141,50 @@
           </button>
         </div>
 
-        <div v-if="triggeredWorkflows.length === 0" class="text-center py-8 text-base-content/60">
+        <div v-if="loadingWorkflowRuns" class="flex justify-center py-8">
+          <span class="loading loading-spinner loading-lg"></span>
+        </div>
+
+        <div v-else-if="workflowRuns.length === 0" class="text-center py-8 text-base-content/60">
           <i class="fas fa-project-diagram text-4xl mb-3 opacity-30"></i>
           <p>{{ t('bugBounty.changeEvents.noWorkflows') }}</p>
         </div>
 
         <div v-else class="space-y-2">
-          <div v-for="wfId in triggeredWorkflows" :key="wfId" class="flex items-center justify-between bg-base-200 p-3 rounded">
-            <div class="flex items-center gap-2">
-              <i class="fas fa-project-diagram text-primary"></i>
-              <span class="font-mono text-sm">{{ wfId }}</span>
+          <div v-for="run in workflowRuns" :key="run.id" class="flex items-center justify-between gap-3 bg-base-200 p-3 rounded">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <i class="fas fa-project-diagram text-primary"></i>
+                <span class="font-medium truncate">{{ run.workflow_template_name || run.workflow_template_id }}</span>
+                <span class="badge badge-xs" :class="getWorkflowRunStatusClass(run.status)">{{ formatWorkflowRunStatus(run.status) }}</span>
+                <span v-if="run.trigger_mode" class="badge badge-ghost badge-xs">{{ run.trigger_mode }}</span>
+              </div>
+              <div class="mt-1 text-xs text-base-content/60 font-mono break-all">
+                {{ run.execution_id }}
+              </div>
+              <div v-if="run.error_message" class="mt-2 text-xs text-error break-all">
+                {{ run.error_message }}
+              </div>
             </div>
-            <button class="btn btn-xs btn-ghost">
-              <i class="fas fa-external-link-alt"></i>
-            </button>
+            <div class="flex items-center gap-1">
+              <button
+                v-if="canRetryWorkflowRun(run)"
+                class="btn btn-xs btn-ghost"
+                :disabled="retryingExecutionId === run.execution_id"
+                :title="t('common.retry')"
+                @click="retryWorkflowRun(run)"
+              >
+                <span v-if="retryingExecutionId === run.execution_id" class="loading loading-spinner loading-xs"></span>
+                <i v-else class="fas fa-rotate-right"></i>
+              </button>
+              <button
+                class="btn btn-xs btn-ghost"
+                :title="t('trafficAnalysis.workflowStudio.executionHistory.table.viewDetail')"
+                @click="openWorkflowRun(run)"
+              >
+                <i class="fas fa-external-link-alt"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -198,9 +227,11 @@ import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
+import { useRouter } from 'vue-router'
 
 const { t } = useI18n()
 const toast = useToast()
+const router = useRouter()
 
 const props = defineProps<{
   visible: boolean
@@ -215,17 +246,11 @@ const emit = defineEmits<{
 
 const activeTab = ref('details')
 const newStatus = ref('')
+const loadingWorkflowRuns = ref(false)
+const workflowRuns = ref<any[]>([])
+const retryingExecutionId = ref('')
 
 // Computed
-const triggeredWorkflows = computed(() => {
-  if (!props.event?.triggered_workflows_json) return []
-  try {
-    return JSON.parse(props.event.triggered_workflows_json)
-  } catch {
-    return []
-  }
-})
-
 const generatedFindings = computed(() => {
   if (!props.event?.generated_findings_json) return []
   try {
@@ -242,7 +267,35 @@ watch(() => props.event, (event) => {
   }
 }, { immediate: true })
 
+watch(
+  () => [props.visible, props.event?.id],
+  ([visible, eventId]) => {
+    if (visible && eventId) {
+      loadWorkflowRuns(eventId)
+    } else {
+      workflowRuns.value = []
+    }
+  },
+  { immediate: true },
+)
+
 // Methods
+const loadWorkflowRuns = async (eventId: string) => {
+  try {
+    loadingWorkflowRuns.value = true
+    workflowRuns.value = await invoke('bounty_list_change_event_workflow_runs', { eventId })
+  } catch (error) {
+    console.error('Failed to load change event workflow runs:', error)
+    workflowRuns.value = []
+  } finally {
+    loadingWorkflowRuns.value = false
+  }
+}
+
+const canRetryWorkflowRun = (run: any) => {
+  return ['failed', 'completed_with_errors'].includes(run?.status)
+}
+
 const updateStatus = async () => {
   if (!props.event || newStatus.value === props.event.status) return
   try {
@@ -256,6 +309,36 @@ const updateStatus = async () => {
     console.error('Failed to update status:', error)
     toast.error(t('bugBounty.errors.updateFailed'))
   }
+}
+
+const retryWorkflowRun = async (run: any) => {
+  if (!run?.execution_id || retryingExecutionId.value) return
+  try {
+    retryingExecutionId.value = run.execution_id
+    await invoke('bounty_retry_change_event_workflow_run', {
+      executionId: run.execution_id,
+    })
+    toast.success(t('common.success'))
+    if (props.event?.id) {
+      await loadWorkflowRuns(props.event.id)
+    }
+    emit('updated')
+  } catch (error) {
+    console.error('Failed to retry change event workflow run:', error)
+    toast.error(t('bugBounty.errors.operationFailed'))
+  } finally {
+    retryingExecutionId.value = ''
+  }
+}
+
+const openWorkflowRun = async (run: any) => {
+  if (!run?.execution_id) return
+  await router.push({
+    name: 'WorkflowStudio',
+    query: {
+      execution_id: String(run.execution_id),
+    },
+  })
 }
 
 const formatDateTime = (date: string) => {
@@ -278,6 +361,26 @@ const formatEventType = (type: string) => {
     configuration_exposed: t('bugBounty.changeEvents.types.configurationExposed'),
   }
   return map[type] || type
+}
+
+const formatWorkflowRunStatus = (status: string) => {
+  const map: Record<string, string> = {
+    running: 'Running',
+    completed: 'Completed',
+    completed_with_errors: 'Completed With Errors',
+    failed: 'Failed',
+  }
+  return map[status] || status
+}
+
+const getWorkflowRunStatusClass = (status: string) => {
+  const map: Record<string, string> = {
+    running: 'badge-info',
+    completed: 'badge-success',
+    completed_with_errors: 'badge-warning',
+    failed: 'badge-error',
+  }
+  return map[status] || 'badge-ghost'
 }
 
 const formatStatus = (status: string) => {

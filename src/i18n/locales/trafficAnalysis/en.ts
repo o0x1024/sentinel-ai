@@ -1,9 +1,13 @@
+import intruder from './en.intruder'
+
 export default {
   title: 'Traffic Analysis',
   tabs: {
     control: 'Proxy Control',
     history: 'History',
     repeater: 'Repeater',
+    comparer: 'Comparer',
+    intruder: 'Intruder',
     proxifier: 'Proxifier',
     capture: 'Capture',
     proxyConfig: 'Proxy Configuration'
@@ -15,6 +19,8 @@ export default {
     control: 'Proxy Control',
     history: 'History Records',
     repeater: 'Repeater',
+    comparer: 'Comparer',
+    intruder: 'Intruder',
     proxifier: 'Proxifier',
     capture: 'Capture',
     proxyConfig: 'Proxy Configuration'
@@ -23,9 +29,20 @@ export default {
     control: 'fa-sliders-h',
     history: 'fa-history',
     repeater: 'fa-redo',
+    comparer: 'fa-not-equal',
+    intruder: 'fa-crosshairs',
     proxifier: 'fa-network-wired',
     capture: 'fa-broadcast-tower',
     proxyConfig: 'fa-cog'
+  },
+  comparer: {
+    labels: {
+      changedLines: 'Changed lines',
+      similarity: 'Similarity',
+    },
+    empty: {
+      noItems: 'No comparison items yet',
+    },
   },
   // Proxy Intercept Component
   intercept: {
@@ -45,7 +62,8 @@ export default {
       dropAll: 'Drop All',
       save: 'Save',
       edit: 'Edit',
-      sendToRepeater: 'Send to Repeater'
+      sendToRepeater: 'Send to Repeater',
+      sendToIntruder: 'Send to Intruder'
     },
     stats: {
       proxyStatus: 'Proxy Status',
@@ -78,6 +96,7 @@ export default {
     },
     contextMenu: {
       sendToRepeater: 'Send to Repeater',
+      sendToIntruder: 'Send to Intruder',
       sendToAI: 'Send to AI Assistant',
       addFilter: 'Add Filter',
       filterByDomain: 'Filter by Domain',
@@ -159,6 +178,7 @@ export default {
       https: 'HTTPS'
     }
   },
+  intruder,
   // Proxy History Component
   history: {
     title: 'Request History',
@@ -172,6 +192,7 @@ export default {
     },
     contextMenu: {
       sendToRepeater: 'Send to Repeater',
+      sendToIntruder: 'Send to Intruder',
       sendRequestToAssistant: 'Send Request to Assistant',
       sendResponseToAssistant: 'Send Response to Assistant',
       copyUrl: 'Copy URL',

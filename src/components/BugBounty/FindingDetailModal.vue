@@ -314,6 +314,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
+import { dialog } from '../../composables/useDialog'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -417,7 +418,7 @@ const createEvidence = async () => {
 }
 
 const deleteEvidence = async (evidence: any) => {
-  if (!confirm(t('bugBounty.confirm.deleteEvidence'))) return
+  if (!(await dialog.confirm(t('bugBounty.confirm.deleteEvidence')))) return
   try {
     await invoke('bounty_delete_evidence', { id: evidence.id })
     toast.success(t('bugBounty.success.evidenceDeleted'))

@@ -93,6 +93,7 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
         default_severity: severity,
         tags,
         description: row.description,
+        target_asset_types: Vec::new(),
     };
 
     let status = if row.enabled {
@@ -465,7 +466,12 @@ impl DatabaseService {
             DatabasePool::SQLite(pool) => {
                 sqlx::query_scalar(
                     r#"
-                    SELECT COALESCE(NULLIF(plugin_code, ''), NULLIF(code, '')) as effective_code 
+                    SELECT CAST(
+                        COALESCE(
+                            NULLIF(CAST(plugin_code AS TEXT), ''),
+                            NULLIF(CAST(code AS TEXT), '')
+                        ) AS TEXT
+                    ) as effective_code
                     FROM plugin_registry 
                     WHERE id = ?
                     "#,
@@ -497,22 +503,40 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
         match runtime {
             DatabasePool::PostgreSQL(pool) => {
+                let mut tx = pool.begin().await?;
+                sqlx::query("DELETE FROM plugin_favorites WHERE plugin_id = $1")
+                    .bind(plugin_id)
+                    .execute(&mut *tx)
+                    .await?;
                 sqlx::query("DELETE FROM plugin_registry WHERE id = $1")
                     .bind(plugin_id)
-                    .execute(pool)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
             }
             DatabasePool::SQLite(pool) => {
+                let mut tx = pool.begin().await?;
+                sqlx::query("DELETE FROM plugin_favorites WHERE plugin_id = ?")
+                    .bind(plugin_id)
+                    .execute(&mut *tx)
+                    .await?;
                 sqlx::query("DELETE FROM plugin_registry WHERE id = ?")
                     .bind(plugin_id)
-                    .execute(pool)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
             }
             DatabasePool::MySQL(pool) => {
+                let mut tx = pool.begin().await?;
+                sqlx::query("DELETE FROM plugin_favorites WHERE plugin_id = ?")
+                    .bind(plugin_id)
+                    .execute(&mut *tx)
+                    .await?;
                 sqlx::query("DELETE FROM plugin_registry WHERE id = ?")
                     .bind(plugin_id)
-                    .execute(pool)
+                    .execute(&mut *tx)
                     .await?;
+                tx.commit().await?;
             }
         }
         Ok(())

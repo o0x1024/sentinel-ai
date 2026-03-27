@@ -389,6 +389,11 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { dialog } from '@/composables/useDialog';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+import {
+  formatRepeaterBytes as formatBytes,
+  generateRepeaterId,
+  getRepeaterStatusClass as getStatusClass,
+} from './proxyRepeaterUiSupport';
 
 const router = useRouter();
 const { t } = useI18n();
@@ -490,10 +495,6 @@ const showPort = computed(() => {
 const isSending = computed(() => currentTab.value?.isSending || false);
 
 // Methods
-function generateId(): string {
-  return `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
-
 function createTab(request?: { method: string; url: string; headers: Record<string, string>; body?: string }): RepeaterTab {
   let targetHost = '';
   let targetPort = 443;
@@ -538,7 +539,7 @@ function createTab(request?: { method: string; url: string; headers: Record<stri
   }
   
   return {
-    id: generateId(),
+    id: generateRepeaterId(),
     name: targetHost || `Request ${tabs.value.length + 1}`,
     targetHost,
     targetPort,
@@ -938,22 +939,6 @@ function toHex(str: string): string {
   }
   
   return lines.join('\n');
-}
-
-function getStatusClass(status: number): string {
-  if (status >= 200 && status < 300) return 'badge-success';
-  if (status >= 300 && status < 400) return 'badge-info';
-  if (status >= 400 && status < 500) return 'badge-warning';
-  if (status >= 500) return 'badge-error';
-  return 'badge-ghost';
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 }
 
 // 右键菜单

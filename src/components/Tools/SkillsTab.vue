@@ -15,6 +15,26 @@
         <p class="text-sm text-base-content/70">{{ $t('Tools.skillsDescription') }}</p>
       </div>
       <div class="flex items-center gap-3">
+        <div class="join">
+          <button
+            class="join-item btn btn-sm"
+            :class="skillsViewMode === 'card' ? 'btn-primary' : 'btn-outline'"
+            :disabled="installLoading"
+            @click="skillsViewMode = 'card'"
+          >
+            <i class="fas fa-grip mr-2"></i>
+            {{ $t('Tools.skillsCardView') }}
+          </button>
+          <button
+            class="join-item btn btn-sm"
+            :class="skillsViewMode === 'list' ? 'btn-primary' : 'btn-outline'"
+            :disabled="installLoading"
+            @click="skillsViewMode = 'list'"
+          >
+            <i class="fas fa-list mr-2"></i>
+            {{ $t('Tools.skillsListView') }}
+          </button>
+        </div>
         <div class="flex items-center gap-2 px-3 py-1 rounded border border-base-300 bg-base-100">
           <span class="text-sm">{{ $t('Tools.skillsEnabledLabel') }}</span>
           <input
@@ -52,7 +72,7 @@
 
     <div class="card bg-base-200 p-4">
       <div v-if="skillsEnabled">
-        <SkillsManager ref="skillsManagerRef" :embedded="true" @changed="handleSkillsChanged" />
+        <SkillsManager ref="skillsManagerRef" :embedded="true" :view-mode="skillsViewMode" @changed="handleSkillsChanged" />
       </div>
       <div v-else class="alert alert-warning">
         <i class="fas fa-exclamation-triangle"></i>
@@ -184,6 +204,7 @@ const installSourceType = ref('')
 const installHistory = ref<any[]>([])
 const historyLoading = ref(false)
 const skillsEnabled = ref(true)
+const skillsViewMode = ref<'card' | 'list'>('card')
 const isDragOver = ref(false)
 let unlistenDragDrop: UnlistenFn | null = null
 

@@ -2,40 +2,15 @@
   <div class="space-y-4">
     <div class="card bg-base-100 shadow-md">
       <div class="card-body">
-        <div class="flex justify-between items-center mb-4">
-          <div class="flex items-center gap-2">
-            <h2 class="card-title">{{ t('bugBounty.findings.title') }}</h2>
-            <span v-if="selectedIds.length > 0" class="badge badge-primary">
-              {{ selectedIds.length }} {{ t('bugBounty.batch.selected') }}
-            </span>
-          </div>
+        <div class="flex flex-col gap-3 mb-4 xl:flex-row xl:items-center xl:justify-between">
+          <h2 class="card-title">{{ t('bugBounty.findings.title') }}</h2>
           <div class="flex gap-2 flex-wrap">
-            <!-- Batch Actions -->
-            <div v-if="selectedIds.length > 0" class="flex gap-2">
-              <div class="dropdown dropdown-end">
-                <label tabindex="0" class="btn btn-sm btn-outline">
-                  <i class="fas fa-edit mr-2"></i>
-                  {{ t('bugBounty.batch.updateStatus') }}
-                </label>
-                <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-40">
-                  <li><a @click="batchUpdateStatus('new')">{{ t('bugBounty.status.new') }}</a></li>
-                  <li><a @click="batchUpdateStatus('verified')">{{ t('bugBounty.status.verified') }}</a></li>
-                  <li><a @click="batchUpdateStatus('reported')">{{ t('bugBounty.status.reported') }}</a></li>
-                  <li><a @click="batchUpdateStatus('duplicate')">{{ t('bugBounty.status.duplicate') }}</a></li>
-                  <li><a @click="batchUpdateStatus('fixed')">{{ t('bugBounty.status.fixed') }}</a></li>
-                </ul>
-              </div>
-              <button class="btn btn-sm btn-error btn-outline" @click="batchDelete">
-                <i class="fas fa-trash mr-2"></i>
-                {{ t('bugBounty.batch.delete') }}
-              </button>
-              <button class="btn btn-sm btn-ghost" @click="clearSelection">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-
-            <!-- Filters -->
-            <select v-model="filter.severity" class="select select-sm select-bordered" @change="$emit('filter-change', filter)">
+            <select
+              v-model="filter.severity"
+              class="select select-sm select-bordered"
+              :disabled="loading || selectionLoading || batchActionLoading"
+              @change="onFilterChange"
+            >
               <option value="">{{ t('bugBounty.filter.allSeverities') }}</option>
               <option value="critical">{{ t('bugBounty.severity.critical') }}</option>
               <option value="high">{{ t('bugBounty.severity.high') }}</option>
@@ -43,7 +18,12 @@
               <option value="low">{{ t('bugBounty.severity.low') }}</option>
               <option value="info">{{ t('bugBounty.severity.info') }}</option>
             </select>
-            <select v-model="filter.status" class="select select-sm select-bordered" @change="$emit('filter-change', filter)">
+            <select
+              v-model="filter.status"
+              class="select select-sm select-bordered"
+              :disabled="loading || selectionLoading || batchActionLoading"
+              @change="onFilterChange"
+            >
               <option value="">{{ t('bugBounty.filter.allStatuses') }}</option>
               <option value="new">{{ t('bugBounty.status.new') }}</option>
               <option value="verified">{{ t('bugBounty.status.verified') }}</option>
@@ -56,11 +36,57 @@
               type="text" 
               class="input input-sm input-bordered w-48"
               :placeholder="t('bugBounty.search')"
-              @input="$emit('filter-change', filter)"
+              :disabled="loading || selectionLoading || batchActionLoading"
+              @input="onFilterChange"
             />
-            <button class="btn btn-sm btn-primary" @click="$emit('create')">
+            <button class="btn btn-sm btn-primary" :disabled="batchActionLoading" @click="$emit('create')">
               <i class="fas fa-plus mr-2"></i>
               {{ t('bugBounty.createFinding') }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="total > 0 && hasBatchSelection"
+          class="mb-4 flex flex-col gap-3 rounded-lg border border-base-300 bg-base-200/40 p-3 lg:flex-row lg:items-center lg:justify-between"
+        >
+          <div class="text-sm text-base-content/70">
+            {{ t('bugBounty.batch.selectionSummary', { selected: selectedIds.length, page: findings.length, total }) }}
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              class="btn btn-sm btn-outline"
+              :disabled="loading || selectionLoading || batchActionLoading || total === 0 || allFilteredSelected"
+              @click="selectAllFiltered"
+            >
+              <span v-if="selectionLoading" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-layer-group mr-2"></i>
+              {{ t('bugBounty.batch.selectAllFiltered') }}
+            </button>
+            <div class="dropdown dropdown-end">
+              <button
+                tabindex="0"
+                class="btn btn-sm btn-outline"
+                :disabled="selectedIds.length === 0 || loading || selectionLoading || batchActionLoading"
+              >
+                <i class="fas fa-edit mr-2"></i>
+                {{ t('bugBounty.batch.updateStatus') }}
+              </button>
+              <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-40">
+                <li><a @click="batchUpdateStatus('new')">{{ t('bugBounty.status.new') }}</a></li>
+                <li><a @click="batchUpdateStatus('verified')">{{ t('bugBounty.status.verified') }}</a></li>
+                <li><a @click="batchUpdateStatus('reported')">{{ t('bugBounty.status.reported') }}</a></li>
+                <li><a @click="batchUpdateStatus('duplicate')">{{ t('bugBounty.status.duplicate') }}</a></li>
+                <li><a @click="batchUpdateStatus('fixed')">{{ t('bugBounty.status.fixed') }}</a></li>
+              </ul>
+            </div>
+            <button
+              class="btn btn-sm btn-error btn-outline"
+              :disabled="selectedIds.length === 0 || loading || selectionLoading || batchActionLoading"
+              @click="batchDelete"
+            >
+              <i class="fas fa-trash mr-2"></i>
+              {{ t('bugBounty.batch.delete') }}
             </button>
           </div>
         </div>
@@ -87,6 +113,7 @@
                     class="checkbox checkbox-sm"
                     :checked="isAllSelected"
                     :indeterminate="isPartialSelected"
+                    :disabled="loading || selectionLoading || batchActionLoading"
                     @change="toggleSelectAll"
                   />
                 </th>
@@ -106,6 +133,7 @@
                     type="checkbox" 
                     class="checkbox checkbox-sm"
                     :checked="isSelected(finding.id)"
+                    :disabled="loading || selectionLoading || batchActionLoading"
                     @change="toggleSelect(finding.id)"
                   />
                 </td>
@@ -152,11 +180,49 @@
           </table>
         </div>
 
-        <div v-if="findings.length > 0" class="flex justify-center py-4">
-          <div class="join">
-            <button class="join-item btn btn-sm" :disabled="page <= 1" @click="goToPrevPage">«</button>
-            <button class="join-item btn btn-sm">{{ page }}</button>
-            <button class="join-item btn btn-sm" :disabled="!hasNext" @click="goToNextPage">»</button>
+        <div v-if="total > 0" class="flex flex-col gap-3 pt-2 xl:flex-row xl:items-center xl:justify-between">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="text-base-content/70">{{ t('bugBounty.surface.inventory.pageSizeLabel') }}</span>
+            <select v-model.number="localPageSize" class="select select-bordered select-sm" :disabled="loading || selectionLoading" @change="onPageSizeChange">
+              <option v-for="size in pageSizeOptions" :key="size" :value="size">
+                {{ size }}
+              </option>
+            </select>
+          </div>
+
+          <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <div class="join">
+              <button class="join-item btn btn-sm" :disabled="page <= 1 || loading" @click="goToFirstPage">
+                {{ t('bugBounty.surface.inventory.firstPage') }}
+              </button>
+              <button class="join-item btn btn-sm" :disabled="page <= 1 || loading" @click="goToPrevPage">
+                {{ t('common.previous') }}
+              </button>
+              <button class="join-item btn btn-sm">
+                {{ t('bugBounty.surface.inventory.pageInfo', { page, total: pageCount }) }}
+              </button>
+              <button class="join-item btn btn-sm" :disabled="page >= pageCount || loading" @click="goToNextPage">
+                {{ t('common.next') }}
+              </button>
+              <button class="join-item btn btn-sm" :disabled="page >= pageCount || loading" @click="goToLastPage">
+                {{ t('bugBounty.surface.inventory.lastPage') }}
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <input
+                v-model="pageInput"
+                type="number"
+                min="1"
+                :max="pageCount"
+                class="input input-bordered input-sm w-24"
+                :placeholder="t('bugBounty.surface.inventory.jumpPlaceholder')"
+                @keyup.enter="applyPageJump"
+              />
+              <button class="btn btn-sm btn-outline" :disabled="loading" @click="applyPageJump">
+                {{ t('bugBounty.surface.inventory.jump') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -165,17 +231,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '../../composables/useToast'
 
 const { t } = useI18n()
+const toast = useToast()
 
 const props = defineProps<{
   findings: any[]
   programs: any[]
   loading: boolean
+  batchActionLoading: boolean
+  batchActionVersion: number
   page: number
   pageSize: number
+  pageCount: number
+  total: number
   hasNext: boolean
 }>()
 
@@ -188,6 +261,7 @@ const emit = defineEmits<{
   (e: 'batch-update-status', ids: string[], status: string): void
   (e: 'batch-delete', ids: string[]): void
   (e: 'page-change', page: number): void
+  (e: 'page-size-change', size: number): void
 }>()
 
 const filter = reactive({
@@ -197,18 +271,52 @@ const filter = reactive({
 })
 
 const selectedIds = ref<string[]>([])
+const pageInput = ref(String(props.page))
+const localPageSize = ref(props.pageSize)
+const selectionLoading = ref(false)
+const pageSizeOptions = [10, 20, 50, 100]
 
-// Computed
+const buildFindingFilter = (includePagination = true) => {
+  const nextFilter: Record<string, unknown> = {
+    sort_by: 'created_at',
+    sort_dir: 'desc',
+  }
+
+  if (filter.severity) {
+    nextFilter.severities = [filter.severity]
+  }
+  if (filter.status) {
+    nextFilter.statuses = [filter.status]
+  }
+  if (filter.search) {
+    nextFilter.search = filter.search
+  }
+  if (includePagination) {
+    nextFilter.limit = props.pageSize
+    nextFilter.offset = (props.page - 1) * props.pageSize
+  }
+
+  return nextFilter
+}
+
 const isAllSelected = computed(() => {
-  return props.findings.length > 0 && selectedIds.value.length === props.findings.length
+  return props.findings.length > 0 && props.findings.every(finding => selectedIds.value.includes(finding.id))
 })
 
 const isPartialSelected = computed(() => {
-  return selectedIds.value.length > 0 && selectedIds.value.length < props.findings.length
+  const selectedOnPage = props.findings.filter(finding => selectedIds.value.includes(finding.id)).length
+  return selectedOnPage > 0 && selectedOnPage < props.findings.length
 })
+const hasBatchSelection = computed(() => selectedIds.value.length > 0)
+const allFilteredSelected = computed(() => props.total > 0 && selectedIds.value.length >= props.total)
 
 // Methods
 const isSelected = (id: string) => selectedIds.value.includes(id)
+
+const onFilterChange = () => {
+  clearSelection()
+  emit('filter-change', { ...filter })
+}
 
 const toggleSelect = (id: string) => {
   const index = selectedIds.value.indexOf(id)
@@ -221,9 +329,14 @@ const toggleSelect = (id: string) => {
 
 const toggleSelectAll = () => {
   if (isAllSelected.value) {
-    selectedIds.value = []
+    const currentPageIds = new Set(props.findings.map(finding => finding.id))
+    selectedIds.value = selectedIds.value.filter(id => !currentPageIds.has(id))
   } else {
-    selectedIds.value = props.findings.map(f => f.id)
+    const next = new Set(selectedIds.value)
+    for (const finding of props.findings) {
+      next.add(finding.id)
+    }
+    selectedIds.value = [...next]
   }
 }
 
@@ -231,16 +344,31 @@ const clearSelection = () => {
   selectedIds.value = []
 }
 
+const selectAllFiltered = async () => {
+  if (props.total === 0 || allFilteredSelected.value || props.batchActionLoading) return
+
+  try {
+    selectionLoading.value = true
+    const rows = await invoke<any[]>('bounty_list_findings', {
+      filter: buildFindingFilter(false),
+    })
+    selectedIds.value = rows.map(row => row.id)
+  } catch (error) {
+    console.error('Failed to load findings for batch selection:', error)
+    toast.error(t('bugBounty.errors.loadFailed'))
+  } finally {
+    selectionLoading.value = false
+  }
+}
+
 const batchUpdateStatus = (status: string) => {
-  if (selectedIds.value.length === 0) return
+  if (selectedIds.value.length === 0 || props.batchActionLoading) return
   emit('batch-update-status', [...selectedIds.value], status)
-  clearSelection()
 }
 
 const batchDelete = () => {
-  if (selectedIds.value.length === 0) return
+  if (selectedIds.value.length === 0 || props.batchActionLoading) return
   emit('batch-delete', [...selectedIds.value])
-  clearSelection()
 }
 
 const goToPrevPage = () => {
@@ -249,9 +377,58 @@ const goToPrevPage = () => {
 }
 
 const goToNextPage = () => {
-  if (!props.hasNext) return
+  if (props.page >= props.pageCount) return
   emit('page-change', props.page + 1)
 }
+
+const goToFirstPage = () => {
+  if (props.page <= 1) return
+  emit('page-change', 1)
+}
+
+const goToLastPage = () => {
+  if (props.page >= props.pageCount) return
+  emit('page-change', props.pageCount)
+}
+
+const applyPageJump = () => {
+  const nextPage = Number.parseInt(pageInput.value, 10)
+  if (Number.isNaN(nextPage)) {
+    pageInput.value = String(props.page)
+    return
+  }
+  const clamped = Math.min(Math.max(1, nextPage), props.pageCount)
+  emit('page-change', clamped)
+}
+
+const onPageSizeChange = () => {
+  if (localPageSize.value === props.pageSize) return
+  clearSelection()
+  emit('page-size-change', localPageSize.value)
+}
+
+watch(
+  () => props.page,
+  (value) => {
+    pageInput.value = String(value)
+  },
+)
+
+watch(
+  () => props.pageSize,
+  (value) => {
+    localPageSize.value = value
+  },
+)
+
+watch(
+  () => props.batchActionVersion,
+  (_, previousValue) => {
+    if (previousValue !== undefined) {
+      clearSelection()
+    }
+  },
+)
 
 const getProgramName = (programId: string) => {
   const program = props.programs.find(p => p.id === programId)

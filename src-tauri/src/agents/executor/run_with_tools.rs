@@ -6,16 +6,18 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 use sentinel_db::Database;
-use sentinel_db::DatabaseService;
 use sentinel_llm::{parse_image_from_json, ChatMessage, StreamContent, StreamingLlmClient};
 use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
-use sentinel_tools::buildin_tools::todos::{
-    auto_complete_all_todos, get_execution_todos, TodoStatus as ExecutionTodoStatus, TodosList,
-};
-use sentinel_tools::buildin_tools::{HttpRequestTool, ShellTool, SkillsTool, TodosTool};
-use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor, ToolSource};
+use sentinel_tools::buildin_tools::ShellTool;
 use sentinel_tools::ToolServer;
 
+use super::run_with_tools_support::{
+    accumulate_retry_progress, apply_allowed_tools_policy, build_retry_history,
+    clear_retry_turn_state, collect_all_tool_calls, ensure_ai_conversation_exists_for_persistence,
+    finalize_response_state, infer_tool_result_success, is_empty_response_error,
+    is_retryable_error, parse_team_stream_context, patch_builtin_dynamic_tools,
+    persist_ai_message_with_retry, register_skills_tool_guard, tool_loop_fingerprint,
+};
 use super::AgentExecuteParams;
 use crate::agents::context_engineering::reflection::{
     record_execution_reflection, ExecutionOutcome,
@@ -27,372 +29,6 @@ use crate::agents::tenth_man::{InterventionContext, InterventionMode, TenthMan, 
 use crate::agents::tool_router::ToolRouter;
 use crate::agents::{append_tool_digests, build_context, build_tool_digest, ContextBuildInput};
 use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
-
-async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
-    match db.get_config("agent", "skills_enabled").await {
-        Ok(Some(val)) => {
-            let v = val.trim().to_lowercase();
-            matches!(v.as_str(), "true" | "1" | "yes" | "on")
-        }
-        _ => true,
-    }
-}
-
-async fn is_skill_enabled_in_db(db: &DatabaseService, skill_id: &str) -> bool {
-    let key = format!("enabled::{}", skill_id);
-    match db.get_config("skills", &key).await {
-        Ok(Some(val)) => {
-            let v = val.trim().to_lowercase();
-            matches!(v.as_str(), "true" | "1" | "yes" | "on")
-        }
-        _ => true,
-    }
-}
-
-async fn register_skills_tool_guard(
-    tool_server: &ToolServer,
-    db: Arc<DatabaseService>,
-) -> Result<()> {
-    let Some(info) = tool_server.get_tool(SkillsTool::NAME).await else {
-        return Ok(());
-    };
-
-    let input_schema = info.input_schema.clone();
-    let description = info.description.clone();
-
-    tool_server.unregister_tool(SkillsTool::NAME).await;
-
-    let executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-        let db = db.clone();
-        Box::pin(async move {
-            use rig::tool::Tool;
-            use sentinel_tools::buildin_tools::skills::{SkillsAction, SkillsTool, SkillsToolArgs};
-
-            let tool_args: SkillsToolArgs =
-                serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-
-            if !is_skills_enabled_in_db(&db).await {
-                return Err("Skills tool is disabled".to_string());
-            }
-
-            let skill_id = tool_args.skill_id.as_deref();
-            let requires_skill = matches!(
-                tool_args.action,
-                SkillsAction::Load | SkillsAction::ReadFile
-            );
-            if requires_skill {
-                if let Some(id) = skill_id {
-                    if !is_skill_enabled_in_db(&db, id).await {
-                        return Err(format!("Skill '{}' is disabled", id));
-                    }
-                }
-            }
-
-            let tool = SkillsTool;
-            let mut result = tool
-                .call(tool_args)
-                .await
-                .map_err(|e| format!("Skills operation failed: {}", e))?;
-
-            if matches!(result.action.as_str(), "list") {
-                if let Some(skills) = result.skills.take() {
-                    let mut filtered = Vec::new();
-                    for skill in skills {
-                        if is_skill_enabled_in_db(&db, &skill.id).await {
-                            filtered.push(skill);
-                        }
-                    }
-                    result.skills = Some(filtered);
-                }
-            }
-
-            serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
-        })
-    });
-
-    let def = DynamicToolDef {
-        name: SkillsTool::NAME.to_string(),
-        description,
-        input_schema,
-        output_schema: None,
-        source: ToolSource::Builtin,
-        category: "system".to_string(),
-        executor,
-    };
-
-    tool_server.register_tool(def).await;
-    Ok(())
-}
-
-fn apply_allowed_tools_policy(mut tool_ids: Vec<String>, allowed_tools: &[String]) -> Vec<String> {
-    if allowed_tools.is_empty() {
-        return tool_ids;
-    }
-    let allowed = allowed_tools
-        .iter()
-        .map(|id| id.trim())
-        .filter(|id| !id.is_empty())
-        .map(|id| id.to_string())
-        .collect::<std::collections::HashSet<_>>();
-    tool_ids.retain(|id| allowed.contains(id));
-    tool_ids
-}
-
-fn infer_tool_result_success(raw: &str) -> bool {
-    fn has_hard_error(text: &str) -> bool {
-        let lower = text.trim().to_lowercase();
-        if lower.is_empty() {
-            return false;
-        }
-        if lower.contains("toolset error")
-            || lower.contains("tool execution failed")
-            || lower.contains("shell execution failed")
-            || lower.contains("command timeout after")
-            || lower.contains("llm request timeout")
-            || lower.contains("traceback (most recent call last)")
-            || lower.contains("fatal error:")
-        {
-            return true;
-        }
-        (lower.contains("timed out") || lower.contains("timeout after"))
-            && (lower.contains("error") || lower.contains("failed"))
-    }
-
-    fn visit(value: &serde_json::Value) -> bool {
-        match value {
-            serde_json::Value::Null => true,
-            serde_json::Value::Bool(v) => *v,
-            serde_json::Value::Number(n) => n.as_i64().map(|v| v == 0).unwrap_or(true),
-            serde_json::Value::String(s) => {
-                let lower = s.trim().to_lowercase();
-                if has_hard_error(&lower) {
-                    return false;
-                }
-                if lower.starts_with("error:") || lower.starts_with("failed:") {
-                    return false;
-                }
-                !lower.contains(" no such file or directory")
-            }
-            serde_json::Value::Array(arr) => arr.iter().all(visit),
-            serde_json::Value::Object(map) => {
-                if let Some(v) = map.get("success").and_then(|v| v.as_bool()) {
-                    return v;
-                }
-                if let Some(v) = map.get("ok").and_then(|v| v.as_bool()) {
-                    return v;
-                }
-                if let Some(v) = map.get("completed").and_then(|v| v.as_bool()) {
-                    if !v {
-                        return false;
-                    }
-                }
-                if let Some(v) = map.get("exit_code").and_then(|v| v.as_i64()) {
-                    return v == 0;
-                }
-                if let Some(v) = map.get("code").and_then(|v| v.as_i64()) {
-                    return v == 0;
-                }
-                if let Some(v) = map.get("error").and_then(|v| v.as_str()) {
-                    if !v.trim().is_empty() {
-                        return false;
-                    }
-                }
-                map.values().all(visit)
-            }
-        }
-    }
-
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(v) => visit(&v),
-        Err(_) => {
-            let lower = raw.trim().to_lowercase();
-            if has_hard_error(&lower) {
-                return false;
-            }
-            if lower.starts_with("error:") || lower.starts_with("failed:") {
-                return false;
-            }
-            !lower.contains(" no such file or directory")
-        }
-    }
-}
-
-fn shorten_for_fingerprint(raw: &str, max_chars: usize) -> String {
-    if raw.chars().count() <= max_chars {
-        return raw.trim().to_string();
-    }
-    raw.chars()
-        .take(max_chars)
-        .collect::<String>()
-        .trim()
-        .to_string()
-}
-
-fn tool_loop_fingerprint(tool_name: &str, arguments: &str, result: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    tool_name.hash(&mut hasher);
-    shorten_for_fingerprint(arguments, 320).hash(&mut hasher);
-    shorten_for_fingerprint(result, 320).hash(&mut hasher);
-    hasher.finish()
-}
-
-#[derive(Debug, Clone)]
-struct TeamStreamContext {
-    session_id: String,
-    stream_id: String,
-    member_id: Option<String>,
-    phase: String,
-}
-
-fn parse_team_stream_context(execution_id: &str) -> Option<TeamStreamContext> {
-    if !execution_id.starts_with("team-v3:") {
-        return None;
-    }
-    let parts = execution_id.split(':').collect::<Vec<_>>();
-    if parts.len() < 4 {
-        return None;
-    }
-    let session_id = parts.get(1)?.trim().to_string();
-    if session_id.is_empty() {
-        return None;
-    }
-    // New format: team-v3:{session_id}:{task_id}:{member_id}:{uuid}
-    // Legacy format: team-v3:{session_id}:{task_id}:{uuid}
-    let member_id = if parts.len() >= 5 {
-        parts
-            .get(3)
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-    } else {
-        None
-    };
-    Some(TeamStreamContext {
-        session_id,
-        stream_id: execution_id.to_string(),
-        member_id,
-        phase: "task_execution".to_string(),
-    })
-}
-
-fn todo_status_label(status: &ExecutionTodoStatus) -> &'static str {
-    match status {
-        ExecutionTodoStatus::Pending => "pending",
-        ExecutionTodoStatus::InProgress => "in_progress",
-        ExecutionTodoStatus::Completed => "completed",
-        ExecutionTodoStatus::Failed => "failed",
-    }
-}
-
-fn collect_incomplete_todo_summaries(list: &TodosList, limit: usize) -> Vec<String> {
-    list.items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.status != ExecutionTodoStatus::Completed)
-        .take(limit)
-        .map(|(idx, item)| {
-            format!(
-                "#{} {} ({})",
-                idx + 1,
-                item.description.trim(),
-                todo_status_label(&item.status)
-            )
-        })
-        .collect()
-}
-
-async fn persist_ai_message_with_retry(
-    db: Arc<sentinel_db::DatabaseService>,
-    msg: sentinel_core::models::database::AiMessage,
-    log_label: &str,
-) {
-    const MAX_RETRIES: usize = 3;
-    for attempt in 0..=MAX_RETRIES {
-        match db.upsert_ai_message_append(&msg).await {
-            Ok(_) => return,
-            Err(e) => {
-                let err = e.to_string().to_lowercase();
-                let locked = err.contains("database is locked") || err.contains("(code: 5)");
-                if locked && attempt < MAX_RETRIES {
-                    let backoff_ms = 30u64 * (1u64 << attempt);
-                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                    continue;
-                }
-                tracing::warn!("Failed to persist {}: {}", log_label, e);
-                return;
-            }
-        }
-    }
-}
-
-async fn ensure_ai_conversation_exists_for_persistence(
-    db: &DatabaseService,
-    execution_id: &str,
-    model: &str,
-    provider: &str,
-) {
-    match db.get_ai_conversation(execution_id).await {
-        Ok(Some(_)) => return,
-        Ok(None) => {}
-        Err(e) => {
-            tracing::warn!(
-                "Failed to check ai_conversation before persistence (execution_id={}): {}",
-                execution_id,
-                e
-            );
-            return;
-        }
-    }
-
-    use sentinel_core::models::database as core_db;
-    let now = chrono::Utc::now();
-    let conv = core_db::AiConversation {
-        id: execution_id.to_string(),
-        title: None,
-        service_name: if provider.trim().is_empty() {
-            "default".to_string()
-        } else {
-            provider.to_string()
-        },
-        model_name: if model.trim().is_empty() {
-            "default".to_string()
-        } else {
-            model.to_string()
-        },
-        model_provider: Some(provider.to_string()),
-        context_type: None,
-        project_id: None,
-        vulnerability_id: None,
-        scan_task_id: None,
-        conversation_data: None,
-        summary: None,
-        total_messages: 0,
-        total_tokens: 0,
-        cost: 0.0,
-        tags: None,
-        tool_config: None,
-        is_archived: false,
-        created_at: now,
-        updated_at: now,
-    };
-
-    if let Err(e) = db.create_ai_conversation(&conv).await {
-        let err = e.to_string().to_lowercase();
-        let already_exists = err.contains("unique")
-            || err.contains("duplicate")
-            || err.contains("already exists")
-            || err.contains("constraint failed");
-        if !already_exists {
-            tracing::warn!(
-                "Failed to create ai_conversation for persistence (execution_id={}): {}",
-                execution_id,
-                e
-            );
-        }
-    }
-}
 
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
@@ -569,81 +205,16 @@ pub async fn execute_agent_with_tools(
     let max_retries = 2; // 最多重试 2 次
     let mut empty_response_retries = 0;
     let max_empty_response_retries = 2;
-    let mut unfinished_task_retries = 0;
-    let max_unfinished_task_retries = 2;
     let mut silent_retry_pending = false;
     let mut last_error: Option<anyhow::Error> = None;
     let mut skill_reload_count = 0;
     let max_skill_reload = 3;
-    let mut todos_recovery_prompt: Option<String> = None;
 
     // 累积的工具调用记录（跨重试保留）
     let accumulated_tool_calls: Arc<Mutex<Vec<ToolCallRecord>>> = Arc::new(Mutex::new(Vec::new()));
     // 累积的助手输出（跨重试保留）
     let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let base_history_messages = history_chat_messages.clone();
-    let build_retry_history = |attempt: u32, include_accumulated: bool| -> Vec<ChatMessage> {
-        let mut history = base_history_messages.clone();
-        if attempt == 0 && !include_accumulated {
-            return history;
-        }
-
-        let tool_calls_snapshot = accumulated_tool_calls
-            .lock()
-            .map(|calls| calls.clone())
-            .unwrap_or_default();
-        let output_snapshot = accumulated_assistant_output
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default();
-
-        let mut unique_calls = std::collections::HashMap::new();
-        for call in tool_calls_snapshot {
-            unique_calls.entry(call.id.clone()).or_insert(call);
-        }
-        let mut ordered_calls = unique_calls.into_values().collect::<Vec<_>>();
-        ordered_calls.sort_by_key(|c| c.sequence);
-
-        if !ordered_calls.is_empty() {
-            let tool_calls_json = serde_json::to_string(
-                &ordered_calls
-                    .iter()
-                    .map(|c| {
-                        json!({
-                            "id": c.id,
-                            "type": "function",
-                            "function": {
-                                "name": c.name,
-                                "arguments": c.arguments,
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap_or_default();
-
-            tracing::info!(
-                "Building assistant tool_calls message: tool_calls={}, content_empty=true",
-                ordered_calls.len()
-            );
-            let mut tool_calls_msg = ChatMessage::assistant(".");
-            tool_calls_msg.tool_calls = Some(tool_calls_json);
-            tool_calls_msg.reasoning_content = Some(String::new());
-            history.push(tool_calls_msg);
-
-            for call in ordered_calls.iter() {
-                if let Some(result) = &call.result {
-                    history.push(ChatMessage::tool(result.clone(), call.id.clone()));
-                }
-            }
-        }
-
-        if !output_snapshot.trim().is_empty() {
-            history.push(ChatMessage::assistant(output_snapshot));
-        }
-
-        history
-    };
 
     let skill_reload_requested = Arc::new(AtomicBool::new(false));
     let loaded_skill_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -658,194 +229,17 @@ pub async fn execute_agent_with_tools(
                 "Execution cancelled before new stream turn: {}",
                 params.execution_id
             );
-            let _ = app_handle.emit(
-                "agent:complete",
-                &serde_json::json!({
-                    "execution_id": params.execution_id,
-                    "cancelled": true,
-                }),
-            );
             return Ok(String::new());
         }
 
         let mut dynamic_tools = tool_server.get_dynamic_tools(&current_tool_ids).await;
-
-        if current_tool_ids.iter().any(|id| id == ShellTool::NAME) {
-            if let Some(shell_info) = tool_server.get_tool(ShellTool::NAME).await {
-                let execution_id_for_shell = params.execution_id.clone();
-                let shell_input_schema = shell_info.input_schema.clone();
-                let shell_description = shell_info.description.clone();
-                let shell_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-                    let execution_id_for_shell = execution_id_for_shell.clone();
-                    Box::pin(async move {
-                        use rig::tool::Tool;
-                        use sentinel_tools::buildin_tools::shell::{ShellArgs, ShellTool};
-
-                        let mut patched_args = args;
-                        if let Some(obj) = patched_args.as_object_mut() {
-                            obj.insert(
-                                "execution_id".to_string(),
-                                serde_json::Value::String(execution_id_for_shell.clone()),
-                            );
-                            obj.insert(
-                                "enable_large_output_storage".to_string(),
-                                serde_json::Value::Bool(true),
-                            );
-                        }
-
-                        let tool_args: ShellArgs = serde_json::from_value(patched_args)
-                            .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-                        let tool = ShellTool::new();
-                        let result = tool
-                            .call(tool_args)
-                            .await
-                            .map_err(|e| format!("Shell execution failed: {}", e))?;
-
-                        serde_json::to_value(result)
-                            .map_err(|e| format!("Failed to serialize shell result: {}", e))
-                    })
-                });
-
-                let shell_def = DynamicToolDef {
-                    name: ShellTool::NAME.to_string(),
-                    description: shell_description,
-                    input_schema: shell_input_schema,
-                    output_schema: None,
-                    source: ToolSource::Builtin,
-                    category: "system".to_string(),
-                    executor: shell_executor,
-                };
-
-                dynamic_tools = dynamic_tools
-                    .into_iter()
-                    .map(|tool| {
-                        if tool.name() == ShellTool::NAME {
-                            DynamicTool::new(shell_def.clone())
-                        } else {
-                            tool
-                        }
-                    })
-                    .collect();
-            }
-        }
-
-        if current_tool_ids
-            .iter()
-            .any(|id| id == HttpRequestTool::NAME)
-        {
-            if let Some(http_info) = tool_server.get_tool(HttpRequestTool::NAME).await {
-                let http_input_schema = http_info.input_schema.clone();
-                let http_description = http_info.description.clone();
-                let http_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-                    Box::pin(async move {
-                        use rig::tool::Tool;
-                        use sentinel_tools::buildin_tools::http_request::{
-                            HttpRequestArgs, HttpRequestTool,
-                        };
-
-                        let mut patched_args = args;
-                        if let Some(obj) = patched_args.as_object_mut() {
-                            obj.insert(
-                                "enable_large_output_storage".to_string(),
-                                serde_json::Value::Bool(true),
-                            );
-                        }
-
-                        let tool_args: HttpRequestArgs = serde_json::from_value(patched_args)
-                            .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-                        let tool = HttpRequestTool::default();
-                        let result = tool
-                            .call(tool_args)
-                            .await
-                            .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-                        serde_json::to_value(result)
-                            .map_err(|e| format!("Failed to serialize HTTP result: {}", e))
-                    })
-                });
-
-                let http_def = DynamicToolDef {
-                    name: HttpRequestTool::NAME.to_string(),
-                    description: http_description,
-                    input_schema: http_input_schema,
-                    output_schema: None,
-                    source: ToolSource::Builtin,
-                    category: "network".to_string(),
-                    executor: http_executor,
-                };
-
-                dynamic_tools = dynamic_tools
-                    .into_iter()
-                    .map(|tool| {
-                        if tool.name() == HttpRequestTool::NAME {
-                            DynamicTool::new(http_def.clone())
-                        } else {
-                            tool
-                        }
-                    })
-                    .collect();
-            }
-        }
-
-        if current_tool_ids.iter().any(|id| id == TodosTool::NAME) {
-            if let Some(todos_info) = tool_server.get_tool(TodosTool::NAME).await {
-                let execution_id_for_todos = params.execution_id.clone();
-                let todos_input_schema = todos_info.input_schema.clone();
-                let todos_description = todos_info.description.clone();
-                let todos_executor: ToolExecutor = Arc::new(move |args: serde_json::Value| {
-                    let execution_id_for_todos = execution_id_for_todos.clone();
-                    Box::pin(async move {
-                        use rig::tool::Tool;
-                        use sentinel_tools::buildin_tools::todos::{TodosArgs, TodosTool};
-
-                        let mut patched_args = args;
-                        if let Some(obj) = patched_args.as_object_mut() {
-                            // Align todos writes with current execution context to avoid
-                            // cross-run leakage when model-provided execution_id is stale.
-                            obj.insert(
-                                "execution_id".to_string(),
-                                serde_json::Value::String(execution_id_for_todos.clone()),
-                            );
-                        }
-
-                        let tool_args: TodosArgs = serde_json::from_value(patched_args)
-                            .map_err(|e| format!("Invalid arguments: {}", e))?;
-
-                        let tool = TodosTool::new();
-                        let result = tool
-                            .call(tool_args)
-                            .await
-                            .map_err(|e| format!("Todos operation failed: {}", e))?;
-
-                        serde_json::to_value(result)
-                            .map_err(|e| format!("Failed to serialize todos result: {}", e))
-                    })
-                });
-
-                let todos_def = DynamicToolDef {
-                    name: TodosTool::NAME.to_string(),
-                    description: todos_description,
-                    input_schema: todos_input_schema,
-                    output_schema: None,
-                    source: ToolSource::Builtin,
-                    category: "system".to_string(),
-                    executor: todos_executor,
-                };
-
-                dynamic_tools = dynamic_tools
-                    .into_iter()
-                    .map(|tool| {
-                        if tool.name() == TodosTool::NAME {
-                            DynamicTool::new(todos_def.clone())
-                        } else {
-                            tool
-                        }
-                    })
-                    .collect();
-            }
-        }
+        dynamic_tools = patch_builtin_dynamic_tools(
+            dynamic_tools,
+            &current_tool_ids,
+            tool_server,
+            &params.execution_id,
+        )
+        .await;
 
         tracing::info!(
             "Got {} dynamic tool instances for rig-core native tool calling",
@@ -909,14 +303,25 @@ pub async fn execute_agent_with_tools(
         }
 
         let include_accumulated = retries > 0 || force_history_with_tools;
-        let mut history_for_retry = build_retry_history(retries, include_accumulated);
+        let tool_calls_snapshot = accumulated_tool_calls
+            .lock()
+            .map(|calls| calls.clone())
+            .unwrap_or_default();
+        let output_snapshot = accumulated_assistant_output
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        let mut history_for_retry = build_retry_history(
+            &base_history_messages,
+            tool_calls_snapshot,
+            output_snapshot,
+            retries,
+            include_accumulated,
+        );
         if loop_guard_prompt_needed.swap(false, Ordering::SeqCst) {
             history_for_retry.push(ChatMessage::user(
                 "[LoopGuard] You are repeating the same tool call arguments and getting the same result. Do not repeat identical probes. First summarize what has been learned, then change strategy (different endpoint/input/query) or explicitly conclude insufficient evidence.",
             ));
-        }
-        if let Some(prompt) = todos_recovery_prompt.take() {
-            history_for_retry.push(ChatMessage::user(prompt));
         }
         force_history_with_tools = false;
         let result = client
@@ -1666,31 +1071,20 @@ pub async fn execute_agent_with_tools(
                 retries += 1;
                 last_error = Some(loop_err);
 
-                if let Ok(current_calls) = tool_calls_collector.lock() {
-                    if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                        acc.extend(current_calls.clone());
-                    }
-                }
-                if let Ok(current_output) = assistant_segment_buf.lock() {
-                    if !current_output.is_empty() {
-                        if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                            if !acc.is_empty() {
-                                acc.push_str("\n\n");
-                            }
-                            acc.push_str(current_output.as_str());
-                        }
-                    }
-                }
-                if let Ok(mut p) = pending.lock() {
-                    p.clear();
-                }
-                if let Ok(mut tc) = tool_calls_collector.lock() {
-                    tc.clear();
-                }
-                if let Ok(mut fp) = last_tool_fingerprint.lock() {
-                    *fp = None;
-                }
-                repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+                accumulate_retry_progress(
+                    &tool_calls_collector,
+                    &accumulated_tool_calls,
+                    &assistant_segment_buf,
+                    &accumulated_assistant_output,
+                );
+                clear_retry_turn_state(
+                    &assistant_segment_buf,
+                    &reasoning_content_buf,
+                    &pending,
+                    &tool_calls_collector,
+                    Some(&last_tool_fingerprint),
+                    Some(repeated_tool_fingerprint_count.as_ref()),
+                );
                 force_history_with_tools = true;
                 continue;
             }
@@ -1699,228 +1093,16 @@ pub async fn execute_agent_with_tools(
 
         match result {
             Ok(response) => {
-                // 合并最终输出和累积的输出
-                let full_response = if let Ok(acc) = accumulated_assistant_output.lock() {
-                    if !acc.is_empty() && !response.is_empty() {
-                        format!("{}\n\n{}", acc, response)
-                    } else if !acc.is_empty() {
-                        acc.clone()
-                    } else {
-                        response.clone()
-                    }
-                } else {
-                    response.clone()
-                };
+                let (full_response, final_response, seg_count) = finalize_response_state(
+                    &response,
+                    &accumulated_assistant_output,
+                    &persisted_segment_count,
+                );
+                let all_tool_calls =
+                    collect_all_tool_calls(&accumulated_tool_calls, &tool_calls_collector);
 
-                // If assistant text segments were already persisted at tool-call boundaries,
-                // only save the last turn's response text to avoid duplicating earlier segments
-                // in the database. The full_response is still used for memory/logging.
-                let seg_count = persisted_segment_count.load(Ordering::SeqCst);
-                let final_response = if seg_count > 0 && !response.is_empty() {
-                    tracing::info!(
-                        "Segments already persisted: {}, saving only last turn response ({} chars) instead of full ({} chars)",
-                        seg_count, response.len(), full_response.len()
-                    );
-                    response.clone()
-                } else {
-                    full_response.clone()
-                };
-
-                // 合并所有工具调用记录（包括累积的和当前的）
-                let mut all_tool_calls = Vec::new();
-                if let Ok(acc_calls) = accumulated_tool_calls.lock() {
-                    all_tool_calls.extend(acc_calls.clone());
-                }
-                if let Ok(current_calls) = tool_calls_collector.lock() {
-                    all_tool_calls.extend(current_calls.clone());
-                }
-
-                // Continue execution until todos are fully completed.
-                let incomplete_todos = get_execution_todos(&params.execution_id)
-                    .await
-                    .map(|list| collect_incomplete_todo_summaries(&list, 5))
-                    .unwrap_or_default();
-                if !incomplete_todos.is_empty() {
-                    // Smart completion detection: if the agent's response clearly
-                    // indicates the task is done, auto-complete the remaining todos
-                    // instead of retrying and causing an infinite loop.
-                    let response_lower = full_response.to_lowercase();
-                    let has_completion_signal = {
-                        // CTF flag found patterns
-                        let has_flag = response_lower.contains("flag{")
-                            || response_lower.contains("flag_found")
-                            || response_lower.contains("[flag_found]")
-                            || response_lower.contains("ctf{")
-                            || response_lower.contains("picoctf{")
-                            || response_lower.contains("htb{")
-                            || regex::Regex::new(r"(?i)flag\s*[:：]\s*\S+\{")
-                                .map(|re| re.is_match(&response_lower))
-                                .unwrap_or(false);
-                        // Explicit task-completion phrases
-                        let has_conclusion = response_lower.contains("任务已完成")
-                            || response_lower.contains("挑战已完成")
-                            || response_lower.contains("题目已完成")
-                            || response_lower.contains("已成功完成")
-                            || response_lower.contains("成功找到")
-                            || response_lower.contains("task completed")
-                            || response_lower.contains("task is complete")
-                            || response_lower.contains("successfully completed")
-                            || response_lower.contains("mission accomplished");
-                        // Check if all incomplete items have completion markers in their description
-                        let all_items_semantically_done = incomplete_todos.iter().all(|t| {
-                            let t_lower = t.to_lowercase();
-                            t_lower.contains('✅')
-                                || t_lower.contains("已完成")
-                                || t_lower.contains("done")
-                        });
-
-                        has_flag || has_conclusion || all_items_semantically_done
-                    };
-
-                    if has_completion_signal {
-                        tracing::info!(
-                            "TodosGuard detected task completion signal in response - auto-completing remaining todos for execution: {}",
-                            params.execution_id
-                        );
-                        auto_complete_all_todos(
-                            &params.execution_id,
-                            "Task completed (auto-detected from response)",
-                        )
-                        .await;
-                        // Fall through to normal completion path
-                    } else {
-                        let reason_text =
-                            format!("todos not completed: {}", incomplete_todos.join("; "));
-                        let err = anyhow::anyhow!("Todos guard failed: {}", reason_text);
-                        tracing::warn!(
-                            "Todos guard rejected final response - execution_id: {}, incomplete_todos: {:?}",
-                            params.execution_id,
-                            incomplete_todos
-                        );
-                        if retries < max_retries {
-                            retries += 1;
-                            last_error = Some(err);
-                            silent_retry_pending = true;
-                            todos_recovery_prompt = Some(format!(
-                                "[TodosGuard] STOP! Do NOT output conclusions yet. Your todos list has unfinished items. \
-                                You MUST use the `todos` tool to update each item's status before concluding. \
-                                For each completed item, call: todos(action=\"update_status\", item_index=N, status=\"completed\"). \
-                                For items that cannot be done, call: todos(action=\"update_status\", item_index=N, status=\"failed\"). \
-                                Current incomplete todos: {}.",
-                                incomplete_todos.join("; ")
-                            ));
-
-                            if let Ok(current_calls) = tool_calls_collector.lock() {
-                                if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                                    acc.extend(current_calls.clone());
-                                }
-                            }
-                            if let Ok(current_output) = assistant_segment_buf.lock() {
-                                if !current_output.is_empty() {
-                                    if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                                        if !acc.is_empty() {
-                                            acc.push_str("\n\n");
-                                        }
-                                        acc.push_str(current_output.as_str());
-                                    }
-                                }
-                            }
-
-                            if let Ok(mut buf) = assistant_segment_buf.lock() {
-                                buf.clear();
-                            }
-                            if let Ok(mut buf) = reasoning_content_buf.lock() {
-                                buf.clear();
-                            }
-                            if let Ok(mut p) = pending_calls.lock() {
-                                p.clear();
-                            }
-                            if let Ok(mut tc) = tool_calls_collector.lock() {
-                                tc.clear();
-                            }
-                            if let Ok(mut fp) = last_tool_fingerprint.lock() {
-                                *fp = None;
-                            }
-                            repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
-                            force_history_with_tools = true;
-                            continue;
-                        }
-                        if unfinished_task_retries < max_unfinished_task_retries {
-                            unfinished_task_retries += 1;
-                            last_error = Some(err);
-                            silent_retry_pending = true;
-                            todos_recovery_prompt = Some(format!(
-                                "[TodosGuard] STOP! Do NOT output conclusions yet. Your todos list has unfinished items. \
-                                You MUST use the `todos` tool to update each item's status before concluding. \
-                                For each completed item, call: todos(action=\"update_status\", item_index=N, status=\"completed\"). \
-                                For items that cannot be done, call: todos(action=\"update_status\", item_index=N, status=\"failed\"). \
-                                Current incomplete todos: {}.",
-                                incomplete_todos.join("; ")
-                            ));
-
-                            if let Ok(current_calls) = tool_calls_collector.lock() {
-                                if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                                    acc.extend(current_calls.clone());
-                                }
-                            }
-                            if let Ok(current_output) = assistant_segment_buf.lock() {
-                                if !current_output.is_empty() {
-                                    if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                                        if !acc.is_empty() {
-                                            acc.push_str("\n\n");
-                                        }
-                                        acc.push_str(current_output.as_str());
-                                    }
-                                }
-                            }
-
-                            if let Ok(mut buf) = assistant_segment_buf.lock() {
-                                buf.clear();
-                            }
-                            if let Ok(mut buf) = reasoning_content_buf.lock() {
-                                buf.clear();
-                            }
-                            if let Ok(mut p) = pending_calls.lock() {
-                                p.clear();
-                            }
-                            if let Ok(mut tc) = tool_calls_collector.lock() {
-                                tc.clear();
-                            }
-                            if let Ok(mut fp) = last_tool_fingerprint.lock() {
-                                *fp = None;
-                            }
-                            repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
-                            force_history_with_tools = true;
-                            continue;
-                        }
-
-                        // All retries exhausted — auto-complete as a final fallback
-                        // to avoid leaving stale incomplete todos in the database.
-                        tracing::warn!(
-                            "TodosGuard retries exhausted, auto-completing remaining todos as fallback - execution_id: {}",
-                            params.execution_id
-                        );
-                        auto_complete_all_todos(
-                            &params.execution_id,
-                            "Retries exhausted, auto-completed by TodosGuard",
-                        )
-                        .await;
-
-                        let _ = app.emit(
-                            "agent:completion_guard_failed",
-                            &json!({
-                                "execution_id": params.execution_id,
-                                "reasons": [reason_text.clone()],
-                                "required_artifact": serde_json::Value::Null,
-                                "incomplete_todos": incomplete_todos,
-                                "response_length": final_response.len(),
-                                "tool_calls": all_tool_calls.len(),
-                                "auto_completed": true,
-                            }),
-                        );
-                        // Fall through to normal completion instead of breaking
-                    }
-                }
+                // Outcome is determined by the execution result itself.
+                // Todos remain process-tracking state and must not block session completion.
 
                 tracing::info!(
                     "Agent with tools completed - execution_id: {}, final_save_length: {}, full_response_length: {}, persisted_segments: {}",
@@ -2162,36 +1344,20 @@ pub async fn execute_agent_with_tools(
                     last_error = Some(anyhow::anyhow!("{}", friendly_err));
 
                     // 保存当前工作到累积记录中（在清理之前）
-                    if let Ok(current_calls) = tool_calls_collector.lock() {
-                        if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                            acc.extend(current_calls.clone());
-                        }
-                    }
-
-                    if let Ok(current_output) = assistant_segment_buf.lock() {
-                        if !current_output.is_empty() {
-                            if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                                if !acc.is_empty() {
-                                    acc.push_str("\n\n");
-                                }
-                                acc.push_str(current_output.as_str());
-                            }
-                        }
-                    }
-
-                    // 清理重试前的临时状态（但不清理累积记录）
-                    if let Ok(mut buf) = assistant_segment_buf.lock() {
-                        buf.clear();
-                    }
-                    if let Ok(mut buf) = reasoning_content_buf.lock() {
-                        buf.clear();
-                    }
-                    if let Ok(mut p) = pending_calls.lock() {
-                        p.clear();
-                    }
-                    if let Ok(mut tc) = tool_calls_collector.lock() {
-                        tc.clear();
-                    }
+                    accumulate_retry_progress(
+                        &tool_calls_collector,
+                        &accumulated_tool_calls,
+                        &assistant_segment_buf,
+                        &accumulated_assistant_output,
+                    );
+                    clear_retry_turn_state(
+                        &assistant_segment_buf,
+                        &reasoning_content_buf,
+                        &pending_calls,
+                        &tool_calls_collector,
+                        None,
+                        None,
+                    );
 
                     continue;
                 } else if is_empty_response && empty_response_retries < max_empty_response_retries {
@@ -2206,39 +1372,20 @@ pub async fn execute_agent_with_tools(
                         params.execution_id
                     );
 
-                    if let Ok(current_calls) = tool_calls_collector.lock() {
-                        if let Ok(mut acc) = accumulated_tool_calls.lock() {
-                            acc.extend(current_calls.clone());
-                        }
-                    }
-
-                    if let Ok(current_output) = assistant_segment_buf.lock() {
-                        if !current_output.is_empty() {
-                            if let Ok(mut acc) = accumulated_assistant_output.lock() {
-                                if !acc.is_empty() {
-                                    acc.push_str("\n\n");
-                                }
-                                acc.push_str(current_output.as_str());
-                            }
-                        }
-                    }
-
-                    if let Ok(mut buf) = assistant_segment_buf.lock() {
-                        buf.clear();
-                    }
-                    if let Ok(mut buf) = reasoning_content_buf.lock() {
-                        buf.clear();
-                    }
-                    if let Ok(mut p) = pending_calls.lock() {
-                        p.clear();
-                    }
-                    if let Ok(mut tc) = tool_calls_collector.lock() {
-                        tc.clear();
-                    }
-                    if let Ok(mut fp) = last_tool_fingerprint.lock() {
-                        *fp = None;
-                    }
-                    repeated_tool_fingerprint_count.store(0, Ordering::SeqCst);
+                    accumulate_retry_progress(
+                        &tool_calls_collector,
+                        &accumulated_tool_calls,
+                        &assistant_segment_buf,
+                        &accumulated_assistant_output,
+                    );
+                    clear_retry_turn_state(
+                        &assistant_segment_buf,
+                        &reasoning_content_buf,
+                        &pending_calls,
+                        &tool_calls_collector,
+                        Some(&last_tool_fingerprint),
+                        Some(repeated_tool_fingerprint_count.as_ref()),
+                    );
                     force_history_with_tools = true;
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
                     continue;
@@ -2332,84 +1479,4 @@ pub async fn execute_agent_with_tools(
         );
     }
     Err(final_error)
-}
-
-fn is_retryable_error(err_msg: &str) -> bool {
-    let err_lower = err_msg.to_lowercase();
-    if err_lower.contains("empty response") || err_lower.contains("without textual response") {
-        return true;
-    }
-    if err_lower.contains("error decoding response body") {
-        return true;
-    }
-    if err_lower.contains("unexpected eof") || err_lower.contains("connection closed") {
-        return true;
-    }
-    if err_lower.contains("timed out") || err_lower.contains("timeout") {
-        return true;
-    }
-    if err_lower.contains("connection reset") || err_lower.contains("network") {
-        return true;
-    }
-    false
-}
-
-fn is_empty_response_error(err_msg: &str) -> bool {
-    let err_lower = err_msg.to_lowercase();
-    err_lower.contains("empty response") || err_lower.contains("without textual response")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn infer_tool_result_success_detects_timeout_failure() {
-        assert!(!infer_tool_result_success(
-            "Tool execution failed: command timeout after 180000ms"
-        ));
-    }
-
-    #[test]
-    fn infer_tool_result_success_respects_success_field() {
-        assert!(infer_tool_result_success(
-            r#"{"success":true,"output":"ok"}"#
-        ));
-        assert!(!infer_tool_result_success(
-            r#"{"success":false,"error":"boom"}"#
-        ));
-    }
-
-    #[test]
-    fn collect_incomplete_todo_summaries_skips_completed_items() {
-        let list = TodosList {
-            items: vec![
-                sentinel_tools::buildin_tools::todos::TodoItem {
-                    description: "done".to_string(),
-                    status: ExecutionTodoStatus::Completed,
-                    result: None,
-                },
-                sentinel_tools::buildin_tools::todos::TodoItem {
-                    description: "keep going".to_string(),
-                    status: ExecutionTodoStatus::InProgress,
-                    result: None,
-                },
-                sentinel_tools::buildin_tools::todos::TodoItem {
-                    description: "retry later".to_string(),
-                    status: ExecutionTodoStatus::Failed,
-                    result: None,
-                },
-            ],
-            current_index: Some(1),
-        };
-
-        let summaries = collect_incomplete_todo_summaries(&list, 5);
-        assert_eq!(
-            summaries,
-            vec![
-                "#2 keep going (in_progress)".to_string(),
-                "#3 retry later (failed)".to_string()
-            ]
-        );
-    }
 }

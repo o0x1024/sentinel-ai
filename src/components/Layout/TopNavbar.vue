@@ -35,30 +35,31 @@
 
     <!-- 右侧快捷操作区 -->
     <div class="navbar-end flex-shrink-0 gap-2">
-      <!-- 通知按钮 -->
-      <div class="dropdown dropdown-end">
-        <div tabindex="0" role="button" class="btn btn-ghost btn-circle btn-sm sm:btn-md indicator">
-          <i class="fas fa-bell text-lg sm:text-xl"></i>
-          <span v-if="unreadNotifications > 0" class="badge badge-xs badge-primary indicator-item">{{ unreadNotifications }}</span>
-        </div>
-        <div tabindex="0" class="dropdown-content z-[60] card card-compact w-80 p-2 shadow bg-base-100">
-          <div class="card-body">
-            <h3 class="card-title text-sm">通知中心</h3>
-            <div class="space-y-2 max-h-64 overflow-y-auto">
-              <div v-for="notification in notifications" :key="notification.id" class="alert alert-info py-2">
-                <i :class="notification.icon"></i>
-                <div>
-                  <div class="font-bold text-xs">{{ notification.title }}</div>
-                  <div class="text-xs opacity-70">{{ notification.message }}</div>
-                </div>
-              </div>
-              <div v-if="notifications.length === 0" class="text-center text-sm opacity-70 py-4">
-                暂无新通知
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <TopNavbarActivityDropdown
+        :title="t('notifications.center.messagesTitle')"
+        icon-class="fas fa-inbox"
+        :empty-text="t('notifications.center.emptyMessages')"
+        :items="messageItems"
+        :unread-count="unreadMessageCount"
+        @open="openActivity"
+        @remove="removeNotification"
+        @mark-all-read="markAllAsRead('message')"
+        @clear-all="clearCategory('message')"
+        @view-all="openNotificationCenter('message')"
+      />
+
+      <TopNavbarActivityDropdown
+        :title="t('notifications.center.notificationsTitle')"
+        icon-class="fas fa-bell"
+        :empty-text="t('notifications.center.emptyNotifications')"
+        :items="notificationItems"
+        :unread-count="unreadNotificationCount"
+        @open="openActivity"
+        @remove="removeNotification"
+        @mark-all-read="markAllAsRead('notification')"
+        @clear-all="clearCategory('notification')"
+        @view-all="openNotificationCenter('notification')"
+      />
 
 
       <!-- 语言切换器 -->
@@ -113,12 +114,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter, useRoute } from 'vue-router'
-import { invoke } from '@tauri-apps/api/core'
 import { usePageTour, type TourStep } from '@/composables/usePageTour'
-
+import { useNotificationCenter } from '@/composables/useNotificationCenter'
+import type { AppNotificationItem, NotificationCategory } from '@/types/notification'
+import TopNavbarActivityDropdown from './TopNavbarActivityDropdown.vue'
 
 
 // Emits
@@ -137,10 +139,17 @@ const { manualStartTour } = usePageTour()
 // 搜索相关
 const searchQuery = ref('')
 
-// 通知相关
-const unreadNotifications = ref(3)
-const notifications = ref([
-])
+const {
+  initializeNotificationCenter,
+  messageItems,
+  notificationItems,
+  unreadMessageCount,
+  unreadNotificationCount,
+  openNotification,
+  removeNotification,
+  markAllAsRead,
+  clearCategory,
+} = useNotificationCenter()
 
 // 可用语言
 const availableLanguages = [
@@ -177,6 +186,17 @@ const performSearch = () => {
     // 可以导航到搜索结果页面
     router.push({ path: '/search', query: { q: searchQuery.value } })
   }
+}
+
+const openActivity = async (item: AppNotificationItem) => {
+  await openNotification(router, item)
+}
+
+const openNotificationCenter = async (category: NotificationCategory) => {
+  await router.push({
+    path: '/notification-center',
+    query: { category },
+  })
 }
 
 // 页面向导配置映射
@@ -320,6 +340,10 @@ const startPageTour = () => {
     manualStartTour(steps)
   }
 }
+
+onMounted(async () => {
+  await initializeNotificationCenter(router)
+})
 
 </script>
 

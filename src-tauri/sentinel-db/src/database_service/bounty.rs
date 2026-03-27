@@ -208,7 +208,6 @@ fn row_to_bounty_change_event(row: PgRow) -> BountyChangeEventRow {
         diff: row.get("diff"),
         affected_scope: row.get("affected_scope"),
         detection_method: row.get("detection_method"),
-        triggered_workflows_json: row.get("triggered_workflows_json"),
         generated_findings_json: row.get("generated_findings_json"),
         tags_json: row.get("tags_json"),
         metadata_json: row.get("metadata_json"),
@@ -3393,7 +3392,6 @@ pub struct BountyChangeEventRow {
     pub diff: Option<String>,
     pub affected_scope: Option<String>,
     pub detection_method: String,
-    pub triggered_workflows_json: Option<String>,
     pub generated_findings_json: Option<String>,
     pub tags_json: Option<String>,
     pub metadata_json: Option<String>,
@@ -3431,9 +3429,9 @@ impl DatabaseService {
             let query = r#"INSERT INTO bounty_change_events (
                     id, program_id, asset_id, event_type, severity, status, title, description,
                     old_value, new_value, diff, affected_scope, detection_method,
-                    triggered_workflows_json, generated_findings_json, tags_json, metadata_json,
-                    risk_score, auto_trigger_enabled, created_at, updated_at, resolved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
+                    generated_findings_json, tags_json, metadata_json, risk_score,
+                    auto_trigger_enabled, created_at, updated_at, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#;
             match runtime {
                 DatabasePool::SQLite(pool) => {
                     sqlx::query(query)
@@ -3450,7 +3448,6 @@ impl DatabaseService {
                         .bind(&event.diff)
                         .bind(&event.affected_scope)
                         .bind(&event.detection_method)
-                        .bind(&event.triggered_workflows_json)
                         .bind(&event.generated_findings_json)
                         .bind(&event.tags_json)
                         .bind(&event.metadata_json)
@@ -3477,7 +3474,6 @@ impl DatabaseService {
                         .bind(&event.diff)
                         .bind(&event.affected_scope)
                         .bind(&event.detection_method)
-                        .bind(&event.triggered_workflows_json)
                         .bind(&event.generated_findings_json)
                         .bind(&event.tags_json)
                         .bind(&event.metadata_json)
@@ -3499,9 +3495,9 @@ impl DatabaseService {
             r#"INSERT INTO bounty_change_events (
                 id, program_id, asset_id, event_type, severity, status, title, description,
                 old_value, new_value, diff, affected_scope, detection_method,
-                triggered_workflows_json, generated_findings_json, tags_json, metadata_json,
-                risk_score, auto_trigger_enabled, created_at, updated_at, resolved_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)"#
+                generated_findings_json, tags_json, metadata_json, risk_score,
+                auto_trigger_enabled, created_at, updated_at, resolved_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)"#
         )
         .bind(&event.id)
         .bind(&event.program_id)
@@ -3516,7 +3512,6 @@ impl DatabaseService {
         .bind(&event.diff)
         .bind(&event.affected_scope)
         .bind(&event.detection_method)
-        .bind(&event.triggered_workflows_json)
         .bind(&event.generated_findings_json)
         .bind(&event.tags_json)
         .bind(&event.metadata_json)
@@ -3576,9 +3571,9 @@ impl DatabaseService {
             let query = r#"UPDATE bounty_change_events SET
                     program_id = ?, asset_id = ?, event_type = ?, severity = ?, status = ?,
                     title = ?, description = ?, old_value = ?, new_value = ?, diff = ?,
-                    affected_scope = ?, detection_method = ?, triggered_workflows_json = ?,
-                    generated_findings_json = ?, tags_json = ?, metadata_json = ?,
-                    risk_score = ?, auto_trigger_enabled = ?, updated_at = ?, resolved_at = ?
+                    affected_scope = ?, detection_method = ?, generated_findings_json = ?,
+                    tags_json = ?, metadata_json = ?, risk_score = ?, auto_trigger_enabled = ?,
+                    updated_at = ?, resolved_at = ?
                 WHERE id = ?"#;
             return match runtime {
                 DatabasePool::SQLite(pool) => {
@@ -3595,7 +3590,6 @@ impl DatabaseService {
                         .bind(&event.diff)
                         .bind(&event.affected_scope)
                         .bind(&event.detection_method)
-                        .bind(&event.triggered_workflows_json)
                         .bind(&event.generated_findings_json)
                         .bind(&event.tags_json)
                         .bind(&event.metadata_json)
@@ -3622,7 +3616,6 @@ impl DatabaseService {
                         .bind(&event.diff)
                         .bind(&event.affected_scope)
                         .bind(&event.detection_method)
-                        .bind(&event.triggered_workflows_json)
                         .bind(&event.generated_findings_json)
                         .bind(&event.tags_json)
                         .bind(&event.metadata_json)
@@ -3643,10 +3636,10 @@ impl DatabaseService {
             r#"UPDATE bounty_change_events SET
                 program_id = $1, asset_id = $2, event_type = $3, severity = $4, status = $5,
                 title = $6, description = $7, old_value = $8, new_value = $9, diff = $10,
-                affected_scope = $11, detection_method = $12, triggered_workflows_json = $13,
-                generated_findings_json = $14, tags_json = $15, metadata_json = $16,
-                risk_score = $17, auto_trigger_enabled = $18, updated_at = $19, resolved_at = $20
-            WHERE id = $21"#,
+                affected_scope = $11, detection_method = $12, generated_findings_json = $13,
+                tags_json = $14, metadata_json = $15, risk_score = $16,
+                auto_trigger_enabled = $17, updated_at = $18, resolved_at = $19
+            WHERE id = $20"#,
         )
         .bind(&event.program_id)
         .bind(&event.asset_id)
@@ -3660,7 +3653,6 @@ impl DatabaseService {
         .bind(&event.diff)
         .bind(&event.affected_scope)
         .bind(&event.detection_method)
-        .bind(&event.triggered_workflows_json)
         .bind(&event.generated_findings_json)
         .bind(&event.tags_json)
         .bind(&event.metadata_json)
@@ -3730,8 +3722,8 @@ impl DatabaseService {
             let query = r#"
                 SELECT
                     id, program_id, asset_id, event_type, severity, status, title, description, old_value,
-                    new_value, diff, affected_scope, detection_method, triggered_workflows_json,
-                    generated_findings_json, tags_json, metadata_json, risk_score, auto_trigger_enabled,
+                    new_value, diff, affected_scope, detection_method, generated_findings_json,
+                    tags_json, metadata_json, risk_score, auto_trigger_enabled,
                     CAST(created_at AS TEXT) AS created_at, CAST(updated_at AS TEXT) AS updated_at,
                     CAST(resolved_at AS TEXT) AS resolved_at
                 FROM bounty_change_events
@@ -4139,36 +4131,6 @@ impl DatabaseService {
 
         Ok(result.rows_affected() > 0)
     }
-
-    /// Add triggered workflow to change event
-    pub async fn add_triggered_workflow_to_change_event(
-        &self,
-        event_id: &str,
-        workflow_id: &str,
-    ) -> Result<bool> {
-        let event = self.get_bounty_change_event(event_id).await?;
-        let Some(mut event) = event else {
-            return Ok(false);
-        };
-
-        let mut workflows: Vec<String> = event
-            .triggered_workflows_json
-            .as_ref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_default();
-
-        if !workflows.contains(&workflow_id.to_string()) {
-            workflows.push(workflow_id.to_string());
-            event.triggered_workflows_json =
-                Some(serde_json::to_string(&workflows).unwrap_or_default());
-            event.status = "workflow_triggered".to_string();
-            event.updated_at = chrono::Utc::now().to_rfc3339();
-            return self.update_bounty_change_event(&event).await;
-        }
-
-        Ok(true)
-    }
-
     /// Add generated finding to change event
     pub async fn add_generated_finding_to_change_event(
         &self,
@@ -5327,95 +5289,97 @@ impl DatabaseService {
         );
 
         sqlx::query(&query)
-        .bind(&asset.id)
-        .bind(&asset.program_id)
-        .bind(&asset.scope_id)
-        .bind(&asset.asset_type)
-        .bind(&asset.canonical_url)
-        .bind(&asset.original_urls_json)
-        .bind(&asset.hostname)
-        .bind(asset.port)
-        .bind(&asset.path)
-        .bind(&asset.protocol)
-        .bind(&asset.ip_addresses_json)
-        .bind(&asset.dns_records_json)
-        .bind(&asset.tech_stack_json)
-        .bind(&asset.fingerprint)
-        .bind(&asset.tags_json)
-        .bind(&asset.labels_json)
-        .bind(asset.priority_score)
-        .bind(asset.risk_score)
-        .bind(asset.is_alive)
-        .bind(optional_timestamp_string_to_datetime(&asset.last_checked_at))
-        .bind(timestamp_string_to_datetime(&asset.first_seen_at))
-        .bind(timestamp_string_to_datetime(&asset.last_seen_at))
-        .bind(asset.findings_count)
-        .bind(asset.change_events_count)
-        .bind(&asset.metadata_json)
-        .bind(timestamp_string_to_datetime(&asset.created_at))
-        .bind(timestamp_string_to_datetime(&asset.updated_at))
-        .bind(&asset.ip_version)
-        .bind(asset.asn)
-        .bind(&asset.asn_org)
-        .bind(&asset.isp)
-        .bind(&asset.country)
-        .bind(&asset.city)
-        .bind(asset.latitude)
-        .bind(asset.longitude)
-        .bind(asset.is_cloud)
-        .bind(&asset.cloud_provider)
-        .bind(&asset.service_name)
-        .bind(&asset.service_version)
-        .bind(&asset.service_product)
-        .bind(&asset.banner)
-        .bind(&asset.transport_protocol)
-        .bind(&asset.cpe)
-        .bind(&asset.domain_registrar)
-        .bind(&asset.registration_date)
-        .bind(&asset.expiration_date)
-        .bind(&asset.nameservers_json)
-        .bind(&asset.mx_records_json)
-        .bind(&asset.txt_records_json)
-        .bind(&asset.whois_data_json)
-        .bind(asset.is_wildcard)
-        .bind(&asset.parent_domain)
-        .bind(asset.http_status)
-        .bind(asset.response_time_ms)
-        .bind(asset.content_length)
-        .bind(&asset.content_type)
-        .bind(&asset.title)
-        .bind(&asset.favicon_hash)
-        .bind(&asset.headers_json)
-        .bind(&asset.waf_detected)
-        .bind(&asset.cdn_detected)
-        .bind(&asset.screenshot_path)
-        .bind(&asset.body_hash)
-        .bind(&asset.certificate_id)
-        .bind(asset.ssl_enabled)
-        .bind(&asset.certificate_subject)
-        .bind(&asset.certificate_issuer)
-        .bind(&asset.certificate_valid_from)
-        .bind(&asset.certificate_valid_to)
-        .bind(&asset.certificate_san_json)
-        .bind(&asset.exposure_level)
-        .bind(asset.attack_surface_score)
-        .bind(asset.vulnerability_count)
-        .bind(asset.cvss_max_score)
-        .bind(asset.exploit_available)
-        .bind(&asset.asset_category)
-        .bind(&asset.asset_owner)
-        .bind(&asset.business_unit)
-        .bind(&asset.criticality)
-        .bind(&asset.discovery_method)
-        .bind(&asset.data_sources_json)
-        .bind(asset.confidence_score)
-        .bind(asset.monitoring_enabled)
-        .bind(&asset.scan_frequency)
-        .bind(&asset.last_scan_type)
-        .bind(&asset.parent_asset_id)
-        .bind(&asset.related_assets_json)
-        .execute(self.get_pool()?)
-        .await?;
+            .bind(&asset.id)
+            .bind(&asset.program_id)
+            .bind(&asset.scope_id)
+            .bind(&asset.asset_type)
+            .bind(&asset.canonical_url)
+            .bind(&asset.original_urls_json)
+            .bind(&asset.hostname)
+            .bind(asset.port)
+            .bind(&asset.path)
+            .bind(&asset.protocol)
+            .bind(&asset.ip_addresses_json)
+            .bind(&asset.dns_records_json)
+            .bind(&asset.tech_stack_json)
+            .bind(&asset.fingerprint)
+            .bind(&asset.tags_json)
+            .bind(&asset.labels_json)
+            .bind(asset.priority_score)
+            .bind(asset.risk_score)
+            .bind(asset.is_alive)
+            .bind(optional_timestamp_string_to_datetime(
+                &asset.last_checked_at,
+            ))
+            .bind(timestamp_string_to_datetime(&asset.first_seen_at))
+            .bind(timestamp_string_to_datetime(&asset.last_seen_at))
+            .bind(asset.findings_count)
+            .bind(asset.change_events_count)
+            .bind(&asset.metadata_json)
+            .bind(timestamp_string_to_datetime(&asset.created_at))
+            .bind(timestamp_string_to_datetime(&asset.updated_at))
+            .bind(&asset.ip_version)
+            .bind(asset.asn)
+            .bind(&asset.asn_org)
+            .bind(&asset.isp)
+            .bind(&asset.country)
+            .bind(&asset.city)
+            .bind(asset.latitude)
+            .bind(asset.longitude)
+            .bind(asset.is_cloud)
+            .bind(&asset.cloud_provider)
+            .bind(&asset.service_name)
+            .bind(&asset.service_version)
+            .bind(&asset.service_product)
+            .bind(&asset.banner)
+            .bind(&asset.transport_protocol)
+            .bind(&asset.cpe)
+            .bind(&asset.domain_registrar)
+            .bind(&asset.registration_date)
+            .bind(&asset.expiration_date)
+            .bind(&asset.nameservers_json)
+            .bind(&asset.mx_records_json)
+            .bind(&asset.txt_records_json)
+            .bind(&asset.whois_data_json)
+            .bind(asset.is_wildcard)
+            .bind(&asset.parent_domain)
+            .bind(asset.http_status)
+            .bind(asset.response_time_ms)
+            .bind(asset.content_length)
+            .bind(&asset.content_type)
+            .bind(&asset.title)
+            .bind(&asset.favicon_hash)
+            .bind(&asset.headers_json)
+            .bind(&asset.waf_detected)
+            .bind(&asset.cdn_detected)
+            .bind(&asset.screenshot_path)
+            .bind(&asset.body_hash)
+            .bind(&asset.certificate_id)
+            .bind(asset.ssl_enabled)
+            .bind(&asset.certificate_subject)
+            .bind(&asset.certificate_issuer)
+            .bind(&asset.certificate_valid_from)
+            .bind(&asset.certificate_valid_to)
+            .bind(&asset.certificate_san_json)
+            .bind(&asset.exposure_level)
+            .bind(asset.attack_surface_score)
+            .bind(asset.vulnerability_count)
+            .bind(asset.cvss_max_score)
+            .bind(asset.exploit_available)
+            .bind(&asset.asset_category)
+            .bind(&asset.asset_owner)
+            .bind(&asset.business_unit)
+            .bind(&asset.criticality)
+            .bind(&asset.discovery_method)
+            .bind(&asset.data_sources_json)
+            .bind(asset.confidence_score)
+            .bind(asset.monitoring_enabled)
+            .bind(&asset.scan_frequency)
+            .bind(&asset.last_scan_type)
+            .bind(&asset.parent_asset_id)
+            .bind(&asset.related_assets_json)
+            .execute(self.get_pool()?)
+            .await?;
 
         info!("Created bounty asset: {}", asset.id);
         Ok(())

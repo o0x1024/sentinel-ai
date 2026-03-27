@@ -54,6 +54,22 @@ pub struct EdgeDef {
     pub from_port: String,
     pub to_node: String,
     pub to_port: String,
+    #[serde(default = "default_edge_source_scope")]
+    pub source_scope: String,
+    #[serde(default)]
+    pub source_path: String,
+    #[serde(default)]
+    pub target_path: String,
+    #[serde(default = "default_edge_merge_mode")]
+    pub merge_mode: String,
+}
+
+fn default_edge_source_scope() -> String {
+    "output".to_string()
+}
+
+fn default_edge_merge_mode() -> String {
+    "replace".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

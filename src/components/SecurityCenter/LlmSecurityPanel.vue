@@ -806,8 +806,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { open, save } from '@tauri-apps/plugin-dialog'
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 import {
   llmTestCreateRun,
   llmTestDeleteRun,
@@ -816,14 +816,29 @@ import {
   llmTestListRuns,
   llmTestResetRun,
   llmTestStopRun,
-  loadLlmSuitesFromConfig,
-  saveLlmSuitesToConfig,
   type ExecuteLlmTestBatchRequest,
   type ExecuteLlmTestCaseResponse,
   type LlmSuiteDefinition,
   type LlmTestRunView,
 } from '../../api/llmTest'
 import LlmSuiteDrawer from './LlmSuiteDrawer.vue'
+import {
+  applyImportedSuites,
+  casePromptPreview,
+  exportSuitesJson as exportSuitesToJson,
+  importSuitesJson as importSuitesFromJson,
+  loadSuites,
+  persistSuites,
+  type LlmSuiteImportPreview,
+} from './llmSecuritySuiteSupport'
+import {
+  formatModelOutput,
+  getCaseMessagesFromSuites,
+  getRunSummaryStats,
+  getSelectedRunCases,
+  type CaseResultEntry,
+} from './llmSecurityReportSupport'
+import { formatDateTime, formatDuration, riskBadgeClass, statusBadgeClass } from './llmSecurityUiSupport'
 
 const { t } = useI18n()
 
@@ -918,49 +933,6 @@ const applyPreset = (preset: 'openai' | 'custom') => {
   }
 }
 
-// --- Risk Badge Helpers ---
-// --- Time formatting helpers ---
-const formatDateTime = (iso: string | undefined): string => {
-  if (!iso) return '-'
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    })
-  } catch { return iso }
-}
-
-const formatDuration = (startIso: string | undefined, endIso: string | undefined): string => {
-  if (!startIso || !endIso) return '-'
-  try {
-    const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
-    if (ms < 0) return '-'
-    if (ms < 1000) return `${ms}ms`
-    const s = Math.floor(ms / 1000)
-    if (s < 60) return `${s}s`
-    const m = Math.floor(s / 60)
-    const rs = s % 60
-    return `${m}m ${rs}s`
-  } catch { return '-' }
-}
-
-const riskBadgeClass = (risk: string) => {
-  const r = (risk || '').toLowerCase()
-  if (r === 'critical') return 'badge-error'
-  if (r === 'high') return 'badge-warning'
-  if (r === 'medium') return 'badge-info'
-  if (r === 'low') return 'badge-success'
-  return 'badge-ghost'
-}
-
-const statusBadgeClass = (status: string) => {
-  const s = (status || '').toLowerCase()
-  if (s === 'completed') return 'badge-success'
-  if (s === 'running') return 'badge-info'
-  if (s === 'failed' || s === 'cancelled') return 'badge-error'
-  return 'badge-ghost'
-}
-
 // OWASP LLM Top 10 (2025) 测试套件已从前端移至数据库预置，在初始化时写入
 
 const loadingRuns = ref(false)
@@ -1014,14 +986,14 @@ const handleSuitesUpdate = async (updated: LlmSuiteDefinition[]) => {
   selectedSuiteIds.value = selectedSuiteIds.value.filter(id => ids.has(id))
   if (selectedSuiteIds.value.length === 0 && updated.length > 0) selectedSuiteIds.value = [updated[0].id]
   // Persist all suites to database
-  await saveLlmSuitesToConfig(updated)
+  await persistSuites(updated)
 }
 
-const importPreview = ref({
+const importPreview = ref<LlmSuiteImportPreview>({
   open: false,
   formatVersion: '',
-  candidates: [] as LlmSuiteDefinition[],
-  conflictIds: [] as string[],
+  candidates: [],
+  conflictIds: [],
   invalidCount: 0,
 })
 
@@ -1446,142 +1418,48 @@ const exportReport = async () => {
 }
 
 // --- Run data computed ---
-const selectedRunCases = computed(() => {
-  const summary = selectedRunForActions.value?.results_summary as any
-  const cases = summary?.cases
-  return Array.isArray(cases) ? cases : []
-})
+const selectedRunCases = computed(() => getSelectedRunCases(selectedRunForActions.value))
 
 // --- Case detail modal ---
-type CaseResultEntry = {
-  case_id: string
-  verdict: string
-  risk_level: string
-  confidence: number
-  latency_ms: number
-  evidence_ref?: string
-  executed_at?: string
-  model_output?: Record<string, any>
-  assertion_results?: Array<{ type: string; passed: boolean; reason?: string; score?: number }>
-  owasp?: { id: string; title: string }
-}
 const caseDetailModal = ref<{ open: boolean; entry: CaseResultEntry | null }>({ open: false, entry: null })
 
 const openCaseDetail = (entry: CaseResultEntry) => {
   caseDetailModal.value = { open: true, entry }
 }
 
-const getCaseMessages = (caseId: string): Array<{ role: string; content: string }> => {
-  for (const suite of suites.value) {
-    const found = suite.cases?.find(c => c.case_id === caseId)
-    if (found) {
-      if (Array.isArray(found.messages)) {
-        return found.messages
-          .filter(m => m?.role && typeof m?.content === 'string')
-          .map(m => ({ role: String(m.role), content: String(m.content) }))
-      }
-      if (found.user_prompt) return [{ role: 'user', content: found.user_prompt }]
-    }
-  }
-  return []
-}
-
 const caseDetailMessages = computed(() => {
   const caseId = caseDetailModal.value.entry?.case_id
   if (!caseId) return [] as Array<{ role: string; content: string }>
-  return getCaseMessages(caseId)
+  return getCaseMessagesFromSuites(suites.value, caseId)
 })
-
-const formatModelOutput = (output: Record<string, any> | undefined): string => {
-  if (!output) return ''
-  // error 字段可能是字符串或对象，统一处理
-  if (output.error) {
-    const err = output.error
-    if (typeof err === 'string') return `Error: ${err}`
-    if (typeof err === 'object') {
-      // OpenAI-style error: { message, type, code }
-      const msg = err.message ?? err.msg ?? err.detail ?? err.description
-      if (msg) return `Error: ${msg}`
-      return `Error: ${JSON.stringify(err, null, 2)}`
-    }
-    return `Error: ${String(err)}`
-  }
-  if (output.content) return String(output.content)
-  if (output.choices) {
-    try {
-      const choice = output.choices[0]
-      return choice?.message?.content ?? choice?.text ?? JSON.stringify(output, null, 2)
-    } catch { /* empty */ }
-  }
-  // 兼容其他响应格式
-  if (output.message) return String(output.message)
-  if (output.text) return String(output.text)
-  return JSON.stringify(output, null, 2)
-}
-
-const runSummaryStats = computed(() => {
-  const summary = selectedRunForActions.value?.results_summary as any
-  return {
-    executed: Number(summary?.cases_executed || 0),
-    passed: Number(summary?.cases_passed || 0),
-    failed: Number(summary?.cases_failed || 0),
-  }
-})
+const runSummaryStats = computed(() => getRunSummaryStats(selectedRunForActions.value))
 
 // --- Suite Management ---
-const persistSuites = async () => {
-  await saveLlmSuitesToConfig(suites.value)
-}
-
-const loadSuites = async () => {
-  try {
-    suites.value = await loadLlmSuitesFromConfig()
-  } catch {
-    suites.value = []
-  }
+const loadLocalSuites = async () => {
+  suites.value = await loadSuites()
   if (selectedSuiteIds.value.length === 0 && suites.value.length > 0) {
     selectedSuiteIds.value = [suites.value[0].id]
   }
 }
 
-const exportSuitesJson = async () => {
+const handleExportSuitesJson = async () => {
   try {
     lastError.value = ''
-    const allSuites = suites.value
-      .map(s => ({ id: s.id, name: s.name, version: s.version, description: s.description || '', cases: Array.isArray(s.cases) ? s.cases : [] }))
-    const selected = await save({
-      defaultPath: `llm_test_suites_${new Date().toISOString().split('T')[0]}.json`,
-      filters: [{ name: t('llmSecurity.report.exportFileFilter'), extensions: ['json'] }],
+    await exportSuitesToJson({
+      suites: suites.value,
+      exportFileLabel: t('llmSecurity.report.exportFileFilter'),
       title: t('llmSecurity.suiteManager.exportJson'),
     })
-    if (!selected) return
-    await writeTextFile(selected, JSON.stringify({ format_version: '1.0', exported_at: new Date().toISOString(), suites: allSuites }, null, 2))
   } catch (err: any) {
     lastError.value = err?.message || String(err)
   }
 }
 
-const importSuitesJson = async () => {
+const handleImportSuitesJson = async () => {
   try {
     lastError.value = ''
-    const selected = await open({
-      directory: false,
-      multiple: false,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-      title: 'Import LLM Test Suites',
-    })
-    if (!selected) return
-    const content = await readTextFile(selected as string)
-    const parsed = JSON.parse(content)
-    const decoded = decodeImportPayload(parsed)
-    const existingIds = new Set(suites.value.map(s => s.id))
-    importPreview.value = {
-      open: true,
-      formatVersion: decoded.formatVersion,
-      candidates: decoded.candidates,
-      conflictIds: decoded.candidates.filter(s => existingIds.has(s.id)).map(s => s.id),
-      invalidCount: decoded.invalidCount,
-    }
+    const preview = await importSuitesFromJson(suites.value)
+    if (preview) importPreview.value = preview
   } catch (err: any) {
     lastError.value = err?.message || String(err)
   }
@@ -1591,81 +1469,23 @@ const closeImportPreview = () => { importPreview.value.open = false }
 
 const applyImport = async (overwriteConflicts: boolean) => {
   try {
-    const existingMap = new Map(suites.value.map(s => [s.id, s] as const))
-    for (const suite of importPreview.value.candidates) {
-      if (existingMap.has(suite.id) && !overwriteConflicts) continue
-      existingMap.set(suite.id, suite)
-      if (!selectedSuiteIds.value.includes(suite.id)) selectedSuiteIds.value.push(suite.id)
-    }
-    suites.value = Array.from(existingMap.values())
-    await persistSuites()
+    const nextState = applyImportedSuites({
+      existingSuites: suites.value,
+      selectedSuiteIds: selectedSuiteIds.value,
+      candidates: importPreview.value.candidates,
+      overwriteConflicts,
+    })
+    suites.value = nextState.suites
+    selectedSuiteIds.value = nextState.selectedSuiteIds
+    await persistSuites(suites.value)
     closeImportPreview()
   } catch (err: any) {
     lastError.value = err?.message || String(err)
   }
 }
 
-const decodeImportPayload = (parsed: any): { formatVersion: string; candidates: LlmSuiteDefinition[]; invalidCount: number } => {
-  let rawSuites: any[] = []
-  let formatVersion = 'legacy-array'
-  if (Array.isArray(parsed)) {
-    rawSuites = parsed
-  } else if (parsed && typeof parsed === 'object') {
-    formatVersion = String(parsed.format_version || 'unknown')
-    if (Array.isArray(parsed.suites)) rawSuites = parsed.suites
-    else throw new Error('Invalid import payload: suites array missing')
-  } else {
-    throw new Error('Invalid JSON payload')
-  }
-
-  const unique = new Map<string, LlmSuiteDefinition>()
-  let invalidCount = 0
-  for (const item of rawSuites) {
-    const id = String(item?.id || '').trim()
-    const name = String(item?.name || '').trim()
-    const version = String(item?.version || '').trim()
-    if (!id || !name || !version) { invalidCount += 1; continue }
-    unique.set(id, {
-      id, name, version,
-      description: item?.description ? String(item.description) : '',
-      cases: Array.isArray(item?.cases)
-        ? item.cases
-            .filter((c: any) => {
-              if (!c?.case_id) return false
-              if (typeof c?.user_prompt === 'string' && c.user_prompt.trim().length > 0) return true
-              if (!Array.isArray(c?.messages)) return false
-              return c.messages.some((m: any) => m?.role && typeof m?.content === 'string')
-            })
-            .map((c: any) => ({
-              case_id: String(c.case_id),
-              owasp_id: c.owasp_id ? String(c.owasp_id) : '',
-              owasp_title: c.owasp_title ? String(c.owasp_title) : '',
-              user_prompt: c.user_prompt ? String(c.user_prompt) : '',
-              messages: Array.isArray(c.messages)
-                ? c.messages
-                    .filter((m: any) => m?.role && typeof m?.content === 'string')
-                    .map((m: any) => ({ role: String(m.role), content: String(m.content) }))
-                : undefined,
-              regex_not_match: c.regex_not_match ? String(c.regex_not_match) : '',
-            }))
-        : [],
-
-    })
-  }
-  return { formatVersion, candidates: Array.from(unique.values()), invalidCount }
-}
-
-const casePromptPreview = (c: NonNullable<LlmSuiteDefinition['cases']>[number]) => {
-  if (c.user_prompt) return c.user_prompt
-  if (Array.isArray(c.messages)) {
-    const lastUser = [...c.messages].reverse().find(m => m.role === 'user')
-    if (lastUser?.content) return lastUser.content
-  }
-  return '-'
-}
-
 onMounted(() => {
-  void loadSuites()
+  void loadLocalSuites()
   void loadRuns()
 })
 </script>

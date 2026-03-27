@@ -18,6 +18,18 @@
                 {{ $t('trafficAnalysis.tabs.repeater') }}
                 <span v-if="repeaterCount > 0" class="badge badge-xs badge-primary ml-1">{{ repeaterCount }}</span>
             </button>
+            <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'comparer'"
+                :class="{ 'tab-active': activeTab === 'comparer' }" @click="activeTab = 'comparer'">
+                <i class="fas fa-not-equal mr-2"></i>
+                {{ $t('trafficAnalysis.tabs.comparer') }}
+                <span v-if="comparerCount > 0" class="badge badge-xs badge-accent ml-1">{{ comparerCount }}</span>
+            </button>
+            <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'intruder'"
+                :class="{ 'tab-active': activeTab === 'intruder' }" @click="activeTab = 'intruder'">
+                <i class="fas fa-crosshairs mr-2"></i>
+                {{ $t('trafficAnalysis.tabs.intruder') }}
+                <span v-if="intruderCount > 0" class="badge badge-xs badge-secondary ml-1">{{ intruderCount }}</span>
+            </button>
             <button type="button" class="tab" role="tab" :aria-selected="activeTab === 'proxifier'"
                 :class="{ 'tab-active': activeTab === 'proxifier' }" @click="activeTab = 'proxifier'">
                 <i class="fas fa-network-wired mr-2"></i>
@@ -40,12 +52,14 @@
             <TrafficControl 
                 v-show="activeTab === 'control'" 
                 @sendToRepeater="handleSendToRepeater"
+                @sendToIntruder="handleSendToIntruder"
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxyHistory 
                 ref="proxyHistoryRef"
                 v-show="activeTab === 'proxyhistory'" 
                 @sendToRepeater="handleSendToRepeater"
+                @sendToIntruder="handleSendToIntruder"
                 @addFilterRule="handleAddFilterRule"
                 class="h-full absolute inset-0 overflow-auto"
             />
@@ -53,6 +67,19 @@
                 v-show="activeTab === 'repeater'" 
                 ref="repeaterRef"
                 :initialRequest="pendingRepeaterRequest"
+                class="h-full absolute inset-0 overflow-auto"
+            />
+            <ProxyComparer
+                v-show="activeTab === 'comparer'"
+                ref="comparerRef"
+                class="h-full absolute inset-0 overflow-auto"
+            />
+            <ProxyIntruder
+                v-show="activeTab === 'intruder'"
+                ref="intruderRef"
+                :initialRequest="pendingIntruderRequest"
+                @sendToRepeater="handleSendToRepeater"
+                @sendToComparer="handleSendToComparer"
                 class="h-full absolute inset-0 overflow-auto"
             />
             <ProxifierPanel 
@@ -75,13 +102,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, watch, provide } from 'vue'
+import { ref, onMounted, onActivated, onDeactivated, onErrorCaptured, onUnmounted, watch, provide } from 'vue'
 import TrafficControl from '../components/traffic/ProxyIntercept.vue'
 import ProxyHistory from '../components/traffic/ProxyHistory.vue'
 import ProxyRepeater from '../components/traffic/ProxyRepeater.vue'
+import ProxyComparer from '../components/traffic/ProxyComparer.vue'
+import ProxyIntruder from '../components/traffic/ProxyIntruder.vue'
 import ProxyConfiguration from '../components/traffic/ProxyConfiguration.vue'
 import ProxifierPanel from '../components/traffic/ProxifierPanel.vue'
 import PacketCapture from '../components/traffic/PacketCapture.vue'
+import {
+    COMPARER_TRANSFER_STORAGE_KEY,
+    parseTransferEnvelope,
+    REPEATER_TRANSFER_STORAGE_KEY,
+    type TrafficComparePayload,
+} from '../components/traffic/transfers'
 
 // Types
 interface RepeaterRequest {
@@ -91,15 +126,20 @@ interface RepeaterRequest {
     body?: string;
 }
 
-const activeTab = ref<'control' | 'proxyhistory' | 'repeater' | 'proxifier' | 'capture' | 'proxyconfig'>('proxyhistory')
+const activeTab = ref<'control' | 'proxyhistory' | 'repeater' | 'comparer' | 'intruder' | 'proxifier' | 'capture' | 'proxyconfig'>('proxyhistory')
 const isDevelopment = ref(import.meta.env.DEV)
 const componentError = ref<string | null>(null)
 const refreshTrigger = ref(0)
 const repeaterRef = ref<InstanceType<typeof ProxyRepeater> | null>(null)
+const comparerRef = ref<InstanceType<typeof ProxyComparer> | null>(null)
+const intruderRef = ref<InstanceType<typeof ProxyIntruder> | null>(null)
 const proxyConfigRef = ref<InstanceType<typeof ProxyConfiguration> | null>(null)
 const proxyHistoryRef = ref<InstanceType<typeof ProxyHistory> | null>(null)
 const pendingRepeaterRequest = ref<RepeaterRequest | undefined>(undefined)
+const pendingIntruderRequest = ref<RepeaterRequest | undefined>(undefined)
 const repeaterCount = ref(0)
+const comparerCount = ref(0)
+const intruderCount = ref(0)
 
 defineOptions({
   name: 'TrafficAnalysis'
@@ -123,6 +163,53 @@ function handleSendToRepeater(request: RepeaterRequest) {
     }
     
     repeaterCount.value++
+}
+
+function handleSendToIntruder(request: RepeaterRequest) {
+    console.log('[TrafficAnalysis] Sending to intruder:', request)
+
+    if (activeTab.value === 'intruder' && intruderRef.value) {
+        intruderRef.value.addRequestFromHistory(request)
+    } else {
+        pendingIntruderRequest.value = request
+        activeTab.value = 'intruder'
+    }
+
+    intruderCount.value++
+}
+
+function handleSendToComparer(payload: TrafficComparePayload) {
+    if (activeTab.value === 'comparer' && comparerRef.value) {
+        comparerRef.value.addComparison(payload)
+    } else {
+        activeTab.value = 'comparer'
+        requestAnimationFrame(() => {
+            comparerRef.value?.addComparison(payload)
+        })
+    }
+
+    comparerCount.value++
+}
+
+function handleTransferStorage(event: StorageEvent) {
+    if (event.key === REPEATER_TRANSFER_STORAGE_KEY) {
+        const envelope = parseTransferEnvelope<RepeaterRequest>(event.newValue)
+        if (!envelope) {
+            return
+        }
+
+        handleSendToRepeater(envelope.payload)
+        return
+    }
+
+    if (event.key === COMPARER_TRANSFER_STORAGE_KEY) {
+        const envelope = parseTransferEnvelope<TrafficComparePayload>(event.newValue)
+        if (!envelope) {
+            return
+        }
+
+        handleSendToComparer(envelope.payload)
+    }
 }
 
 // 处理添加过滤规则
@@ -167,10 +254,14 @@ watch(activeTab, (newTab) => {
         // 切换离开 Repeater 时清除待处理请求
         pendingRepeaterRequest.value = undefined
     }
+    if (newTab !== 'intruder') {
+        pendingIntruderRequest.value = undefined
+    }
 })
 
 onMounted(() => {
     console.log('traffic view mounted, activeTab:', activeTab.value)
+    window.addEventListener('storage', handleTransferStorage)
 })
 
 // 当组件从缓存中激活时，触发刷新
@@ -182,6 +273,10 @@ onActivated(() => {
 // 当组件被缓存时
 onDeactivated(() => {
     console.log('traffic view deactivated')
+})
+
+onUnmounted(() => {
+    window.removeEventListener('storage', handleTransferStorage)
 })
 
 // 捕获子组件错误

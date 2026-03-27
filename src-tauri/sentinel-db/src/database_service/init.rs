@@ -4,8 +4,8 @@ use crate::database_service::migrations::{
     TaskToolIntegrationMigration, TimestampTypeMigration,
 };
 use crate::database_service::service::DatabaseService;
-use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use crate::database_service::sqlx_compat::PgPool;
+use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use anyhow::Result;
 use chrono::Utc;
 use tracing::info;
@@ -1237,7 +1237,6 @@ impl DatabaseService {
                 diff TEXT,
                 affected_scope TEXT,
                 detection_method TEXT NOT NULL,
-                triggered_workflows_json TEXT,
                 generated_findings_json TEXT,
                 tags_json TEXT,
                 metadata_json TEXT,

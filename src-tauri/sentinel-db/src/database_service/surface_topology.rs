@@ -1,7 +1,5 @@
 use crate::database_service::service::DatabaseService;
-use crate::database_service::surface::{
-    SurfaceAssetFilter, SurfaceRelationFilter,
-};
+use crate::database_service::surface::{SurfaceAssetFilter, SurfaceRelationFilter};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -164,7 +162,8 @@ impl DatabaseService {
             edge_offset,
             node_limit,
             edge_limit,
-            has_more_nodes: (node_offset as usize + node_limit as usize) < total_node_count as usize,
+            has_more_nodes: (node_offset as usize + node_limit as usize)
+                < total_node_count as usize,
             has_more_edges,
             by_type,
             nodes,

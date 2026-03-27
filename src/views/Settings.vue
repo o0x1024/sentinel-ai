@@ -146,31 +146,20 @@ import GeneralSettings from '@/components/Settings/GeneralSettings.vue'
 import SecuritySettings from '@/components/Settings/SecuritySettings.vue'
 import NetworkSettings from '@/components/Settings/NetworkSettings.vue'
 import AgentSettings from '@/components/Settings/AgentSettings.vue'
+import {
+  createDefaultCustomProvider,
+  createDefaultRagConfig,
+  createDefaultSettings,
+  OUTPUT_STORAGE_THRESHOLD_DEFAULT,
+  type DatabaseConfig,
+  settingsCategories,
+} from './settingsDefinitions'
+import { buildAvailableModels, buildAvailableProviders, loadAiConfig as fetchAiConfig, loadAiUsageStats as fetchAiUsageStats } from './settingsAiSupport'
+import { applyDatabaseTypeDefaults } from './settingsDatabaseSupport'
+import { createSettingsSecurityActions } from './settingsSecuritySupport'
+import { applyFontSize, applyLanguage, applyTheme, applyUIScale, clampOutputStorageThreshold, normalizeCloseAction } from './settingsUiSupport'
 
 const { t, locale } = useI18n()
-
-const OUTPUT_STORAGE_THRESHOLD_MIN = 8000
-const OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX = 32000
-const OUTPUT_STORAGE_THRESHOLD_DEFAULT = 16000
-
-const clampOutputStorageThreshold = (value: number): number => {
-  if (!Number.isFinite(value)) return OUTPUT_STORAGE_THRESHOLD_DEFAULT
-  return Math.min(
-    OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX,
-    Math.max(OUTPUT_STORAGE_THRESHOLD_MIN, Math.round(value)),
-  )
-}
-
-const normalizeCloseAction = (value: unknown): 'hide' | 'minimize' | 'exit' => {
-  const normalized = String(value ?? '').trim().toLowerCase()
-  if (normalized === 'hide' || normalized === 'tray' || normalized === 'close_to_tray') {
-    return 'hide'
-  }
-  if (normalized === 'exit' || normalized === 'quit' || normalized === 'close') {
-    return 'exit'
-  }
-  return 'minimize'
-}
 
 // 响应式数据
 const activeCategory = ref('ai')
@@ -180,137 +169,11 @@ defineOptions({
   name: 'Settings'
 });
 
-// Database configuration interface
-interface DatabaseConfig {
-  db_type: string
-  path?: string
-  host?: string
-  port?: number
-  database?: string
-  username?: string
-  password?: string
-  enable_wal?: boolean
-  enable_ssl?: boolean
-  max_connections?: number
-  query_timeout?: number
-}
-
 // 设置分类
-const categories = [
-  { id: 'ai', icon: 'fas fa-robot' },
-  { id: 'rag', icon: 'fas fa-database' },
-  { id: 'agent', icon: 'fas fa-user-cog' },
-  { id: 'database', icon: 'fas fa-server' },
-  { id: 'system', icon: 'fas fa-cog' },
-  { id: 'security', icon: 'fas fa-shield-alt' },
-  { id: 'network', icon: 'fas fa-network-wired' },
-]
+const categories = settingsCategories
 
 // 设置数据
-const settings = ref({
-  ai: {
-    temperature: 0.7,
-    maxTokens: 2000,
-    toolOutputLimit: 50000,
-    outputStorageThreshold: OUTPUT_STORAGE_THRESHOLD_DEFAULT,
-    maxTurns: 100
-  },
-  database: {
-    type: 'sqlite',
-    path: '',
-    host: 'localhost',
-    port: 5432,
-    name: 'sentinel_ai',
-    username: '',
-    password: '',
-    maxConnections: 10,
-    queryTimeout: 30,
-    enableWAL: true,
-    enableSSL: false,
-    autoBackup: true,
-    backupFrequency: 'daily',
-    backupRetention: 7,
-    backupPath: '',
-    autoCleanup: false,
-    retentionDays: 30,
-    cleanupLogs: true,
-    cleanupTempFiles: true,
-    cleanupOldSessions: true
-  },
-
-  general: {
-    theme: 'auto',
-    darkMode: false,
-    fontSize: 16,
-    compactMode: false,
-    language: 'auto',
-    region: 'auto',
-    timezone: 'auto',
-    dateFormat: 'YYYY-MM-DD',
-    autoStart: false,
-    startMinimized: false,
-    restoreSession: true,
-    checkUpdates: true,
-    closeAction: 'minimize',
-    closeToTray: false,
-    minimizeToTray: false,
-    alwaysOnTop: false,
-    windowOpacity: 1,
-    memoryLimit: 2048,
-    autoGC: true,
-    preload: false,
-    maxConnections: 5,
-    requestTimeout: 30,
-    retryCount: 3,
-    analytics: false,
-    errorReporting: true,
-    usageStats: false,
-    encryptLocalData: true,
-    uiScale: 100
-  },
-  system: {
-    theme: 'dark',
-    fontSize: 'normal',
-    uiScale: 100,
-    autoStart: false,
-    minimizeToTray: true
-  },
-  security: {
-    requireAuth: false,
-    authMethod: 'password',
-    sessionTimeout: 30,
-    maxLoginAttempts: 5,
-    lockoutDuration: 15,
-    twoFactorAuth: false,
-    encryption: true,
-    encryptionType: 'AES-256',
-    keyManagement: 'auto',
-    keyRotation: true,
-    rotationPeriod: 90,
-    encryptDatabase: true,
-    encryptConfig: true,
-    encryptLogs: false,
-    encryptCache: false,
-    encryptBackups: true,
-    forceHTTPS: true,
-    verifyCertificates: true,
-    useProxy: false,
-    proxyType: 'http',
-    proxyHost: '',
-    proxyPort: 8080,
-    enableIPWhitelist: false,
-    allowedIPs: '',
-    enableRateLimit: false,
-    requestsPerMinute: 60,
-    burstLimit: 10,
-    logRetention: 90,
-    compressLogs: true,
-    remoteLogging: false,
-    logServer: '',
-    logApiKey: '',
-    pin: ''
-  }
-})
+const settings = ref(createDefaultSettings())
 
 // AI相关数据
 const selectedAiProvider = ref('OpenAI')
@@ -319,32 +182,11 @@ const aiConfig = ref<any>({ providers: {}, default_llm_provider: 'openai' })
 const aiUsageStats = ref({})
 
 // RAG配置数据
-const ragConfig = ref({
-  embedding_provider: 'ollama',
-  embedding_model: 'nomic-embed-text',
-  embedding_dimensions: null,
-  embedding_api_key: '',
-  embedding_base_url: 'http://localhost:11434',
-  chunk_size_chars: 1000,
-  chunk_overlap_chars: 200,
-  chunking_strategy: 'RecursiveCharacter',
-  min_chunk_size_chars: 100,
-  max_chunk_size_chars: 3000,
-  top_k: 5,
-  mmr_lambda: 0.7,
-  similarity_threshold: 0.7,
-  batch_size: 10,
-  max_concurrent: 4,
-  reranking_enabled: false,
-  reranking_provider: '',
-  reranking_model: '',
-  augmentation_enabled: false
-})
+const ragConfig = ref(createDefaultRagConfig())
 
 const loadAiUsageStats = async () => {
   try {
-    const stats = await invoke('get_ai_usage_stats') as Record<string, { input_tokens: number, output_tokens: number, total_tokens: number, cost: number }>
-    aiUsageStats.value = stats || {}
+    aiUsageStats.value = await fetchAiUsageStats()
   } catch (e) {
     console.warn('Failed to load AI usage stats', e)
   }
@@ -372,40 +214,13 @@ const clearAiUsageStats = async () => {
 // 单独加载 AI 配置
 const loadAiConfig = async () => {
   try {
-    const aiConfigData = await invoke('get_ai_config')
-    aiConfig.value = aiConfigData as any
-    
-    // 加载 enable_multimodal 配置
-    try {
-      const configs = await invoke('get_config', { request: { category: 'ai', key: 'enable_multimodal' } }) as Array<{ key: string, value: string }>
-      if (configs && configs.length > 0) {
-        aiConfig.value.enable_multimodal = configs[0].value === 'true'
-      } else {
-        // 默认启用多模态
-        aiConfig.value.enable_multimodal = true
-      }
-    } catch {
-      // 默认启用多模态
-      aiConfig.value.enable_multimodal = true
-    }
-    
+    aiConfig.value = await fetchAiConfig()
     console.log('Reloaded AI config:', aiConfig.value)
   } catch (e) {
     console.error('Failed to load AI config', e)
   }
 }
-const customProvider = reactive({
-  name: '',
-  api_key: '',
-  api_base: '',
-  model_id: '',
-  display_name: '',
-  rig_provider: '',
-  compat_mode: 'openai', // openai, anthropic, rig_openai, rig_anthropic
-  extra_headers_json: '',
-  timeout: 120,
-  max_retries: 3,
-})
+const customProvider = reactive(createDefaultCustomProvider())
 
 // 测试/添加自定义提供商的状态
 const testingCustomProvider = ref(false)
@@ -424,37 +239,13 @@ const databaseStatus = ref({
 
 // 计算属性
 const availableModels = computed(() => {
-  const models: any[] = []
-  
-  Object.entries(aiConfig.value.providers || {}).forEach(([providerKey, provider]: [string, any]) => {
-    if (provider.models && Array.isArray(provider.models)) {
-      provider.models.forEach((model: any) => {
-        // 放宽条件：默认展示；若存在 is_available 显式为 false 则过滤
-        if (model.is_available !== false) {
-          models.push({
-            ...model,
-            provider: providerKey, // 使用提供商的 KEY 作为名称，确保一致性
-          })
-        }
-      })
-    }
-  })
-  
+  const models = buildAvailableModels(aiConfig.value)
   console.log('Available models for scheduler:', models)
   return models
 })
 
 const availableProviders = computed(() => {
-  const providers: string[] = []
-  
-  Object.entries(aiConfig.value.providers || {}).forEach(([providerKey, provider]: [string, any]) => {
-    if (provider.enabled) {
-      if (!providers.includes(providerKey)) {
-        providers.push(providerKey)
-      }
-    }
-  })
-  
+  const providers = buildAvailableProviders(aiConfig.value)
   console.log('Available providers:', providers)
   return providers
 })
@@ -478,7 +269,7 @@ const loadSettings = async () => {
         settings.value.database.enableSSL = dbConfig.enable_ssl
         settings.value.database.maxConnections = dbConfig.max_connections
         settings.value.database.queryTimeout = dbConfig.query_timeout
-        applyDatabaseTypeDefaults(dbConfig.db_type)
+        applyDatabaseTypeDefaults(settings.value, dbConfig.db_type)
       }
     } catch (dbConfigError) {
       console.error('Failed to load database config:', dbConfigError)
@@ -593,13 +384,13 @@ const loadSettings = async () => {
     
     // 应用已保存的设置
     if (settings.value.general?.theme) {
-      applyTheme(settings.value.general.theme)
+      applyTheme(settings.value.general.theme, settings.value)
     }
     if (settings.value.general?.fontSize) {
       applyFontSize(settings.value.general.fontSize)
     }
     if (settings.value.general?.language) {
-      applyLanguage(settings.value.general.language)
+      applyLanguage(settings.value.general.language, locale)
     }
     if (settings.value.general?.uiScale) {
       applyUIScale(settings.value.general.uiScale)
@@ -610,21 +401,6 @@ const loadSettings = async () => {
   } catch (error) {
     console.error('Failed to load settings:', error)
     dialog.toast.error('加载设置失败')
-  }
-}
-
-const applyDatabaseTypeDefaults = (dbType: string) => {
-  if (dbType === 'postgresql') {
-    settings.value.database.port = 5432
-    settings.value.database.host = settings.value.database.host || 'localhost'
-  } else if (dbType === 'mysql') {
-    settings.value.database.port = 3306
-    settings.value.database.host = settings.value.database.host || 'localhost'
-  } else if (dbType === 'sqlite') {
-    settings.value.database.host = ''
-    settings.value.database.port = 0
-    settings.value.database.username = ''
-    settings.value.database.password = ''
   }
 }
 
@@ -1479,7 +1255,7 @@ const saveGeneralConfig = async () => {
     
     // 应用主题设置
     if (settings.value.general?.theme) {
-      applyTheme(settings.value.general.theme)
+      applyTheme(settings.value.general.theme, settings.value)
     }
     
     // 应用字体大小设置
@@ -1489,7 +1265,7 @@ const saveGeneralConfig = async () => {
     
     // 应用语言设置
     if (settings.value.general?.language) {
-      applyLanguage(settings.value.general.language)
+      applyLanguage(settings.value.general.language, locale)
     }
     
     // 应用UI缩放设置
@@ -1531,135 +1307,16 @@ const saveGeneralConfig = async () => {
   }
 }
 
-const applyTheme = (theme: string) => {
-  // 处理 auto 主题：根据系统偏好自动选择
-  let finalTheme = theme
-  if (theme === 'auto') {
-    finalTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
-  
-  // 应用主题到文档
-  document.documentElement.setAttribute('data-theme', finalTheme)
-  localStorage.setItem('theme', finalTheme)
-  
-  // 更新深色模式状态
-  const isDark = ['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula'].includes(finalTheme)
-  if (settings.value.general) {
-    settings.value.general.darkMode = isDark
-  }
-}
-
-const applyFontSize = (fontSize: number) => {
-  // 应用字体大小到根元素
-  const rootElement = document.documentElement
-  rootElement.style.fontSize = `${fontSize}px`
-  
-  // 同时更新全局字体大小变量
-  rootElement.style.setProperty('--font-size-base', `${fontSize}px`)
-  
-  // 保存到全局设置（兼容 App.vue 的逻辑）
-  if (window.updateFontSize) {
-    const sizeMap: Record<number, string> = {
-      12: 'small', 14: 'normal', 16: 'normal', 18: 'large', 20: 'large'
-    }
-    window.updateFontSize(sizeMap[fontSize] || 'normal')
-  }
-}
-
-const applyLanguage = (language: string) => {
-  // 处理 auto 语言：根据浏览器语言自动选择
-  let finalLang = language
-  if (language === 'auto') {
-    const browserLang = navigator.language.toLowerCase()
-    if (browserLang.startsWith('zh')) {
-      finalLang = browserLang.includes('tw') || browserLang.includes('hk') ? 'zh-TW' : 'zh-CN'
-    } else if (browserLang.startsWith('en')) {
-      finalLang = 'en-US'
-    } else {
-      finalLang = 'zh-CN' // 默认中文
-    }
-  }
-  
-  // 应用语言设置
-  let langCode = finalLang.split('-')[0] // 提取主语言代码
-  
-  // 仅支持 zh 和 en，其他语言映射到 en
-  if (langCode !== 'zh') {
-    langCode = 'en'
-  }
-  
-  locale.value = langCode
-  // 与 i18n/index.ts 保持一致，写入 sentinel-language
-  localStorage.setItem('sentinel-language', langCode)
-}
-
-const applyUIScale = (scale: number) => {
-  // 应用UI缩放
-  const rootElement = document.documentElement
-  const scaleValue = scale / 100
-  
-  rootElement.style.setProperty('--ui-scale', scaleValue.toString())
-  rootElement.style.transform = `scale(${scaleValue})`
-  rootElement.style.transformOrigin = 'top left'
-  
-  if (scale !== 100) {
-    rootElement.style.width = `${10000 / scale}%`
-    rootElement.style.height = `${10000 / scale}%`
-  } else {
-    rootElement.style.width = '100%'
-    rootElement.style.height = '100%'
-  }
-  
-  // 保存到全局设置
-  if (window.updateUIScale) {
-    window.updateUIScale(scale)
-  }
-}
-
 // 安全相关方法
-const changePassword = async (passwordForm: any) => {
-  dialog.toast.success('密码已更改')
-}
-
-const checkVulnerabilities = async () => {
-  dialog.toast.info('正在检查漏洞...')
-}
-
-const generateSecurityReport = async () => {
-  dialog.toast.success('安全报告已生成')
-}
-
-const lockApplication = async () => {
-  dialog.toast.warning('应用程序已锁定')
-}
-
-const emergencyShutdown = async () => {
-  const confirmed = await dialog.confirm({
-    title: '紧急关闭',
-    message: '确定要紧急关闭应用程序吗？',
-    variant: 'error'
-  })
-  
-  if (confirmed) {
-    dialog.toast.error('应用程序正在紧急关闭...')
-  }
-}
-
-const wipeSecurityData = async () => {
-  const confirmed = await dialog.confirm({
-    title: '清除安全数据',
-    message: '确定要清除所有安全数据吗？此操作不可撤销！',
-    variant: 'error'
-  })
-  
-  if (confirmed) {
-    dialog.toast.error('安全数据已清除')
-  }
-}
-
-const saveSecurityConfig = async () => {
-   dialog.toast.success('安全配置已保存')
-}
+const {
+  changePassword,
+  checkVulnerabilities,
+  generateSecurityReport,
+  lockApplication,
+  emergencyShutdown,
+  wipeSecurityData,
+  saveSecurityConfig,
+} = createSettingsSecurityActions(dialog)
 
 // 数据库相关方法
 const saveRagConfig = async () => {
@@ -1701,27 +1358,7 @@ const testEmbeddingConnection = async () => {
 }
 
 const resetRagConfig = () => {
-  ragConfig.value = {
-    embedding_provider: 'ollama',
-    embedding_model: 'nomic-embed-text',
-    embedding_dimensions: null,
-    embedding_api_key: '',
-    embedding_base_url: 'http://localhost:11434',
-    chunk_size_chars: 1000,
-    chunk_overlap_chars: 200,
-    chunking_strategy: 'RecursiveCharacter',
-    min_chunk_size_chars: 100,
-    max_chunk_size_chars: 3000,
-    top_k: 5,
-    mmr_lambda: 0.7,
-    similarity_threshold: 0.7,
-    batch_size: 10,
-    max_concurrent: 4,
-    reranking_enabled: false,
-    reranking_provider: '',
-    reranking_model: '',
-    augmentation_enabled: false
-  }
+  ragConfig.value = createDefaultRagConfig()
   dialog.toast.success('RAG配置已重置为默认值')
 }
 
@@ -1759,7 +1396,7 @@ watch(() => settings.value.general, (newGeneral, oldGeneral) => {
 
     // 主题变更时应用
     if (newGeneral?.theme !== oldGeneral?.theme && newGeneral?.theme) {
-      applyTheme(newGeneral.theme)
+      applyTheme(newGeneral.theme, settings.value)
     }
 
     // 字体大小变更时应用
@@ -1769,7 +1406,7 @@ watch(() => settings.value.general, (newGeneral, oldGeneral) => {
 
     // 语言变更时应用
     if (newGeneral?.language !== oldGeneral?.language && newGeneral?.language) {
-      applyLanguage(newGeneral.language)
+      applyLanguage(newGeneral.language, locale)
     }
 
     // UI 缩放变更时应用
@@ -1785,7 +1422,7 @@ watch(
   () => settings.value.database.type,
   (newType, oldType) => {
     if (!newType || newType === oldType) return
-    applyDatabaseTypeDefaults(newType)
+    applyDatabaseTypeDefaults(settings.value, newType)
   }
 )
 </script>

@@ -1,7 +1,12 @@
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use crate::database_service::sqlx_compat::{MySql, Postgres};
+use crate::database_service::surface_asset_query::{
+    push_surface_asset_filters, push_surface_asset_pagination,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sqlx::QueryBuilder;
 use std::collections::HashMap;
 
 /// Shared surface asset row used by all typed network mapping objects.
@@ -340,39 +345,42 @@ pub struct SurfaceOverview {
 }
 
 impl DatabaseService {
-    async fn surface_asset_matches_search(
-        &self,
-        row: &SurfaceAssetRow,
-        needle: &str,
-    ) -> Result<bool> {
-        if row.asset_name.to_lowercase().contains(needle)
-            || row
-                .display_name
-                .as_deref()
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(needle)
-            || row.status.to_lowercase().contains(needle)
-            || row
-                .internet_exposure
-                .as_deref()
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(needle)
-            || row
-                .source
-                .as_deref()
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(needle)
-        {
-            return Ok(true);
-        }
+    pub async fn count_surface_assets(&self, filter: &SurfaceAssetFilter) -> Result<i64> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let typed_details = self.get_surface_typed_details(row).await?;
-        Ok(typed_details
-            .map(|details| details.to_string().to_lowercase().contains(needle))
-            .unwrap_or(false))
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+                    "SELECT COUNT(*) FROM surface_assets WHERE 1=1",
+                );
+                push_surface_asset_filters(&mut query_builder, filter);
+                Ok(query_builder
+                    .build_query_scalar::<i64>()
+                    .fetch_one(pool)
+                    .await?)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM surface_assets WHERE 1=1");
+                push_surface_asset_filters(&mut query_builder, filter);
+                Ok(query_builder
+                    .build_query_scalar::<i64>()
+                    .fetch_one(pool)
+                    .await?)
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM surface_assets WHERE 1=1");
+                push_surface_asset_filters(&mut query_builder, filter);
+                Ok(query_builder
+                    .build_query_scalar::<i64>()
+                    .fetch_one(pool)
+                    .await?)
+            }
+        }
     }
 
     pub async fn get_surface_asset_by_identity(
@@ -758,24 +766,31 @@ impl DatabaseService {
             existing.maintainer = asset.maintainer.clone().or(existing.maintainer);
             existing.contact = asset.contact.clone().or(existing.contact);
             existing.env = asset.env.clone().or(existing.env);
-            existing.internet_exposure =
-                asset.internet_exposure.clone().or(existing.internet_exposure);
+            existing.internet_exposure = asset
+                .internet_exposure
+                .clone()
+                .or(existing.internet_exposure);
             existing.criticality = asset.criticality.clone().or(existing.criticality);
             existing.data_level = asset.data_level.clone().or(existing.data_level);
             existing.source = asset.source.clone().or(existing.source);
             existing.last_seen_at = asset.last_seen_at.clone();
-            existing.last_verified_at = asset.last_verified_at.clone().or(existing.last_verified_at);
-            existing.discovery_task_id =
-                asset.discovery_task_id.clone().or(existing.discovery_task_id);
+            existing.last_verified_at =
+                asset.last_verified_at.clone().or(existing.last_verified_at);
+            existing.discovery_task_id = asset
+                .discovery_task_id
+                .clone()
+                .or(existing.discovery_task_id);
             existing.status = asset.status.clone();
             existing.alive_status = asset.alive_status.clone().or(existing.alive_status);
             existing.confidence_score = asset.confidence_score.or(existing.confidence_score);
-            existing.fingerprint_confidence =
-                asset.fingerprint_confidence.or(existing.fingerprint_confidence);
+            existing.fingerprint_confidence = asset
+                .fingerprint_confidence
+                .or(existing.fingerprint_confidence);
             existing.risk_score = asset.risk_score.or(existing.risk_score);
             existing.risk_level = asset.risk_level.clone().or(existing.risk_level);
-            existing.vulnerabilities_count =
-                asset.vulnerabilities_count.or(existing.vulnerabilities_count);
+            existing.vulnerabilities_count = asset
+                .vulnerabilities_count
+                .or(existing.vulnerabilities_count);
             existing.weak_password_flag = asset.weak_password_flag.or(existing.weak_password_flag);
             existing.expired_cert_flag = asset.expired_cert_flag.or(existing.expired_cert_flag);
             existing.exposed_to_internet_flag = asset
@@ -1028,43 +1043,7 @@ impl DatabaseService {
         "#;
 
         let rows = match runtime {
-            DatabasePool::SQLite(pool) => {
-                sqlx::query(sql)
-                    .bind(status)
-                    .bind(observation_count)
-                    .bind(imported_asset_count)
-                    .bind(changed_asset_count)
-                    .bind(error_message)
-                    .bind(completed_at)
-                    .bind(run_id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query(sql)
-                    .bind(status)
-                    .bind(observation_count)
-                    .bind(imported_asset_count)
-                    .bind(changed_asset_count)
-                    .bind(error_message)
-                    .bind(completed_at)
-                    .bind(run_id)
-                    .execute(pool)
-                    .await?
-                    .rows_affected()
-            }
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    r#"
-                    UPDATE surface_discovery_runs
-                    SET status = $1, observation_count = COALESCE($2, observation_count),
-                        imported_asset_count = COALESCE($3, imported_asset_count),
-                        changed_asset_count = COALESCE($4, changed_asset_count),
-                        error_message = $5, completed_at = $6
-                    WHERE id = $7
-                    "#,
-                )
+            DatabasePool::SQLite(pool) => sqlx::query(sql)
                 .bind(status)
                 .bind(observation_count)
                 .bind(imported_asset_count)
@@ -1074,14 +1053,47 @@ impl DatabaseService {
                 .bind(run_id)
                 .execute(pool)
                 .await?
-                .rows_affected()
-            }
+                .rows_affected(),
+            DatabasePool::MySQL(pool) => sqlx::query(sql)
+                .bind(status)
+                .bind(observation_count)
+                .bind(imported_asset_count)
+                .bind(changed_asset_count)
+                .bind(error_message)
+                .bind(completed_at)
+                .bind(run_id)
+                .execute(pool)
+                .await?
+                .rows_affected(),
+            DatabasePool::PostgreSQL(pool) => sqlx::query(
+                r#"
+                    UPDATE surface_discovery_runs
+                    SET status = $1, observation_count = COALESCE($2, observation_count),
+                        imported_asset_count = COALESCE($3, imported_asset_count),
+                        changed_asset_count = COALESCE($4, changed_asset_count),
+                        error_message = $5, completed_at = $6
+                    WHERE id = $7
+                    "#,
+            )
+            .bind(status)
+            .bind(observation_count)
+            .bind(imported_asset_count)
+            .bind(changed_asset_count)
+            .bind(error_message)
+            .bind(completed_at)
+            .bind(run_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
         };
 
         Ok(rows > 0)
     }
 
-    pub async fn create_surface_observation(&self, observation: &SurfaceObservationRow) -> Result<()> {
+    pub async fn create_surface_observation(
+        &self,
+        observation: &SurfaceObservationRow,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()
@@ -1155,99 +1167,58 @@ impl DatabaseService {
         Ok(())
     }
 
-    pub async fn list_surface_discovery_runs(
+    pub async fn list_surface_assets(
         &self,
-        program_id: Option<&str>,
-        limit: Option<i64>,
-    ) -> Result<Vec<SurfaceDiscoveryRunRow>> {
+        filter: &SurfaceAssetFilter,
+    ) -> Result<Vec<SurfaceAssetRow>> {
         let runtime = self
             .runtime_pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let mut rows: Vec<SurfaceDiscoveryRunRow> = match runtime {
+        let rows: Vec<SurfaceAssetRow> = match runtime {
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as("SELECT * FROM surface_discovery_runs")
+                let mut query_builder =
+                    QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM surface_assets WHERE 1=1");
+                push_surface_asset_filters(&mut query_builder, filter);
+                query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
+                push_surface_asset_pagination(
+                    &mut query_builder,
+                    filter,
+                    Some(" LIMIT -1 OFFSET "),
+                );
+                query_builder
+                    .build_query_as::<SurfaceAssetRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_discovery_runs")
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT * FROM surface_assets WHERE 1=1");
+                push_surface_asset_filters(&mut query_builder, filter);
+                query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
+                push_surface_asset_pagination(
+                    &mut query_builder,
+                    filter,
+                    Some(" LIMIT 18446744073709551615 OFFSET "),
+                );
+                query_builder
+                    .build_query_as::<SurfaceAssetRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_discovery_runs")
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT * FROM surface_assets WHERE 1=1");
+                push_surface_asset_filters(&mut query_builder, filter);
+                query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
+                push_surface_asset_pagination(&mut query_builder, filter, None);
+                query_builder
+                    .build_query_as::<SurfaceAssetRow>()
                     .fetch_all(pool)
                     .await?
             }
         };
-
-        if let Some(program_id) = program_id {
-            rows.retain(|row| row.program_id == program_id);
-        }
-
-        rows.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-
-        if let Some(limit) = limit {
-            rows.truncate(limit.max(0) as usize);
-        }
-
-        Ok(rows)
-    }
-
-    pub async fn list_surface_assets(&self, filter: &SurfaceAssetFilter) -> Result<Vec<SurfaceAssetRow>> {
-        let runtime = self
-            .runtime_pool
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-
-        let mut rows: Vec<SurfaceAssetRow> = match runtime {
-            DatabasePool::SQLite(pool) => {
-                sqlx::query_as("SELECT * FROM surface_assets")
-                    .fetch_all(pool)
-                    .await?
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_assets")
-                    .fetch_all(pool)
-                    .await?
-            }
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_assets")
-                    .fetch_all(pool)
-                    .await?
-            }
-        };
-
-        if let Some(program_id) = filter.program_id.as_deref() {
-            rows.retain(|row| row.program_id == program_id);
-        }
-        if let Some(asset_type) = filter.asset_type.as_deref() {
-            rows.retain(|row| row.asset_type == asset_type);
-        }
-        if let Some(status) = filter.status.as_deref() {
-            rows.retain(|row| row.status == status);
-        }
-        if let Some(search) = filter.search.as_deref() {
-            let needle = search.to_lowercase();
-            let mut matched_rows = Vec::with_capacity(rows.len());
-            for row in rows {
-                if self.surface_asset_matches_search(&row, &needle).await? {
-                    matched_rows.push(row);
-                }
-            }
-            rows = matched_rows;
-        }
-
-        rows.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
-
-        if let Some(offset) = filter.offset {
-            rows = rows.into_iter().skip(offset.max(0) as usize).collect();
-        }
-        if let Some(limit) = filter.limit {
-            rows.truncate(limit.max(0) as usize);
-        }
 
         Ok(rows)
     }
@@ -1297,55 +1268,4 @@ impl DatabaseService {
 
         Ok(rows)
     }
-
-    pub async fn get_surface_overview(&self, program_id: Option<&str>) -> Result<SurfaceOverview> {
-        let assets = self
-            .list_surface_assets(&SurfaceAssetFilter {
-                program_id: program_id.map(str::to_string),
-                ..Default::default()
-            })
-            .await?;
-        let relations = self
-            .list_surface_relations(&SurfaceRelationFilter {
-                program_id: program_id.map(str::to_string),
-                ..Default::default()
-            })
-            .await?;
-        let runs = self.list_surface_discovery_runs(program_id, Some(20)).await?;
-
-        let mut by_type = HashMap::new();
-        let mut active_assets = 0;
-        let mut high_risk_assets = 0;
-
-        for asset in &assets {
-            *by_type.entry(asset.asset_type.clone()).or_insert(0) += 1;
-            if asset.status.eq_ignore_ascii_case("active") {
-                active_assets += 1;
-            }
-            if asset
-                .risk_level
-                .as_deref()
-                .map(|level| matches!(level, "high" | "critical" | "High" | "Critical"))
-                .unwrap_or(false)
-            {
-                high_risk_assets += 1;
-            }
-        }
-
-        let recent_changes = runs
-            .iter()
-            .map(|run| run.changed_asset_count.unwrap_or(0))
-            .sum::<i32>();
-
-        Ok(SurfaceOverview {
-            total_assets: assets.len() as i32,
-            active_assets,
-            high_risk_assets,
-            by_type,
-            total_relations: relations.len() as i32,
-            recent_changes,
-            recent_runs: runs.len() as i32,
-        })
-    }
-
 }

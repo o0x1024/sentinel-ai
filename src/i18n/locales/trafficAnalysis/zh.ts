@@ -1,9 +1,13 @@
+import intruder from './zh.intruder'
+
 export default {
   title: '流量分析',
   tabs: {
     control: '代理控制',
     history: '历史记录',
     repeater: '重放器',
+    comparer: 'Comparer',
+    intruder: 'Intruder',
     proxifier: '代理工具',
     capture: '抓包',
     proxyConfig: '代理配置'
@@ -15,6 +19,8 @@ export default {
     control: '代理控制',
     history: '历史记录',
     repeater: '重放器',
+    comparer: 'Comparer',
+    intruder: 'Intruder',
     proxifier: '代理工具',
     capture: '抓包',
     proxyConfig: '代理配置'
@@ -23,9 +29,20 @@ export default {
     control: 'fa-sliders-h',
     history: 'fa-history',
     repeater: 'fa-redo',
+    comparer: 'fa-not-equal',
+    intruder: 'fa-crosshairs',
     proxifier: 'fa-network-wired',
     capture: 'fa-broadcast-tower',
     proxyConfig: 'fa-cog'
+  },
+  comparer: {
+    labels: {
+      changedLines: '变更行数',
+      similarity: '相似度',
+    },
+    empty: {
+      noItems: '暂无对比项',
+    },
   },
   // Proxy Intercept Component
   intercept: {
@@ -58,6 +75,7 @@ export default {
       save: '保存',
       edit: '编辑',
       sendToRepeater: '发送到重放器',
+      sendToIntruder: '发送到 Intruder',
       toggleHttp: '切换HTTP拦截',
       toggleWs: '切换WebSocket拦截'
     },
@@ -78,6 +96,7 @@ export default {
     sentToAssistant: '已发送{type}到 AI 助手',
     contextMenu: {
       sendToRepeater: '发送到重放器',
+      sendToIntruder: '发送到 Intruder',
       sendToAI: '发送到AI助手',
       addFilter: '添加过滤规则',
       filterByDomain: '按域名过滤',
@@ -153,6 +172,7 @@ export default {
       https: 'HTTPS'
     }
   },
+  intruder,
   // Proxy History Component
   history: {
     title: '请求历史',
@@ -277,6 +297,7 @@ export default {
     },
     contextMenu: {
       sendToRepeater: '发送到重放器',
+      sendToIntruder: '发送到 Intruder',
       sendRequestToAssistant: '发送请求到助手',
       sendResponseToAssistant: '发送响应到助手',
       copyUrl: '复制 URL',

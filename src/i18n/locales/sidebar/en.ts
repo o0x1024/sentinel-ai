@@ -22,6 +22,8 @@ export default {
   performance: 'Performance Monitor',
   workflowStudio: 'Workflow Studio',
   notifications: 'Notifications',
+  notificationCenter: 'Message Center',
+  notificationRules: 'Notification Center',
   bugBounty: 'BBounty',
 
   // Sidebar section titles

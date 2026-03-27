@@ -187,29 +187,25 @@
                 </td>
                 <td>
                   <div class="flex gap-1">
-                    <button class="btn btn-ghost btn-xs" @click="viewEvent(event)" :title="t('common.view')">
+                    <button type="button" class="btn btn-ghost btn-xs" @click="viewEvent(event)" :title="t('common.view')">
                       <i class="fas fa-eye"></i>
                     </button>
                     <button 
-                      v-if="event.auto_trigger_enabled && event.status === 'new'"
+                      type="button"
                       class="btn btn-ghost btn-xs text-primary" 
                       @click="triggerWorkflow(event)" 
                       :title="t('bugBounty.changeEvents.triggerWorkflow')"
                     >
                       <i class="fas fa-play"></i>
                     </button>
-                    <div class="dropdown dropdown-end">
-                      <label tabindex="0" class="btn btn-ghost btn-xs">
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-xs"
+                      :title="t('bugBounty.table.actions')"
+                      @click.stop="toggleActionMenu($event, event)"
+                    >
                         <i class="fas fa-ellipsis-v"></i>
-                      </label>
-                      <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-lg bg-base-100 rounded-box w-40">
-                        <li><a @click="updateStatus(event, 'acknowledged')">{{ t('bugBounty.changeEvents.acknowledge') }}</a></li>
-                        <li><a @click="updateStatus(event, 'resolved')">{{ t('bugBounty.changeEvents.resolve') }}</a></li>
-                        <li><a @click="updateStatus(event, 'ignored')">{{ t('bugBounty.changeEvents.ignore') }}</a></li>
-                        <li class="divider"></li>
-                        <li><a class="text-error" @click="deleteEvent(event)">{{ t('common.delete') }}</a></li>
-                      </ul>
-                    </div>
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -227,13 +223,37 @@
       </div>
     </div>
   </div>
+  <Teleport to="body">
+    <div
+      v-if="actionMenu.visible && actionMenu.event"
+      class="fixed inset-0 z-[1200]"
+      @click="closeActionMenu"
+    >
+      <ul
+        ref="actionMenuRef"
+        class="menu fixed w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow-2xl"
+        :style="{
+          top: `${actionMenu.top}px`,
+          left: `${actionMenu.left}px`,
+        }"
+        @click.stop
+      >
+        <li><a @click="handleActionMenuStatus('acknowledged')">{{ t('bugBounty.changeEvents.acknowledge') }}</a></li>
+        <li><a @click="handleActionMenuStatus('resolved')">{{ t('bugBounty.changeEvents.resolve') }}</a></li>
+        <li><a @click="handleActionMenuStatus('ignored')">{{ t('bugBounty.changeEvents.ignore') }}</a></li>
+        <li class="divider my-1"></li>
+        <li><a class="text-error" @click="handleActionMenuDelete">{{ t('common.delete') }}</a></li>
+      </ul>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from '../../composables/useToast'
+import { dialog } from '../../composables/useDialog'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -264,6 +284,14 @@ const filter = reactive({
   event_type: '',
   severity: '',
   status: '',
+})
+
+const actionMenuRef = ref<HTMLElement | null>(null)
+const actionMenu = reactive({
+  visible: false,
+  top: 0,
+  left: 0,
+  event: null as any | null,
 })
 
 const buildFilterParams = (includePagination = true) => {
@@ -386,7 +414,7 @@ const goToNextPage = () => {
 
 const batchUpdateStatus = async (status: string) => {
   if (selectedIds.value.length === 0) return
-  if (!confirm(t('bugBounty.batch.confirmUpdateStatus', { count: selectedIds.value.length }))) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmUpdateStatus', { count: selectedIds.value.length })))) return
 
   try {
     loading.value = true
@@ -408,7 +436,7 @@ const batchUpdateStatus = async (status: string) => {
 
 const batchDelete = async () => {
   if (selectedIds.value.length === 0) return
-  if (!confirm(t('bugBounty.batch.confirmDelete', { count: selectedIds.value.length }))) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmDelete', { count: selectedIds.value.length })))) return
 
   try {
     loading.value = true
@@ -450,7 +478,7 @@ const updateStatus = async (event: any, status: string) => {
 }
 
 const deleteEvent = async (event: any) => {
-  if (!confirm(t('bugBounty.changeEvents.confirmDelete'))) return
+  if (!(await dialog.confirm(t('bugBounty.changeEvents.confirmDelete')))) return
   try {
     await invoke('bounty_delete_change_event', { id: event.id })
     toast.success(t('bugBounty.changeEvents.deleted'))
@@ -463,6 +491,81 @@ const deleteEvent = async (event: any) => {
     console.error('Failed to delete event:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
   }
+}
+
+const closeActionMenu = () => {
+  actionMenu.visible = false
+  actionMenu.event = null
+}
+
+const positionActionMenu = (trigger: HTMLElement) => {
+  const menuWidth = actionMenuRef.value?.offsetWidth || 176
+  const menuHeight = actionMenuRef.value?.offsetHeight || 180
+  const gap = 8
+  const margin = 8
+  const rect = trigger.getBoundingClientRect()
+
+  const preferredLeft = rect.left - menuWidth - gap
+  const fallbackLeft = rect.right + gap
+  const nextLeft = preferredLeft >= margin
+    ? preferredLeft
+    : Math.min(fallbackLeft, window.innerWidth - menuWidth - margin)
+
+  const centeredTop = rect.top + (rect.height / 2) - (menuHeight / 2)
+  const nextTop = Math.min(
+    Math.max(margin, centeredTop),
+    window.innerHeight - menuHeight - margin,
+  )
+
+  actionMenu.left = nextLeft
+  actionMenu.top = nextTop
+}
+
+const toggleActionMenu = async (mouseEvent: MouseEvent, event: any) => {
+  const trigger = mouseEvent.currentTarget
+  if (!(trigger instanceof HTMLElement)) return
+
+  if (actionMenu.visible && actionMenu.event?.id === event.id) {
+    closeActionMenu()
+    return
+  }
+
+  actionMenu.event = event
+  actionMenu.visible = true
+  await nextTick()
+  positionActionMenu(trigger)
+}
+
+const handleActionMenuStatus = async (status: string) => {
+  const event = actionMenu.event
+  closeActionMenu()
+  if (!event) return
+  await updateStatus(event, status)
+}
+
+const handleActionMenuDelete = async () => {
+  const event = actionMenu.event
+  closeActionMenu()
+  if (!event) return
+  await deleteEvent(event)
+}
+
+const handleActionMenuEscape = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    closeActionMenu()
+  }
+}
+
+const bindActionMenuListeners = () => {
+  document.addEventListener('scroll', closeActionMenu, true)
+  window.addEventListener('resize', closeActionMenu)
+  document.addEventListener('keydown', handleActionMenuEscape)
+}
+
+const unbindActionMenuListeners = () => {
+  document.removeEventListener('scroll', closeActionMenu, true)
+  window.removeEventListener('resize', closeActionMenu)
+  document.removeEventListener('keydown', handleActionMenuEscape)
 }
 
 // Helpers
@@ -557,9 +660,24 @@ const getRiskScoreClass = (score: number) => {
   return 'text-success'
 }
 
+watch(
+  () => actionMenu.visible,
+  (visible) => {
+    if (visible) {
+      bindActionMenuListeners()
+    } else {
+      unbindActionMenuListeners()
+    }
+  },
+)
+
 // Lifecycle
 onMounted(async () => {
   await loadEvents()
   await loadStats()
+})
+
+onBeforeUnmount(() => {
+  unbindActionMenuListeners()
 })
 </script>

@@ -6,7 +6,10 @@ use crate::database_service::surface::{
 use anyhow::Result;
 
 impl DatabaseService {
-    pub async fn create_surface_fingerprint(&self, fingerprint: &SurfaceFingerprintRow) -> Result<()> {
+    pub async fn create_surface_fingerprint(
+        &self,
+        fingerprint: &SurfaceFingerprintRow,
+    ) -> Result<()> {
         let runtime = self
             .runtime_pool
             .as_ref()

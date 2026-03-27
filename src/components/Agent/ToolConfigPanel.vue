@@ -363,6 +363,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
+import { dialog } from '../../composables/useDialog'
 
 interface ToolMetadata {
   id: string
@@ -668,7 +669,7 @@ const loadUsageStats = async () => {
 }
 
 const clearUsageStats = async () => {
-  if (!confirm(t('agent.areYouSureClearStatistics'))) return
+  if (!(await dialog.confirm(t('agent.areYouSureClearStatistics')))) return
   
   try {
     await invoke('clear_tool_usage_stats')

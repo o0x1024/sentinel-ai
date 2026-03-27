@@ -902,47 +902,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { invoke } from '@tauri-apps/api/core'
 import SearchableSelect from '@/components/SearchableSelect.vue'
 import EditableSelect from '@/components/EditableSelect.vue'
-import { EditorView, basicSetup } from 'codemirror'
-import { EditorState } from '@codemirror/state'
-import { json } from '@codemirror/lang-json'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { keymap } from '@codemirror/view'
-import { defaultKeymap, indentWithTab } from '@codemirror/commands'
+import {
+  getEnabledProviders,
+  getProviderIcon,
+  getProviderModels,
+  getProviderName,
+  needsApiKey,
+  rigProviderOptions,
+} from './aiSettingsProviderSupport'
+import {
+  formatUsageLastUsed,
+  formatUsageTotalTokens,
+  maxUsageTokens,
+  totalUsageCost,
+  totalUsageInputTokens,
+  totalUsageOutputTokens,
+} from './aiSettingsStatsSupport'
+import { useAiSettingsManualEditor } from './useAiSettingsManualEditor'
+import { useAiSettingsServiceIntegrations } from './useAiSettingsServiceIntegrations'
 
 const { t } = useI18n()
-
-// 手动编辑模式相关状态
-const useGuiMode = ref(true)
-const manualConfigText = ref('')
-const configError = ref('')
-const configValid = ref(false)
-
-// 统计视图状态
-const statsView = ref<'provider' | 'model'>('provider')
-const detailedStats = ref<any[]>([])
 const isAvailableModelsExpanded = ref(false)
-
-// 加载详细统计
-const loadDetailedStats = async () => {
-  try {
-    const stats = await invoke('get_detailed_ai_usage_stats') as any[]
-    detailedStats.value = stats || []
-  } catch (e) {
-    console.warn('Failed to load detailed AI usage stats', e)
-  }
-}
-
-// CodeMirror 相关
-const editorContainer = ref<HTMLDivElement | null>(null)
-const fullscreenEditorContainer = ref<HTMLDivElement | null>(null)
-let editorView: EditorView | null = null
-let fullscreenEditorView: EditorView | null = null
-const isFullscreen = ref(false)
 
 // Props
 interface Props {
@@ -982,6 +966,43 @@ interface Emits {
 }
 
 const emit = defineEmits<Emits>()
+
+const aiConfigRef = computed(() => props.aiConfig)
+const {
+  applyAndExitFullscreen,
+  applyManualConfig,
+  configError,
+  configValid,
+  editorContainer,
+  exitFullscreen,
+  formatConfig,
+  fullscreenEditorContainer,
+  isFullscreen,
+  manualConfigText,
+  resetToDefault,
+  toggleFullscreen,
+  useGuiMode,
+  validateConfig,
+} = useAiSettingsManualEditor({
+  aiConfig: aiConfigRef,
+  emitApplyManualConfig: (config) => {
+    emit('applyManualConfig', config)
+  },
+})
+
+const {
+  aliyunApiKeyLocal,
+  aliyunDefaultModelLocal,
+  detailedStats,
+  loadDetailedStats,
+  saveServiceConfigs,
+  statsView,
+  tavilyApiKeyLocal,
+  tavilyMaxResultsLocal,
+  testAliyunConnection,
+  testingAliyun,
+  totalRequests,
+} = useAiSettingsServiceIntegrations()
 
 // Computed
 const selectedAiProvider = computed({
@@ -1238,21 +1259,9 @@ const onChangeDefaultVisionModel = async () => {
   }
 }
 
-// 获取已启用的提供商列表
-const getEnabledProviders = () => {
-  if (!props.aiConfig.providers) {
-    return []
-  }
-
-  return Object.keys(props.aiConfig.providers).filter(providerKey => {
-    const provider = props.aiConfig.providers[providerKey]
-    return provider && provider.enabled === true
-  })
-}
-
 // Provider 选项（用于可搜索下拉）
 const providerOptions = computed(() => {
-  return getEnabledProviders().map(provider => ({
+  return getEnabledProviders(props.aiConfig).map(provider => ({
     value: provider,
     label: getProviderName(provider),
     description: ''
@@ -1261,7 +1270,7 @@ const providerOptions = computed(() => {
 
 // Chat 模型选项（用于可搜索下拉）
 const chatModelOptions = computed(() => {
-  const models = getProviderModels(defaultProviderLocal.value)
+  const models = getProviderModels(props.aiConfig, defaultProviderLocal.value)
   return models.map((model: any) => ({
     value: model.id,
     label: model.name,
@@ -1271,7 +1280,7 @@ const chatModelOptions = computed(() => {
 
 // VLM 模型选项（用于可搜索下拉）
 const vlmModelOptions = computed(() => {
-  const models = getProviderModels(defaultVlmProviderLocal.value)
+  const models = getProviderModels(props.aiConfig, defaultVlmProviderLocal.value)
   return models.map((model: any) => ({
     value: model.id,
     label: model.supports_vision ? `👁️ ${model.name}` : model.name,
@@ -1314,107 +1323,6 @@ const onSelectedProviderModelChange = () => {
   saveAiConfig()
 }
 
-// 获取指定提供商的模型列表
-const getProviderModels = (providerKey: string) => {
-  if (!providerKey || !props.aiConfig.providers) {
-    return []
-  }
-
-  // 查找匹配的提供商（不区分大小写）
-  const provider = Object.keys(props.aiConfig.providers).find(key =>
-    key.toLowerCase() === providerKey.toLowerCase()
-  )
-
-  if (!provider) {
-    return []
-  }
-
-  const models = props.aiConfig.providers[provider]?.models || []
-  return models
-}
-
-// Methods
-const getProviderIcon = (provider: string) => {
-  const icons: Record<string, string> = {
-    'OpenAI': 'fas fa-brain',
-    'Azure OpenAI': 'fab fa-microsoft',
-    'Anthropic': 'fas fa-robot',
-    'Google': 'fab fa-google',
-    'Gemini': 'fab fa-google',
-    'Google Gemini': 'fab fa-google',
-    'Ollama': 'fas fa-server',
-    'DeepSeek': 'fas fa-eye',
-    'EternalAI': 'fas fa-link',
-    'Galadriel': 'fas fa-hat-wizard',
-    'Moonshot': 'fas fa-moon',
-    'Mira': 'fas fa-compass',
-    'OpenRouter': 'fas fa-route',
-    'ModelScope': 'fas fa-cog',
-    'Groq': 'fas fa-bolt',
-    'Perplexity': 'fas fa-search',
-    'TogetherAI': 'fas fa-users',
-    'xAI': 'fas fa-atom',
-    'Cohere': 'fas fa-comments',
-    'Hyperbolic': 'fas fa-infinity',
-  }
-  return icons[provider] || 'fas fa-cog'
-}
-
-const getProviderName = (provider: string) => {
-  const names: Record<string, string> = {
-    'OpenAI': 'OpenAI',
-    'Azure OpenAI': 'Azure OpenAI',
-    'Anthropic': 'Anthropic',
-    'Google': 'Google',
-    'Gemini': 'Gemini',
-    'Google Gemini': 'Google Gemini',
-    'Ollama': 'Ollama',
-    'DeepSeek': 'DeepSeek',
-    'EternalAI': 'EternalAI',
-    'Galadriel': 'Galadriel',
-    'Moonshot': 'Moonshot',
-    'Mira': 'Mira',
-    'OpenRouter': 'OpenRouter',
-    'ModelScope': 'ModelScope',
-    'Groq': 'Groq',
-    'Perplexity': 'Perplexity',
-    'TogetherAI': 'TogetherAI',
-    'xAI': 'xAI',
-    'Cohere': 'Cohere',
-    'Hyperbolic': 'Hyperbolic',
-  }
-  return names[provider] || provider
-}
-
-// rig 库支持的提供商列表
-const rigProviderOptions = [
-  { value: 'anthropic', label: 'Anthropic', description: 'Claude 系列模型' },
-  { value: 'openai', label: 'OpenAI', description: 'OpenAI 及兼容 API' },
-  { value: 'azure', label: 'Azure OpenAI', description: 'Azure 托管 OpenAI 服务' },
-  { value: 'cohere', label: 'Cohere', description: 'Cohere 模型' },
-  { value: 'deepseek', label: 'DeepSeek', description: 'DeepSeek 模型' },
-  { value: 'eternalai', label: 'EternalAI', description: 'EternalAI 模型' },
-  { value: 'gemini', label: 'Google Gemini', description: 'Google Gemini 模型' },
-  { value: 'galadriel', label: 'Galadriel', description: 'Galadriel 模型' },
-  { value: 'groq', label: 'Groq', description: 'Groq 高速推理' },
-  { value: 'hyperbolic', label: 'Hyperbolic', description: 'Hyperbolic 模型' },
-  { value: 'mira', label: 'Mira', description: 'Mira 模型' },
-  { value: 'moonshot', label: 'Moonshot', description: 'Moonshot Kimi 模型' },
-  { value: 'ollama', label: 'Ollama', description: '本地模型服务' },
-  { value: 'openrouter', label: 'OpenRouter', description: '多模型路由服务' },
-  { value: 'perplexity', label: 'Perplexity', description: 'Perplexity 搜索增强' },
-  { value: 'togetherai', label: 'TogetherAI', description: '开源模型托管' },
-  { value: 'xai', label: 'xAI', description: 'xAI Grok 模型' },
-]
-
-const needsApiKey = (provider: string) => {
-  // Ollama never needs API key
-  if (['Ollama'].includes(provider)) {
-    return false
-  }
-  return true
-}
-
 const testConnection = (provider: string) => {
   emit('testConnection', provider)
 }
@@ -1436,253 +1344,29 @@ const clearUsageStats = () => {
 }
 
 const saveAiConfig = async () => {
-  await saveTavilyConfig()
-  await saveAliyunConfig()
+  await saveServiceConfigs()
   emit('saveAiConfig')
-}
-
-// --- Tavily Search Settings ---
-const tavilyApiKeyLocal = ref('')
-const tavilyMaxResultsLocal = ref<number>(5)
-
-const loadTavilyConfig = async () => {
-  try {
-    const items = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
-    const map = new Map(items.map(i => [i.key, i.value]))
-    tavilyApiKeyLocal.value = String(map.get('tavily_api_key') || '')
-    const mr = Number(map.get('tavily_max_results') || 5)
-    tavilyMaxResultsLocal.value = isNaN(mr) ? 5 : Math.min(Math.max(mr, 1), 20)
-  } catch (e) {
-    console.warn('Failed to load Tavily config', e)
-  }
-}
-
-const saveTavilyConfig = async () => {
-  try {
-    const configs = [
-      { category: 'ai', key: 'tavily_api_key', value: tavilyApiKeyLocal.value || '', description: 'Tavily API key for web search', is_encrypted: true },
-      { category: 'ai', key: 'tavily_max_results', value: String(tavilyMaxResultsLocal.value || 5), description: 'Default max results for Tavily', is_encrypted: false },
-    ]
-    await invoke('save_config_batch', { configs })
-  } catch (e) {
-    console.error('Failed to save Tavily config', e)
-  }
-}
-
-// --- Aliyun DashScope Settings ---
-const aliyunApiKeyLocal = ref('')
-const aliyunDefaultModelLocal = ref('qwen-vl-plus')
-const testingAliyun = ref(false)
-
-const loadAliyunConfig = async () => {
-  try {
-    const items = await invoke('get_config', { request: { category: 'ai', key: null } }) as Array<{ key: string, value: string }>
-    const map = new Map(items.map(i => [i.key, i.value]))
-    aliyunApiKeyLocal.value = String(map.get('aliyun_dashscope_api_key') || '')
-    aliyunDefaultModelLocal.value = String(map.get('aliyun_dashscope_model') || 'qwen-vl-plus')
-  } catch (e) {
-    console.warn('Failed to load Aliyun config', e)
-  }
-}
-
-const saveAliyunConfig = async () => {
-  try {
-    const configs = [
-      { category: 'ai', key: 'aliyun_dashscope_api_key', value: aliyunApiKeyLocal.value || '', description: 'Aliyun DashScope API key for file upload', is_encrypted: true },
-      { category: 'ai', key: 'aliyun_dashscope_model', value: aliyunDefaultModelLocal.value || 'qwen-vl-plus', description: 'Default model for DashScope upload', is_encrypted: false },
-    ]
-    await invoke('save_config_batch', { configs })
-  } catch (e) {
-    console.error('Failed to save Aliyun config', e)
-  }
-}
-
-const testAliyunConnection = async () => {
-  if (!aliyunApiKeyLocal.value) {
-    alert('请先输入 DashScope API Key')
-    return
-  }
-  testingAliyun.value = true
-  try {
-    const result = await invoke('test_aliyun_dashscope_connection', {
-      apiKey: aliyunApiKeyLocal.value,
-      model: aliyunDefaultModelLocal.value || 'qwen-vl-plus',
-    })
-    if (result) {
-      alert('连接成功！')
-    } else {
-      alert('连接失败，请检查 API Key')
-    }
-  } catch (e: any) {
-    alert('连接测试失败: ' + (e?.message || e))
-  } finally {
-    testingAliyun.value = false
-  }
-}
-
-// CodeMirror 初始化
-const initCodeMirror = () => {
-  if (!editorContainer.value) return
-  
-  if (editorView) {
-    editorView.destroy()
-    editorView = null
-  }
-  
-  editorContainer.value.innerHTML = ''
-  
-  const state = EditorState.create({
-    doc: manualConfigText.value,
-    extensions: [
-      basicSetup,
-      json(),
-      oneDark,
-      keymap.of([...defaultKeymap, indentWithTab]),
-      EditorView.lineWrapping,
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          manualConfigText.value = update.state.doc.toString()
-          validateConfigText()
-        }
-      }),
-    ],
-  })
-  
-  editorView = new EditorView({
-    state,
-    parent: editorContainer.value,
-  })
-}
-
-// 更新编辑器内容
-const updateEditorContent = (content: string) => {
-  if (!editorView) return
-  const currentContent = editorView.state.doc.toString()
-  if (currentContent !== content) {
-    editorView.dispatch({
-      changes: {
-        from: 0,
-        to: currentContent.length,
-        insert: content
-      }
-    })
-  }
-  // 同步更新全屏编辑器
-  if (fullscreenEditorView) {
-    const fsContent = fullscreenEditorView.state.doc.toString()
-    if (fsContent !== content) {
-      fullscreenEditorView.dispatch({
-        changes: {
-          from: 0,
-          to: fsContent.length,
-          insert: content
-        }
-      })
-    }
-  }
-}
-
-// 全屏编辑器初始化
-const initFullscreenEditor = () => {
-  if (!fullscreenEditorContainer.value) return
-  
-  if (fullscreenEditorView) {
-    fullscreenEditorView.destroy()
-    fullscreenEditorView = null
-  }
-  
-  fullscreenEditorContainer.value.innerHTML = ''
-  
-  const state = EditorState.create({
-    doc: manualConfigText.value,
-    extensions: [
-      basicSetup,
-      json(),
-      oneDark,
-      keymap.of([...defaultKeymap, indentWithTab]),
-      EditorView.lineWrapping,
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          manualConfigText.value = update.state.doc.toString()
-          validateConfigText()
-          // 同步到普通编辑器
-          if (editorView) {
-            const normalContent = editorView.state.doc.toString()
-            const newContent = update.state.doc.toString()
-            if (normalContent !== newContent) {
-              editorView.dispatch({
-                changes: {
-                  from: 0,
-                  to: normalContent.length,
-                  insert: newContent
-                }
-              })
-            }
-          }
-        }
-      }),
-    ],
-  })
-  
-  fullscreenEditorView = new EditorView({
-    state,
-    parent: fullscreenEditorContainer.value,
-  })
-  
-  fullscreenEditorView.focus()
-}
-
-// 切换全屏
-const toggleFullscreen = async () => {
-  isFullscreen.value = true
-  await nextTick()
-  initFullscreenEditor()
-}
-
-// 退出全屏
-const exitFullscreen = () => {
-  if (fullscreenEditorView) {
-    fullscreenEditorView.destroy()
-    fullscreenEditorView = null
-  }
-  isFullscreen.value = false
-}
-
-// 应用并退出全屏
-const applyAndExitFullscreen = () => {
-  applyManualConfig()
-  exitFullscreen()
 }
 
 // 统计计算属性
 const totalInputTokens = computed<number>(() => {
-  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.input_tokens || 0), 0) as number
+  return totalUsageInputTokens(props.aiUsageStats)
 })
 
 const totalOutputTokens = computed<number>(() => {
-  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.output_tokens || 0), 0) as number
+  return totalUsageOutputTokens(props.aiUsageStats)
 })
 
 const totalCost = computed<number>(() => {
-  return Object.values(props.aiUsageStats).reduce((sum: number, usage: any) => sum + (usage.cost || 0), 0) as number
+  return totalUsageCost(props.aiUsageStats)
 })
 
 const maxTokens = computed<number>(() => {
-  return Math.max(...Object.values(props.aiUsageStats).map((usage: any) => usage.total_tokens || 0), 1)
-})
-
-const totalRequests = computed<number>(() => {
-  return detailedStats.value.length
+  return maxUsageTokens(props.aiUsageStats)
 })
 
 const totalTokensFormatted = computed<string>(() => {
-  const total = totalInputTokens.value + totalOutputTokens.value
-  if (total >= 1_000_000) {
-    return `${(total / 1_000_000).toFixed(2)}M`
-  } else if (total >= 1_000) {
-    return `${(total / 1_000).toFixed(2)}K`
-  }
-  return total.toLocaleString()
+  return formatUsageTotalTokens(totalInputTokens.value + totalOutputTokens.value)
 })
 
 const avgCostPerRequest = computed<string>(() => {
@@ -1692,186 +1376,8 @@ const avgCostPerRequest = computed<string>(() => {
 
 // 格式化最后使用时间
 const formatLastUsed = (timestamp: string | null) => {
-  if (!timestamp) return '-'
-  const date = new Date(timestamp)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  
-  if (diff < 60000) return t('settings.ai.justNow')
-  if (diff < 3600000) return t('settings.ai.minutesAgo', { n: Math.floor(diff / 60000) })
-  if (diff < 86400000) return t('settings.ai.hoursAgo', { n: Math.floor(diff / 3600000) })
-  if (diff < 604800000) return t('settings.ai.daysAgo', { n: Math.floor(diff / 86400000) })
-  return date.toLocaleDateString()
+  return formatUsageLastUsed(timestamp, (key, params) => t(key, params))
 }
-
-onMounted(() => {
-  loadTavilyConfig()
-  loadAliyunConfig()
-  loadDetailedStats()
-})
-
-onUnmounted(() => {
-  if (editorView) {
-    editorView.destroy()
-    editorView = null
-  }
-  if (fullscreenEditorView) {
-    fullscreenEditorView.destroy()
-    fullscreenEditorView = null
-  }
-})
-
-// 手动编辑相关方法
-const validateConfigText = () => {
-  configError.value = ''
-  configValid.value = false
-
-  if (!manualConfigText.value.trim()) {
-    return
-  }
-
-  try {
-    const parsed = JSON.parse(manualConfigText.value)
-
-    // 基本验证：确保是对象且包含 providers
-    if (typeof parsed !== 'object' || parsed === null) {
-      configError.value = '配置必须是有效的 JSON 对象'
-      return
-    }
-
-    if (!parsed.providers || typeof parsed.providers !== 'object') {
-      configError.value = '配置必须包含 providers 对象'
-      return
-    }
-
-    // 验证每个 provider 的基本结构
-    for (const [providerName, providerConfig] of Object.entries(parsed.providers)) {
-      if (typeof providerConfig !== 'object' || providerConfig === null) {
-        configError.value = `Provider "${providerName}" 必须是对象`
-        return
-      }
-
-      const config = providerConfig as any
-      if (typeof config.enabled !== 'boolean') {
-        configError.value = `Provider "${providerName}" 缺少必需的 enabled 字段（布尔值）`
-        return
-      }
-    }
-
-    configValid.value = true
-  } catch (error) {
-    configError.value = `JSON 解析错误: ${(error as Error).message}`
-  }
-}
-
-const validateConfig = () => {
-  validateConfigText()
-}
-
-const applyManualConfig = () => {
-  if (configError.value) {
-    return
-  }
-
-  try {
-    const parsed = JSON.parse(manualConfigText.value)
-    emit('applyManualConfig', parsed)
-  } catch (error) {
-    configError.value = `应用配置失败: ${(error as Error).message}`
-  }
-}
-
-const formatConfig = () => {
-  if (!manualConfigText.value.trim()) {
-    return
-  }
-
-  try {
-    const parsed = JSON.parse(manualConfigText.value)
-    const formatted = JSON.stringify(parsed, null, 2)
-    manualConfigText.value = formatted
-    updateEditorContent(formatted)
-    validateConfigText()
-  } catch (error) {
-    // 保持原始文本，不格式化无效的 JSON
-  }
-}
-
-const resetToDefault = () => {
-  const buildDefaultProvider = (
-    id: string,
-    name: string,
-    rigProvider: string,
-    apiBase: string | null,
-    extra: Record<string, unknown> = {}
-  ) => ({
-    id,
-    provider: id,
-    name,
-    api_key: null,
-    api_base: apiBase,
-    organization: null,
-    enabled: false,
-    default_model: '',
-    models: [],
-    rig_provider: rigProvider,
-    max_context_length: null,
-    ...extra
-  })
-
-  const defaultConfig = {
-    providers: {
-      Anthropic: buildDefaultProvider('anthropic', 'Anthropic', 'anthropic', 'https://api.anthropic.com'),
-      OpenAI: buildDefaultProvider('openai', 'OpenAI', 'openai', 'https://api.openai.com/v1'),
-      'Azure OpenAI': buildDefaultProvider('azure', 'Azure OpenAI', 'azure', null),
-      Cohere: buildDefaultProvider('cohere', 'Cohere', 'cohere', 'https://api.cohere.ai'),
-      DeepSeek: buildDefaultProvider('deepseek', 'DeepSeek', 'deepseek', 'https://api.deepseek.com/v1'),
-      EternalAI: buildDefaultProvider('eternalai', 'EternalAI', 'eternalai', null),
-      'Google Gemini': buildDefaultProvider('gemini', 'Google Gemini', 'gemini', null),
-      Galadriel: buildDefaultProvider('galadriel', 'Galadriel', 'galadriel', null),
-      Groq: buildDefaultProvider('groq', 'Groq', 'groq', 'https://api.groq.com/openai/v1'),
-      Hyperbolic: buildDefaultProvider('hyperbolic', 'Hyperbolic', 'hyperbolic', 'https://api.hyperbolic.xyz/v1'),
-      Mira: buildDefaultProvider('mira', 'Mira', 'mira', null),
-      Moonshot: buildDefaultProvider('moonshot', 'Moonshot', 'moonshot', 'https://api.moonshot.cn/v1'),
-      Ollama: buildDefaultProvider('ollama', 'Ollama', 'ollama', 'http://localhost:11434'),
-      OpenRouter: buildDefaultProvider('openrouter', 'OpenRouter', 'openrouter', 'https://openrouter.ai/api/v1', {
-        http_referer: null,
-        x_title: null
-      }),
-      Perplexity: buildDefaultProvider('perplexity', 'Perplexity', 'perplexity', 'https://api.perplexity.ai'),
-      TogetherAI: buildDefaultProvider('togetherai', 'TogetherAI', 'togetherai', 'https://api.together.xyz/v1'),
-      xAI: buildDefaultProvider('xai', 'xAI', 'xai', 'https://api.x.ai/v1')
-    }
-  }
-
-  const formatted = JSON.stringify(defaultConfig, null, 2)
-  manualConfigText.value = formatted
-  updateEditorContent(formatted)
-  validateConfigText()
-}
-
-// 监听 aiConfig 变化，同步到手动编辑文本
-watch(() => props.aiConfig, (newConfig) => {
-  if (newConfig && !useGuiMode.value) {
-    const newText = JSON.stringify(newConfig, null, 2)
-    manualConfigText.value = newText
-    updateEditorContent(newText)
-    validateConfigText()
-  }
-}, { immediate: true, deep: true })
-
-// 初始化手动编辑文本
-watch(useGuiMode, async (isGuiMode) => {
-  if (!isGuiMode && props.aiConfig) {
-    manualConfigText.value = JSON.stringify(props.aiConfig, null, 2)
-    validateConfigText()
-    await nextTick()
-    initCodeMirror()
-  } else if (isGuiMode && editorView) {
-    editorView.destroy()
-    editorView = null
-  }
-})
 
 </script>
 

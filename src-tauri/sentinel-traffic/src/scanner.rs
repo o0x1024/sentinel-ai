@@ -719,6 +719,7 @@ impl ScanPipeline {
                 description,
                 default_severity: severity,
                 tags: tags_array,
+                target_asset_types: Vec::new(),
             };
 
             // 创建 PluginExecutor
@@ -832,6 +833,7 @@ impl ScanPipeline {
             description,
             default_severity: severity,
             tags: tags_array,
+            target_asset_types: Vec::new(),
         };
 
         // 替换旧实例

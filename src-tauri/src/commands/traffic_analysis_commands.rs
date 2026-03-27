@@ -315,6 +315,7 @@ impl TrafficAnalysisState {
                     sentinel_plugins::Severity::Info => sentinel_traffic::Severity::Info,
                 },
                 tags: db_rec.metadata.tags,
+                target_asset_types: db_rec.metadata.target_asset_types,
             };
 
             let status = match db_rec.status {
@@ -2439,6 +2440,7 @@ pub async fn update_plugin(
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],
             description: Some(plugin_description.clone()),
+            target_asset_types: Vec::new(),
         };
         let input_schema =
             sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
@@ -2604,6 +2606,7 @@ pub async fn test_plugin(
                         description: metadata.description.clone(),
                         default_severity: severity,
                         tags: metadata.tags.clone(),
+                        target_asset_types: metadata.target_asset_types.clone(),
                     };
                     // 注册并缓存代码（忽略可能的并发注册错误）
                     // 使用 traffic_metadata 进行注册以避免所有权冲突
@@ -2816,6 +2819,7 @@ pub async fn test_plugin_advanced(
                     sentinel_plugins::Severity::Info => sentinel_traffic::Severity::Info,
                 },
                 tags: plugin_record.metadata.tags,
+                target_asset_types: plugin_record.metadata.target_asset_types,
             };
 
             let _ = plugin_manager
@@ -3067,6 +3071,7 @@ pub async fn test_agent_plugin(
                 default_severity: sentinel_plugins::Severity::Medium,
                 tags: vec![],
                 description: Some(format!("Agent tool plugin: {}", name)),
+                target_asset_types: Vec::new(),
             };
 
             let executor = sentinel_plugins::PluginExecutor::new(metadata, code, 1000)
@@ -3173,6 +3178,7 @@ pub async fn get_plugin_input_schema(
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: None,
+        target_asset_types: Vec::new(),
     };
     let schema = sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
         &code, metadata,
@@ -3227,6 +3233,7 @@ pub async fn get_plugin_output_schema(
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: None,
+        target_asset_types: Vec::new(),
     };
 
     let schema = match sentinel_plugins::get_output_schema_from_code(&code, metadata).await {
@@ -4963,6 +4970,7 @@ pub async fn install_store_plugin(
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,
+        target_asset_types: Vec::new(),
     };
 
     // Register plugin to database
@@ -5059,6 +5067,7 @@ pub async fn update_store_plugin(
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,
+        target_asset_types: Vec::new(),
     };
 
     // Update plugin in database

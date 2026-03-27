@@ -1,7 +1,7 @@
 //! Simple execution path without tools.
 
 use anyhow::Result;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
 use sentinel_llm::{LlmConfig, StreamContent, StreamingLlmClient};
@@ -38,6 +38,8 @@ pub async fn execute_agent_simple(
     let client = StreamingLlmClient::new(config);
     let execution_id = params.execution_id.clone();
     let app = app_handle.clone();
+    let reasoning_content = Arc::new(Mutex::new(String::new()));
+    let reasoning_content_for_stream = reasoning_content.clone();
 
     let result = client
         .stream_completion(Some(&system_prompt), &params.task, |content| {
@@ -56,6 +58,9 @@ pub async fn execute_agent_simple(
                     );
                 }
                 StreamContent::Reasoning(reasoning) => {
+                    if let Ok(mut buf) = reasoning_content_for_stream.lock() {
+                        buf.push_str(&reasoning);
+                    }
                     let _ = app.emit(
                         "agent:chunk",
                         &serde_json::json!({
@@ -82,12 +87,18 @@ pub async fn execute_agent_simple(
                 response.len()
             );
 
+            let final_reasoning_content = reasoning_content
+                .lock()
+                .ok()
+                .map(|buf| buf.clone())
+                .filter(|buf| !buf.trim().is_empty());
+
             save_assistant_message(
                 app_handle,
                 &params.execution_id,
                 &response,
                 None,
-                None,
+                final_reasoning_content,
                 params.persist_messages,
                 params.subagent_run_id.as_deref(),
             )

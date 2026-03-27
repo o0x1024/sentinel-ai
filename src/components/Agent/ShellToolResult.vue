@@ -57,6 +57,28 @@
       <div v-if="isStdoutTruncated || isStderrTruncated" class="text-warning text-[10px] mt-1 italic">
         {{ $t('tools.shell.outputTruncatedHint') }}
       </div>
+
+      <div
+        v-if="shouldRecommendTerminal"
+        class="mt-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] text-warning-content"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="font-semibold text-warning">
+              {{ $t('tools.shell.longRunningCommandTitle') }}
+            </div>
+            <div class="mt-1 whitespace-pre-wrap break-words text-warning/90">
+              {{ $t('tools.shell.longRunningCommandHint') }}
+            </div>
+          </div>
+          <button
+            @click.stop="openInteractiveTerminal"
+            class="btn btn-xs btn-warning flex-shrink-0"
+          >
+            {{ $t('tools.shell.openTerminal') }}
+          </button>
+        </div>
+      </div>
       
       <!-- Error message -->
       <div v-if="error && !stderr" class="error text-[#f14c4c] whitespace-pre-wrap break-all">{{ error }}</div>
@@ -126,6 +148,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { highlightShellCommand } from '@/utils/shellHighlight'
+import { useTerminal } from '@/composables/useTerminal'
+import { useTodos } from '@/composables/useTodos'
 
 const props = defineProps<{
   args?: Record<string, any>
@@ -150,6 +174,8 @@ const isExpanded = ref(false)
 const hasOverflow = ref(false)
 const terminalBodyRef = ref<HTMLElement | null>(null)
 let unlisten: (() => void) | null = null
+const terminal = useTerminal()
+const todos = useTodos()
 
 // Extract command from args
 const command = computed(() => {
@@ -239,6 +265,11 @@ async function handleCancel() {
   } finally {
     isCancelling.value = false
   }
+}
+
+function openInteractiveTerminal() {
+  todos.close()
+  terminal.openTerminal()
 }
 
 // Check if needs confirmation - show when status is running and we have a pending permission request
@@ -384,8 +415,20 @@ const success = computed(() => {
   
   // Fall back to exit code check
   if (exitCode.value !== null) return exitCode.value === 0
-  
+
   return props.status === 'completed'
+})
+
+const backgroundCommandError = computed(() => {
+  const rawError = String(props.error || '').trim()
+  if (!rawError.includes('Detected a background shell command')) {
+    return ''
+  }
+  return rawError
+})
+
+const shouldRecommendTerminal = computed(() => {
+  return props.status === 'failed' && backgroundCommandError.value.length > 0
 })
 
 // Execution time

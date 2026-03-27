@@ -105,110 +105,14 @@
 
     <!-- Tab Content -->
     <div class="flex-1 min-h-0 overflow-auto">
-      <!-- Programs Tab -->
-      <ProgramsPanel 
-        v-if="activeTab === 'programs'"
-        :programs="programs"
-        :loading="loading"
-        @create="showCreateProgramModal = true"
-        @select="selectProgram"
-        @edit="editProgram"
-        @delete="deleteProgram"
-      />
-
-      <!-- Assets Tab -->
-      <AssetsPanelV2 
-        v-if="activeTab === 'assets'"
-        :program-id="selectedProgram?.id"
-        :programs="programs"
-        @stats-updated="updateAssetStats"
-        @refresh="onAssetsRefreshNeeded"
-      />
-
-      <!-- Findings Tab -->
-      <FindingsPanel 
-        v-if="activeTab === 'findings'"
-        :findings="findings"
-        :programs="programs"
-        :loading="loadingFindings"
-        :page="findingPage"
-        :page-size="pageSize"
-        :has-next="findingHasNext"
-        @create="showCreateFindingModal = true"
-        @view="viewFinding"
-        @delete="deleteFinding"
-        @create-submission="createSubmissionFromFinding"
-        @filter-change="onFindingFilterChange"
-        @batch-update-status="batchUpdateFindingStatus"
-        @batch-delete="batchDeleteFindings"
-        @page-change="onFindingPageChange"
-      />
-
-      <!-- Submissions Tab -->
-      <SubmissionsPanel 
-        v-if="activeTab === 'submissions'"
-        :submissions="submissions"
-        :loading="loadingSubmissions"
-        :page="submissionPage"
-        :page-size="pageSize"
-        :has-next="submissionHasNext"
-        @create="showCreateSubmissionModal = true"
-        @view="viewSubmission"
-        @edit="editSubmission"
-        @delete="deleteSubmission"
-        @filter-change="onSubmissionFilterChange"
-        @batch-update-status="batchUpdateSubmissionStatus"
-        @batch-delete="batchDeleteSubmissions"
-        @page-change="onSubmissionPageChange"
-      />
-
-      <!-- Statistics Tab -->
-      <StatisticsPanel 
-        v-if="activeTab === 'statistics'"
-        :finding-stats="findingStats"
-        :submission-stats="submissionStats"
-        :programs="programs"
-        :findings="findings"
-        :submissions="submissions"
-      />
-
-      <!-- Import/Export Tab -->
-      <ImportExportPanel 
-        v-if="activeTab === 'import-export'"
-        :programs="programs"
-        :findings="findings"
-        :submissions="submissions"
-        @imported="onDataImported"
-      />
-
-      <!-- Templates Tab -->
-      <ReportTemplatesPanel 
-        v-if="activeTab === 'templates'"
-        @use-template="onUseTemplate"
-      />
-
-      <!-- Change Events Tab -->
-      <ChangeEventsPanel 
-        v-if="activeTab === 'changes'"
-        @view="viewChangeEvent"
-        @trigger-workflow="triggerWorkflowFromEvent"
-        @create="showCreateChangeEventModal = true"
-      />
-
-      <!-- Workflow Templates Tab -->
-      <WorkflowTemplatesPanel
-        v-if="activeTab === 'workflows'"
-        :programs="programs"
-        :selected-program="selectedProgram"
-        @view="viewWorkflowTemplate"
-      />
-
-      <!-- Monitor Tab -->
-      <MonitorPanel
-        v-if="activeTab === 'monitor'"
-        :selected-program="selectedProgram"
-        :programs="programs"
-      />
+      <KeepAlive>
+        <component
+          :is="currentTabComponent"
+          :key="activeTab"
+          v-bind="currentTabProps"
+          v-on="currentTabListeners"
+        />
+      </KeepAlive>
     </div>
 
     <!-- Modals -->
@@ -297,10 +201,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
+import { useRoute } from 'vue-router'
 import { useToast } from '../composables/useToast'
+import { dialog } from '../composables/useDialog'
 import { 
   ProgramsPanel, 
   FindingsPanel, 
@@ -324,15 +230,41 @@ import MonitorPanel from '../components/BugBounty/MonitorPanel.vue'
 import CreateChangeEventModal from '../components/BugBounty/CreateChangeEventModal.vue'
 import AssetsPanelV2 from '../components/BugBounty/AssetsPanelV2.vue'
 
+
+defineOptions({
+  name: 'BugBountyView',
+});
+
 const { t } = useI18n()
 const toast = useToast()
+const route = useRoute()
 
 // State
 const loading = ref(false)
 const loadingFindings = ref(false)
 const loadingSubmissions = ref(false)
+const findingBatchActionLoading = ref(false)
+const findingBatchActionVersion = ref(0)
+const submissionBatchActionLoading = ref(false)
+const submissionBatchActionVersion = ref(0)
 const creating = ref(false)
-const activeTab = ref('programs')
+type BugBountyTab =
+  | 'programs'
+  | 'assets'
+  | 'findings'
+  | 'submissions'
+  | 'statistics'
+  | 'import-export'
+  | 'templates'
+  | 'changes'
+  | 'workflows'
+  | 'monitor'
+
+const activeTab = ref<BugBountyTab>('programs')
+const loadedTabs = ref({
+  findings: false,
+  submissions: false,
+})
 
 // Modals
 const showCreateProgramModal = ref(false)
@@ -363,6 +295,8 @@ const findings = ref<any[]>([])
 const submissions = ref<any[]>([])
 const programFindings = ref<any[]>([])
 const findingPage = ref(1)
+const findingPageSize = ref(20)
+const findingTotal = ref(0)
 const submissionPage = ref(1)
 const pageSize = ref(20)
 const findingHasNext = ref(false)
@@ -393,6 +327,7 @@ const submissionStats = ref({
   total_rewards: 0.0,
   total_bonuses: 0.0,
 })
+const submissionTotal = ref(0)
 
 const changeEventStats = ref({
   total_events: 0,
@@ -419,15 +354,187 @@ const submissionFilter = ref({
 const totalEarnings = computed(() => 
   submissionStats.value.total_rewards + submissionStats.value.total_bonuses
 )
+const findingPageCount = computed(() => Math.max(1, Math.ceil(findingTotal.value / findingPageSize.value)))
+const submissionPageCount = computed(() => Math.max(1, Math.ceil(submissionTotal.value / pageSize.value)))
+
+const tabComponents: Record<BugBountyTab, any> = {
+  programs: ProgramsPanel,
+  assets: AssetsPanelV2,
+  findings: FindingsPanel,
+  submissions: SubmissionsPanel,
+  statistics: StatisticsPanel,
+  'import-export': ImportExportPanel,
+  templates: ReportTemplatesPanel,
+  changes: ChangeEventsPanel,
+  workflows: WorkflowTemplatesPanel,
+  monitor: MonitorPanel,
+}
+
+const currentTabComponent = computed(() => tabComponents[activeTab.value])
+
+const currentTabProps = computed(() => {
+  switch (activeTab.value) {
+    case 'programs':
+      return {
+        programs: programs.value,
+        loading: loading.value,
+      }
+    case 'assets':
+      return {
+        programId: selectedProgram.value?.id,
+        programs: programs.value,
+      }
+    case 'findings':
+      return {
+        findings: findings.value,
+        programs: programs.value,
+        loading: loadingFindings.value,
+        batchActionLoading: findingBatchActionLoading.value,
+        batchActionVersion: findingBatchActionVersion.value,
+        page: findingPage.value,
+        pageSize: findingPageSize.value,
+        pageCount: findingPageCount.value,
+        total: findingTotal.value,
+        hasNext: findingHasNext.value,
+      }
+    case 'submissions':
+      return {
+        submissions: submissions.value,
+        loading: loadingSubmissions.value,
+        batchActionLoading: submissionBatchActionLoading.value,
+        batchActionVersion: submissionBatchActionVersion.value,
+        page: submissionPage.value,
+        pageSize: pageSize.value,
+        total: submissionTotal.value,
+        hasNext: submissionHasNext.value,
+      }
+    case 'statistics':
+      return {
+        findingStats: findingStats.value,
+        submissionStats: submissionStats.value,
+        programs: programs.value,
+        findings: findings.value,
+        submissions: submissions.value,
+      }
+    case 'import-export':
+      return {
+        programs: programs.value,
+        findings: findings.value,
+        submissions: submissions.value,
+      }
+    case 'workflows':
+      return {
+        programs: programs.value,
+        selectedProgram: selectedProgram.value,
+      }
+    case 'monitor':
+      return {
+        selectedProgram: selectedProgram.value,
+        programs: programs.value,
+      }
+    default:
+      return {}
+  }
+})
+
+const currentTabListeners = computed(() => {
+  switch (activeTab.value) {
+    case 'programs':
+      return {
+        create: () => {
+          showCreateProgramModal.value = true
+        },
+        select: selectProgram,
+        edit: editProgram,
+        delete: deleteProgram,
+      }
+    case 'assets':
+      return {
+        refresh: onAssetsRefreshNeeded,
+      }
+    case 'findings':
+      return {
+        create: () => {
+          showCreateFindingModal.value = true
+        },
+        view: viewFinding,
+        delete: deleteFinding,
+        'create-submission': createSubmissionFromFinding,
+        'filter-change': onFindingFilterChange,
+        'batch-update-status': batchUpdateFindingStatus,
+        'batch-delete': batchDeleteFindings,
+        'page-change': onFindingPageChange,
+        'page-size-change': onFindingPageSizeChange,
+      }
+    case 'submissions':
+      return {
+        create: () => {
+          showCreateSubmissionModal.value = true
+        },
+        view: viewSubmission,
+        edit: editSubmission,
+        delete: deleteSubmission,
+        'filter-change': onSubmissionFilterChange,
+        'batch-update-status': batchUpdateSubmissionStatus,
+        'batch-delete': batchDeleteSubmissions,
+        'page-change': onSubmissionPageChange,
+      }
+    case 'import-export':
+      return {
+        imported: onDataImported,
+      }
+    case 'templates':
+      return {
+        'use-template': onUseTemplate,
+      }
+    case 'changes':
+      return {
+        view: viewChangeEvent,
+        'trigger-workflow': triggerWorkflowFromEvent,
+        create: () => {
+          showCreateChangeEventModal.value = true
+        },
+      }
+    case 'workflows':
+      return {
+        view: viewWorkflowTemplate,
+      }
+    default:
+      return {}
+  }
+})
 
 // Methods
-const switchTab = async (tab: string) => {
+const switchTab = async (tab: BugBountyTab) => {
   activeTab.value = tab
-  if (tab === 'findings') {
+  if (tab === 'findings' && !loadedTabs.value.findings) {
     await loadFindings()
-  } else if (tab === 'submissions') {
+    loadedTabs.value.findings = true
+  } else if (tab === 'submissions' && !loadedTabs.value.submissions) {
     await loadSubmissions()
+    loadedTabs.value.submissions = true
   }
+}
+
+const isBugBountyTab = (value: string): value is BugBountyTab => {
+  return [
+    'programs',
+    'assets',
+    'findings',
+    'submissions',
+    'statistics',
+    'import-export',
+    'templates',
+    'changes',
+    'workflows',
+    'monitor',
+  ].includes(value)
+}
+
+const syncTabFromRoute = async () => {
+  const routeTab = typeof route.query.tab === 'string' ? route.query.tab : ''
+  if (!routeTab || !isBugBountyTab(routeTab) || routeTab === activeTab.value) return
+  await switchTab(routeTab)
 }
 
 const loadPrograms = async () => {
@@ -450,25 +557,62 @@ const loadStats = async () => {
   }
 }
 
+const loadAssetStats = async () => {
+  try {
+    const overview = await invoke<any>('surface_get_overview', { programId: null })
+    assetStats.value = {
+      total: overview?.total_assets || 0,
+      active: overview?.active_assets || 0,
+    }
+  } catch (error) {
+    console.error('Failed to load asset stats:', error)
+    assetStats.value = {
+      total: 0,
+      active: 0,
+    }
+  }
+}
+
 const loadFindings = async () => {
   try {
     loadingFindings.value = true
-    const filter: any = {}
+    const baseFilter: any = {}
     if (findingFilter.value.severity) {
-      filter.severities = [findingFilter.value.severity]
+      baseFilter.severities = [findingFilter.value.severity]
     }
     if (findingFilter.value.status) {
-      filter.statuses = [findingFilter.value.status]
+      baseFilter.statuses = [findingFilter.value.status]
     }
     if (findingFilter.value.search) {
-      filter.search = findingFilter.value.search
+      baseFilter.search = findingFilter.value.search
     }
-    filter.sort_by = 'created_at'
-    filter.sort_dir = 'desc'
-    filter.limit = pageSize.value
-    filter.offset = (findingPage.value - 1) * pageSize.value
-    findings.value = await invoke('bounty_list_findings', { filter: Object.keys(filter).length > 0 ? filter : null })
-    findingHasNext.value = findings.value.length === pageSize.value
+    baseFilter.sort_by = 'created_at'
+    baseFilter.sort_dir = 'desc'
+
+    const pagedFilter = {
+      ...baseFilter,
+      limit: findingPageSize.value,
+      offset: (findingPage.value - 1) * findingPageSize.value,
+    }
+
+    const [pagedRows, allRows] = await Promise.all([
+      invoke<any[]>('bounty_list_findings', {
+        filter: Object.keys(pagedFilter).length > 0 ? pagedFilter : null,
+      }),
+      invoke<any[]>('bounty_list_findings', {
+        filter: Object.keys(baseFilter).length > 0 ? baseFilter : null,
+      }),
+    ])
+
+    findings.value = Array.isArray(pagedRows) ? pagedRows : []
+    findingTotal.value = Array.isArray(allRows) ? allRows.length : 0
+    findingHasNext.value = findingPage.value < findingPageCount.value
+
+    if (findingPage.value > findingPageCount.value) {
+      findingPage.value = findingPageCount.value
+      await loadFindings()
+      return
+    }
   } catch (error) {
     console.error('Failed to load findings:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
@@ -488,19 +632,40 @@ const loadFindingStats = async () => {
 const loadSubmissions = async () => {
   try {
     loadingSubmissions.value = true
-    const filter: any = {}
+    const baseFilter: any = {}
     if (submissionFilter.value.status) {
-      filter.statuses = [submissionFilter.value.status]
+      baseFilter.statuses = [submissionFilter.value.status]
     }
     if (submissionFilter.value.search) {
-      filter.search = submissionFilter.value.search
+      baseFilter.search = submissionFilter.value.search
     }
-    filter.sort_by = 'created_at'
-    filter.sort_dir = 'desc'
-    filter.limit = pageSize.value
-    filter.offset = (submissionPage.value - 1) * pageSize.value
-    submissions.value = await invoke('bounty_list_submissions', { filter: Object.keys(filter).length > 0 ? filter : null })
-    submissionHasNext.value = submissions.value.length === pageSize.value
+    baseFilter.sort_by = 'created_at'
+    baseFilter.sort_dir = 'desc'
+
+    const pagedFilter = {
+      ...baseFilter,
+      limit: pageSize.value,
+      offset: (submissionPage.value - 1) * pageSize.value,
+    }
+
+    const [pagedRows, allRows] = await Promise.all([
+      invoke<any[]>('bounty_list_submissions', {
+        filter: Object.keys(pagedFilter).length > 0 ? pagedFilter : null,
+      }),
+      invoke<any[]>('bounty_list_submissions', {
+        filter: Object.keys(baseFilter).length > 0 ? baseFilter : null,
+      }),
+    ])
+
+    submissions.value = Array.isArray(pagedRows) ? pagedRows : []
+    submissionTotal.value = Array.isArray(allRows) ? allRows.length : 0
+    submissionHasNext.value = submissionPage.value < submissionPageCount.value
+
+    if (submissionPage.value > submissionPageCount.value) {
+      submissionPage.value = submissionPageCount.value
+      await loadSubmissions()
+      return
+    }
   } catch (error) {
     console.error('Failed to load submissions:', error)
     toast.error(t('bugBounty.errors.loadFailed'))
@@ -536,13 +701,6 @@ const loadProgramFindings = async (programId: string) => {
     })
   } catch (error) {
     console.error('Failed to load program findings:', error)
-  }
-}
-
-const updateAssetStats = (stats: any) => {
-  assetStats.value = {
-    total: stats?.total || 0,
-    active: stats?.active || 0,
   }
 }
 
@@ -686,7 +844,7 @@ const createSubmission = async (data: any) => {
 }
 
 const deleteFinding = async (finding: any) => {
-  if (!confirm(t('bugBounty.confirm.deleteFinding'))) return
+  if (!(await dialog.confirm(t('bugBounty.confirm.deleteFinding')))) return
   try {
     await invoke('bounty_delete_finding', { id: finding.id })
     toast.success(t('bugBounty.success.findingDeleted'))
@@ -699,7 +857,7 @@ const deleteFinding = async (finding: any) => {
 }
 
 const deleteSubmission = async (submission: any) => {
-  if (!confirm(t('bugBounty.confirm.deleteSubmission'))) return
+  if (!(await dialog.confirm(t('bugBounty.confirm.deleteSubmission')))) return
   try {
     await invoke('bounty_delete_submission', { id: submission.id })
     toast.success(t('bugBounty.success.submissionDeleted'))
@@ -712,7 +870,7 @@ const deleteSubmission = async (submission: any) => {
 }
 
 const deleteProgram = async (program: any) => {
-  if (!confirm(t('bugBounty.confirm.deleteProgram'))) return
+  if (!(await dialog.confirm(t('bugBounty.confirm.deleteProgram')))) return
   try {
     await invoke('bounty_delete_program', { id: program.id })
     toast.success(t('bugBounty.success.programDeleted'))
@@ -820,7 +978,15 @@ const onSubmissionFilterChange = (filter: any) => {
 }
 
 const onFindingPageChange = (page: number) => {
-  findingPage.value = page
+  findingPage.value = Math.min(Math.max(1, page), findingPageCount.value)
+  loadFindings()
+}
+
+const onFindingPageSizeChange = (size: number) => {
+  if (!Number.isFinite(size) || size <= 0) return
+  if (size === findingPageSize.value) return
+  findingPageSize.value = size
+  findingPage.value = 1
   loadFindings()
 }
 
@@ -832,6 +998,7 @@ const onSubmissionPageChange = (page: number) => {
 const onDataImported = async () => {
   await loadPrograms()
   await loadStats()
+  await loadAssetStats()
   await loadFindings()
   await loadFindingStats()
   await loadSubmissions()
@@ -872,6 +1039,11 @@ const confirmTriggerWorkflow = async () => {
       templateId: selectedWorkflowTemplateId.value,
       eventId: selectedWorkflowEvent.value.id,
     })
+    if (selectedChangeEvent.value?.id === selectedWorkflowEvent.value.id) {
+      selectedChangeEvent.value = await invoke('bounty_get_change_event', {
+        id: selectedWorkflowEvent.value.id,
+      })
+    }
     toast.success(t('bugBounty.changeEvents.workflowTriggered') || 'Workflow triggered successfully')
     showSelectWorkflowModal.value = false
     await loadChangeEventStats() // refresh stats if status changed
@@ -902,14 +1074,17 @@ const createChangeEvent = async (data: any) => {
 
 const onAssetsDiscovered = async (result: any) => {
   // Refresh asset stats and change event stats after assets are discovered
+  await loadAssetStats()
   await loadChangeEventStats()
   // v2 asset panel will auto-refresh via event emission
   showDiscoverAssetsModal.value = false
 }
 
-const onAssetsRefreshNeeded = () => {
-  // Handle any UI state updates if needed
-  loadChangeEventStats()
+const onAssetsRefreshNeeded = async () => {
+  await Promise.all([
+    loadAssetStats(),
+    loadChangeEventStats(),
+  ])
 }
 
 // Workflow Template
@@ -936,56 +1111,76 @@ const onWorkflowTemplateUpdated = async () => {
 
 // Batch operations
 const batchUpdateFindingStatus = async (ids: string[], status: string) => {
-  if (!confirm(t('bugBounty.batch.confirmUpdateStatus', { count: ids.length }))) return
+  if (findingBatchActionLoading.value || !ids.length) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmUpdateStatus', { count: ids.length })))) return
   
   try {
+    findingBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_update_finding_status', { ids, status })
     toast.success(t('bugBounty.batch.updateSuccess', { count: successCount }))
     await loadFindings()
     await loadFindingStats()
+    findingBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch update failed:', error)
     toast.error(t('bugBounty.errors.updateFailed'))
+  } finally {
+    findingBatchActionLoading.value = false
   }
 }
 
 const batchDeleteFindings = async (ids: string[]) => {
-  if (!confirm(t('bugBounty.batch.confirmDeleteFindings', { count: ids.length }))) return
+  if (findingBatchActionLoading.value || !ids.length) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmDelete', { count: ids.length })))) return
   try {
+    findingBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_delete_findings', { ids })
     toast.success(t('bugBounty.batch.deleteSuccess', { count: successCount }))
     await loadFindings()
     await loadFindingStats()
+    findingBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch delete failed:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
+  } finally {
+    findingBatchActionLoading.value = false
   }
 }
 
 const batchUpdateSubmissionStatus = async (ids: string[], status: string) => {
-  if (!confirm(t('bugBounty.batch.confirmUpdateStatus', { count: ids.length }))) return
+  if (submissionBatchActionLoading.value || !ids.length) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmUpdateStatus', { count: ids.length })))) return
   
   try {
+    submissionBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_update_submission_status', { ids, status })
     toast.success(t('bugBounty.batch.updateSuccess', { count: successCount }))
     await loadSubmissions()
     await loadSubmissionStats()
+    submissionBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch update failed:', error)
     toast.error(t('bugBounty.errors.updateFailed'))
+  } finally {
+    submissionBatchActionLoading.value = false
   }
 }
 
 const batchDeleteSubmissions = async (ids: string[]) => {
-  if (!confirm(t('bugBounty.batch.confirmDeleteSubmissions', { count: ids.length }))) return
+  if (submissionBatchActionLoading.value || !ids.length) return
+  if (!(await dialog.confirm(t('bugBounty.batch.confirmDeleteSubmissions', { count: ids.length })))) return
   try {
+    submissionBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_delete_submissions', { ids })
     toast.success(t('bugBounty.batch.deleteSuccess', { count: successCount }))
     await loadSubmissions()
     await loadSubmissionStats()
+    submissionBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch delete failed:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
+  } finally {
+    submissionBatchActionLoading.value = false
   }
 }
 
@@ -993,8 +1188,17 @@ const batchDeleteSubmissions = async (ids: string[]) => {
 onMounted(async () => {
   await loadPrograms()
   await loadStats()
+  await loadAssetStats()
   await loadFindingStats()
   await loadSubmissionStats()
   await loadChangeEventStats()
+  await syncTabFromRoute()
 })
+
+watch(
+  () => route.query.tab,
+  async () => {
+    await syncTabFromRoute()
+  },
+)
 </script>

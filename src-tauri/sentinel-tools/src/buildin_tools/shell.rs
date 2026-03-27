@@ -335,7 +335,7 @@ impl ShellTool {
     }
 
     pub const NAME: &'static str = "shell";
-    pub const DESCRIPTION: &'static str = "Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). For interactive tools that require continuous input/output (like msfconsole, sqlmap, database clients, Python REPL), use interactive_shell instead.";
+    pub const DESCRIPTION: &'static str = "Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). For interactive tools, long-lived services, or background commands that keep running (like msfconsole, sqlmap, database clients, Python REPL, dev servers), use interactive_shell instead.";
 
     /// Check if command is reading files from /workspace/context/ to avoid recursive storage
     fn is_reading_context_file(command: &str) -> bool {
@@ -358,6 +358,115 @@ impl ShellTool {
         read_commands
             .iter()
             .any(|c| cmd.starts_with(c) || cmd.contains(&format!(" | {}", c)))
+    }
+
+    fn scan_unquoted_shell(command: &str, mut f: impl FnMut(char, Option<char>, Option<char>)) {
+        let chars: Vec<char> = command.chars().collect();
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escaped = false;
+
+        for (idx, ch) in chars.iter().copied().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            if ch == '\\' && !in_single {
+                escaped = true;
+                continue;
+            }
+
+            if ch == '\'' && !in_double {
+                in_single = !in_single;
+                continue;
+            }
+
+            if ch == '"' && !in_single {
+                in_double = !in_double;
+                continue;
+            }
+
+            if in_single || in_double {
+                continue;
+            }
+
+            let prev = idx.checked_sub(1).and_then(|i| chars.get(i)).copied();
+            let next = chars.get(idx + 1).copied();
+            f(ch, prev, next);
+        }
+    }
+
+    fn has_background_operator(command: &str) -> bool {
+        let mut found = false;
+        Self::scan_unquoted_shell(command, |ch, prev, next| {
+            if found || ch != '&' {
+                return;
+            }
+            if prev == Some('>') || next == Some('>') {
+                return;
+            }
+            if prev == Some('&') || next == Some('&') {
+                return;
+            }
+            found = true;
+        });
+        found
+    }
+
+    fn background_command_keeps_stdio_attached(command: &str) -> bool {
+        if !Self::has_background_operator(command) {
+            return false;
+        }
+
+        let mut stdout_redirected = false;
+        let mut stderr_redirected = false;
+        let mut stderr_to_stdout = false;
+
+        let chars: Vec<char> = command.chars().collect();
+        Self::scan_unquoted_shell(command, |ch, prev, next| {
+            if ch == '>' {
+                match prev {
+                    Some('&') => {
+                        stdout_redirected = true;
+                        stderr_redirected = true;
+                    }
+                    Some('2') => {
+                        stderr_redirected = true;
+                    }
+                    _ => {
+                        stdout_redirected = true;
+                    }
+                }
+            }
+
+            if ch == '2' && next == Some('>') {
+                stderr_redirected = true;
+            }
+
+            if ch == '2'
+                && chars.windows(4).any(|window| window == ['2', '>', '&', '1'])
+            {
+                stderr_to_stdout = true;
+            }
+        });
+
+        let stderr_detached = stderr_redirected || (stderr_to_stdout && stdout_redirected);
+        !(stdout_redirected && stderr_detached)
+    }
+
+    fn build_background_command_guidance(command: &str) -> Option<String> {
+        if !Self::background_command_keeps_stdio_attached(command) {
+            return None;
+        }
+
+        Some(
+            "Detected a background shell command that keeps stdout/stderr attached. The one-shot \
+shell tool waits for those pipes to close, so this command would stay in running state. Use \
+interactive_shell for long-lived processes, or fully detach the command, for example: \
+`nohup <command> >/tmp/sentinel-shell.log 2>&1 < /dev/null & echo $!`."
+                .to_string(),
+        )
     }
 
     /// Execute command in Docker sandbox
@@ -578,6 +687,9 @@ impl Tool for ShellTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let start_time = Instant::now();
+        if let Some(guidance) = Self::build_background_command_guidance(&args.command) {
+            return Err(ShellError::ExecutionFailed(guidance));
+        }
         let execution_id = args.execution_id.clone();
         let cancellation_token = if let Some(exec_id) = execution_id.as_deref() {
             Some(register_shell_execution_cancellation(exec_id).await)
@@ -857,6 +969,37 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_detects_background_operator() {
+        assert!(ShellTool::has_background_operator(
+            "python3 -m http.server 8000 &"
+        ));
+        assert!(!ShellTool::has_background_operator("echo foo && echo bar"));
+        assert!(!ShellTool::has_background_operator("echo '&'"));
+    }
+
+    #[test]
+    fn test_detects_background_command_with_attached_stdio() {
+        assert!(ShellTool::background_command_keeps_stdio_attached(
+            "python3 -m http.server 8000 &"
+        ));
+        assert!(ShellTool::build_background_command_guidance(
+            "python3 -m http.server 8000 &"
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn test_allows_detached_background_command() {
+        assert!(!ShellTool::background_command_keeps_stdio_attached(
+            "nohup python3 -m http.server 8000 >/tmp/http.log 2>&1 < /dev/null & echo $!"
+        ));
+        assert!(ShellTool::build_background_command_guidance(
+            "nohup python3 -m http.server 8000 >/tmp/http.log 2>&1 < /dev/null & echo $!"
+        )
+        .is_none());
+    }
 
     #[tokio::test]
     async fn test_default_rules() {

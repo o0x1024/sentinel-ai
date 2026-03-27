@@ -202,7 +202,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         if let Some(ref items) = todos {
             state.open_todos = items
                 .iter()
-                .filter(|item| item.status.to_lowercase() != "done")
+                .filter(|item| {
+                    matches!(
+                        item.status.to_lowercase().as_str(),
+                        "pending" | "in_progress" | "inprogress"
+                    )
+                })
                 .map(|item| item.description.trim().to_string())
                 .filter(|item| !item.is_empty())
                 .take(12)

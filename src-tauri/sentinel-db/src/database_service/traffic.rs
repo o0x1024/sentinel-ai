@@ -1211,7 +1211,7 @@ impl DatabaseService {
             }
             DatabasePool::SQLite(pool) => {
                 sqlx::query_scalar::<_, Option<String>>(
-                    "SELECT plugin_code FROM plugin_registry WHERE id = ?",
+                    "SELECT CAST(plugin_code AS TEXT) FROM plugin_registry WHERE id = ?",
                 )
                 .bind(plugin_id)
                 .fetch_optional(pool)
@@ -1506,38 +1506,7 @@ impl DatabaseService {
 
     /// Delete plugin
     pub async fn delete_traffic_plugin(&self, plugin_id: &str) -> Result<()> {
-        let runtime = self
-            .runtime_pool
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
-
-        match runtime {
-            DatabasePool::PostgreSQL(pool) => {
-                sqlx::query(
-                    r#"
-                    DELETE FROM plugin_registry 
-                    WHERE id = $1
-                    "#,
-                )
-                .bind(plugin_id)
-                .execute(pool)
-                .await?;
-            }
-            DatabasePool::SQLite(pool) => {
-                sqlx::query("DELETE FROM plugin_registry WHERE id = ?")
-                    .bind(plugin_id)
-                    .execute(pool)
-                    .await?;
-            }
-            DatabasePool::MySQL(pool) => {
-                sqlx::query("DELETE FROM plugin_registry WHERE id = ?")
-                    .bind(plugin_id)
-                    .execute(pool)
-                    .await?;
-            }
-        }
-
-        Ok(())
+        self.delete_plugin_from_registry_internal(plugin_id).await
     }
 
     // ============================================================

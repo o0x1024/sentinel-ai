@@ -27,6 +27,9 @@ pub struct PluginMetadata {
     pub tags: Vec<String>,
     /// 描述
     pub description: Option<String>,
+    /// Preferred asset target types for monitor tasks
+    #[serde(default)]
+    pub target_asset_types: Vec<String>,
 }
 
 fn default_main_category() -> String {

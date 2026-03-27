@@ -1,4 +1,6 @@
 pub mod commands;
+pub mod data_nodes;
+pub mod edge_mapping;
 pub mod engine;
 pub mod scheduler;
 

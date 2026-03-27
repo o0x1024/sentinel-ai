@@ -20,6 +20,7 @@ use self::run_with_tools::execute_agent_with_tools;
 pub mod message_store;
 pub mod run_simple;
 pub mod run_with_tools;
+mod run_with_tools_support;
 pub mod tool_exec;
 pub mod types;
 pub mod utils;

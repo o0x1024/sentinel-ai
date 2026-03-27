@@ -1,7 +1,11 @@
 //! Bug Bounty commands for Tauri
 
 use super::bounty_workflow_event_support::{
-    build_workflow_trigger_inputs_from_event, run_workflow_template_with_inputs,
+    bounty_trigger_workflows_for_event_internal, run_workflow_template_with_inputs,
+};
+use crate::commands::workflow_notification_support::{
+    build_workflow_result_summary_event, emit_workflow_result_summary,
+    summarize_workflow_results,
 };
 use chrono::Utc;
 use sentinel_bounty::services::{
@@ -1048,7 +1052,6 @@ pub struct UpdateChangeEventRequest {
     pub severity: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub triggered_workflows: Option<Vec<String>>,
     pub generated_findings: Option<Vec<String>>,
     pub risk_score: Option<f64>,
     pub auto_trigger_enabled: Option<bool>,
@@ -1100,7 +1103,6 @@ pub async fn bounty_create_change_event(
         diff: request.diff,
         affected_scope: request.affected_scope,
         detection_method: request.detection_method,
-        triggered_workflows_json: None,
         generated_findings_json: None,
         tags_json: request
             .tags
@@ -1210,10 +1212,6 @@ pub async fn bounty_update_change_event(
     if let Some(tags) = request.tags {
         event.tags_json = Some(serde_json::to_string(&tags).unwrap_or_default());
     }
-    if let Some(workflows) = request.triggered_workflows {
-        event.triggered_workflows_json =
-            Some(serde_json::to_string(&workflows).unwrap_or_default());
-    }
     if let Some(findings) = request.generated_findings {
         event.generated_findings_json = Some(serde_json::to_string(&findings).unwrap_or_default());
     }
@@ -1293,19 +1291,6 @@ pub async fn bounty_update_change_event_status(
 
     db_service
         .update_bounty_change_event_status(&id, &status, resolved_at.as_deref())
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Add a triggered workflow to a change event
-#[tauri::command]
-pub async fn bounty_add_triggered_workflow(
-    db_service: State<'_, Arc<DatabaseService>>,
-    event_id: String,
-    workflow_id: String,
-) -> Result<bool, String> {
-    db_service
-        .add_triggered_workflow_to_change_event(&event_id, &workflow_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -2447,7 +2432,7 @@ pub(crate) async fn execute_workflow_steps(
     db: Arc<DatabaseService>,
     plugin_manager: Arc<PluginManager>,
     app_handle: AppHandle,
-) {
+) -> String {
     let total_steps = steps.len();
     let mut completed_steps = 0;
     let mut step_results: HashMap<String, serde_json::Value> = HashMap::new();
@@ -2467,6 +2452,10 @@ pub(crate) async fn execute_workflow_steps(
         };
 
         log::info!("Executing step: {} ({})", step.name, step.id);
+        let step_started_at = Utc::now();
+        let _ = db
+            .save_workflow_run_step(&execution_id, &step.id, "running", step_started_at)
+            .await;
 
         // Emit step start event (running status)
         let _ = app_handle.emit(
@@ -2496,6 +2485,16 @@ pub(crate) async fn execute_workflow_steps(
             Ok(output) => {
                 step_results.insert(step.id.clone(), output.clone());
                 completed_steps += 1;
+                let _ = db
+                    .update_workflow_run_step_status_internal(
+                        &execution_id,
+                        &step.id,
+                        "completed",
+                        Utc::now(),
+                        Some(output.to_string()),
+                        None,
+                    )
+                    .await;
 
                 // Emit step complete event
                 let _ = app_handle.emit(
@@ -2526,6 +2525,16 @@ pub(crate) async fn execute_workflow_steps(
                     }),
                 );
                 completed_steps += 1;
+                let _ = db
+                    .update_workflow_run_step_status_internal(
+                        &execution_id,
+                        &step.id,
+                        "failed",
+                        Utc::now(),
+                        None,
+                        Some(&e),
+                    )
+                    .await;
 
                 let _ = app_handle.emit(
                     "workflow:step-complete",
@@ -2542,6 +2551,14 @@ pub(crate) async fn execute_workflow_steps(
 
         // Emit progress event
         let progress = ((completed_steps as f32 / total_steps as f32) * 100.0) as u32;
+        let _ = db
+            .update_workflow_run_progress(
+                &execution_id,
+                progress,
+                completed_steps as u32,
+                total_steps as u32,
+            )
+            .await;
         let _ = app_handle.emit(
             "workflow:progress",
             &serde_json::json!({
@@ -2576,6 +2593,36 @@ pub(crate) async fn execute_workflow_steps(
         execution_id,
         status
     );
+
+    if let Some((findings_count, asset_count)) = summarize_workflow_results(&step_results, errors.len())
+    {
+        let workflow_name = db
+            .get_workflow_run_detail(&execution_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|detail| {
+                detail
+                    .get("workflow_name")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string())
+            })
+            .unwrap_or_else(|| format!("Execution {}", &execution_id[..8.min(execution_id.len())]));
+
+        emit_workflow_result_summary(
+            &app_handle,
+            &build_workflow_result_summary_event(
+                &execution_id,
+                &workflow_name,
+                status,
+                findings_count,
+                asset_count,
+                errors.len(),
+            ),
+        );
+    }
+
+    status.to_string()
 }
 
 /// Topological sort for step execution order
@@ -2985,6 +3032,7 @@ async fn execute_single_step(
                 description: plugin_data.metadata.description.clone(),
                 default_severity: sentinel_traffic::types::Severity::Medium,
                 tags: plugin_data.metadata.tags.clone(),
+                target_asset_types: plugin_data.metadata.target_asset_types.clone(),
             };
 
             let code = db
@@ -3521,286 +3569,6 @@ fn extract_evidence_from_output(data: &serde_json::Value) -> Option<ExtractedEvi
         })
     } else {
         None
-    }
-}
-
-// ============================================================================
-// Change Event → Workflow Trigger (A3)
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerCondition {
-    pub event_types: Option<Vec<String>>,
-    pub min_severity: Option<String>,
-    pub asset_tags: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowTriggerResult {
-    pub binding_id: String,
-    pub template_id: String,
-    pub template_name: String,
-    pub triggered: bool,
-    pub reason: Option<String>,
-}
-
-/// Get workflows that should be triggered for a change event
-#[tauri::command]
-pub async fn bounty_get_triggered_workflows(
-    db_service: State<'_, Arc<DatabaseService>>,
-    event_id: String,
-) -> Result<Vec<WorkflowTriggerResult>, String> {
-    let event = db_service
-        .get_bounty_change_event(&event_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Change event not found".to_string())?;
-
-    let program_id = event
-        .program_id
-        .as_ref()
-        .ok_or_else(|| "Event has no program_id".to_string())?;
-
-    // Get all auto-trigger bindings for this program
-    let bindings = db_service
-        .get_auto_trigger_workflow_bindings(program_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut results = Vec::new();
-
-    for binding in bindings {
-        let template = db_service
-            .get_bounty_workflow_template(&binding.workflow_template_id)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let template_name = template
-            .as_ref()
-            .map(|t| t.name.clone())
-            .unwrap_or_default();
-
-        // Check trigger conditions
-        let (should_trigger, reason) =
-            if let Some(conditions_json) = &binding.trigger_conditions_json {
-                if let Ok(conditions) = serde_json::from_str::<TriggerCondition>(conditions_json) {
-                    check_trigger_conditions(&event, &conditions)
-                } else {
-                    (true, None) // If conditions can't be parsed, trigger anyway
-                }
-            } else {
-                (true, None) // No conditions = always trigger
-            };
-
-        results.push(WorkflowTriggerResult {
-            binding_id: binding.id,
-            template_id: binding.workflow_template_id,
-            template_name,
-            triggered: should_trigger,
-            reason,
-        });
-    }
-
-    Ok(results)
-}
-
-/// Trigger workflows for a change event
-#[tauri::command]
-pub async fn bounty_trigger_workflows_for_event(
-    app_handle: AppHandle,
-    db_service: State<'_, Arc<DatabaseService>>,
-    plugin_manager: State<'_, Arc<PluginManager>>,
-    event_id: String,
-) -> Result<Vec<String>, String> {
-    bounty_trigger_workflows_for_event_internal(
-        app_handle,
-        (*db_service).clone(),
-        (*plugin_manager).clone(),
-        event_id,
-    )
-    .await
-}
-
-pub async fn bounty_trigger_workflows_for_event_internal(
-    app_handle: AppHandle,
-    db_service: Arc<DatabaseService>,
-    plugin_manager: Arc<PluginManager>,
-    event_id: String,
-) -> Result<Vec<String>, String> {
-    let triggered_results = bounty_get_triggered_workflows_internal(&db_service, &event_id).await?;
-
-    let event = db_service
-        .get_bounty_change_event(&event_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Change event not found".to_string())?;
-
-    let mut triggered_workflow_ids = Vec::new();
-    let workflow_inputs = build_workflow_trigger_inputs_from_event(&db_service, &event).await?;
-
-    for result in triggered_results {
-        if result.triggered {
-            // Record that this workflow was triggered
-            let _ = db_service
-                .add_triggered_workflow_to_change_event(&event_id, &result.binding_id)
-                .await;
-            triggered_workflow_ids.push(result.binding_id.clone());
-
-            // Update binding run status
-            let _ = db_service
-                .update_bounty_workflow_binding_run_status(&result.binding_id, "triggered")
-                .await;
-
-            // Actually run the workflow immediately
-            if let Ok(Some(template)) = db_service
-                .get_bounty_workflow_template(&result.template_id)
-                .await
-            {
-                if let Ok(steps) =
-                    serde_json::from_str::<Vec<WorkflowStepDefinition>>(&template.steps_json)
-                {
-                    if !steps.is_empty() {
-                        let execution_id = uuid::Uuid::new_v4().to_string();
-
-                        log::info!("Auto-triggering workflow execution {} for template {} based on event {}", execution_id, template.id, event.id);
-
-                        let exec_id = execution_id.clone();
-                        let db = db_service.clone();
-                        let pm = plugin_manager.clone();
-                        let app = app_handle.clone();
-                        let program_id = event.program_id.clone();
-                        let inputs = workflow_inputs.clone();
-
-                        tokio::spawn(async move {
-                            execute_workflow_steps(exec_id, steps, inputs, program_id, db, pm, app)
-                                .await;
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // Update event status if workflows were triggered
-    if !triggered_workflow_ids.is_empty() {
-        let _ = db_service
-            .update_bounty_change_event_status(&event_id, "workflow_triggered", None)
-            .await;
-    }
-
-    Ok(triggered_workflow_ids)
-}
-
-async fn bounty_get_triggered_workflows_internal(
-    db_service: &Arc<DatabaseService>,
-    event_id: &str,
-) -> Result<Vec<WorkflowTriggerResult>, String> {
-    let event = db_service
-        .get_bounty_change_event(event_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Change event not found".to_string())?;
-
-    let program_id = event
-        .program_id
-        .as_ref()
-        .ok_or_else(|| "Event has no program_id".to_string())?;
-
-    let bindings = db_service
-        .get_auto_trigger_workflow_bindings(program_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let mut results = Vec::new();
-
-    for binding in bindings {
-        let template = db_service
-            .get_bounty_workflow_template(&binding.workflow_template_id)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let template_name = template
-            .as_ref()
-            .map(|t| t.name.clone())
-            .unwrap_or_default();
-
-        let (should_trigger, reason) =
-            if let Some(conditions_json) = &binding.trigger_conditions_json {
-                if let Ok(conditions) = serde_json::from_str::<TriggerCondition>(conditions_json) {
-                    check_trigger_conditions(&event, &conditions)
-                } else {
-                    (true, None)
-                }
-            } else {
-                (true, None)
-            };
-
-        results.push(WorkflowTriggerResult {
-            binding_id: binding.id,
-            template_id: binding.workflow_template_id,
-            template_name,
-            triggered: should_trigger,
-            reason,
-        });
-    }
-
-    Ok(results)
-}
-
-fn check_trigger_conditions(
-    event: &BountyChangeEventRow,
-    conditions: &TriggerCondition,
-) -> (bool, Option<String>) {
-    // Check event type
-    if let Some(ref allowed_types) = conditions.event_types {
-        if !allowed_types.contains(&event.event_type) {
-            return (
-                false,
-                Some(format!(
-                    "Event type '{}' not in allowed types",
-                    event.event_type
-                )),
-            );
-        }
-    }
-
-    // Check minimum severity
-    if let Some(ref min_severity) = conditions.min_severity {
-        let event_severity_rank = severity_rank(&event.severity);
-        let min_severity_rank = severity_rank(min_severity);
-        if event_severity_rank < min_severity_rank {
-            return (
-                false,
-                Some(format!(
-                    "Severity '{}' below minimum '{}'",
-                    event.severity, min_severity
-                )),
-            );
-        }
-    }
-
-    // Check asset tags (if event has tags)
-    if let Some(ref required_tags) = conditions.asset_tags {
-        if let Some(ref tags_json) = event.tags_json {
-            if let Ok(event_tags) = serde_json::from_str::<Vec<String>>(tags_json) {
-                let has_required_tag = required_tags.iter().any(|t| event_tags.contains(t));
-                if !has_required_tag {
-                    return (false, Some("Event does not have required tags".to_string()));
-                }
-            }
-        }
-    }
-
-    (true, None)
-}
-
-fn severity_rank(severity: &str) -> i32 {
-    match severity.to_lowercase().as_str() {
-        "critical" => 4,
-        "high" => 3,
-        "medium" => 2,
-        "low" => 1,
-        _ => 0,
     }
 }
 

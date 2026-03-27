@@ -235,34 +235,16 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import type {
+  TeamOrchestrationStep,
+  TeamOrchestrationStepType,
+  TeamStepMovePayload,
+} from './teamOrchestrationTypes'
+import { generateTeamStepId } from './teamOrchestrationSupport'
 
 defineOptions({
   name: 'TeamOrchestrationStepTreeEditor',
 })
-
-type TeamOrchestrationStepType = 'agent' | 'serial' | 'parallel'
-
-interface TeamOrchestrationRetry {
-  max_attempts?: number
-  backoff_ms?: number
-}
-
-interface TeamOrchestrationStep {
-  id: string
-  type: TeamOrchestrationStepType
-  name?: string
-  member?: string
-  phase?: string
-  instruction?: string
-  retry?: TeamOrchestrationRetry
-  children?: TeamOrchestrationStep[]
-}
-
-interface TeamStepMovePayload {
-  sourcePath: number[]
-  targetPath: number[]
-  mode: 'before' | 'inside'
-}
 
 const props = withDefaults(defineProps<{
   steps: TeamOrchestrationStep[]
@@ -290,13 +272,8 @@ const dragOverMode = ref<'before' | 'inside' | null>(null)
 
 const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 
-const generateStepId = () => {
-  const random = Math.random().toString(36).slice(2, 7)
-  return `step-${Date.now().toString(36)}-${random}`
-}
-
 const defaultStep = (type: TeamOrchestrationStepType = 'agent'): TeamOrchestrationStep => ({
-  id: generateStepId(),
+  id: generateTeamStepId('step'),
   type,
   name: '',
   member: '',

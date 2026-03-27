@@ -4,8 +4,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::Utc;
+use sentinel_bounty::services::{MonitorPluginConfig, MonitorTask};
 use sentinel_db::{
-    DatabaseService, SurfaceAssetFilter, SurfaceDiscoveryRunRow, SurfaceObservationRow,
+    Database, DatabaseService, SurfaceAssetFilter, SurfaceDiscoveryRunRow, SurfaceObservationRow,
 };
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -506,4 +507,270 @@ pub(crate) async fn collect_monitor_targets(
     }
 
     Ok(targets)
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct MonitorResolvedTargets {
+    pub targets: Vec<String>,
+    pub target_objects: Vec<Value>,
+}
+
+fn push_unique_resolved_target(
+    resolved: &mut MonitorResolvedTargets,
+    seen: &mut HashSet<String>,
+    target: &str,
+    target_object: Value,
+) {
+    let normalized = target.trim().to_string();
+    if !normalized.is_empty() && seen.insert(normalized.clone()) {
+        resolved.targets.push(normalized);
+        resolved.target_objects.push(target_object);
+    }
+}
+
+fn normalize_monitor_target_asset_type(value: &str) -> Option<&'static str> {
+    match value.trim().to_lowercase().as_str() {
+        "url" | "web" | "website" => Some("web"),
+        "domain" | "wildcard" => Some("domain"),
+        "host" | "hostname" => Some("host"),
+        "ip" | "ip_address" => Some("ip"),
+        "service" | "port" | "endpoint" => Some("service"),
+        _ => None,
+    }
+}
+
+fn format_service_target(
+    hostname: Option<&str>,
+    ip_or_host: Option<&str>,
+    port: Option<i32>,
+    fallback: Option<&str>,
+) -> Option<String> {
+    if let Some(port) = port.filter(|port| *port > 0) {
+        if let Some(hostname) = hostname.map(str::trim).filter(|value| !value.is_empty()) {
+            return Some(format!("{hostname}:{port}"));
+        }
+        if let Some(ip_or_host) = ip_or_host.map(str::trim).filter(|value| !value.is_empty()) {
+            return Some(format!("{ip_or_host}:{port}"));
+        }
+    }
+
+    fallback
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+async fn resolve_plugin_target_asset_types(
+    db_service: &Arc<DatabaseService>,
+    plugin: &MonitorPluginConfig,
+) -> Vec<String> {
+    let normalized_plugin_id = plugin
+        .plugin_id
+        .strip_prefix("plugin__")
+        .unwrap_or(&plugin.plugin_id);
+
+    let plugin_metadata_target_asset_types = db_service
+        .get_plugin_from_registry(normalized_plugin_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|record| record.metadata.target_asset_types)
+        .unwrap_or_default();
+
+    plugin.resolved_target_asset_types(&plugin_metadata_target_asset_types)
+}
+
+pub(crate) async fn collect_monitor_target_payload_for_plugin(
+    db_service: &Arc<DatabaseService>,
+    task: &MonitorTask,
+    plugin: &MonitorPluginConfig,
+) -> Result<MonitorResolvedTargets, String> {
+    let requested_asset_types: HashSet<String> =
+        resolve_plugin_target_asset_types(db_service, plugin)
+            .await
+            .into_iter()
+            .filter_map(|value| normalize_monitor_target_asset_type(&value).map(str::to_string))
+            .collect();
+
+    if requested_asset_types.is_empty() {
+        let targets = collect_monitor_targets(db_service, &task.program_id).await?;
+        let target_objects = targets
+            .iter()
+            .map(|target| json!({ "type": "generic", "value": target, "source": "fallback" }))
+            .collect();
+        return Ok(MonitorResolvedTargets {
+            targets,
+            target_objects,
+        });
+    }
+
+    let scopes = db_service
+        .list_program_scopes(Some(&task.program_id), None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut seen = HashSet::new();
+    let mut resolved = MonitorResolvedTargets::default();
+    for scope in scopes {
+        match scope.target_type.as_str() {
+            "url" if requested_asset_types.contains("web") => push_unique_resolved_target(
+                &mut resolved,
+                &mut seen,
+                &scope.target,
+                json!({ "type": "web", "value": scope.target, "source": "scope" }),
+            ),
+            "wildcard" | "domain" if requested_asset_types.contains("domain") => {
+                push_unique_resolved_target(
+                    &mut resolved,
+                    &mut seen,
+                    &scope.target,
+                    json!({ "type": "domain", "value": scope.target, "source": "scope" }),
+                )
+            }
+            "ip" if requested_asset_types.contains("ip") => push_unique_resolved_target(
+                &mut resolved,
+                &mut seen,
+                &scope.target,
+                json!({ "type": "ip", "value": scope.target, "source": "scope" }),
+            ),
+            _ => {}
+        }
+    }
+
+    if let Ok(surface_assets) = db_service
+        .list_surface_assets(&SurfaceAssetFilter {
+            program_id: Some(task.program_id.clone()),
+            asset_type: None,
+            status: None,
+            search: None,
+            limit: Some(10_000),
+            offset: Some(0),
+        })
+        .await
+    {
+        for asset in &surface_assets {
+            if asset.asset_type == "web" && requested_asset_types.contains("web") {
+                push_unique_resolved_target(
+                    &mut resolved,
+                    &mut seen,
+                    &asset.asset_name,
+                    json!({
+                        "type": "web",
+                        "value": &asset.asset_name,
+                        "source": "surface_asset",
+                        "asset_id": &asset.id,
+                    }),
+                );
+            }
+        }
+
+        for asset in surface_assets {
+            let should_include = match asset.asset_type.as_str() {
+                "domain" => requested_asset_types.contains("domain"),
+                "host" => requested_asset_types.contains("host"),
+                "ip" => requested_asset_types.contains("ip"),
+                _ => false,
+            };
+            if should_include {
+                push_unique_resolved_target(
+                    &mut resolved,
+                    &mut seen,
+                    &asset.asset_name,
+                    json!({
+                        "type": asset.asset_type.as_str(),
+                        "value": &asset.asset_name,
+                        "source": "surface_asset",
+                        "asset_id": &asset.id,
+                    }),
+                );
+            }
+
+            if requested_asset_types.contains("service")
+                && matches!(asset.asset_type.as_str(), "service" | "port")
+            {
+                push_unique_resolved_target(
+                    &mut resolved,
+                    &mut seen,
+                    &asset.asset_name,
+                    json!({
+                        "type": "service",
+                        "value": &asset.asset_name,
+                        "source": "surface_asset",
+                        "asset_id": &asset.id,
+                    }),
+                );
+            }
+        }
+    }
+
+    if let Ok(assets) = db_service
+        .list_bounty_assets(
+            Some(&task.program_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(10_000),
+            Some(0),
+        )
+        .await
+    {
+        for asset in assets {
+            let should_include = match asset.asset_type.as_str() {
+                "domain" => {
+                    requested_asset_types.contains("domain") && asset.is_wildcard != Some(true)
+                }
+                "website" | "web" => requested_asset_types.contains("web"),
+                "host" => requested_asset_types.contains("host"),
+                "ip" => requested_asset_types.contains("ip"),
+                _ => false,
+            };
+            if should_include {
+                push_unique_resolved_target(
+                    &mut resolved,
+                    &mut seen,
+                    &asset.canonical_url,
+                    json!({
+                        "type": asset.asset_type.as_str(),
+                        "value": &asset.canonical_url,
+                        "source": "bounty_asset",
+                        "asset_id": &asset.id,
+                    }),
+                );
+            }
+
+            if requested_asset_types.contains("service")
+                && matches!(asset.asset_type.as_str(), "service" | "port")
+            {
+                let canonical_host = extract_host(&asset.canonical_url);
+                if let Some(target) = format_service_target(
+                    asset.hostname.as_deref(),
+                    canonical_host.as_deref(),
+                    asset.port,
+                    Some(&asset.canonical_url),
+                ) {
+                    push_unique_resolved_target(
+                        &mut resolved,
+                        &mut seen,
+                        &target,
+                        json!({
+                            "type": "service",
+                            "value": &target,
+                            "source": "bounty_asset",
+                            "asset_id": &asset.id,
+                            "host": asset.hostname.as_deref().or(canonical_host.as_deref()),
+                            "port": asset.port,
+                            "protocol": asset.transport_protocol.as_deref(),
+                            "service_name": asset.service_name.as_deref(),
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(resolved)
 }

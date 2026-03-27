@@ -49,6 +49,17 @@ export interface UseTodosReturn {
   stopListening: () => void
 }
 
+type AgentExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
+
+interface AgentExecutionFinishedEvent {
+  execution_id: string
+  outcome: AgentExecutionOutcome
+  success: boolean
+  error?: string | null
+  response?: string | null
+  message?: string | null
+}
+
 // Global state for todos panel (singleton pattern like useTerminal)
 const globalTodosState = ref<{
   todosByExecutionId: Record<string, Todo[]>
@@ -195,31 +206,19 @@ export function useTodos(executionId?: Ref<string> | string): UseTodosReturn {
       }
     })
 
-    // 监听 agent 完成事件，可选择性关闭面板（但保留历史）
-    const unlistenComplete = await listen<{ execution_id: string; success: boolean }>('agent:complete', (event) => {
+    const unlistenFinished = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
       const targetId = getExecutionId()
       if (targetId && event.payload.execution_id !== targetId) {
         return
       }
-      console.log('[useTodos] Agent execution completed:', event.payload.execution_id)
-      // 不清空 todos，保留历史记录供用户查看
-    })
-
-    // 监听 agent 错误事件
-    const unlistenError = await listen<{ execution_id: string; error: string }>('agent:error', (event) => {
-      const targetId = getExecutionId()
-      if (targetId && event.payload.execution_id !== targetId) {
-        return
-      }
-      console.log('[useTodos] Agent execution failed:', event.payload.execution_id)
+      console.log('[useTodos] Agent execution finished:', event.payload.execution_id, event.payload.outcome)
       // 不清空 todos，保留历史记录供用户查看
     })
 
     // 将所有 unlisten 函数组合
     globalUnlisten = () => {
       unlistenTodos()
-      unlistenComplete()
-      unlistenError()
+      unlistenFinished()
     }
   }
 

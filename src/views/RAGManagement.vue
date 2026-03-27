@@ -719,9 +719,18 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
 import Toast from '@/components/Toast.vue'
+import { loadRagQueryThreshold, loadSupportedFileTypes as fetchSupportedFileTypes } from './ragManagementConfigSupport'
+import { buildCollectionDetails } from './ragManagementDetailSupport'
+import {
+  formatBytes,
+  formatDate,
+  isAgentMemoryCollection,
+  isCollectionActive,
+  useRagManagementToast,
+  type CollectionDetails,
+} from './ragManagementUiSupport'
 
 const { t } = useI18n()
-
 // 响应式数据
 const collections = ref([])
 const searchQuery = ref('')
@@ -738,10 +747,6 @@ const querying = ref(false)
 const loadingDetails = ref(false)
 const loadingDocuments = ref(false)
 const loadingChunks = ref(false)
-
-const isAgentMemoryCollection = (collection: any) => collection?.name === 'agent_memory'
-const isCollectionActive = (collection: any) =>
-  isAgentMemoryCollection(collection) || !!collection?.is_active
 
 // 激活集合管理（后端持久化）
 const onActiveToggle = async (collection: any, ev: Event) => {
@@ -796,17 +801,6 @@ const manualInput = ref({
 // 支持的文件类型
 const supportedFileTypes = ref<string[]>(['txt', 'md', 'pdf', 'docx'])
 
-const loadSupportedFileTypes = async () => {
-  try {
-    const types = await invoke('rag_get_supported_file_types') as string[]
-    if (types && types.length > 0) {
-      supportedFileTypes.value = types
-    }
-  } catch (e) {
-    console.warn('Failed to load supported file types', e)
-  }
-}
-
 // 查询相关
 const queryText = ref('')
 const queryTopK = ref(5)
@@ -818,25 +812,13 @@ const queryThreshold = ref(0.2)
 // 加载全局 RAG 配置以同步默认值
 const loadRagConfig = async () => {
   try {
-    const config = await invoke('get_rag_config') as any
-    if (config && typeof config.similarity_threshold === 'number') {
-      queryThreshold.value = config.similarity_threshold
+    const threshold = await loadRagQueryThreshold()
+    if (typeof threshold === 'number') {
+      queryThreshold.value = threshold
     }
   } catch (e) {
     console.warn('Failed to load RAG config:', e)
   }
-}
-
-// 集合详情相关
-interface CollectionStats {
-  totalDocuments: number
-  totalChunks: number
-}
-
-interface CollectionDetails {
-  documents: any[]
-  chunks: any[]
-  stats: CollectionStats
 }
 
 const collectionDetails = ref<CollectionDetails>({
@@ -858,11 +840,7 @@ const docPageSize = ref(10)
 const docCurrentPage = ref(1)
 
 // Toast 通知
-const toast = ref({
-  show: false,
-  message: '',
-  type: 'info'
-})
+const { toast, showToast } = useRagManagementToast()
 
 // 计算属性
 const filteredCollections = computed(() => {
@@ -896,30 +874,6 @@ const totalChunks = computed(() => {
 const totalQueries = computed(() => {
   return collections.value.reduce((sum, collection) => sum + (collection.query_count || 0), 0)
 })
-
-// 方法
-const showToast = (message: string, type: string = 'info') => {
-  toast.value = { show: true, message, type }
-  setTimeout(() => {
-    toast.value.show = false
-  }, 3000)
-}
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString('zh-CN')
-}
-
-const formatBytes = (bytes: number) => {
-  if (!bytes || bytes <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let val = bytes
-  while (val >= 1024 && i < units.length - 1) {
-    val = val / 1024
-    i++
-  }
-  return `${val.toFixed(1)} ${units[i]}`
-}
 
 const refreshCollections = async () => {
   try {
@@ -1009,15 +963,7 @@ const loadCollectionDetails = async (collectionId: string) => {
   loadingDetails.value = true
   try {
     // 这里可以添加获取集合详细信息的API调用
-    // 暂时显示基本信息
-    collectionDetails.value = {
-      documents: [],
-      chunks: [],
-      stats: {
-        totalDocuments: selectedCollection.value?.document_count || 0,
-        totalChunks: selectedCollection.value?.chunk_count || 0
-      }
-    }
+    collectionDetails.value = buildCollectionDetails(selectedCollection.value)
   } catch (error) {
     console.error('加载集合详情失败:', error)
     showToast('加载集合详情失败: ' + error, 'error')
@@ -1377,7 +1323,14 @@ const closeDetailsModal = () => {
 // 生命周期
 onMounted(async () => {
   refreshCollections()
-  loadSupportedFileTypes()
+  try {
+    const types = await fetchSupportedFileTypes()
+    if (types.length > 0) {
+      supportedFileTypes.value = types
+    }
+  } catch (e) {
+    console.warn('Failed to load supported file types', e)
+  }
   
   // 监听批量导入进度事件
   const { listen } = await import('@tauri-apps/api/event')

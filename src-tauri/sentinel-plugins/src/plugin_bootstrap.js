@@ -569,7 +569,19 @@ globalThis.fetch = async function (input, init = {}) {
 
   const body = init.body || null
   const timeout = init.timeout || 30000
-  const result = await Deno.core.ops.op_fetch(url, { method, headers, body, timeout })
+  const redirect = init.redirect || 'follow'
+  const maxRedirects =
+    typeof init.maxRedirects === 'number' && Number.isFinite(init.maxRedirects)
+      ? Math.max(0, Math.trunc(init.maxRedirects))
+      : undefined
+  const result = await Deno.core.ops.op_fetch(url, {
+    method,
+    headers,
+    body,
+    timeout,
+    redirect,
+    max_redirects: maxRedirects,
+  })
 
   if (!result.success) {
     throw new Error(result.error || 'Fetch failed')
@@ -580,6 +592,8 @@ globalThis.fetch = async function (input, init = {}) {
     status: result.status,
     statusText: result.ok ? 'OK' : 'Error',
     headers: new Headers(Object.entries(result.headers)),
+    url: result.final_url || String(url),
+    redirected: Boolean(result.redirected),
     text: async () => result.body,
     json: async () => JSON.parse(result.body),
     arrayBuffer: async () => new TextEncoder().encode(result.body).buffer,
@@ -593,6 +607,8 @@ globalThis.fetch = async function (input, init = {}) {
         status: this.status,
         statusText: this.statusText,
         headers: new Headers(this.headers),
+        url: this.url,
+        redirected: this.redirected,
         text: this.text,
         json: this.json,
         arrayBuffer: this.arrayBuffer,

@@ -114,10 +114,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, onActivated, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { useRoute } from 'vue-router'
 import RoleManagement from '@/components/RoleManagement.vue'
 import UserForcedRulesModal from '@/components/UserForcedRulesModal.vue'
 import TurnLogsModal from '@/components/Agent/TurnLogsModal.vue'
@@ -126,6 +127,7 @@ import type { AiTurnLogSummaryEntry } from '@/api/aiLogs'
 import { useRoleManagement } from '@/composables/useRoleManagement'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import { dialog } from '@/composables/useDialog'
+import type { AiConversationSummary } from '@/components/Agent/conversationTypes'
 
 // {{ t('aiAssistant.trafficReferenceType') }}
 interface ReferencedTraffic {
@@ -140,11 +142,24 @@ interface ReferencedTraffic {
   response_body?: string
 }
 
+interface ReferencedAsset {
+  id: string
+  name: string
+  value: string
+  asset_type: string
+  risk_level?: string
+  status?: string
+  description?: string
+  tags?: string[]
+  metadata?: Record<string, any>
+}
+
 defineOptions({
   name: 'AIAssistant'
 });
 
 const { t } = useI18n()
+const route = useRoute()
 
 // 角色管理
 const {
@@ -193,6 +208,7 @@ const handleNewTab = async () => {
 
 // 流量事件监听器
 let unlistenTraffic: UnlistenFn | null = null
+let unlistenAssets: UnlistenFn | null = null
 
 const handleSelectRole = async (role: any) => {
   try {
@@ -210,7 +226,17 @@ const handleOpenConversationFromLog = async (entry: AiTurnLogSummaryEntry) => {
   const conversationId = String(entry.conversation_id || '').trim()
   if (!conversationId) return
 
-  const existing = sessions.value.find(session => session.id === conversationId)
+  await openConversationById(
+    conversationId,
+    String(entry.user_request_preview || '').trim().slice(0, 40) || t('agent.unnamedConversation'),
+  )
+}
+
+const openConversationById = async (conversationId: string, fallbackTitle?: string) => {
+  const normalizedConversationId = String(conversationId || '').trim()
+  if (!normalizedConversationId) return
+
+  const existing = sessions.value.find(session => session.id === normalizedConversationId)
   if (existing) {
     addSession(existing.id, existing.title)
     await nextTick()
@@ -219,24 +245,37 @@ const handleOpenConversationFromLog = async (entry: AiTurnLogSummaryEntry) => {
   }
 
   try {
-    const conversations = await invoke<any[]>('get_ai_conversations')
+    const conversations = await invoke<AiConversationSummary[]>('get_ai_conversations')
     const matched = Array.isArray(conversations)
-      ? conversations.find(item => String(item?.id || '').trim() === conversationId)
+      ? conversations.find(item => String(item?.id || '').trim() === normalizedConversationId)
       : null
-    const fallbackTitle = String(entry.user_request_preview || '').trim().slice(0, 40)
+
     addSession(
-      conversationId,
+      normalizedConversationId,
       matched?.title || fallbackTitle || t('agent.unnamedConversation'),
     )
     await nextTick()
     getActiveAgentViewRef()?.focusInput?.()
   } catch (error) {
-    console.error('Failed to open conversation from turn log:', error)
-    addSession(
-      conversationId,
-      String(entry.user_request_preview || '').trim().slice(0, 40) || t('agent.unnamedConversation'),
-    )
+    console.error('Failed to open conversation by route:', error)
+    addSession(normalizedConversationId, fallbackTitle || t('agent.unnamedConversation'))
   }
+}
+
+const syncConversationFromRoute = async () => {
+  const conversationId = typeof route.query.conversationId === 'string'
+    ? route.query.conversationId
+    : typeof route.query.conversation_id === 'string'
+      ? route.query.conversation_id
+      : ''
+
+  if (!conversationId) return false
+
+  await openConversationById(
+    conversationId,
+    `${t('agent.unnamedConversation')} ${String(conversationId).slice(0, 8)}`,
+  )
+  return true
 }
 
 // --- 事件处理 ---
@@ -258,9 +297,11 @@ onMounted(async () => {
     // 加载角色列表
     await loadRoles()
 
+    const openedFromRoute = await syncConversationFromRoute()
+
     // 如果没有任何会话，尝试加载最近的一个或创建一个
-    if (sessions.value.length === 0) {
-      const conversations = await invoke<any[]>('get_ai_conversations')
+    if (!openedFromRoute && sessions.value.length === 0) {
+      const conversations = await invoke<AiConversationSummary[]>('get_ai_conversations')
       if (conversations && conversations.length > 0) {
         const latest = conversations.sort((a, b) => 
           new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
@@ -280,6 +321,14 @@ onMounted(async () => {
         activeAgentViewRef.addReferencedTraffic(event.payload.requests, type)
       }
     })
+
+    unlistenAssets = await listen<{ assets: ReferencedAsset[] }>('asset:send-to-assistant', (event) => {
+      console.log('AIAssistant: Received asset data:', event.payload)
+      const activeAgentViewRef = getActiveAgentViewRef()
+      if (event.payload?.assets && activeAgentViewRef?.addReferencedAssets) {
+        activeAgentViewRef.addReferencedAssets(event.payload.assets)
+      }
+    })
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   }
@@ -291,6 +340,10 @@ onUnmounted(() => {
     unlistenTraffic()
     unlistenTraffic = null
   }
+  if (unlistenAssets) {
+    unlistenAssets()
+    unlistenAssets = null
+  }
 })
 
 // 激活时聚焦
@@ -299,6 +352,20 @@ onActivated(() => {
     getActiveAgentViewRef()?.focusInput()
   })
 })
+
+watch(
+  () => [route.query.conversationId, route.query.conversation_id],
+  async ([conversationId, conversationIdSnake]) => {
+    const nextConversationId = typeof conversationId === 'string'
+      ? conversationId
+      : typeof conversationIdSnake === 'string'
+        ? conversationIdSnake
+        : ''
+
+    if (!nextConversationId) return
+    await openConversationById(nextConversationId)
+  },
+)
 </script>
 
 <style scoped>

@@ -45,11 +45,17 @@ impl DatabaseService {
         artifact: &Value,
     ) -> Result<()> {
         match asset_type {
-            "domain" => self.upsert_surface_domain_extension(asset_id, artifact).await,
+            "domain" => {
+                self.upsert_surface_domain_extension(asset_id, artifact)
+                    .await
+            }
             "ip" => self.upsert_surface_ip_extension(asset_id, artifact).await,
             "host" => self.upsert_surface_host_extension(asset_id, artifact).await,
             "port" => self.upsert_surface_port_extension(asset_id, artifact).await,
-            "service" => self.upsert_surface_service_extension(asset_id, artifact).await,
+            "service" => {
+                self.upsert_surface_service_extension(asset_id, artifact)
+                    .await
+            }
             "web" => self.upsert_surface_web_extension(asset_id, artifact).await,
             "certificate" => self.upsert_surface_cert_extension(asset_id, artifact).await,
             _ => Ok(()),
@@ -383,8 +389,8 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let host_asset_id = as_string(artifact.get("host_asset_id"));
-        let ip_address = as_string(artifact.get("ip_or_host"))
-            .or_else(|| as_string(artifact.get("ip_address")));
+        let ip_address =
+            as_string(artifact.get("ip_or_host")).or_else(|| as_string(artifact.get("ip_address")));
         let port_number = as_i32(artifact.get("port")).unwrap_or_default();
         let transport_protocol =
             as_string(artifact.get("transport_protocol")).unwrap_or_else(|| "tcp".to_string());
@@ -457,8 +463,8 @@ impl DatabaseService {
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
         let host_asset_id = as_string(artifact.get("host_asset_id"));
-        let ip_address = as_string(artifact.get("ip_or_host"))
-            .or_else(|| as_string(artifact.get("ip_address")));
+        let ip_address =
+            as_string(artifact.get("ip_or_host")).or_else(|| as_string(artifact.get("ip_address")));
         let port_number = as_i32(artifact.get("port"));
         let transport_protocol = as_string(artifact.get("transport_protocol"));
         let protocol_name = as_string(artifact.get("protocol_name"));
@@ -583,8 +589,8 @@ impl DatabaseService {
         let scheme = as_string(artifact.get("scheme"));
         let service_asset_id = as_string(artifact.get("service_asset_id"));
         let domain_asset_id = as_string(artifact.get("domain_asset_id"));
-        let ip_address = as_string(artifact.get("ip_address"))
-            .or_else(|| as_string(artifact.get("hostname")));
+        let ip_address =
+            as_string(artifact.get("ip_address")).or_else(|| as_string(artifact.get("hostname")));
         let port_number = as_i32(artifact.get("port"));
         let site_title = as_string(artifact.get("site_title"));
         let http_status_code = as_i32(artifact.get("http_status_code"));

@@ -183,6 +183,7 @@ import PluginCodeEditorDialog from './PluginCodeEditorDialog.vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { dialog } from '../../composables/useDialog'
 import type { SubCategory, CodeReference, CommandResponse, TestResult } from './types'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -1189,7 +1190,7 @@ const handleApplyAiCode = async (code: string, context?: CodeReference | null) =
   
   if (!validationResult.is_valid) {
     const errorMsg = validationResult.errors.join('\n')
-    if (!confirm(t('plugins.codeHasErrors', { errors: errorMsg }))) {
+    if (!(await dialog.confirm(t('plugins.codeHasErrors', { errors: errorMsg })))) {
       return
     }
   } else if (validationResult.warnings.length > 0) {

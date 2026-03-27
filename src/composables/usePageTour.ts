@@ -1,6 +1,7 @@
 import { driver, DriveStep, Config } from 'driver.js'
 import 'driver.js/dist/driver.css'
 import { useI18n } from 'vue-i18n'
+import { dialog } from './useDialog'
 
 export interface TourStep extends Omit<DriveStep, 'popover'> {
   element: string
@@ -33,10 +34,17 @@ export function usePageTour() {
       progressText: t('common.tour.progress'),
       onDestroyStarted: () => {
         if (driverObj.hasNextStep() || driverObj.hasPreviousStep()) {
-          const confirmed = confirm(t('common.tour.confirmExit'))
-          if (!confirmed) {
-            return
-          }
+          void (async () => {
+            const confirmed = await dialog.confirm(t('common.tour.confirmExit'))
+            if (!confirmed) {
+              return
+            }
+            driverObj.destroy()
+            if (onComplete) {
+              onComplete()
+            }
+          })()
+          return
         }
         driverObj.destroy()
         if (onComplete) {

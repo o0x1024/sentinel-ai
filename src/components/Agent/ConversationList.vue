@@ -79,6 +79,14 @@
                   <i class="fas fa-robot"></i> {{ conv.model_name }}
                 </span>
               </div>
+              <div v-if="conv.execution_state" class="mt-2">
+                <span
+                  class="badge badge-xs"
+                  :class="getExecutionStateBadgeClass(conv.execution_state.outcome)"
+                >
+                  {{ t(getExecutionStateLabelKey(conv.execution_state.outcome)) }}
+                </span>
+              </div>
             </div>
 
             <!-- Actions -->
@@ -116,17 +124,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import {
+  type AgentExecutionFinishedEvent,
+  type PersistedAgentExecutionState,
+  getExecutionStateBadgeClass,
+  getExecutionStateLabelKey,
+} from './executionState'
+import type { AiConversationDetail } from './conversationTypes'
 
-interface Conversation {
-  id: string
-  title: string | null
-  model_name: string
-  total_messages: number
-  created_at: string
-  updated_at: string
+interface AgentStartEvent {
+  execution_id: string
+  task: string
+}
+
+interface Conversation extends AiConversationDetail {
+  execution_state?: PersistedAgentExecutionState | null
 }
 
 const props = defineProps<{
@@ -152,9 +168,35 @@ const PAGE_SIZE = 20
 let currentOffset = 0
 let totalCount = 0
 const hasMore = ref(true)
+let unlistenAgentStart: UnlistenFn | null = null
+let unlistenExecutionFinished: UnlistenFn | null = null
 
 // Search debounce
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
+
+const sortConversationsByUpdatedAt = () => {
+  conversations.value = [...conversations.value].sort((left, right) => {
+    const leftTs = new Date(left.updated_at).getTime()
+    const rightTs = new Date(right.updated_at).getTime()
+    return rightTs - leftTs
+  })
+}
+
+const updateConversationExecutionState = (
+  conversationId: string,
+  state: PersistedAgentExecutionState | null,
+  updatedAt: string
+) => {
+  const index = conversations.value.findIndex(conversation => conversation.id === conversationId)
+  if (index === -1) return
+
+  conversations.value[index] = {
+    ...conversations.value[index],
+    updated_at: updatedAt,
+    execution_state: state,
+  }
+  sortConversationsByUpdatedAt()
+}
 
 const loadConversations = async (reset = false) => {
   if (reset) {
@@ -225,10 +267,11 @@ const handleSearch = () => {
       try {
         const allConversations = await invoke<Conversation[]>('get_ai_conversations')
         const query = searchQuery.value.toLowerCase()
-        conversations.value = allConversations.filter(conv => 
-          (conv.title || '').toLowerCase().includes(query) ||
-          conv.model_name.toLowerCase().includes(query)
-        )
+        conversations.value = allConversations
+          .filter(conv =>
+            (conv.title || '').toLowerCase().includes(query) ||
+            conv.model_name.toLowerCase().includes(query)
+          )
         hasMore.value = false
       } catch (error) {
         console.error('Failed to search conversations:', error)
@@ -301,8 +344,32 @@ const formatDate = (dateStr: string) => {
   return date.toLocaleDateString()
 }
 
-onMounted(() => {
-  loadConversations(true)
+onMounted(async () => {
+  await loadConversations(true)
+
+  unlistenAgentStart = await listen<AgentStartEvent>('agent:start', (event) => {
+    updateConversationExecutionState(event.payload.execution_id, null, new Date().toISOString())
+  })
+
+  unlistenExecutionFinished = await listen<AgentExecutionFinishedEvent>('agent:execution_finished', (event) => {
+    const completedAt = new Date().toISOString()
+    updateConversationExecutionState(
+      event.payload.execution_id,
+      {
+        ...event.payload,
+        completed_at: completedAt,
+      },
+      completedAt
+    )
+  })
+})
+
+onUnmounted(() => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout)
+  }
+  unlistenAgentStart?.()
+  unlistenExecutionFinished?.()
 })
 
 defineExpose({

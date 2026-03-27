@@ -137,6 +137,14 @@
     :status="message.metadata?.status"
     :execution-id="message.metadata?.execution_id"
   />
+
+  <WebSearchToolResult
+    v-else-if="isWebSearchTool"
+    :args="message.metadata?.tool_args"
+    :result="message.metadata?.tool_result"
+    :error="message.metadata?.error"
+    :status="message.metadata?.status"
+  />
   
   <!-- Tool Call Message - Collapsible Panel (only render if has content) -->
   <div v-else-if="message.type === 'tool_call' && hasToolCallContent" class="tool-call-panel rounded-lg overflow-hidden  bg-base-200 border-l-4" :class="toolPanelBorderClass">
@@ -432,6 +440,7 @@ import type { AgentMessage } from '@/types/agent'
 import { getMessageTypeName } from '@/types/agent'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ShellToolResult from './ShellToolResult.vue'
+import WebSearchToolResult from './WebSearchToolResult.vue'
 
 const { t } = useI18n()
 
@@ -673,6 +682,11 @@ const skillsCardTarget = computed(() => {
 const isShellTool = computed(() => {
   const name = props.message.metadata?.tool_name?.toLowerCase()
   return name === 'shell' || name === 'bash' || name === 'cmd' || name === 'powershell'
+})
+
+const isWebSearchTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return (props.message.type === 'tool_call' || props.message.type === 'tool_result') && name === 'web_search'
 })
 
 // Check if this is a segment summary message (sliding window)
@@ -944,6 +958,7 @@ const hasToolResult = computed(() => {
 const hasToolCallContent = computed(() => {
   if (props.message.type !== 'tool_call') return false
   if (isSkillsTool.value) return false
+  if (isWebSearchTool.value) return false
   
   // Has content, args, result, or call_id
   return !!(

@@ -196,12 +196,24 @@ function updateReadonly(readonly: boolean) {
 defineExpose({
   focus: () => editorView?.focus(),
   getContent: () => editorView?.state.doc.toString() || '',
+  getSelectionRange: () => {
+    if (!editorView) return { from: 0, to: 0 }
+    const main = editorView.state.selection.main
+    return { from: main.from, to: main.to }
+  },
   undo: () => editorView && undo(editorView),
   redo: () => editorView && redo(editorView),
   selectAll: () => {
     if (!editorView) return
     editorView.dispatch({
       selection: { anchor: 0, head: editorView.state.doc.length }
+    })
+    editorView.focus()
+  },
+  setSelection: (from: number, to: number) => {
+    if (!editorView) return
+    editorView.dispatch({
+      selection: { anchor: from, head: to }
     })
     editorView.focus()
   },
@@ -310,4 +322,3 @@ onUnmounted(() => {
   background-color: oklch(var(--p) / 0.2) !important;
 }
 </style>
-

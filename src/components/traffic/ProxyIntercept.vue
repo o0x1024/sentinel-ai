@@ -192,6 +192,15 @@
           </button>
           <button 
             class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
+            @click="contextMenuSendToIntruder"
+            :disabled="contextMenu.item?.type !== 'request'"
+            :class="{ 'opacity-50 cursor-not-allowed': contextMenu.item?.type !== 'request' }"
+          >
+            <i class="fas fa-crosshairs w-4 text-secondary"></i>
+            {{ $t('trafficAnalysis.intercept.contextMenu.sendToIntruder') }}
+          </button>
+          <button 
+            class="w-full px-4 py-2 text-left text-sm hover:bg-base-200 flex items-center gap-2"
             @click="contextMenuSendToAI"
           >
             <i class="fas fa-robot w-4 text-secondary"></i>
@@ -346,6 +355,14 @@
             >
               <i class="fas fa-redo mr-1"></i>
               {{ $t('trafficAnalysis.intercept.buttons.sendToRepeater') }}
+            </button>
+            <button 
+              @click="sendToIntruder"
+              class="btn btn-outline btn-sm"
+              :disabled="!currentItem || currentItem.type !== 'request'"
+            >
+              <i class="fas fa-crosshairs mr-1"></i>
+              {{ $t('trafficAnalysis.intercept.buttons.sendToIntruder') }}
             </button>
             
             <div class="flex-1"></div>
@@ -529,6 +546,25 @@ import { dialog } from '@/composables/useDialog';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
 import HttpCodeEditor from '@/components/HttpCodeEditor.vue';
+import {
+  convertInterceptedItemToProxyRequest as convertToProxyRequest,
+  formatInterceptBody as formatBody,
+  formatInterceptTimestamp as formatTimestamp,
+  getInterceptItemDirection,
+  getInterceptItemDomain,
+  getInterceptItemMethod,
+  getInterceptItemStatus,
+  getInterceptMethodClass as getMethodClass,
+  getInterceptStatusClass as getStatusClass,
+  truncateInterceptText as truncate,
+  type InterceptedItem,
+  type InterceptedRequest,
+  type InterceptedResponse,
+  type InterceptedWebSocketMessage,
+  type ProxyRequestForAI,
+  type ProxyStats,
+  type ProxyStatus,
+} from './proxyInterceptSupport';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -539,75 +575,9 @@ const refreshTrigger = inject<any>('refreshTrigger', ref(0));
 // 发送到 Repeater 的事件
 const emit = defineEmits<{
   (e: 'sendToRepeater', request: InterceptedRequest): void
+  (e: 'sendToIntruder', request: InterceptedRequest): void
   (e: 'sendToAssistant', requests: any[]): void
 }>();
-
-// 用于发送到 AI 助手的请求格式（兼容 ProxyHistory）
-interface ProxyRequestForAI {
-  id: number;
-  url: string;
-  host: string;
-  protocol: string;
-  method: string;
-  status_code: number;
-  request_headers?: string;
-  request_body?: string;
-  response_headers?: string;
-  response_body?: string;
-  response_size: number;
-  response_time: number;
-  timestamp: string;
-}
-
-// 类型定义
-interface ProxyStats {
-  http_requests: number;
-  https_requests: number;
-  errors: number;
-  qps: number;
-}
-
-interface ProxyStatus {
-  running: boolean;
-  port: number;
-  mitm: boolean;
-  stats: ProxyStats;
-}
-
-interface InterceptedRequest {
-  id: string;
-  method: string;
-  url: string;
-  path: string;
-  protocol: string;
-  headers: Record<string, string>;
-  body?: string;
-  timestamp: number;
-}
-
-interface InterceptedResponse {
-  id: string;
-  request_id: string;
-  status: number;
-  headers: Record<string, string>;
-  body?: string;
-  timestamp: number;
-}
-
-interface InterceptedWebSocketMessage {
-  id: string;
-  connection_id: string;
-  direction: 'client_to_server' | 'server_to_client';
-  message_type: 'text' | 'binary' | 'ping' | 'pong' | 'close';
-  content?: string;
-  timestamp: number;
-}
-
-// 拦截项类型
-type InterceptedItem = 
-  | { type: 'request'; data: InterceptedRequest }
-  | { type: 'response'; data: InterceptedResponse }
-  | { type: 'websocket'; data: InterceptedWebSocketMessage };
 
 // 响应式状态
 const proxyStatus = ref<ProxyStatus>({
@@ -709,62 +679,6 @@ let isResizing = false;
 let startY = 0;
 let startHeight = 0;
 
-// Format content for Pretty view (JSON, XML, etc.)
-function formatBody(body: string): string {
-  if (!body) return body;
-  
-  const trimmed = body.trim();
-  
-  // Try JSON
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      // Not valid JSON
-    }
-  }
-  
-  // Try XML/HTML
-  if (trimmed.startsWith('<')) {
-    try {
-      return formatXml(trimmed);
-    } catch {
-      // Not valid XML
-    }
-  }
-  
-  return body;
-}
-
-// Simple XML formatter
-function formatXml(xml: string): string {
-  let formatted = '';
-  let indent = 0;
-  const lines = xml.replace(/></g, '>\n<').split('\n');
-  
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    if (!trimmedLine) continue;
-    
-    // Closing tag
-    if (trimmedLine.startsWith('</')) {
-      indent = Math.max(0, indent - 1);
-    }
-    
-    formatted += '  '.repeat(indent) + trimmedLine + '\n';
-    
-    // Opening tag (not self-closing, not closing)
-    if (trimmedLine.startsWith('<') && !trimmedLine.startsWith('</') && 
-        !trimmedLine.startsWith('<?') && !trimmedLine.startsWith('<!') &&
-        !trimmedLine.endsWith('/>') && !trimmedLine.includes('</')) {
-      indent++;
-    }
-  }
-  
-  return formatted.trim();
-}
-
 // Pretty content (formatted) - writable computed
 const prettyContent = computed({
   get: () => {
@@ -852,17 +766,6 @@ function stopResize() {
   document.body.style.userSelect = '';
 }
 
-// 格式化时间戳
-function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString('zh-CN');
-}
-
-function truncate(str: string, len: number) {
-  if (!str) return '';
-  return str.length > len ? str.substring(0, len) + '...' : str;
-}
-
 // Context Menu Methods
 function showContextMenu(event: MouseEvent, item: InterceptedItem, index: number) {
   selectItem(index);
@@ -882,6 +785,22 @@ function closeContextMenu() {
   document.removeEventListener('click', closeContextMenu);
 }
 
+function getItemDomain(): string {
+  return getInterceptItemDomain(contextMenu.value.item);
+}
+
+function getItemMethod(): string {
+  return getInterceptItemMethod(contextMenu.value.item);
+}
+
+function getItemStatus(): number {
+  return getInterceptItemStatus(contextMenu.value.item);
+}
+
+function getItemDirection(): string {
+  return getInterceptItemDirection(contextMenu.value.item);
+}
+
 async function contextMenuForward() {
   closeContextMenu();
   await forwardCurrentItem();
@@ -896,6 +815,14 @@ function contextMenuSendToRepeater() {
   if (contextMenu.value.item?.type === 'request') {
     emit('sendToRepeater', contextMenu.value.item.data as InterceptedRequest);
     dialog.toast.success('Sent to Repeater');
+  }
+  closeContextMenu();
+}
+
+function contextMenuSendToIntruder() {
+  if (contextMenu.value.item?.type === 'request') {
+    emit('sendToIntruder', contextMenu.value.item.data as InterceptedRequest);
+    dialog.toast.success('Sent to Intruder');
   }
   closeContextMenu();
 }
@@ -934,111 +861,6 @@ async function contextMenuSendToAI() {
   
   const typeText = sendType === 'request' ? t('trafficAnalysis.intercept.request') : t('trafficAnalysis.intercept.response');
   dialog.toast.success(t('trafficAnalysis.intercept.sentToAssistant', { type: typeText }));
-}
-
-// Convert intercepted item to ProxyRequest format for AI assistant
-function convertToProxyRequest(item: InterceptedItem): ProxyRequestForAI | null {
-  if (item.type === 'request') {
-    const req = item.data as InterceptedRequest;
-    let host = '';
-    try {
-      const url = new URL(req.url);
-      host = url.hostname;
-    } catch {
-      host = '';
-    }
-    
-    return {
-      id: Date.now(),
-      url: req.url,
-      host,
-      protocol: req.protocol || 'HTTP/1.1',
-      method: req.method,
-      status_code: 0,
-      request_headers: JSON.stringify(req.headers),
-      request_body: req.body,
-      response_headers: undefined,
-      response_body: undefined,
-      response_size: 0,
-      response_time: 0,
-      timestamp: new Date(req.timestamp).toISOString()
-    };
-  } else if (item.type === 'response') {
-    const res = item.data as InterceptedResponse;
-    return {
-      id: Date.now(),
-      url: '', // Response doesn't have URL directly
-      host: '',
-      protocol: 'HTTP/1.1',
-      method: '',
-      status_code: res.status,
-      request_headers: undefined,
-      request_body: undefined,
-      response_headers: JSON.stringify(res.headers),
-      response_body: res.body,
-      response_size: res.body?.length || 0,
-      response_time: 0,
-      timestamp: new Date(res.timestamp).toISOString()
-    };
-  } else if (item.type === 'websocket') {
-    const ws = item.data as InterceptedWebSocketMessage;
-    return {
-      id: Date.now(),
-      url: `ws://${ws.connection_id}`,
-      host: '',
-      protocol: 'WebSocket',
-      method: ws.direction === 'client_to_server' ? 'WS_SEND' : 'WS_RECV',
-      status_code: 0,
-      request_headers: undefined,
-      request_body: ws.content,
-      response_headers: undefined,
-      response_body: undefined,
-      response_size: ws.content?.length || 0,
-      response_time: 0,
-      timestamp: new Date(ws.timestamp).toISOString()
-    };
-  }
-  return null;
-}
-
-// Get item properties for context menu
-function getItemDomain(): string {
-  const item = contextMenu.value.item;
-  if (item?.type === 'request') {
-    try {
-      const url = new URL((item.data as InterceptedRequest).url);
-      return url.hostname;
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
-function getItemMethod(): string {
-  const item = contextMenu.value.item;
-  if (item?.type === 'request') {
-    return (item.data as InterceptedRequest).method;
-  }
-  return '';
-}
-
-function getItemStatus(): number {
-  const item = contextMenu.value.item;
-  if (item?.type === 'response') {
-    return (item.data as InterceptedResponse).status;
-  }
-  return 0;
-}
-
-function getItemDirection(): string {
-  const item = contextMenu.value.item;
-  if (item?.type === 'websocket') {
-    return (item.data as InterceptedWebSocketMessage).direction === 'client_to_server' 
-      ? 'Client → Server' 
-      : 'Server → Client';
-  }
-  return '';
 }
 
 // Filter methods
@@ -1415,6 +1237,11 @@ function sendToRepeater() {
   emit('sendToRepeater', currentRequest.value);
 }
 
+function sendToIntruder() {
+  if (!currentRequest.value) return;
+  emit('sendToIntruder', currentRequest.value);
+}
+
 function loadRequestContent(request: InterceptedRequest) {
   let content = `${request.method} ${request.path} ${request.protocol}\n`;
   for (const [key, value] of Object.entries(request.headers)) {
@@ -1555,25 +1382,6 @@ async function dropCurrentItem() {
   } finally {
     isProcessing.value = false;
   }
-}
-
-function getMethodClass(method: string) {
-  switch (method.toUpperCase()) {
-    case 'GET': return 'badge-info';
-    case 'POST': return 'badge-success';
-    case 'PUT': return 'badge-warning';
-    case 'DELETE': return 'badge-error';
-    case 'PATCH': return 'badge-accent';
-    default: return 'badge-ghost';
-  }
-}
-
-function getStatusClass(status: number) {
-  if (status >= 200 && status < 300) return 'badge-success';
-  if (status >= 300 && status < 400) return 'badge-info';
-  if (status >= 400 && status < 500) return 'badge-warning';
-  if (status >= 500) return 'badge-error';
-  return 'badge-ghost';
 }
 
 async function refreshStatus() {

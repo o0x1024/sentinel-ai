@@ -323,6 +323,80 @@
         <p class="text-sm mt-1">{{ t('agent.createFirstSkill') }}</p>
       </div>
 
+      <div v-else-if="props.viewMode === 'list'" class="overflow-x-auto">
+        <table class="table table-zebra table-sm">
+          <thead>
+            <tr>
+              <th>{{ t('agent.skillName') }}</th>
+              <th>{{ t('agent.skillDescription') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th class="w-40">{{ t('common.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="skill in skills" :key="skill.id">
+              <td>
+                <div class="flex items-center gap-3 min-w-0">
+                  <div :class="['skill-icon', getSkillIconClass(skill.id)]">
+                    <i :class="getSkillIcon(skill.id)"></i>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="font-medium truncate">{{ skill.name }}</div>
+                    <div class="text-[10px] text-base-content/50 font-mono truncate">{{ skill.id }}</div>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <div class="max-w-xl">
+                  <div class="text-sm text-base-content/70 line-clamp-2">{{ skill.description || '-' }}</div>
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    <span v-if="skill.content" class="badge badge-sm badge-info badge-outline">
+                      {{ t('agent.hasSkillContent') }}
+                    </span>
+                    <span v-if="skill.disable_model_invocation" class="badge badge-sm badge-warning badge-outline">
+                      {{ t('agent.modelInvocationDisabled') }}
+                    </span>
+                    <span v-if="!skill.user_invocable" class="badge badge-sm badge-neutral badge-outline">
+                      {{ t('agent.notUserInvocable') }}
+                    </span>
+                    <span v-if="!isSkillEnabled(skill.id)" class="badge badge-sm badge-error badge-outline">
+                      {{ t('common.disabled') }}
+                    </span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <label class="flex items-center gap-2 text-xs text-base-content/60">
+                  <input
+                    type="checkbox"
+                    class="toggle toggle-xs"
+                    :checked="isSkillEnabled(skill.id)"
+                    @change="toggleSkillEnabled(skill.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span>{{ isSkillEnabled(skill.id) ? t('common.enabled') : t('common.disabled') }}</span>
+                </label>
+              </td>
+              <td>
+                <div class="flex items-center gap-2">
+                  <button @click="startEdit(skill)" class="btn btn-xs btn-ghost">
+                    <i class="fas fa-edit mr-1"></i>
+                    {{ t('common.edit') }}
+                  </button>
+                  <button
+                    @click="confirmDelete(skill)"
+                    class="btn btn-xs btn-error btn-outline"
+                    :disabled="deletingSkillIds.includes(skill.id)"
+                  >
+                    <i :class="deletingSkillIds.includes(skill.id) ? 'fas fa-spinner fa-spin mr-1' : 'fas fa-trash mr-1'"></i>
+                    {{ t('common.delete') }}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div v-else class="skills-cards-grid">
         <div
           v-for="skill in skills"
@@ -386,6 +460,7 @@ import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { dialog } from '../../composables/useDialog'
 
 interface Skill {
   id: string
@@ -418,11 +493,13 @@ interface SkillFileEntry {
 interface Props {
   isFullscreen?: boolean
   embedded?: boolean
+  viewMode?: 'card' | 'list'
 }
 
 const props = withDefaults(defineProps<Props>(), {
   isFullscreen: false,
-  embedded: false
+  embedded: false,
+  viewMode: 'card'
 })
 
 const emit = defineEmits<{
@@ -597,7 +674,7 @@ const saveFile = async () => {
 
 const deleteFile = async () => {
   if (!editingSkill.value || !selectedFilePath.value) return
-  if (!confirm(t('agent.skillFilesDeleteConfirm'))) return
+  if (!(await dialog.confirm(t('agent.skillFilesDeleteConfirm')))) return
   try {
     await invoke('delete_skill_file', {
       id: editingSkill.value.id,
@@ -821,7 +898,7 @@ const saveSkill = async () => {
 }
 
 const confirmDelete = async (skill: Skill) => {
-  if (!confirm(t('agent.skillDeleteConfirm'))) return
+  if (!(await dialog.confirm(t('agent.skillDeleteConfirm')))) return
   if (deletingSkillIds.value.includes(skill.id)) return
   deletingSkillIds.value = [...deletingSkillIds.value, skill.id]
   try {
@@ -843,9 +920,9 @@ const confirmDelete = async (skill: Skill) => {
   }
 }
 
-const applyTemplate = () => {
+const applyTemplate = async () => {
   if (!editingSkill.value) return
-  if (editingSkill.value.content.trim() && !confirm(t('agent.skillTemplateOverwriteConfirm'))) {
+  if (editingSkill.value.content.trim() && !(await dialog.confirm(t('agent.skillTemplateOverwriteConfirm')))) {
     return
   }
   editingSkill.value.content = `## Purpose

@@ -98,7 +98,9 @@ export default {
   },
 
   // Notifications
-  notifications: '通知管理',
+  notifications: '通知',
+  notificationCenter: '消息中心',
+  notificationRules: '通知中心',
   unreadNotifications: '未读通知',
   markAsRead: '标记为已读',
   markAllAsRead: '全部标记为已读',

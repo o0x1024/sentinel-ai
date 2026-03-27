@@ -71,12 +71,14 @@ const WorkflowStudio = () => import('./views/WorkflowStudio.vue');
 const AIAssistant = () => import('./views/AIAssistant.vue');
 const RAGManagement = () => import('./views/RAGManagement.vue');
 const TrafficAnalysis = () => import('./views/TrafficAnalysis.vue');
+const IntruderResultsWindow = () => import('./views/IntruderResultsWindow.vue');
 const PluginManagement = () => import('./views/PluginManagement.vue');
 const BugBounty = () => import('./views/BugBounty.vue');
 const CyberChef = () => import('./views/CyberChef.vue');
 
 const Settings = () => import('./views/Settings.vue');
 const PerformanceMonitor = () => import('./components/PerformanceMonitor.vue');
+const NotificationCenter = () => import('./views/NotificationCenter.vue');
 const NotificationManagement = () => import('./views/NotificationManagement.vue');
 
 // 创建路由配置
@@ -135,6 +137,12 @@ const routes = [
     meta: { title: '流量分析' }
   },
   {
+    path: '/intruder-results/:workspaceId',
+    name: 'IntruderResultsWindow',
+    component: IntruderResultsWindow,
+    meta: { title: 'Intruder Results', standalone: true }
+  },
+  {
     path: '/scan-tasks',
     name: 'ScanTasks',
     component: SecurityCenter,
@@ -177,10 +185,16 @@ const routes = [
     meta: { title: '性能监控' }
   },
   {
+    path: '/notification-center',
+    name: 'NotificationCenter',
+    component: NotificationCenter,
+    meta: { title: '消息中心' }
+  },
+  {
     path: '/notifications',
     name: 'NotificationManagement',
     component: NotificationManagement,
-    meta: { title: '通知管理' }
+    meta: { title: '通知中心' }
   },
 ];
 

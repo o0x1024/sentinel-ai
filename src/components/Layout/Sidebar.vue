@@ -90,6 +90,9 @@
               >
                 <i :class="`${item.icon} text-lg`"></i>
                 <span class="font-medium">{{ item.name }}</span>
+                <span v-if="item.badge" class="badge badge-sm ml-auto" :class="item.badgeClass">
+                  {{ item.badge }}
+                </span>
               </router-link>
             </li>
           </ul>
@@ -128,6 +131,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
+import { useNotificationCenter } from '@/composables/useNotificationCenter'
 
 // 接收折叠状态
 const props = defineProps({
@@ -140,6 +144,8 @@ const props = defineProps({
 // 初始化i18n和路由
 const { t } = useI18n()
 const route = useRoute()
+const { unreadMessageCount, unreadNotificationCount } = useNotificationCenter()
+const unreadActivityCount = computed(() => unreadMessageCount.value + unreadNotificationCount.value)
 
 // 主要功能菜单项
 const mainMenuItems = computed(() => [
@@ -251,6 +257,13 @@ const toolMenuItems = computed(() => [
 // 系统设置菜单项
 const systemMenuItems = computed(() => [
   {
+    path: '/notification-center',
+    name: t('sidebar.notificationCenter', '消息中心'),
+    icon: 'fas fa-inbox',
+    badge: unreadActivityCount.value > 0 ? unreadActivityCount.value.toString() : null,
+    badgeClass: unreadActivityCount.value > 0 ? 'badge-primary' : ''
+  },
+  {
     path: '/settings',
     name: t('sidebar.settings', '系统设置'),
     icon: 'fas fa-cog',
@@ -259,8 +272,8 @@ const systemMenuItems = computed(() => [
   },
   {
     path: '/notifications',
-    name: t('sidebar.notifications', '通知管理'),
-    icon: 'fas fa-bell',
+    name: t('sidebar.notificationRules', '通知中心'),
+    icon: 'fas fa-sliders',
     badge: null,
     badgeClass: ''
   },

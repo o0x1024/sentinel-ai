@@ -98,7 +98,8 @@ pub struct ChangeEvent {
     pub affected_scope: Option<String>,
     /// Detection method
     pub detection_method: String,
-    /// Triggered workflow IDs
+    /// Deprecated compatibility field.
+    /// Structured workflow run records are now the source of truth for event workflow audit.
     pub triggered_workflows: Vec<String>,
     /// Generated findings
     pub generated_findings: Vec<String>,
@@ -207,7 +208,6 @@ pub struct UpdateChangeEventRequest {
     pub severity: Option<ChangeSeverity>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub triggered_workflows: Option<Vec<String>>,
     pub generated_findings: Option<Vec<String>>,
 }
 

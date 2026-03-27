@@ -21,6 +21,7 @@
 //! - `plugins/plugin-types.d.ts` - TypeScript 类型定义
 //! - `plugins/README.md` - 开发指南
 
+pub mod dictionary_runtime;
 pub mod error;
 pub mod executor;
 pub mod plugin;
@@ -35,7 +36,8 @@ pub use plugin::{
     PluginStatus,
 };
 pub use plugin_engine::PluginEngine;
-pub use plugin_ops::{init_dictionary_pool, sentinel_plugin_ext, PluginContext};
+pub use dictionary_runtime::init_dictionary_pool;
+pub use plugin_ops::{sentinel_plugin_ext, PluginContext};
 pub use types::*;
 
 /// 获取内置插件目录路径

@@ -92,6 +92,35 @@ fn create_plugin_executor(plugin_id: String) -> ToolExecutor {
     })
 }
 
+fn create_plugin_executor_with_context(ctx: PluginContext) -> ToolExecutor {
+    create_executor(move |args: Value| {
+        let plugin_id = ctx.plugin_id.clone();
+        let plugin_name = ctx.name.clone();
+        let plugin_code = ctx.code.clone();
+
+        async move {
+            let args_clone = args.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+                let local = tokio::task::LocalSet::new();
+                local.block_on(
+                    &rt,
+                    execute_plugin_async(plugin_id, plugin_name, plugin_code, args_clone),
+                )
+            })
+            .await
+            .map_err(|e| format!("Plugin execution task failed: {}", e))??;
+
+            Ok(result)
+        }
+    })
+}
+
 /// Execute plugin in a dedicated runtime (called from spawn_blocking)
 async fn execute_plugin_async(
     plugin_id: String,
@@ -112,6 +141,7 @@ async fn execute_plugin_async(
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: Some(format!("Agent tool plugin: {}", plugin_name)),
+        target_asset_types: Vec::new(),
     };
 
     // Create a PluginExecutor with restart capability (1000 executions before restart warning)
@@ -189,6 +219,12 @@ pub async fn load_plugin_tools_to_server(tool_server: &ToolServer, plugins: Vec<
 
     for plugin_meta in plugins {
         let full_name = format!("plugin::{}", plugin_meta.plugin_id);
+        let mut bound_context: Option<PluginContext> = None;
+        tracing::info!(
+            "Registering plugin tool {} (has_code={})",
+            plugin_meta.plugin_id,
+            plugin_meta.code.is_some()
+        );
 
         // Register plugin context if code is available
         if let Some(code) = &plugin_meta.code {
@@ -197,10 +233,15 @@ pub async fn load_plugin_tools_to_server(tool_server: &ToolServer, plugins: Vec<
                 name: plugin_meta.name.clone(),
                 code: code.clone(),
             };
-            register_plugin_context(ctx).await;
+            register_plugin_context(ctx.clone()).await;
+            bound_context = Some(ctx);
         }
 
-        let executor = create_plugin_executor(plugin_meta.plugin_id.clone());
+        let executor = if let Some(ctx) = bound_context {
+            create_plugin_executor_with_context(ctx)
+        } else {
+            create_plugin_executor(plugin_meta.plugin_id.clone())
+        };
 
         tool_server
             .register_plugin_tool(

@@ -241,6 +241,56 @@
               >
             </div>
           </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">产品范围</span>
+              </label>
+              <input
+                v-model.trim="form.productScopeText"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: Jenkins,Grafana"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">厂商范围</span>
+              </label>
+              <input
+                v-model.trim="form.vendorScopeText"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: Atlassian,HashiCorp"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">端口范围</span>
+              </label>
+              <input
+                v-model.trim="form.portScopeText"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: 80,443,8080"
+              >
+            </div>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">标签</span>
+            </label>
+            <input
+              v-model.trim="form.tagsText"
+              type="text"
+              class="input input-bordered"
+              placeholder="用逗号分隔，例如 exposure,spring,actuator"
+            >
+          </div>
         </template>
 
         <div class="form-control">
@@ -453,6 +503,7 @@ const handledMetadataKeysByType: Record<string, string[]> = {
     'finding_type',
     'severity',
     'target_types',
+    'tags',
     'match_scope',
     'request',
     'matchers',
@@ -486,6 +537,9 @@ const form = reactive({
   safeMode: true,
   targetTypesText: 'web',
   fingerprintScopeText: '',
+  productScopeText: '',
+  vendorScopeText: '',
+  portScopeText: '',
   impact: '',
   extraMetadataText: '',
   matchers: [] as RuleMatcherForm[],
@@ -569,6 +623,15 @@ function resetForm() {
   form.targetTypesText = Array.isArray(metadata.target_types) ? metadata.target_types.join(',') : 'web'
   form.fingerprintScopeText = Array.isArray(metadata.match_scope?.fingerprints)
     ? metadata.match_scope.fingerprints.join(',')
+    : ''
+  form.productScopeText = Array.isArray(metadata.match_scope?.products)
+    ? metadata.match_scope.products.join(',')
+    : ''
+  form.vendorScopeText = Array.isArray(metadata.match_scope?.vendors)
+    ? metadata.match_scope.vendors.join(',')
+    : ''
+  form.portScopeText = Array.isArray(metadata.match_scope?.ports)
+    ? metadata.match_scope.ports.join(',')
     : ''
   form.impact = metadata.impact || ''
   form.matchers = normalizeMatchers(metadata.matchers)
@@ -672,9 +735,16 @@ function buildRulePayload(): RuleEntryValue {
     metadata.finding_type = form.findingType.trim() || 'risk_verification'
     metadata.severity = form.severity
     metadata.target_types = parseCommaSeparated(form.targetTypesText)
+    const tags = parseCommaSeparated(form.tagsText)
+    if (tags.length > 0) metadata.tags = tags
     metadata.match_scope = {
       ...(metadata.match_scope || {}),
       fingerprints: parseCommaSeparated(form.fingerprintScopeText),
+      products: parseCommaSeparated(form.productScopeText),
+      vendors: parseCommaSeparated(form.vendorScopeText),
+      ports: parseCommaSeparated(form.portScopeText)
+        .map(item => Number(item))
+        .filter(item => Number.isFinite(item)),
     }
     metadata.request = {
       method: form.requestMethod,

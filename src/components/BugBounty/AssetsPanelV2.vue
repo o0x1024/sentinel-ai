@@ -59,11 +59,15 @@
       <a class="tab" :class="{ 'tab-active': activeTab === 'runs' }" @click="activeTab = 'runs'">{{ t('bugBounty.surface.tabs.runs') }}</a>
     </div>
 
-    <div v-if="activeTab === 'inventory'" class="card bg-base-100 shadow-sm border border-base-300">
+    <div v-show="activeTab === 'inventory'" class="card bg-base-100 shadow-sm border border-base-300">
       <div class="card-body">
         <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <h3 class="card-title text-base">{{ t('bugBounty.surface.inventory.title') }}</h3>
           <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <button class="btn btn-outline btn-sm" @click="openImportModal">
+              <i class="fas fa-file-import mr-2"></i>
+              {{ t('bugBounty.surface.inventory.actions.manualImport') }}
+            </button>
             <select v-model="assetTypeFilter" class="select select-bordered select-sm">
               <option value="">{{ t('bugBounty.surface.inventory.allTypes') }}</option>
               <option v-for="option in assetTypeOptions" :key="option.type" :value="option.type">
@@ -84,13 +88,43 @@
             />
           </div>
         </div>
+        <div
+          v-if="inventoryTotal > 0 && hasSelectedAssets"
+          class="flex flex-col gap-3 rounded-lg border border-base-300 bg-base-200/40 p-3 lg:flex-row lg:items-center lg:justify-between"
+        >
+          <div class="text-sm text-base-content/70">
+            {{ t('bugBounty.surface.inventory.actions.selectionSummary', { selected: selectedAssetIds.length, page: inventoryItems.length, total: inventoryTotal }) }}
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button class="btn btn-sm btn-warning" :disabled="!selectedAssetIds.length || inventoryLoading || bulkDeleting" @click="deleteSelectedAssets">
+              {{ t('bugBounty.surface.inventory.actions.deleteSelected') }}
+            </button>
+            <button class="btn btn-sm btn-warning btn-outline" :disabled="!inventoryItems.length || inventoryLoading || bulkDeleting" @click="deleteCurrentPageAssets">
+              {{ t('bugBounty.surface.inventory.actions.deleteCurrentPage') }}
+            </button>
+            <button class="btn btn-sm btn-error" :disabled="!inventoryTotal || inventoryLoading || bulkDeleting" @click="deleteAllFilteredAssets">
+              {{ deleteAllActionLabel }}
+            </button>
+          </div>
+        </div>
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead>
               <tr>
+                <th class="w-12">
+                  <input
+                    type="checkbox"
+                    class="checkbox checkbox-sm"
+                    :checked="allCurrentPageSelected"
+                    :disabled="!inventoryItems.length || inventoryLoading"
+                    @click.stop
+                    @change="toggleSelectCurrentPage"
+                  />
+                </th>
                 <th v-for="column in inventoryColumns" :key="column.key">
                   {{ column.label }}
                 </th>
+                <th class="w-48">{{ t('bugBounty.surface.inventory.actions.column') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -100,17 +134,24 @@
                 class="cursor-pointer hover"
                 @click="openAssetDetail(item.asset.id)"
               >
+                <td @click.stop>
+                  <input
+                    type="checkbox"
+                    class="checkbox checkbox-sm"
+                    :checked="selectedAssetIdSet.has(item.asset.id)"
+                    @change="toggleAssetSelection(item.asset.id)"
+                  />
+                </td>
                 <td
                   v-for="column in inventoryColumns"
                   :key="column.key"
                   :class="column.mono ? 'font-mono text-xs break-all' : ''"
                 >
-                  <span
+                  <SurfaceAssetTypeIcon
                     v-if="column.badge === 'type'"
-                    class="badge badge-outline badge-sm"
-                  >
-                    {{ formatAssetType(item.asset.asset_type) }}
-                  </span>
+                    :type="item.asset.asset_type"
+                    :label="formatAssetType(item.asset.asset_type)"
+                  />
                   <span
                     v-else-if="column.badge === 'status'"
                     class="inline-flex"
@@ -127,9 +168,30 @@
                     {{ formatInventoryValue(item, column) }}
                   </span>
                 </td>
+                <td @click.stop>
+                  <div class="flex flex-wrap gap-1">
+                    <SurfaceIconButton
+                      :label="t('bugBounty.surface.inventory.actions.edit')"
+                      icon="edit"
+                      @click="openEditModal(item.asset)"
+                    />
+                    <SurfaceIconButton
+                      :label="t('bugBounty.surface.inventory.actions.sendToAssistant')"
+                      icon="assistant"
+                      tone="primary"
+                      @click="sendAssetToAssistant(item.asset.id)"
+                    />
+                    <SurfaceIconButton
+                      :label="t('bugBounty.surface.inventory.actions.delete')"
+                      icon="delete"
+                      tone="error"
+                      @click="deleteSingleAsset(item.asset)"
+                    />
+                  </div>
+                </td>
               </tr>
               <tr v-if="inventoryLoading">
-                <td :colspan="inventoryColumns.length" class="py-8 text-center text-sm text-base-content/60">
+                <td :colspan="inventoryColumns.length + 2" class="py-8 text-center text-sm text-base-content/60">
                   <span class="loading loading-spinner loading-sm mr-2"></span>
                   {{ t('common.loading') }}
                 </td>
@@ -207,13 +269,13 @@
     </div>
 
     <SurfaceTopologyPanel
-      v-else-if="activeTab === 'topology'"
+      v-show="activeTab === 'topology'"
       :program-id="selectedProgramId || null"
       :refresh-token="topologyRefreshToken"
       @open-asset="openAssetDetail"
     />
 
-    <div v-else-if="activeTab === 'runs'" class="card bg-base-100 shadow-sm border border-base-300">
+    <div v-show="activeTab === 'runs'" class="card bg-base-100 shadow-sm border border-base-300">
       <div class="card-body">
         <h3 class="card-title text-base">{{ t('bugBounty.surface.runs.title') }}</h3>
         <div class="overflow-x-auto">
@@ -231,7 +293,7 @@
             </thead>
             <tbody>
               <tr
-                v-for="run in runs"
+                v-for="run in pagedRuns"
                 :key="run.id"
                 class="cursor-pointer hover"
                 @click="openRunDetail(run.id)"
@@ -247,7 +309,72 @@
             </tbody>
           </table>
         </div>
-        <div v-if="!runs.length" class="text-sm text-base-content/60">{{ t('bugBounty.surface.runs.empty') }}</div>
+        <div v-if="!runTotal" class="text-sm text-base-content/60">{{ t('bugBounty.surface.runs.empty') }}</div>
+        <div v-if="runTotal > 0" class="flex flex-col gap-3 pt-2 xl:flex-row xl:items-center xl:justify-between">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="text-base-content/70">{{ t('bugBounty.surface.inventory.pageSizeLabel') }}</span>
+            <select v-model.number="runPageSize" class="select select-bordered select-sm">
+              <option v-for="size in runPageSizeOptions" :key="size" :value="size">
+                {{ size }}
+              </option>
+            </select>
+          </div>
+
+          <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            <div class="join">
+              <button
+                class="join-item btn btn-sm"
+                :disabled="runPage <= 1 || loading"
+                @click="goToFirstRunPage"
+              >
+                {{ t('bugBounty.surface.inventory.firstPage') }}
+              </button>
+              <button
+                class="join-item btn btn-sm"
+                :disabled="runPage <= 1 || loading"
+                @click="goToPreviousRunPage"
+              >
+                {{ t('common.previous') }}
+              </button>
+              <button class="join-item btn btn-sm">
+                {{ t('bugBounty.surface.inventory.pageInfo', { page: runPage, total: runPageCount }) }}
+              </button>
+              <button
+                class="join-item btn btn-sm"
+                :disabled="runPage >= runPageCount || loading"
+                @click="goToNextRunPage"
+              >
+                {{ t('common.next') }}
+              </button>
+              <button
+                class="join-item btn btn-sm"
+                :disabled="runPage >= runPageCount || loading"
+                @click="goToLastRunPage"
+              >
+                {{ t('bugBounty.surface.inventory.lastPage') }}
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <input
+                v-model="runPageInput"
+                type="number"
+                min="1"
+                :max="runPageCount"
+                class="input input-bordered input-sm w-24"
+                :placeholder="t('bugBounty.surface.inventory.jumpPlaceholder')"
+                @keyup.enter="applyRunPageJump"
+              />
+              <button
+                class="btn btn-sm btn-outline"
+                :disabled="loading"
+                @click="applyRunPageJump"
+              >
+                {{ t('bugBounty.surface.inventory.jump') }}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -270,16 +397,39 @@
     :asset-id="selectedAssetId"
     @close="closeDetailModal"
   />
+  <SurfaceAssetEditModal
+    :visible="showEditModal"
+    :asset="editingAsset"
+    @close="closeEditModal"
+    @save="saveAssetEdit"
+  />
+  <SurfaceAssetImportModal
+    :visible="showImportModal"
+    :submitting="importing"
+    :program-id="selectedProgramId || null"
+    :programs="programs"
+    @close="closeImportModal"
+    @submit="submitImport"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { emit as tauriEmit } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import SurfaceAssetListModal from './SurfaceAssetListModal.vue'
 import SurfaceAssetDetailModal from './SurfaceAssetDetailModal.vue'
 import SurfaceDiscoveryRunDetailModal from './SurfaceDiscoveryRunDetailModal.vue'
 import SurfaceTopologyPanel from './SurfaceTopologyPanel.vue'
+import SurfaceAssetEditModal, { type SurfaceAssetEditPayload } from './SurfaceAssetEditModal.vue'
+import SurfaceAssetImportModal, { type SurfaceAssetImportPayload } from './SurfaceAssetImportModal.vue'
+import SurfaceAssetTypeIcon from './SurfaceAssetTypeIcon.vue'
+import SurfaceIconButton from './SurfaceIconButton.vue'
+import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
+import { useToast } from '../../composables/useToast'
+import { dialog } from '../../composables/useDialog'
 
 const props = defineProps<{
   programId?: string | null
@@ -287,14 +437,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'stats-updated', stats: { total: number; active: number }): void
   (e: 'refresh'): void
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
+const toast = useToast()
 
 const loading = ref(false)
 const inventoryLoading = ref(false)
+const bulkDeleting = ref(false)
+const importing = ref(false)
 const activeTab = ref<'inventory' | 'topology' | 'runs'>('inventory')
 const selectedProgramId = ref(props.programId || '')
 const search = ref('')
@@ -306,6 +459,10 @@ const inventoryTotal = ref(0)
 const inventoryPageSize = ref(10)
 const inventoryPageInput = ref('1')
 const inventoryPageSizeOptions = [10, 20, 50, 100]
+const runPage = ref(1)
+const runPageSize = ref(10)
+const runPageInput = ref('1')
+const runPageSizeOptions = [10, 20, 50, 100]
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const topologyRefreshToken = ref(0)
 
@@ -328,6 +485,10 @@ const showRunDetailModal = ref(false)
 const selectedRunId = ref<string | null>(null)
 const showAssetStatsModal = ref(false)
 const assetStatsFilter = ref<'all' | 'active'>('all')
+const selectedAssetIds = ref<string[]>([])
+const showEditModal = ref(false)
+const editingAsset = ref<any | null>(null)
+const showImportModal = ref(false)
 
 const assetTypeOptions = computed(() => {
   return Object.entries(overview.value.by_type || {})
@@ -337,6 +498,27 @@ const assetTypeOptions = computed(() => {
 })
 
 const inventoryPageCount = computed(() => Math.max(1, Math.ceil(inventoryTotal.value / inventoryPageSize.value)))
+const runTotal = computed(() => runs.value.length)
+const runPageCount = computed(() => Math.max(1, Math.ceil(runTotal.value / runPageSize.value)))
+const pagedRuns = computed(() => {
+  const offset = (runPage.value - 1) * runPageSize.value
+  return runs.value.slice(offset, offset + runPageSize.value)
+})
+const currentPageAssetIds = computed(() => inventoryItems.value.map((item) => item.asset.id).filter(Boolean))
+const selectedAssetIdSet = computed(() => new Set(selectedAssetIds.value))
+const hasSelectedAssets = computed(() => selectedAssetIds.value.length > 0)
+const allCurrentPageSelected = computed(() =>
+  currentPageAssetIds.value.length > 0 &&
+  currentPageAssetIds.value.every((id) => selectedAssetIdSet.value.has(id)),
+)
+const hasInventoryFilters = computed(() =>
+  Boolean(selectedProgramId.value || assetTypeFilter.value || statusFilter.value || search.value.trim()),
+)
+const deleteAllActionLabel = computed(() =>
+  hasInventoryFilters.value
+    ? t('bugBounty.surface.inventory.actions.deleteFiltered', { count: inventoryTotal.value })
+    : t('bugBounty.surface.inventory.actions.deleteAll', { count: inventoryTotal.value }),
+)
 
 const inventoryColumns = computed(() => {
   const generic = [
@@ -442,12 +624,14 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
     inventoryHasNext.value = rows.length > inventoryPageSize.value
     inventoryItems.value = rows.slice(0, inventoryPageSize.value)
     assets.value = inventoryItems.value.map((item) => item.asset)
+    selectedAssetIds.value = selectedAssetIds.value.filter((id) => currentPageAssetIds.value.includes(id))
   } catch (error) {
     console.error('Failed to load surface inventory:', error)
     inventoryTotal.value = 0
     inventoryItems.value = []
     assets.value = []
     inventoryHasNext.value = false
+    selectedAssetIds.value = []
   } finally {
     if (useLoading) inventoryLoading.value = false
   }
@@ -459,17 +643,17 @@ const loadAll = async () => {
     const programId = selectedProgramId.value || null
     const [overviewData, runData] = await Promise.all([
       invoke<any>('surface_get_overview', { programId }),
-      invoke<any[]>('surface_list_discovery_runs', { programId, limit: 50 }),
+      invoke<any[]>('surface_list_discovery_runs', { programId, limit: null }),
     ])
     await loadInventory(programId, false)
 
     overview.value = overviewData
-    runs.value = runData
-
-    emit('stats-updated', {
-      total: overviewData?.total_assets || 0,
-      active: overviewData?.active_assets || 0,
-    })
+    runs.value = Array.isArray(runData) ? runData : []
+    if (runPage.value > runPageCount.value) {
+      runPage.value = runPageCount.value
+    }
+    runPageInput.value = String(runPage.value)
+    emit('refresh')
   } catch (error) {
     console.error('Failed to load surface graph data:', error)
     overview.value = {
@@ -485,6 +669,8 @@ const loadAll = async () => {
     inventoryTotal.value = 0
     inventoryItems.value = []
     runs.value = []
+    runPage.value = 1
+    runPageInput.value = '1'
   } finally {
     loading.value = false
   }
@@ -493,7 +679,6 @@ const loadAll = async () => {
 const refreshAll = async () => {
   await loadAll()
   topologyRefreshToken.value += 1
-  emit('refresh')
 }
 
 const assetStatsModalTitle = computed(() =>
@@ -536,6 +721,24 @@ const closeDetailModal = () => {
   selectedAssetId.value = null
 }
 
+const openEditModal = (asset: any) => {
+  editingAsset.value = asset
+  showEditModal.value = true
+}
+
+const closeEditModal = () => {
+  showEditModal.value = false
+  editingAsset.value = null
+}
+
+const openImportModal = () => {
+  showImportModal.value = true
+}
+
+const closeImportModal = () => {
+  showImportModal.value = false
+}
+
 const formatInventoryValue = (item: any, column: any) => {
   const raw =
     column.detailKey != null
@@ -555,6 +758,182 @@ const reloadInventoryFromFirstPage = () => {
     return
   }
   loadInventory()
+}
+
+const clearSelection = () => {
+  selectedAssetIds.value = []
+}
+
+const toggleAssetSelection = (assetId: string) => {
+  if (!assetId) return
+  selectedAssetIds.value = selectedAssetIds.value.includes(assetId)
+    ? selectedAssetIds.value.filter((id) => id !== assetId)
+    : [...selectedAssetIds.value, assetId]
+}
+
+const toggleSelectCurrentPage = () => {
+  if (!currentPageAssetIds.value.length) return
+  selectedAssetIds.value = allCurrentPageSelected.value ? [] : [...currentPageAssetIds.value]
+}
+
+const getInventoryFilterPayload = () => ({
+  program_id: selectedProgramId.value || null,
+  asset_type: assetTypeFilter.value || null,
+  status: statusFilter.value || null,
+  search: search.value.trim() || null,
+  limit: null,
+  offset: null,
+})
+
+const refreshAfterMutation = async (deletedCount = 0) => {
+  clearSelection()
+  if (deletedCount > 0 && inventoryPage.value > 1 && deletedCount >= inventoryItems.value.length) {
+    inventoryPage.value = Math.max(1, inventoryPage.value - 1)
+  }
+  await loadAll()
+}
+
+const deleteSingleAsset = async (asset: any) => {
+  if (!asset?.id) return
+  if (!(await dialog.confirm(t('bugBounty.surface.inventory.actions.confirmDeleteSingle', { name: asset.display_name || asset.asset_name })))) {
+    return
+  }
+
+  try {
+    await invoke('surface_delete_asset', { assetId: asset.id })
+    toast.success(t('bugBounty.surface.inventory.actions.deleteSuccess', { count: 1 }))
+    await refreshAfterMutation(1)
+  } catch (error) {
+    console.error('Failed to delete surface asset:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.deleteFailed'))
+  }
+}
+
+const deleteSelectedAssets = async () => {
+  if (!selectedAssetIds.value.length) return
+  if (!(await dialog.confirm(t('bugBounty.surface.inventory.actions.confirmDeleteSelected', { count: selectedAssetIds.value.length })))) {
+    return
+  }
+
+  try {
+    bulkDeleting.value = true
+    const deleted = await invoke<number>('surface_batch_delete_assets', { assetIds: selectedAssetIds.value })
+    toast.success(t('bugBounty.surface.inventory.actions.deleteSuccess', { count: deleted }))
+    await refreshAfterMutation(deleted)
+  } catch (error) {
+    console.error('Failed to batch delete surface assets:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.deleteFailed'))
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
+const deleteCurrentPageAssets = async () => {
+  const ids = [...currentPageAssetIds.value]
+  if (!ids.length) return
+  if (!(await dialog.confirm(t('bugBounty.surface.inventory.actions.confirmDeleteCurrentPage', { count: ids.length })))) {
+    return
+  }
+
+  try {
+    bulkDeleting.value = true
+    const deleted = await invoke<number>('surface_batch_delete_assets', { assetIds: ids })
+    toast.success(t('bugBounty.surface.inventory.actions.deleteSuccess', { count: deleted }))
+    await refreshAfterMutation(deleted)
+  } catch (error) {
+    console.error('Failed to delete current surface inventory page:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.deleteFailed'))
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
+const deleteAllFilteredAssets = async () => {
+  if (!inventoryTotal.value) return
+  const confirmKey = hasInventoryFilters.value
+    ? 'bugBounty.surface.inventory.actions.confirmDeleteFiltered'
+    : 'bugBounty.surface.inventory.actions.confirmDeleteAll'
+  if (!(await dialog.confirm(t(confirmKey, { count: inventoryTotal.value })))) {
+    return
+  }
+
+  try {
+    bulkDeleting.value = true
+    const deleted = await invoke<number>('surface_delete_inventory', { filter: getInventoryFilterPayload() })
+    inventoryPage.value = 1
+    toast.success(t('bugBounty.surface.inventory.actions.deleteSuccess', { count: deleted }))
+    await refreshAfterMutation(deleted)
+  } catch (error) {
+    console.error('Failed to delete filtered surface inventory:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.deleteFailed'))
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
+const saveAssetEdit = async (payload: SurfaceAssetEditPayload) => {
+  if (!editingAsset.value?.id) return
+
+  try {
+    await invoke('surface_update_asset', { assetId: editingAsset.value.id, request: payload })
+    toast.success(t('bugBounty.surface.inventory.actions.updateSuccess'))
+    closeEditModal()
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to update surface asset:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.updateFailed'))
+  }
+}
+
+const submitImport = async (payload: SurfaceAssetImportPayload) => {
+  try {
+    importing.value = true
+    const result = await invoke<{ requested: number; created: number; skipped: number }>('surface_manual_import_assets', {
+      request: payload,
+    })
+
+    if (result.created > 0 && result.skipped > 0) {
+      toast.success(
+        t('bugBounty.surface.inventory.import.partialSuccess', {
+          created: result.created,
+          skipped: result.skipped,
+        }),
+      )
+    } else if (result.created > 0) {
+      toast.success(t('bugBounty.surface.inventory.import.success', { count: result.created }))
+    } else {
+      toast.warning(t('bugBounty.surface.inventory.import.noop', { count: result.skipped || result.requested }))
+    }
+
+    closeImportModal()
+    await loadAll()
+  } catch (error) {
+    console.error('Failed to manually import surface assets:', error)
+    toast.error(t('bugBounty.surface.inventory.import.failed'))
+  } finally {
+    importing.value = false
+  }
+}
+
+const sendAssetToAssistant = async (assetId?: string | null) => {
+  if (!assetId) return
+
+  try {
+    const detail = await invoke<any>('surface_get_asset_detail', { assetId })
+    if (!detail?.asset) {
+      toast.warning(t('bugBounty.surface.inventory.actions.assistantMissing'))
+      return
+    }
+
+    await tauriEmit('asset:send-to-assistant', {
+      assets: [buildReferencedSurfaceAsset(detail)],
+    })
+    toast.success(t('bugBounty.surface.inventory.actions.assistantSuccess'))
+    await router.push('/ai-assistant')
+  } catch (error) {
+    console.error('Failed to send surface asset to AI assistant:', error)
+    toast.error(t('bugBounty.surface.inventory.actions.assistantFailed'))
+  }
 }
 
 const setInventoryPage = (page: number) => {
@@ -594,6 +973,41 @@ const applyInventoryPageJump = () => {
     return
   }
   setInventoryPage(page)
+}
+
+const setRunPage = (page: number) => {
+  const nextPage = Math.min(Math.max(1, page), runPageCount.value)
+  runPage.value = nextPage
+}
+
+const goToFirstRunPage = () => {
+  if (loading.value || runPage.value <= 1) return
+  setRunPage(1)
+}
+
+const goToPreviousRunPage = () => {
+  if (runPage.value <= 1 || loading.value) return
+  setRunPage(runPage.value - 1)
+}
+
+const goToNextRunPage = () => {
+  if (runPage.value >= runPageCount.value || loading.value) return
+  setRunPage(runPage.value + 1)
+}
+
+const goToLastRunPage = () => {
+  if (loading.value || runPage.value >= runPageCount.value) return
+  setRunPage(runPageCount.value)
+}
+
+const applyRunPageJump = () => {
+  if (loading.value) return
+  const page = Number.parseInt(runPageInput.value, 10)
+  if (Number.isNaN(page)) {
+    runPageInput.value = String(runPage.value)
+    return
+  }
+  setRunPage(page)
 }
 
 const formatTime = (value?: string) => {
@@ -639,6 +1053,8 @@ watch(
 
 watch(selectedProgramId, () => {
   inventoryPage.value = 1
+  runPage.value = 1
+  runPageInput.value = '1'
   loadAll()
 })
 
@@ -654,6 +1070,15 @@ watch(inventoryPage, () => {
 watch(inventoryPageSize, () => {
   inventoryPageInput.value = '1'
   reloadInventoryFromFirstPage()
+})
+
+watch(runPage, () => {
+  runPageInput.value = String(runPage.value)
+})
+
+watch(runPageSize, () => {
+  runPageInput.value = '1'
+  runPage.value = 1
 })
 
 watch(search, () => {
@@ -674,6 +1099,7 @@ onBeforeUnmount(() => {
 
 onMounted(() => {
   inventoryPageInput.value = String(inventoryPage.value)
+  runPageInput.value = String(runPage.value)
   loadAll()
 })
 </script>

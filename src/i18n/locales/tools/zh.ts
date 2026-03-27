@@ -29,6 +29,8 @@ export default {
   skillsInstallHistoryDeleted: '安装记录已删除',
   skillsInstallHistoryDeleteFailed: '删除安装记录失败',
   skillsEnabledLabel: 'Skills 工具',
+  skillsCardView: '卡片',
+  skillsListView: '列表',
   skillsDisabledWarning: 'Skills 已禁用。请开启开关后再管理或使用 Skills。',
   skillsDropInstallHint: '拖放 skill 文件或文件夹到此处进行安装',
   skillsDropMultipleHint: '检测到多个项目，将使用第一个拖放路径进行安装。',
@@ -233,6 +235,8 @@ export default {
     copyAllHint: '复制命令与全部输出',
     outputTruncatedHint: '输出为性能考虑已截断，复制全部可查看完整输出。',
     noOutput: '（无输出）',
+    longRunningCommandTitle: '该命令更适合在交互式终端中运行',
+    longRunningCommandHint: '检测到这是一个后台或长驻命令。一次性 shell 会等待输出管道关闭，容易一直停留在执行中。请改用右侧 Terminal，或显式重定向 stdout/stderr 并彻底脱离终端。',
     clickToExpand: '点击展开',
     expand: '展开',
     collapse: '折叠'

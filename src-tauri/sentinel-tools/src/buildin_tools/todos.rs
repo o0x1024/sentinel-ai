@@ -25,6 +25,12 @@ pub enum TodoStatus {
     Failed,
 }
 
+impl TodoStatus {
+    fn is_terminal(&self) -> bool {
+        matches!(self, TodoStatus::Completed | TodoStatus::Failed)
+    }
+}
+
 impl From<&str> for TodoStatus {
     fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
@@ -320,8 +326,8 @@ impl Tool for TodosTool {
                     list.items[idx].result = Some(res);
                 }
 
-                // Auto-advance if completed
-                if status == TodoStatus::Completed && Some(idx) == list.current_index {
+                // Advance the pointer whenever the current item reaches a terminal state.
+                if status.is_terminal() && Some(idx) == list.current_index {
                     if idx + 1 < list.items.len() {
                         list.current_index = Some(idx + 1);
                         list.items[idx + 1].status = TodoStatus::InProgress;

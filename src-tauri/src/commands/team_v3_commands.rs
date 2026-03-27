@@ -4504,11 +4504,11 @@ async fn generate_team_v3_execution_plan_with_main_agent(
     member_catalog: &[String],
     blackboard_context: &str,
     cancellation_token: &CancellationToken,
+    tool_config: &ToolConfig,
 ) -> Result<Option<TeamV3ExecutionPlan>> {
     let planner_prompt =
         build_team_v3_planner_prompt(goal_text, user_input, member_catalog, blackboard_context);
     let execution_id = format!("team-v3-planner:{}:{}", session_id, Uuid::new_v4());
-    let planner_tool_config = load_team_v3_tool_config(app_handle).await;
     let planner_params = AgentExecuteParams {
         execution_id,
         model: model.to_string(),
@@ -4519,7 +4519,7 @@ async fn generate_team_v3_execution_plan_with_main_agent(
         api_base: provider_config.api_base.clone(),
         max_iterations: 8,
         timeout_secs: 180,
-        tool_config: Some(planner_tool_config),
+        tool_config: Some(tool_config.clone()),
         enable_tenth_man_rule: false,
         tenth_man_config: None,
         document_attachments: None,
@@ -4567,6 +4567,7 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
     rig_provider: &str,
     model: &str,
     cancellation_token: &CancellationToken,
+    tool_config: &ToolConfig,
 ) -> Result<(Vec<String>, Value)> {
     let members = team_member_ids(state_data);
     let main_agent_id = members
@@ -4640,6 +4641,7 @@ async fn prepare_team_v3_execution_tasks_with_main_agent(
         &member_catalog,
         blackboard_context.as_str(),
         cancellation_token,
+        tool_config,
     )
     .await?;
 
@@ -4723,9 +4725,14 @@ async fn run_team_v3_execution_orchestrator(
     user_input: String,
     state_data: Value,
     rag_enabled: bool,
+    tool_config_override: Option<ToolConfig>,
 ) -> Result<String> {
     let provider_config = resolve_team_v3_provider_config(ai_manager.as_ref()).await?;
-    let team_tool_config = load_team_v3_tool_config(&app_handle).await;
+    let team_tool_config = if let Some(config) = tool_config_override {
+        config
+    } else {
+        load_team_v3_tool_config(&app_handle).await
+    };
     let rig_provider = provider_config
         .rig_provider
         .clone()
@@ -4746,6 +4753,7 @@ async fn run_team_v3_execution_orchestrator(
         rig_provider.as_str(),
         model.as_str(),
         &cancellation_token,
+        &team_tool_config,
     )
     .await?;
     let member_profiles = team_member_profiles(&execution_state_data);
@@ -5531,6 +5539,7 @@ pub async fn team_v3_start_execution(
     session_id: String,
     conversation_id: Option<String>,
     rag_enabled: Option<bool>,
+    tool_config: Option<ToolConfig>,
     app_handle: AppHandle,
     ai_manager: AiState<'_>,
 ) -> Result<(), String> {
@@ -5588,6 +5597,7 @@ pub async fn team_v3_start_execution(
     let user_input_for_spawn = task.clone();
     let state_data_for_spawn = next_state_data.clone();
     let rag_enabled_for_spawn = rag_enabled.unwrap_or(true);
+    let tool_config_for_spawn = tool_config.clone();
     tokio::spawn(async move {
         let run_result = run_team_v3_execution_orchestrator(
             runtime_pool_for_spawn.clone(),
@@ -5600,6 +5610,7 @@ pub async fn team_v3_start_execution(
             user_input_for_spawn,
             state_data_for_spawn,
             rag_enabled_for_spawn,
+            tool_config_for_spawn,
         )
         .await;
 

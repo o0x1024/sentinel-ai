@@ -5,8 +5,8 @@ use crate::database_service::db_config::{
 };
 use crate::database_service::migration::DatabaseMigration;
 use crate::database_service::migrations::AgentTeamMigration;
-use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use crate::database_service::sqlx_compat::{MySqlRow, PgPool, PgPoolOptions, PgRow};
+use crate::database_service::surface_migrations::SurfaceGraphMigration;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
@@ -337,6 +337,19 @@ impl DatabaseService {
         if !has_reasoning_content {
             info!("Adding reasoning_content column to ai_messages table");
             sqlx::query("ALTER TABLE ai_messages ADD COLUMN reasoning_content TEXT")
+                .execute(pool)
+                .await?;
+        }
+
+        let has_legacy_triggered_workflows_json: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'bounty_change_events' AND column_name = 'triggered_workflows_json')"
+        )
+        .fetch_one(pool)
+        .await?;
+
+        if has_legacy_triggered_workflows_json {
+            info!("Dropping legacy triggered_workflows_json column from bounty_change_events");
+            sqlx::query("ALTER TABLE bounty_change_events DROP COLUMN triggered_workflows_json")
                 .execute(pool)
                 .await?;
         }
@@ -1007,10 +1020,6 @@ impl DatabaseService {
 
         Ok(())
     }
-
-
-
-
 
     async fn ensure_runtime_default_data(&self) -> Result<()> {
         if self

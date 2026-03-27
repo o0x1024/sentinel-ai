@@ -193,12 +193,7 @@ import {
   type AiTurnLogSummaryEntry,
 } from '@/api/aiLogs'
 import SearchableSelect from '@/components/SearchableSelect.vue'
-
-interface ConversationOptionSource {
-  id: string
-  title?: string | null
-  updated_at?: string | null
-}
+import type { ConversationOptionSource } from './conversationTypes'
 
 const props = defineProps<{
   modelValue: boolean

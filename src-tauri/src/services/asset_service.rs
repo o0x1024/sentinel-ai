@@ -72,6 +72,22 @@ impl AssetService {
             .map_err(|e: anyhow::Error| format!("Database error: {}", e))
     }
 
+    /// 批量删除资产
+    pub async fn delete_assets(&self, ids: &[String]) -> Result<usize, String> {
+        let mut deleted = 0usize;
+        for id in ids {
+            if self
+                .db
+                .delete_asset(id)
+                .await
+                .map_err(|e: anyhow::Error| format!("Database error: {}", e))?
+            {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
     /// 查询资产列表
     pub async fn list_assets(
         &self,

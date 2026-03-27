@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed, watch, onUnmounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
@@ -14,6 +14,8 @@ import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 
 const router = useRouter()
+const route = useRoute()
+const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
 
 // License activation state
 const isLicensed = ref(true) // Default to true, check on mount
@@ -99,7 +101,7 @@ onMounted(async () => {
   await checkLicenseStatus()
 
   // 只有在根路径时才重定向，避免路由冲突
-  if (router.currentRoute.value.path === '/') {
+  if (router.currentRoute.value.path === '/' && !isStandaloneRoute.value) {
     router.replace('/dashboard')
   }
 
@@ -240,35 +242,36 @@ window.updateUIScale = (newScale: number) => {
     <!-- License Activation Dialog -->
     <LicenseActivation v-if="!isLicensed" @activated="onLicenseActivated" />
 
-    <!-- 主应用窗口 -->
-    <!-- 顶部导航栏 -->
-    <TopNavbar @toggle-sidebar="toggleSidebar" @set-theme="setTheme" @switch-language="switchLanguage" />
+    <template v-if="!isStandaloneRoute">
+      <TopNavbar @toggle-sidebar="toggleSidebar" @set-theme="setTheme" @switch-language="switchLanguage" />
 
-    <!-- 主要内容区域 - 受缩放影响 -->
-    <div :class="appClasses" :style="appStyles" class="flex h-[calc(100vh-4rem)]">
-      <!-- 侧边栏 -->
-      <Sidebar :collapsed="sidebarCollapsed"
-        class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-1000 " :class="{
-          'w-16': sidebarCollapsed,
-          'w-64': !sidebarCollapsed
-        }" />
+      <div :class="appClasses" :style="appStyles" class="flex h-[calc(100vh-4rem)]">
+        <Sidebar :collapsed="sidebarCollapsed"
+          class="fixed left-0 top-16 h-[calc(100vh-4rem)] transition-all duration-300 z-1000 " :class="{
+            'w-16': sidebarCollapsed,
+            'w-64': !sidebarCollapsed
+          }" />
 
-      <!-- 主内容区 -->
-      <main class="flex-1 transition-all duration-300 overflow-y-auto mt-16" :class="{
-        'ml-16': sidebarCollapsed,
-        'ml-64': !sidebarCollapsed
-      }">
-        <!-- 使用 keep-alive 保持组件活跃，确保事件监听器不会丢失 -->
-        <router-view v-slot="{ Component }">
-          <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio']">
-            <component :is="Component" class="min-h-full" />
-          </keep-alive>
-        </router-view>
-      </main>
-    </div>
+        <main class="flex-1 transition-all duration-300 overflow-y-auto mt-16" :class="{
+          'ml-16': sidebarCollapsed,
+          'ml-64': !sidebarCollapsed
+        }">
+          <router-view v-slot="{ Component }">
+            <keep-alive :include="['TrafficAnalysis', 'AIAssistant', 'Vulnerabilities','Settings','Plugin','SecurityCenter','WorkflowStudio','BugBountyView']">
+              <component :is="Component" class="min-h-full" />
+            </keep-alive>
+          </router-view>
+        </main>
+      </div>
+
+      <GlobalPluginEditor />
+    </template>
+
+    <template v-else>
+      <router-view />
+    </template>
 
     <Toast />
-    <GlobalPluginEditor />
   </div>
 </template>
 
