@@ -194,6 +194,9 @@
         <span v-if="task.config.enable_port_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-network-wired mr-1"></i>Port
         </span>
+        <span v-if="task.config.enable_service_monitoring" class="badge badge-outline badge-xs">
+          <i class="fas fa-server mr-1"></i>{{ t('bugBounty.monitor.service') }}
+        </span>
         <span v-if="task.config.enable_web_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-globe mr-1"></i>Web
         </span>

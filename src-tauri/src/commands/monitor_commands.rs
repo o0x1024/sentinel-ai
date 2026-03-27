@@ -1,5 +1,8 @@
 //! Asset Monitor Scheduler Commands
 
+use crate::commands::monitor_config_support::{
+    apply_plugins_to_monitor_type, monitor_type_for_plugin, normalize_loaded_monitor_task,
+};
 use crate::commands::monitor_execution_heartbeat_support::start_monitor_execution_heartbeat;
 use crate::commands::monitor_finding_support::import_monitor_findings_from_output;
 use crate::commands::monitor_notification_support::{
@@ -230,6 +233,7 @@ async fn load_tasks_from_db(
         if !json.is_empty() {
             let tasks: Vec<MonitorTask> = serde_json::from_str(&json).unwrap_or_default();
             for task in tasks {
+                let task = normalize_loaded_monitor_task(task);
                 if scheduler.get_task(&task.id).await.is_none() {
                     let _ = scheduler.add_task(task).await;
                 }
@@ -1434,6 +1438,10 @@ pub struct MonitorConfigDto {
     #[serde(default)]
     pub port_plugins: Vec<MonitorPluginConfigDto>,
 
+    pub enable_service_monitoring: Option<bool>,
+    #[serde(default)]
+    pub service_plugins: Vec<MonitorPluginConfigDto>,
+
     pub enable_web_monitoring: Option<bool>,
     #[serde(default)]
     pub web_plugins: Vec<MonitorPluginConfigDto>,
@@ -1488,6 +1496,13 @@ impl From<MonitorConfigDto> for ChangeMonitorConfig {
             config.port_plugins = dto.port_plugins.into_iter().map(Into::into).collect();
         }
 
+        if let Some(v) = dto.enable_service_monitoring {
+            config.enable_service_monitoring = v;
+        }
+        if !dto.service_plugins.is_empty() {
+            config.service_plugins = dto.service_plugins.into_iter().map(Into::into).collect();
+        }
+
         if let Some(v) = dto.enable_web_monitoring {
             config.enable_web_monitoring = v;
         }
@@ -1509,6 +1524,7 @@ impl From<MonitorConfigDto> for ChangeMonitorConfig {
             config.check_interval_secs = v;
         }
 
+        config.migrate_legacy_port_service_plugins();
         config
     }
 }
@@ -3262,6 +3278,12 @@ pub async fn monitor_create_default_tasks(
     network_task.config.enable_content_monitoring = false;
     network_task.config.enable_api_monitoring = false;
     network_task.config.enable_port_monitoring = true;
+    network_task.config.port_plugins = vec![MonitorPluginConfig::new("port_monitor".to_string())];
+    network_task.config.enable_service_monitoring = true;
+    network_task.config.service_plugins = vec![MonitorPluginConfig::with_fallbacks(
+        "service_monitor".to_string(),
+        vec!["service_fingerprinter".to_string()],
+    )];
     network_task.config.enable_web_monitoring = true;
     task_ids.push(state_guard.scheduler.add_task(network_task).await?);
 
@@ -3272,6 +3294,7 @@ pub async fn monitor_create_default_tasks(
     risk_task.config.enable_content_monitoring = false;
     risk_task.config.enable_api_monitoring = false;
     risk_task.config.enable_port_monitoring = false;
+    risk_task.config.enable_service_monitoring = false;
     risk_task.config.enable_web_monitoring = false;
     risk_task.config.enable_risk_monitoring = true;
     risk_task.config.risk_plugins = vec![
@@ -4514,7 +4537,7 @@ pub struct MonitorPluginInfo {
     pub id: String,
     pub name: String,
     pub category: String,
-    pub monitor_type: String, // dns, cert, content, api, port, web, risk
+    pub monitor_type: String, // dns, cert, content, api, port, service, web, risk
     pub description: Option<String>,
     pub is_available: bool,
 }
@@ -4543,67 +4566,8 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
         // Normalize name by removing prefix if it's a plugin
         let normalized_name = tool.name.strip_prefix("plugin__").unwrap_or(&tool.name);
 
-        let monitor_type = match normalized_name {
-            // DNS monitoring plugins
-            "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" => "dns",
-
-            // Certificate monitoring plugins
-            "cert_monitor" | "ssl_scanner" => "cert",
-
-            // Content monitoring plugins
-            "content_monitor" => "content",
-
-            // API monitoring plugins
-            "api_monitor" | "js_analyzer" | "js_link_finder" => "api",
-
-            // Port / service monitoring plugins
-            "port_monitor" | "service_fingerprinter" | "cidr_mapper" => "port",
-
-            // Web monitoring plugins
-            "http_prober" | "tech_fingerprinter" | "favicon_fingerprinter" => "web",
-
-            // Risk monitoring plugins
-            "sensitive_file_scanner" | "risk_scanner" => "risk",
-
-            _ => {
-                // Check category-based matching
-                let cat_lower = tool.category.to_lowercase();
-                match cat_lower.as_str() {
-                    "monitor" | "recon" | "reconnaissance"
-                        if normalized_name.contains("dns")
-                            || normalized_name.contains("subdomain") =>
-                    {
-                        "dns"
-                    }
-                    "monitor"
-                        if normalized_name.contains("cert") || normalized_name.contains("ssl") =>
-                    {
-                        "cert"
-                    }
-                    "monitor" if normalized_name.contains("content") => "content",
-                    "monitor" | "recon"
-                        if normalized_name.contains("port")
-                            || normalized_name.contains("service") =>
-                    {
-                        "port"
-                    }
-                    "monitor" | "recon"
-                        if normalized_name.contains("web")
-                            || normalized_name.contains("tech")
-                            || normalized_name.contains("fingerprint")
-                            || normalized_name.contains("http") =>
-                    {
-                        "web"
-                    }
-                    "monitor"
-                        if normalized_name.contains("api") || normalized_name.contains("js") =>
-                    {
-                        "api"
-                    }
-                    "risk" | "vuln" | "exploit" => "risk",
-                    _ => continue, // Skip non-monitor plugins
-                }
-            }
+        let Some(monitor_type) = monitor_type_for_plugin(normalized_name, &tool.category) else {
+            continue;
         };
 
         // tracing::info!("Matched plugin: {} -> monitor_type={}", tool.name, monitor_type);
@@ -4637,7 +4601,7 @@ pub async fn monitor_test_plugin(plugin_id: String) -> Result<bool, String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePluginConfigRequest {
-    pub monitor_type: String, // dns, cert, content, api
+    pub monitor_type: String, // dns, cert, content, api, port, service, web, risk
     pub plugins: Vec<MonitorPluginConfigDto>,
 }
 
@@ -4655,14 +4619,7 @@ pub async fn monitor_update_task_plugins(
         .update_task(&task_id, |task| {
             let plugins: Vec<MonitorPluginConfig> =
                 request.plugins.into_iter().map(Into::into).collect();
-
-            match request.monitor_type.as_str() {
-                "dns" => task.config.dns_plugins = plugins,
-                "cert" => task.config.cert_plugins = plugins,
-                "content" => task.config.content_plugins = plugins,
-                "api" => task.config.api_plugins = plugins,
-                _ => {}
-            }
+            apply_plugins_to_monitor_type(&mut task.config, &request.monitor_type, plugins);
         })
         .await?;
 

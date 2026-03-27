@@ -570,6 +570,83 @@
             </div>
           </div>
 
+          <!-- Service Monitoring -->
+          <div class="card bg-base-200 p-4 mb-3">
+            <div class="flex items-center justify-between mb-2">
+              <label class="label cursor-pointer gap-2">
+                <input type="checkbox" v-model="taskForm.config.enable_service_monitoring" class="checkbox checkbox-primary" />
+                <span class="label-text font-semibold">
+                  <i class="fas fa-server mr-2"></i>
+                  {{ t('bugBounty.monitor.serviceMonitoring') }}
+                </span>
+              </label>
+              <button 
+                v-if="taskForm.config.enable_service_monitoring"
+                class="btn btn-xs btn-ghost"
+                @click="addPluginConfig('service')"
+              >
+                <i class="fas fa-plus mr-1"></i>
+                {{ t('bugBounty.monitor.addPlugin') }}
+              </button>
+            </div>
+            
+            <div v-if="taskForm.config.enable_service_monitoring && taskForm.config.service_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
+              <i class="fas fa-info-circle mr-1"></i>
+              {{ t('bugBounty.monitor.noPluginsConfigured') }}
+            </div>
+            
+            <div v-if="taskForm.config.enable_service_monitoring && taskForm.config.service_plugins.length > 0" class="space-y-2 ml-6">
+              <div v-for="(plugin, idx) in taskForm.config.service_plugins" :key="`service-${idx}`" class="card bg-base-100 p-3">
+                <div class="flex items-start gap-2">
+                  <div class="flex-1 space-y-2">
+                    <div class="form-control">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.primaryPlugin') }}</span>
+                      </label>
+                      <select v-model="plugin.plugin_id" class="select select-sm select-bordered">
+                        <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                        <option v-for="p in getPluginsByType('service')" :key="p.id" :value="p.id">
+                          {{ p.name }}
+                        </option>
+                      </select>
+                    </div>
+
+                    <MonitorTargetAssetSelector v-model="plugin.target_asset_types" />
+                    
+                    <div v-if="plugin.fallback_plugins.length > 0" class="space-y-1">
+                      <label class="label py-1">
+                        <span class="label-text-alt">{{ t('bugBounty.monitor.fallbackPlugins') }}</span>
+                      </label>
+                      <div v-for="(fallback, fIdx) in plugin.fallback_plugins" :key="`service-fb-${idx}-${fIdx}`" class="flex gap-1">
+                        <select v-model="plugin.fallback_plugins[fIdx]" class="select select-xs select-bordered flex-1">
+                          <option value="">{{ t('bugBounty.monitor.selectPlugin') }}</option>
+                          <option v-for="p in getPluginsByType('service')" :key="p.id" :value="p.id">
+                            {{ p.name }}
+                          </option>
+                        </select>
+                        <button class="btn btn-xs btn-ghost" @click="removeFallbackPlugin('service', idx, Number(fIdx))">
+                          <i class="fas fa-times"></i>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      class="btn btn-xs btn-ghost"
+                      @click="addFallbackPlugin('service', idx)"
+                    >
+                      <i class="fas fa-plus mr-1"></i>
+                      {{ t('bugBounty.monitor.addFallback') }}
+                    </button>
+                  </div>
+                  
+                  <button class="btn btn-xs btn-ghost text-error" @click="removePluginConfig('service', idx)">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Web Monitoring -->
           <div class="card bg-base-200 p-4 mb-3">
             <div class="flex items-center justify-between mb-2">
@@ -939,6 +1016,8 @@ const createEmptyTaskConfig = () => ({
   api_plugins: [] as any[],
   enable_port_monitoring: false,
   port_plugins: [] as any[],
+  enable_service_monitoring: false,
+  service_plugins: [] as any[],
   enable_web_monitoring: false,
   web_plugins: [] as any[],
   enable_risk_monitoring: false,
@@ -965,17 +1044,59 @@ const normalizePluginConfigList = (plugins: unknown) => Array.isArray(plugins)
   ? plugins.map(plugin => normalizePluginConfig(plugin))
   : []
 
-const normalizeTaskConfig = (config: any) => ({
-  ...createEmptyTaskConfig(),
-  ...(config || {}),
-  dns_plugins: normalizePluginConfigList(config?.dns_plugins),
-  cert_plugins: normalizePluginConfigList(config?.cert_plugins),
-  content_plugins: normalizePluginConfigList(config?.content_plugins),
-  api_plugins: normalizePluginConfigList(config?.api_plugins),
-  port_plugins: normalizePluginConfigList(config?.port_plugins),
-  web_plugins: normalizePluginConfigList(config?.web_plugins),
-  risk_plugins: normalizePluginConfigList(config?.risk_plugins),
-})
+const splitLegacyServicePlugins = (plugins: any[]) => {
+  const portPlugins: any[] = []
+  const servicePlugins: any[] = []
+
+  for (const rawPlugin of plugins) {
+    const plugin = normalizePluginConfig(rawPlugin)
+    if (plugin.plugin_id === 'service_fingerprinter') {
+      servicePlugins.push(plugin)
+      continue
+    }
+
+    const fallbackPlugins = Array.isArray(plugin.fallback_plugins) ? plugin.fallback_plugins : []
+    const serviceFallbacks = fallbackPlugins.filter((fallback: string) => fallback === 'service_fingerprinter')
+    const retainedFallbacks = fallbackPlugins.filter((fallback: string) => fallback !== 'service_fingerprinter')
+
+    if (serviceFallbacks.length > 0) {
+      servicePlugins.push({
+        ...createEmptyPluginConfig(),
+        plugin_id: 'service_fingerprinter',
+        fallback_plugins: serviceFallbacks,
+      })
+    }
+
+    portPlugins.push({
+      ...plugin,
+      fallback_plugins: retainedFallbacks,
+    })
+  }
+
+  return { portPlugins, servicePlugins }
+}
+
+const normalizeTaskConfig = (config: any) => {
+  const normalizedPortPlugins = normalizePluginConfigList(config?.port_plugins)
+  const normalizedServicePlugins = normalizePluginConfigList(config?.service_plugins)
+  const legacyMigration = normalizedServicePlugins.length === 0
+    ? splitLegacyServicePlugins(normalizedPortPlugins)
+    : { portPlugins: normalizedPortPlugins, servicePlugins: normalizedServicePlugins }
+
+  return {
+    ...createEmptyTaskConfig(),
+    ...(config || {}),
+    dns_plugins: normalizePluginConfigList(config?.dns_plugins),
+    cert_plugins: normalizePluginConfigList(config?.cert_plugins),
+    content_plugins: normalizePluginConfigList(config?.content_plugins),
+    api_plugins: normalizePluginConfigList(config?.api_plugins),
+    port_plugins: legacyMigration.portPlugins,
+    enable_service_monitoring: Boolean(config?.enable_service_monitoring || legacyMigration.servicePlugins.length > 0),
+    service_plugins: legacyMigration.servicePlugins,
+    web_plugins: normalizePluginConfigList(config?.web_plugins),
+    risk_plugins: normalizePluginConfigList(config?.risk_plugins),
+  }
+}
 
 const getPluginConfigs = (monitorType: string) => {
   switch (monitorType) {
@@ -989,6 +1110,8 @@ const getPluginConfigs = (monitorType: string) => {
       return taskForm.config.api_plugins
     case 'port':
       return taskForm.config.port_plugins
+    case 'service':
+      return taskForm.config.service_plugins
     case 'web':
       return taskForm.config.web_plugins
     case 'risk':

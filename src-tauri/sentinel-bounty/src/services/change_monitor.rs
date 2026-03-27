@@ -91,7 +91,7 @@ fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
         | "js_link_finder" | "risk_scanner" => vec!["web"],
         "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" | "cert_monitor"
         | "ssl_scanner" => vec!["domain"],
-        "port_monitor" | "service_fingerprinter" => vec!["service"],
+        "port_monitor" | "service_fingerprinter" | "service_monitor" => vec!["service"],
         "cidr_mapper" => vec!["ip"],
         _ => vec![],
     }
@@ -129,6 +129,13 @@ pub struct ChangeMonitorConfig {
     /// Plugin configuration for Port monitoring
     #[serde(default)]
     pub port_plugins: Vec<MonitorPluginConfig>,
+
+    /// Enable Service monitoring
+    #[serde(default)]
+    pub enable_service_monitoring: bool,
+    /// Plugin configuration for Service monitoring
+    #[serde(default)]
+    pub service_plugins: Vec<MonitorPluginConfig>,
 
     /// Enable Web monitoring (Uptime, Status, Screenshot)
     pub enable_web_monitoring: bool,
@@ -171,8 +178,11 @@ impl Default for ChangeMonitorConfig {
             api_plugins: vec![MonitorPluginConfig::new("api_monitor".to_string())],
 
             enable_port_monitoring: true,
-            port_plugins: vec![MonitorPluginConfig::with_fallbacks(
-                "port_monitor".to_string(),
+            port_plugins: vec![MonitorPluginConfig::new("port_monitor".to_string())],
+
+            enable_service_monitoring: true,
+            service_plugins: vec![MonitorPluginConfig::with_fallbacks(
+                "service_monitor".to_string(),
                 vec!["service_fingerprinter".to_string()],
             )],
 
@@ -233,6 +243,14 @@ impl ChangeMonitorConfig {
             .collect()
     }
 
+    /// Get all Service plugin IDs
+    pub fn service_plugin_ids(&self) -> Vec<String> {
+        self.service_plugins
+            .iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
     /// Get all Web plugin IDs
     pub fn web_plugin_ids(&self) -> Vec<String> {
         self.web_plugins
@@ -247,6 +265,56 @@ impl ChangeMonitorConfig {
             .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
+    }
+
+    pub fn migrate_legacy_port_service_plugins(&mut self) {
+        let mut migrated_service_plugins = Vec::new();
+        let mut normalized_port_plugins = Vec::new();
+
+        for mut plugin in self.port_plugins.drain(..) {
+            if plugin.plugin_id == "service_fingerprinter" || plugin.plugin_id == "service_monitor" {
+                migrated_service_plugins.push(plugin);
+                continue;
+            }
+
+            let (service_fallbacks, retained_fallbacks): (Vec<_>, Vec<_>) = plugin
+                .fallback_plugins
+                .into_iter()
+                .partition(|fallback| fallback == "service_fingerprinter" || fallback == "service_monitor");
+            plugin.fallback_plugins = retained_fallbacks;
+
+            if !service_fallbacks.is_empty() {
+                const PRIMARY_SERVICE_MONITOR: &str = "service_monitor";
+                const FALLBACK_SERVICE_FINGERPRINTER: &str = "service_fingerprinter";
+
+                let preferred_primary = if service_fallbacks.iter().any(|fallback| fallback == PRIMARY_SERVICE_MONITOR) {
+                    PRIMARY_SERVICE_MONITOR
+                } else {
+                    FALLBACK_SERVICE_FINGERPRINTER
+                };
+                let fallback_plugins = service_fallbacks
+                    .into_iter()
+                    .filter(|fallback| fallback != preferred_primary)
+                    .collect();
+
+                let mut service_plugin =
+                    MonitorPluginConfig::new(preferred_primary.to_string());
+                service_plugin.fallback_plugins = fallback_plugins;
+                migrated_service_plugins.push(service_plugin);
+            }
+
+            normalized_port_plugins.push(plugin);
+        }
+
+        self.port_plugins = normalized_port_plugins;
+
+        if self.service_plugins.is_empty() && !migrated_service_plugins.is_empty() {
+            self.service_plugins = migrated_service_plugins;
+        }
+
+        if !self.service_plugins.is_empty() {
+            self.enable_service_monitoring = true;
+        }
     }
 }
 

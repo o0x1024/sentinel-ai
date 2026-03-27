@@ -20,6 +20,7 @@ pub mod license_commands;
 pub mod llm_test_commands;
 pub mod mcp_commands;
 pub mod monitor_commands;
+pub(crate) mod monitor_config_support;
 pub(crate) mod monitor_execution_heartbeat_support;
 pub(crate) mod monitor_finding_support;
 pub(crate) mod monitor_notification_support;

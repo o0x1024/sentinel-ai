@@ -63,6 +63,9 @@ pub fn collect_monitor_plugins(task: &MonitorTask) -> Vec<MonitorPluginConfig> {
     if task.config.enable_port_monitoring {
         plugins.extend(task.config.port_plugins.clone());
     }
+    if task.config.enable_service_monitoring {
+        plugins.extend(task.config.service_plugins.clone());
+    }
     if task.config.enable_risk_monitoring {
         plugins.extend(task.config.risk_plugins.clone());
     }
