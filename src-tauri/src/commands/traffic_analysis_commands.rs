@@ -35,6 +35,8 @@ use crate::events::{
     FindingEvent, InterceptRequestEvent, InterceptResponseEvent, PluginChangedEvent,
     ProxyStatusEvent, ScanStatsEvent,
 };
+use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
+use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
 /// 拦截请求（用于前端展示）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,6 +358,87 @@ impl TrafficAnalysisState {
             .await
             .map_err(|e| format!("Failed to execute agent plugin '{}': {}", plugin_id, e))
     }
+}
+
+async fn refresh_active_agent_plugin_tools(db: &DatabaseService) -> Result<usize, String> {
+    cleanup_removed_agent_plugins(db).await?;
+
+    let tool_server = sentinel_tools::get_tool_server();
+    tool_server.init_builtin_tools().await;
+    sentinel_tools::plugin_adapter::refresh_plugin_tools(&tool_server).await;
+
+    let active_plugins = db
+        .get_active_agent_plugins()
+        .await
+        .map_err(|e| format!("Failed to query active agent plugins: {}", e))?;
+
+    let mut plugin_metas = Vec::new();
+    for plugin in active_plugins {
+        let plugin_id = plugin.metadata.id.clone();
+        if plugin_id.is_empty() {
+            continue;
+        }
+
+        let code = db
+            .get_plugin_code(&plugin_id)
+            .await
+            .map_err(|e| format!("Failed to load plugin code for {}: {}", plugin_id, e))?;
+
+        let input_schema = if let Some(code_str) = &code {
+            sentinel_tools::plugin_adapter::PluginToolAdapter::get_input_schema_runtime(
+                code_str,
+                plugin.metadata.clone(),
+            )
+            .await
+        } else {
+            serde_json::json!({
+                "type": "object",
+                "properties": {}
+            })
+        };
+
+        plugin_metas.push(sentinel_tools::plugin_adapter::PluginToolMeta {
+            plugin_id,
+            name: plugin.metadata.name.clone(),
+            description: plugin
+                .metadata
+                .description
+                .as_deref()
+                .unwrap_or("Agent plugin tool")
+                .to_string(),
+            input_schema,
+            code,
+            category: Some(plugin.metadata.category.clone()),
+        });
+    }
+
+    let count = plugin_metas.len();
+    if count > 0 {
+        sentinel_tools::plugin_adapter::load_plugin_tools_to_server(&tool_server, plugin_metas)
+            .await;
+    }
+
+    Ok(count)
+}
+
+fn resolved_store_plugin_monitor_type(
+    existing: Option<&PluginRecord>,
+    plugin_id: &str,
+    main_category: &str,
+    category: &str,
+) -> Option<String> {
+    if let Some(monitor_type) = existing
+        .and_then(|record| record.metadata.monitor_type.clone())
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(monitor_type);
+    }
+
+    if main_category != "agent" {
+        return None;
+    }
+
+    infer_monitor_type_for_plugin(plugin_id, category).map(str::to_string)
 }
 
 /// 命令响应
@@ -3293,6 +3376,23 @@ pub async fn delete_plugin(
         .await
         .map_err(|e| format!("Failed to delete plugin: {}", e))?;
 
+    if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
+        tracing::warn!(
+            "Failed to refresh active agent tools after deleting plugin {}: {}",
+            plugin_id,
+            e
+        );
+    }
+
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id: plugin_id.clone(),
+            enabled: false,
+            name: plugin_name,
+        },
+    );
+
     tracing::info!("Plugin deleted: {}", plugin_id);
     Ok(CommandResponse::ok(()))
 }
@@ -4930,6 +5030,7 @@ pub async fn fetch_plugin_code(download_url: String) -> Result<serde_json::Value
 /// 从商店安装插件
 #[tauri::command]
 pub async fn install_store_plugin(
+    app: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     plugin: StorePluginInfo,
 ) -> Result<CommandResponse<String>, String> {
@@ -4993,6 +5094,10 @@ pub async fn install_store_plugin(
 
     // Register plugin to database
     let db = state.get_db_service();
+    let existing_plugin = db
+        .get_plugin_from_registry(&plugin.id)
+        .await
+        .map_err(|e| format!("Failed to read existing plugin metadata: {}", e))?;
 
     // Convert to TrafficPluginMetadata
     use sentinel_db::TrafficPluginMetadata;
@@ -5012,6 +5117,28 @@ pub async fn install_store_plugin(
         .await
         .map_err(|e| format!("Failed to install plugin: {}", e))?;
 
+    db.update_plugin_enabled(&plugin.id, true)
+        .await
+        .map_err(|e| format!("Failed to enable installed plugin: {}", e))?;
+
+    let metadata_json = serde_json::to_value(&PluginMetadata {
+        monitor_type: resolved_store_plugin_monitor_type(
+            existing_plugin.as_ref(),
+            &metadata.id,
+            &metadata.main_category,
+            &metadata.category,
+        ),
+        target_asset_types: existing_plugin
+            .as_ref()
+            .map(|record| record.metadata.target_asset_types.clone())
+            .unwrap_or_default(),
+        ..metadata.clone()
+    })
+    .map_err(|e| format!("Failed to serialize plugin metadata: {}", e))?;
+    db.update_plugin(&metadata_json, &plugin_code)
+        .await
+        .map_err(|e| format!("Failed to persist plugin metadata: {}", e))?;
+
     tracing::info!("Plugin installed: {}", plugin.id);
 
     // Update plugin manager cache
@@ -5023,12 +5150,31 @@ pub async fn install_store_plugin(
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
 
+    if metadata.main_category == "agent" {
+        let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
+        tracing::info!(
+            "Refreshed {} active agent plugin tools after installing {}",
+            refreshed,
+            plugin.id
+        );
+    }
+
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id: plugin.id.clone(),
+            enabled: true,
+            name: plugin.name.clone(),
+        },
+    );
+
     Ok(CommandResponse::ok(plugin.id))
 }
 
 /// Update plugin from store
 #[tauri::command]
 pub async fn update_store_plugin(
+    app: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     plugin: StorePluginInfo,
 ) -> Result<CommandResponse<String>, String> {
@@ -5091,6 +5237,10 @@ pub async fn update_store_plugin(
 
     // Update plugin in database
     let db = state.get_db_service();
+    let existing_plugin = db
+        .get_plugin_from_registry(&plugin.id)
+        .await
+        .map_err(|e| format!("Failed to read existing plugin metadata: {}", e))?;
 
     // Convert to TrafficPluginMetadata
     use sentinel_db::TrafficPluginMetadata;
@@ -5110,6 +5260,24 @@ pub async fn update_store_plugin(
         .await
         .map_err(|e| format!("Failed to update plugin: {}", e))?;
 
+    let metadata_json = serde_json::to_value(&PluginMetadata {
+        monitor_type: resolved_store_plugin_monitor_type(
+            existing_plugin.as_ref(),
+            &metadata.id,
+            &metadata.main_category,
+            &metadata.category,
+        ),
+        target_asset_types: existing_plugin
+            .as_ref()
+            .map(|record| record.metadata.target_asset_types.clone())
+            .unwrap_or_default(),
+        ..metadata.clone()
+    })
+    .map_err(|e| format!("Failed to serialize plugin metadata: {}", e))?;
+    db.update_plugin(&metadata_json, &plugin_code)
+        .await
+        .map_err(|e| format!("Failed to persist plugin metadata: {}", e))?;
+
     tracing::info!("Plugin updated: {}", plugin.id);
 
     // Update plugin manager cache
@@ -5120,6 +5288,24 @@ pub async fn update_store_plugin(
     {
         tracing::warn!("Failed to update plugin cache: {}", e);
     }
+
+    if metadata.main_category == "agent" {
+        let refreshed = refresh_active_agent_plugin_tools(db.as_ref()).await?;
+        tracing::info!(
+            "Refreshed {} active agent plugin tools after updating {}",
+            refreshed,
+            plugin.id
+        );
+    }
+
+    emit_plugin_changed(
+        &app,
+        PluginChangedEvent {
+            plugin_id: plugin.id.clone(),
+            enabled: true,
+            name: plugin.name.clone(),
+        },
+    );
 
     Ok(CommandResponse::ok(plugin.id))
 }
