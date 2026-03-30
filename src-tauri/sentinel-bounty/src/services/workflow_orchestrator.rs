@@ -127,6 +127,16 @@ impl WorkflowOrchestrator {
         execution_id: &str,
         raw_output: &serde_json::Value,
     ) -> Vec<WorkflowArtifact> {
+        self.try_process_step_output(step, execution_id, raw_output)
+            .unwrap_or_default()
+    }
+
+    pub fn try_process_step_output(
+        &self,
+        step: &StepContext,
+        execution_id: &str,
+        raw_output: &serde_json::Value,
+    ) -> Result<Vec<WorkflowArtifact>, String> {
         let mut artifacts = Vec::new();
 
         // Detect artifact type
@@ -176,6 +186,26 @@ impl WorkflowOrchestrator {
                     });
                 }
             }
+            ArtifactType::Evidence => {
+                let evidences =
+                    ArtifactExtractor::extract_evidences(output_data).ok_or_else(|| {
+                        format!(
+                            "Step `{}` returned invalid `evidences` schema",
+                            step.step_name
+                        )
+                    })?;
+                let mut metadata = base_metadata.clone();
+                metadata.count = Some(evidences.evidences.len());
+                artifacts.push(WorkflowArtifact {
+                    id: Uuid::new_v4().to_string(),
+                    step_id: step.step_id.clone(),
+                    execution_id: execution_id.to_string(),
+                    artifact_type: ArtifactType::Evidence,
+                    data: serde_json::to_value(&evidences).unwrap_or_default(),
+                    metadata,
+                    created_at: Utc::now(),
+                });
+            }
             ArtifactType::Subdomains => {
                 if let Some(subdomains) = ArtifactExtractor::extract_subdomains(output_data) {
                     let mut metadata = base_metadata.clone();
@@ -205,6 +235,75 @@ impl WorkflowOrchestrator {
                         created_at: Utc::now(),
                     });
                 }
+            }
+            ArtifactType::SurfaceWebs => {
+                let webs =
+                    ArtifactExtractor::extract_surface_webs(output_data).ok_or_else(|| {
+                        format!("Step `{}` returned invalid `webs` schema", step.step_name)
+                    })?;
+                let mut metadata = base_metadata.clone();
+                metadata.count = Some(webs.webs.len());
+                artifacts.push(WorkflowArtifact {
+                    id: Uuid::new_v4().to_string(),
+                    step_id: step.step_id.clone(),
+                    execution_id: execution_id.to_string(),
+                    artifact_type: ArtifactType::SurfaceWebs,
+                    data: serde_json::to_value(&webs).unwrap_or_default(),
+                    metadata,
+                    created_at: Utc::now(),
+                });
+            }
+            ArtifactType::SurfaceFingerprints => {
+                let fingerprints = ArtifactExtractor::extract_surface_fingerprints(output_data)
+                    .ok_or_else(|| {
+                        format!(
+                            "Step `{}` returned invalid `fingerprints` schema",
+                            step.step_name
+                        )
+                    })?;
+                let mut metadata = base_metadata.clone();
+                metadata.count = Some(fingerprints.fingerprints.len());
+                artifacts.push(WorkflowArtifact {
+                    id: Uuid::new_v4().to_string(),
+                    step_id: step.step_id.clone(),
+                    execution_id: execution_id.to_string(),
+                    artifact_type: ArtifactType::SurfaceFingerprints,
+                    data: serde_json::to_value(&fingerprints).unwrap_or_default(),
+                    metadata,
+                    created_at: Utc::now(),
+                });
+            }
+            ArtifactType::SurfaceBundle => {
+                let bundle =
+                    ArtifactExtractor::extract_surface_bundle(output_data).ok_or_else(|| {
+                        format!(
+                            "Step `{}` returned invalid `surface_bundle` schema",
+                            step.step_name
+                        )
+                    })?;
+                let mut metadata = base_metadata.clone();
+                metadata.count = Some(
+                    bundle.organizations.len()
+                        + bundle.domains.len()
+                        + bundle.ips.len()
+                        + bundle.hosts.len()
+                        + bundle.ports.len()
+                        + bundle.services.len()
+                        + bundle.webs.len()
+                        + bundle.certificates.len()
+                        + bundle.fingerprints.len()
+                        + bundle.relations.len()
+                        + bundle.changes.len(),
+                );
+                artifacts.push(WorkflowArtifact {
+                    id: Uuid::new_v4().to_string(),
+                    step_id: step.step_id.clone(),
+                    execution_id: execution_id.to_string(),
+                    artifact_type: ArtifactType::SurfaceBundle,
+                    data: serde_json::to_value(&bundle).unwrap_or_default(),
+                    metadata,
+                    created_at: Utc::now(),
+                });
             }
             ArtifactType::Technologies => {
                 if let Some(tech) = ArtifactExtractor::extract_technologies(output_data) {
@@ -280,7 +379,7 @@ impl WorkflowOrchestrator {
             }
         }
 
-        artifacts
+        Ok(artifacts)
     }
 
     /// Create retry executor for a step
@@ -360,10 +459,22 @@ impl WorkflowOrchestrator {
             match result {
                 Ok(output) => {
                     upstream_results.insert(step.step_id.clone(), output.clone());
-                    let mut step_artifacts =
-                        self.process_step_output(step, &context.execution_id, &output);
-                    all_artifacts.append(&mut step_artifacts);
-                    completed_steps += 1;
+                    match self.try_process_step_output(step, &context.execution_id, &output) {
+                        Ok(mut step_artifacts) => {
+                            all_artifacts.append(&mut step_artifacts);
+                            completed_steps += 1;
+                        }
+                        Err(error) => {
+                            failed_steps += 1;
+                            step_errors.push(StepError {
+                                step_id: step.step_id.clone(),
+                                step_name: step.step_name.clone(),
+                                error,
+                                retries: 0,
+                                is_critical: true,
+                            });
+                        }
+                    }
                 }
                 Err(e) => {
                     failed_steps += 1;

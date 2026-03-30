@@ -48,6 +48,7 @@ fn create_simple_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -57,6 +58,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Concurrency Test",
         description: "Test",
+        target_asset_types: vec![],
         evidence: url,
         location: "url",
         severity: "info",

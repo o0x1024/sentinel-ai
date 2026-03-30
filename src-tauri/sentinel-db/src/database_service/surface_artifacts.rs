@@ -1,9 +1,32 @@
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::service::DatabaseService;
+use crate::database_service::sqlx_compat::{MySql, Postgres};
 use crate::database_service::surface::{
     SurfaceChangeLogRow, SurfaceEvidenceRow, SurfaceFingerprintRow,
 };
 use anyhow::Result;
+use sqlx::QueryBuilder;
+
+fn push_limit_sqlite(query_builder: &mut QueryBuilder<sqlx::Sqlite>, limit: Option<i64>) {
+    if let Some(limit) = limit {
+        query_builder.push(" LIMIT ");
+        query_builder.push_bind(limit.max(0));
+    }
+}
+
+fn push_limit_mysql(query_builder: &mut QueryBuilder<MySql>, limit: Option<i64>) {
+    if let Some(limit) = limit {
+        query_builder.push(" LIMIT ");
+        query_builder.push_bind(limit.max(0));
+    }
+}
+
+fn push_limit_postgres(query_builder: &mut QueryBuilder<Postgres>, limit: Option<i64>) {
+    if let Some(limit) = limit {
+        query_builder.push(" LIMIT ");
+        query_builder.push_bind(limit.max(0));
+    }
+}
 
 impl DatabaseService {
     pub async fn create_surface_fingerprint(
@@ -18,7 +41,7 @@ impl DatabaseService {
         match runtime {
             DatabasePool::SQLite(pool) => {
                 sqlx::query(
-                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, confidence_score, source, observed_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, rule_id, rule_word, rule_name, normalized_product, normalized_vendor, normalized_category, normalized_family, version, is_primary, match_source_part, confidence_score, source, observed_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&fingerprint.id)
                 .bind(&fingerprint.program_id)
@@ -26,6 +49,16 @@ impl DatabaseService {
                 .bind(&fingerprint.fingerprint_type)
                 .bind(&fingerprint.fingerprint_key)
                 .bind(&fingerprint.fingerprint_value)
+                .bind(&fingerprint.rule_id)
+                .bind(&fingerprint.rule_word)
+                .bind(&fingerprint.rule_name)
+                .bind(&fingerprint.normalized_product)
+                .bind(&fingerprint.normalized_vendor)
+                .bind(&fingerprint.normalized_category)
+                .bind(&fingerprint.normalized_family)
+                .bind(&fingerprint.version)
+                .bind(fingerprint.is_primary)
+                .bind(&fingerprint.match_source_part)
                 .bind(fingerprint.confidence_score)
                 .bind(&fingerprint.source)
                 .bind(&fingerprint.observed_at)
@@ -35,7 +68,7 @@ impl DatabaseService {
             }
             DatabasePool::MySQL(pool) => {
                 sqlx::query(
-                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, confidence_score, source, observed_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, rule_id, rule_word, rule_name, normalized_product, normalized_vendor, normalized_category, normalized_family, version, is_primary, match_source_part, confidence_score, source, observed_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&fingerprint.id)
                 .bind(&fingerprint.program_id)
@@ -43,6 +76,16 @@ impl DatabaseService {
                 .bind(&fingerprint.fingerprint_type)
                 .bind(&fingerprint.fingerprint_key)
                 .bind(&fingerprint.fingerprint_value)
+                .bind(&fingerprint.rule_id)
+                .bind(&fingerprint.rule_word)
+                .bind(&fingerprint.rule_name)
+                .bind(&fingerprint.normalized_product)
+                .bind(&fingerprint.normalized_vendor)
+                .bind(&fingerprint.normalized_category)
+                .bind(&fingerprint.normalized_family)
+                .bind(&fingerprint.version)
+                .bind(fingerprint.is_primary)
+                .bind(&fingerprint.match_source_part)
                 .bind(fingerprint.confidence_score)
                 .bind(&fingerprint.source)
                 .bind(&fingerprint.observed_at)
@@ -52,7 +95,7 @@ impl DatabaseService {
             }
             DatabasePool::PostgreSQL(pool) => {
                 sqlx::query(
-                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, confidence_score, source, observed_at, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                    "INSERT INTO surface_fingerprints (id, program_id, asset_id, fingerprint_type, fingerprint_key, fingerprint_value, rule_id, rule_word, rule_name, normalized_product, normalized_vendor, normalized_category, normalized_family, version, is_primary, match_source_part, confidence_score, source, observed_at, metadata_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
                 )
                 .bind(&fingerprint.id)
                 .bind(&fingerprint.program_id)
@@ -60,6 +103,16 @@ impl DatabaseService {
                 .bind(&fingerprint.fingerprint_type)
                 .bind(&fingerprint.fingerprint_key)
                 .bind(&fingerprint.fingerprint_value)
+                .bind(&fingerprint.rule_id)
+                .bind(&fingerprint.rule_word)
+                .bind(&fingerprint.rule_name)
+                .bind(&fingerprint.normalized_product)
+                .bind(&fingerprint.normalized_vendor)
+                .bind(&fingerprint.normalized_category)
+                .bind(&fingerprint.normalized_family)
+                .bind(&fingerprint.version)
+                .bind(fingerprint.is_primary)
+                .bind(&fingerprint.match_source_part)
                 .bind(fingerprint.confidence_score)
                 .bind(&fingerprint.source)
                 .bind(&fingerprint.observed_at)
@@ -83,36 +136,63 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let mut rows: Vec<SurfaceFingerprintRow> = match runtime {
+        let rows: Vec<SurfaceFingerprintRow> = match runtime {
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as("SELECT * FROM surface_fingerprints")
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+                    "SELECT * FROM surface_fingerprints WHERE 1=1",
+                );
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY observed_at DESC, id DESC");
+                push_limit_sqlite(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceFingerprintRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_fingerprints")
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT * FROM surface_fingerprints WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY observed_at DESC, id DESC");
+                push_limit_mysql(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceFingerprintRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_fingerprints")
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT * FROM surface_fingerprints WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY observed_at DESC, id DESC");
+                push_limit_postgres(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceFingerprintRow>()
                     .fetch_all(pool)
                     .await?
             }
         };
-
-        if let Some(program_id) = program_id {
-            rows.retain(|row| row.program_id == program_id);
-        }
-        if let Some(asset_id) = asset_id {
-            rows.retain(|row| row.asset_id == asset_id);
-        }
-
-        rows.sort_by(|a, b| b.observed_at.cmp(&a.observed_at));
-
-        if let Some(limit) = limit {
-            rows.truncate(limit.max(0) as usize);
-        }
 
         Ok(rows)
     }
@@ -197,36 +277,62 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let mut rows: Vec<SurfaceEvidenceRow> = match runtime {
+        let rows: Vec<SurfaceEvidenceRow> = match runtime {
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as("SELECT * FROM surface_evidence")
+                let mut query_builder =
+                    QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM surface_evidence WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY collected_at DESC, id DESC");
+                push_limit_sqlite(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceEvidenceRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_evidence")
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT * FROM surface_evidence WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY collected_at DESC, id DESC");
+                push_limit_mysql(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceEvidenceRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_evidence")
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT * FROM surface_evidence WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY collected_at DESC, id DESC");
+                push_limit_postgres(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceEvidenceRow>()
                     .fetch_all(pool)
                     .await?
             }
         };
-
-        if let Some(program_id) = program_id {
-            rows.retain(|row| row.program_id == program_id);
-        }
-        if let Some(asset_id) = asset_id {
-            rows.retain(|row| row.asset_id.as_deref() == Some(asset_id));
-        }
-
-        rows.sort_by(|a, b| b.collected_at.cmp(&a.collected_at));
-
-        if let Some(limit) = limit {
-            rows.truncate(limit.max(0) as usize);
-        }
 
         Ok(rows)
     }
@@ -311,36 +417,63 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let mut rows: Vec<SurfaceChangeLogRow> = match runtime {
+        let rows: Vec<SurfaceChangeLogRow> = match runtime {
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as("SELECT * FROM surface_change_logs")
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(
+                    "SELECT * FROM surface_change_logs WHERE 1=1",
+                );
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY detected_at DESC, id DESC");
+                push_limit_sqlite(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceChangeLogRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_change_logs")
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT * FROM surface_change_logs WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY detected_at DESC, id DESC");
+                push_limit_mysql(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceChangeLogRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_change_logs")
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT * FROM surface_change_logs WHERE 1=1");
+                if let Some(program_id) = program_id {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = asset_id {
+                    query_builder.push(" AND asset_id = ");
+                    query_builder.push_bind(asset_id);
+                }
+                query_builder.push(" ORDER BY detected_at DESC, id DESC");
+                push_limit_postgres(&mut query_builder, limit);
+                query_builder
+                    .build_query_as::<SurfaceChangeLogRow>()
                     .fetch_all(pool)
                     .await?
             }
         };
-
-        if let Some(program_id) = program_id {
-            rows.retain(|row| row.program_id == program_id);
-        }
-        if let Some(asset_id) = asset_id {
-            rows.retain(|row| row.asset_id.as_deref() == Some(asset_id));
-        }
-
-        rows.sort_by(|a, b| b.detected_at.cmp(&a.detected_at));
-
-        if let Some(limit) = limit {
-            rows.truncate(limit.max(0) as usize);
-        }
 
         Ok(rows)
     }

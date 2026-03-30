@@ -2,6 +2,9 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+use crate::dictionary_surface_builtins::{
+    builtin_favicon_fingerprint_entries, builtin_service_fingerprint_entries,
+};
 use sentinel_core::models::dictionary::{
     Dictionary, DictionaryExport, DictionaryFilter, DictionaryImportOptions, DictionarySet,
     DictionarySetRelation, DictionaryStats, DictionaryType, DictionaryWord, DictionaryWordInput,
@@ -373,6 +376,66 @@ impl DictionaryService {
         self.update_word_count(dictionary_id).await?;
 
         Ok(added_words)
+    }
+
+    pub async fn sync_word_entries(
+        &self,
+        dictionary_id: &str,
+        entries: Vec<DictionaryWordInput>,
+        remove_missing: bool,
+    ) -> Result<Vec<DictionaryWord>> {
+        let existing_words = self.get_dictionary_words(dictionary_id).await?;
+        let mut existing_by_word: HashMap<String, DictionaryWord> = existing_words
+            .into_iter()
+            .map(|word| (word.word.clone(), word))
+            .collect();
+        let mut updated_words = Vec::new();
+        let mut new_entries = Vec::new();
+
+        for entry in entries {
+            let entry_word = entry.word.clone();
+            let entry_weight = entry.weight.unwrap_or(1.0);
+            let entry_category = entry.category.clone();
+            let entry_metadata = entry
+                .metadata
+                .as_ref()
+                .and_then(|value| serde_json::to_string(value).ok());
+
+            if let Some(mut existing) = existing_by_word.remove(&entry_word) {
+                let weight_changed = (existing.weight - entry_weight).abs() > f64::EPSILON;
+                let category_changed = existing.category != entry_category;
+                let metadata_changed = existing.metadata != entry_metadata;
+
+                if weight_changed || category_changed || metadata_changed {
+                    existing.weight = entry_weight;
+                    existing.category = entry_category;
+                    existing.metadata = entry_metadata;
+                    updated_words.push(existing);
+                }
+            } else {
+                new_entries.push(entry);
+            }
+        }
+
+        let mut affected_words = Vec::new();
+
+        if remove_missing {
+            let stale_words: Vec<String> = existing_by_word.into_keys().collect();
+            if !stale_words.is_empty() {
+                self.remove_words(dictionary_id, stale_words).await?;
+            }
+        }
+
+        if !updated_words.is_empty() {
+            affected_words.extend(self.update_words_batch(updated_words).await?);
+        }
+        if !new_entries.is_empty() {
+            affected_words.extend(self.add_word_entries(dictionary_id, new_entries).await?);
+        }
+
+        self.update_word_count(dictionary_id).await?;
+
+        Ok(affected_words)
     }
 
     pub async fn remove_words(&self, dictionary_id: &str, words: Vec<String>) -> Result<u64> {
@@ -833,16 +896,91 @@ impl DictionaryService {
                 updated_at: chrono::Utc::now(),
             },
             vec![
-                "www", "mail", "ftp", "admin", "api", "dev", "test", "staging", "blog", "shop",
-                "store", "support", "help", "docs", "cdn", "static", "assets", "img", "images",
-                "media", "files", "download", "upload", "secure", "ssl", "vpn", "remote",
-                "portal", "dashboard", "panel", "control", "manage", "login", "auth", "sso",
-                "oauth", "app", "mobile", "m", "wap", "beta", "alpha", "demo", "sandbox", "old",
-                "legacy", "archive", "backup", "mirror", "proxy", "cache", "db", "database",
-                "sql", "mysql", "postgres", "redis", "mongo", "elastic", "search", "solr",
-                "kibana", "grafana", "prometheus", "jenkins", "ci", "cd", "build", "deploy",
-                "git", "svn", "repo", "jira", "confluence", "wiki", "forum", "chat", "slack",
-                "teams", "monitoring", "metrics", "logs", "analytics", "stats", "reports",
+                "www",
+                "mail",
+                "ftp",
+                "admin",
+                "api",
+                "dev",
+                "test",
+                "staging",
+                "blog",
+                "shop",
+                "store",
+                "support",
+                "help",
+                "docs",
+                "cdn",
+                "static",
+                "assets",
+                "img",
+                "images",
+                "media",
+                "files",
+                "download",
+                "upload",
+                "secure",
+                "ssl",
+                "vpn",
+                "remote",
+                "portal",
+                "dashboard",
+                "panel",
+                "control",
+                "manage",
+                "login",
+                "auth",
+                "sso",
+                "oauth",
+                "app",
+                "mobile",
+                "m",
+                "wap",
+                "beta",
+                "alpha",
+                "demo",
+                "sandbox",
+                "old",
+                "legacy",
+                "archive",
+                "backup",
+                "mirror",
+                "proxy",
+                "cache",
+                "db",
+                "database",
+                "sql",
+                "mysql",
+                "postgres",
+                "redis",
+                "mongo",
+                "elastic",
+                "search",
+                "solr",
+                "kibana",
+                "grafana",
+                "prometheus",
+                "jenkins",
+                "ci",
+                "cd",
+                "build",
+                "deploy",
+                "git",
+                "svn",
+                "repo",
+                "jira",
+                "confluence",
+                "wiki",
+                "forum",
+                "chat",
+                "slack",
+                "teams",
+                "monitoring",
+                "metrics",
+                "logs",
+                "analytics",
+                "stats",
+                "reports",
             ]
             .into_iter()
             .map(|word| DictionaryWordInput {
@@ -950,7 +1088,9 @@ impl DictionaryService {
                 author: Some("Sentinel AI".to_string()),
                 source_url: Some("https://github.com/adysec/ARL".to_string()),
                 tags: Some("fingerprint,web,arl".to_string()),
-                metadata: None,
+                metadata: Some(serde_json::json!({
+                    "subtype": "web_fingerprint"
+                }).to_string()),
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -962,6 +1102,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Swagger UI",
                         "product": "Swagger UI",
+                        "vendor": "SmartBear",
+                        "asset_category": "api_portal",
+                        "asset_family": "developer_portal",
+                        "priority": 120,
                         "matchers": [
                             {"part": "body", "type": "contains", "value": "Swagger UI"},
                             {"part": "title", "type": "contains", "value": "Swagger UI"}
@@ -976,6 +1120,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Jenkins",
                         "product": "Jenkins",
+                        "vendor": "Jenkins",
+                        "asset_category": "ci_cd",
+                        "asset_family": "devops",
+                        "priority": 130,
                         "matchers": [
                             {"part": "header", "key": "x-jenkins", "type": "exists"},
                             {"part": "body", "type": "contains", "value": "Jenkins"}
@@ -990,6 +1138,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Grafana",
                         "product": "Grafana",
+                        "vendor": "Grafana Labs",
+                        "asset_category": "observability",
+                        "asset_family": "monitoring",
+                        "priority": 120,
                         "matchers": [
                             {"part": "body", "type": "contains", "value": "grafana-app"},
                             {"part": "title", "type": "contains", "value": "Grafana"}
@@ -1004,6 +1156,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Spring Boot",
                         "product": "Spring Boot",
+                        "vendor": "VMware",
+                        "asset_category": "framework",
+                        "asset_family": "java_framework",
+                        "priority": 90,
                         "matchers": [
                             {"part": "header", "key": "x-application-context", "type": "exists"},
                             {"part": "body", "type": "contains", "value": "\"_links\""}
@@ -1018,6 +1174,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Next.js",
                         "product": "Next.js",
+                        "vendor": "Vercel",
+                        "asset_category": "framework",
+                        "asset_family": "javascript_framework",
+                        "priority": 100,
                         "operator": "or",
                         "matchers": [
                             {"part": "body", "type": "contains", "value": "__NEXT_DATA__"},
@@ -1034,6 +1194,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Nginx",
                         "product": "Nginx",
+                        "vendor": "NGINX",
+                        "asset_category": "web_server",
+                        "asset_family": "http_server",
+                        "priority": 80,
                         "matchers": [
                             {"part": "header", "key": "server", "type": "regex", "value": "nginx(?:/([0-9.]+))?"}
                         ],
@@ -1047,6 +1211,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Apache HTTP Server",
                         "product": "Apache",
+                        "vendor": "Apache Software Foundation",
+                        "asset_category": "web_server",
+                        "asset_family": "http_server",
+                        "priority": 80,
                         "matchers": [
                             {"part": "header", "key": "server", "type": "regex", "value": "apache(?:/([0-9.]+))?"}
                         ],
@@ -1060,6 +1228,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Cloudflare",
                         "product": "Cloudflare",
+                        "vendor": "Cloudflare",
+                        "asset_category": "cdn",
+                        "asset_family": "edge_network",
+                        "priority": 110,
                         "operator": "or",
                         "matchers": [
                             {"part": "header", "key": "server", "type": "contains", "value": "cloudflare"},
@@ -1075,6 +1247,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Prometheus",
                         "product": "Prometheus",
+                        "vendor": "CNCF",
+                        "asset_category": "observability",
+                        "asset_family": "monitoring",
+                        "priority": 120,
                         "operator": "or",
                         "matchers": [
                             {"part": "title", "type": "contains", "value": "Prometheus Time Series Collection"},
@@ -1090,6 +1266,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Kibana",
                         "product": "Kibana",
+                        "vendor": "Elastic",
+                        "asset_category": "observability",
+                        "asset_family": "logging",
+                        "priority": 120,
                         "operator": "or",
                         "matchers": [
                             {"part": "title", "type": "contains", "value": "Kibana"},
@@ -1105,6 +1285,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Elasticsearch",
                         "product": "Elasticsearch",
+                        "vendor": "Elastic",
+                        "asset_category": "search",
+                        "asset_family": "data_platform",
+                        "priority": 120,
                         "operator": "or",
                         "matchers": [
                             {"part": "body", "type": "contains", "value": "\"cluster_name\""},
@@ -1120,6 +1304,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Traefik",
                         "product": "Traefik",
+                        "vendor": "Traefik Labs",
+                        "asset_category": "gateway",
+                        "asset_family": "reverse_proxy",
+                        "priority": 100,
                         "operator": "or",
                         "matchers": [
                             {"part": "header", "key": "server", "type": "contains", "value": "Traefik"},
@@ -1135,6 +1323,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "GitLab",
                         "product": "GitLab",
+                        "vendor": "GitLab",
+                        "asset_category": "devops",
+                        "asset_family": "code_platform",
+                        "priority": 125,
                         "operator": "or",
                         "matchers": [
                             {"part": "body", "type": "contains", "value": "GitLab"},
@@ -1150,6 +1342,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Harbor",
                         "product": "Harbor",
+                        "vendor": "VMware",
+                        "asset_category": "registry",
+                        "asset_family": "artifact_registry",
+                        "priority": 115,
                         "operator": "or",
                         "matchers": [
                             {"part": "title", "type": "contains", "value": "Harbor"},
@@ -1165,6 +1361,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "RabbitMQ Management",
                         "product": "RabbitMQ",
+                        "vendor": "VMware",
+                        "asset_category": "messaging",
+                        "asset_family": "message_broker",
+                        "priority": 120,
                         "operator": "or",
                         "matchers": [
                             {"part": "title", "type": "contains", "value": "RabbitMQ Management"},
@@ -1180,6 +1380,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "Consul",
                         "product": "Consul",
+                        "vendor": "HashiCorp",
+                        "asset_category": "service_discovery",
+                        "asset_family": "infrastructure",
+                        "priority": 120,
                         "operator": "or",
                         "matchers": [
                             {"part": "title", "type": "contains", "value": "Consul by HashiCorp"},
@@ -1195,6 +1399,10 @@ impl DictionaryService {
                     metadata: Some(serde_json::json!({
                         "name": "HashiCorp Vault",
                         "product": "Vault",
+                        "vendor": "HashiCorp",
+                        "asset_category": "secrets_management",
+                        "asset_family": "infrastructure",
+                        "priority": 125,
                         "operator": "or",
                         "matchers": [
                             {"part": "title", "type": "contains", "value": "Vault"},
@@ -1204,6 +1412,69 @@ impl DictionaryService {
                     })),
                 },
             ],
+        )
+        .await?;
+
+        self.ensure_builtin_dictionary(
+            Dictionary {
+                id: "builtin_service_fingerprint_rules".to_string(),
+                name: "Service Fingerprint Rules".to_string(),
+                description: Some(
+                    "Dictionary-driven service banner and protocol fingerprint rules used by Service Probe and Service Monitor"
+                        .to_string(),
+                ),
+                dict_type: DictionaryType::ServiceProbeRule.to_string(),
+                service_type: Some(ServiceType::General.to_string()),
+                category: Some("fingerprint".to_string()),
+                is_builtin: true,
+                is_active: true,
+                word_count: 0,
+                file_size: 0,
+                checksum: None,
+                version: "1.0.0".to_string(),
+                author: Some("Sentinel AI".to_string()),
+                source_url: None,
+                tags: Some("fingerprint,service,banner".to_string()),
+                metadata: Some(serde_json::json!({
+                    "subtype": "service_identification"
+                }).to_string()),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            builtin_service_fingerprint_entries(),
+        )
+        .await?;
+
+        self.ensure_builtin_dictionary(
+            Dictionary {
+                id: "builtin_favicon_fingerprint_rules".to_string(),
+                name: "Favicon Fingerprint Rules".to_string(),
+                description: Some(
+                    "Dictionary-driven favicon URL and hash rules used by Favicon Fingerprinter"
+                        .to_string(),
+                ),
+                dict_type: DictionaryType::FingerprintRule.to_string(),
+                service_type: Some(ServiceType::Web.to_string()),
+                category: Some("fingerprint".to_string()),
+                is_builtin: true,
+                is_active: true,
+                word_count: 0,
+                file_size: 0,
+                checksum: None,
+                version: "1.0.0".to_string(),
+                author: Some("Sentinel AI".to_string()),
+                source_url: None,
+                tags: Some("fingerprint,favicon,web".to_string()),
+                metadata: Some(
+                    serde_json::json!({
+                        "subtype": "favicon_fingerprint"
+                    })
+                    .to_string(),
+                ),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            builtin_favicon_fingerprint_entries(),
         )
         .await?;
 
@@ -1226,7 +1497,9 @@ impl DictionaryService {
                 author: Some("Sentinel AI".to_string()),
                 source_url: None,
                 tags: Some("poc,risk,verification,safe".to_string()),
-                metadata: None,
+                metadata: Some(serde_json::json!({
+                    "subtype": "risk_verification"
+                }).to_string()),
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -1497,10 +1770,39 @@ impl DictionaryService {
         dictionary: Dictionary,
         entries: Vec<DictionaryWordInput>,
     ) -> Result<()> {
-        if self.get_dictionary(&dictionary.id).await?.is_none() {
+        if let Some(existing) = self.get_dictionary(&dictionary.id).await? {
+            let mut updated = existing;
+            updated.name = dictionary.name;
+            updated.description = dictionary.description;
+            updated.dict_type = dictionary.dict_type;
+            updated.service_type = dictionary.service_type;
+            updated.category = dictionary.category;
+            updated.is_builtin = dictionary.is_builtin;
+            updated.is_active = dictionary.is_active;
+            updated.file_size = dictionary.file_size;
+            updated.checksum = dictionary.checksum;
+            updated.version = dictionary.version;
+            updated.author = dictionary.author;
+            updated.source_url = dictionary.source_url;
+            updated.tags = dictionary.tags;
+            updated.metadata = dictionary.metadata;
+
+            self.update_dictionary(updated).await?;
+            self.sync_builtin_dictionary_words(&dictionary.id, entries)
+                .await?;
+        } else {
             self.create_dictionary(dictionary.clone()).await?;
             self.add_word_entries(&dictionary.id, entries).await?;
         }
+        Ok(())
+    }
+
+    async fn sync_builtin_dictionary_words(
+        &self,
+        dictionary_id: &str,
+        entries: Vec<DictionaryWordInput>,
+    ) -> Result<()> {
+        self.sync_word_entries(dictionary_id, entries, true).await?;
         Ok(())
     }
 }

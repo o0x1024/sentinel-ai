@@ -330,6 +330,8 @@ export default {
   network: {
     title: '网络设置',
     proxy: '代理设置',
+    globalProxyTitle: '全局出站代理',
+    globalProxyDescription: '仅影响 Sentinel 主动发起的出站请求，例如插件 fetch、模型访问和内置 HTTP 客户端。',
     enableProxy: '启用代理',
     enableGlobalProxy: '启用全局代理',
     scheme: '协议',
@@ -378,9 +380,28 @@ export default {
       generatedKeyNotice: '请立即保存该密钥，仅显示一次。',
       generateFailed: '生成 API 密钥失败: {error}'
     },
+    runtime: {
+      title: '当前代理生效状态',
+      description: '这里展示当前真正影响流量的代理相关功能。即使全局出站代理关闭，本地流量代理仍可能在拦截流量。',
+      refresh: '刷新状态',
+      globalProxy: '全局出站代理',
+      localProxy: '流量分析代理',
+      active: '生效中',
+      inactive: '未生效',
+      unknown: '未知',
+      notSupported: '当前平台不支持',
+      globalProxyActiveDetail: 'Sentinel 主动发起的 HTTP 客户端请求会走已配置代理。',
+      globalProxyInactiveDetail: 'Sentinel 主动发起的 HTTP 客户端将直连，除非另有流量捕获机制开启。',
+      localProxyActiveDetail: '本地监听代理正在端口 {port} 运行，请求可能会出现在代理历史中。',
+      localProxyInactiveDetail: '流量分析代理监听器未运行。',
+      localProxyAutoStartOn: '自动启动：已开启',
+      localProxyAutoStartOff: '自动启动：已关闭',
+      confusionHint: '如果你看到请求“像是走了代理”，优先检查下面的流量分析代理状态。'
+    },
     toast: {
       proxySaved: '全局代理已保存并生效',
-      proxySaveFailed: '保存全局代理失败'
+      proxySaveFailed: '保存全局代理失败',
+      runtimeStatusFailed: '刷新当前代理状态失败'
     },
     timeout: '网络超时',
     timeoutDesc: '网络请求超时时间（秒）',

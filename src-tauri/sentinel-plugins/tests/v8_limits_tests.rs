@@ -54,6 +54,7 @@ async fn test_heap_memory_limit() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     // NOTE:
@@ -91,6 +92,7 @@ export function scan_transaction(transaction) {
         vuln_type: "heap_pressure",
         title: "Heap Memory Pressure Test",
         description: "Allocated ~" + Math.floor(totalBytes / 1024 / 1024) + "MB without fatal OOM",
+        target_asset_types: vec![],
         evidence: "buffers=" + buffers.length + ", totalBytes=" + totalBytes,
         location: "heap",
         severity: "info",
@@ -141,6 +143,7 @@ async fn test_stack_overflow() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -161,6 +164,7 @@ export function scan_transaction(transaction) {
             vuln_type: "stack_test",
             title: "Stack Test Completed",
             description: "Recursion depth: " + depth + ", result: " + result,
+            target_asset_types: vec![],
             evidence: "stack_test",
             location: "stack",
             severity: "info",
@@ -171,6 +175,7 @@ export function scan_transaction(transaction) {
             vuln_type: "stack_overflow",
             title: "Stack Overflow Detected",
             description: "Recursion depth: " + depth,
+            target_asset_types: vec![],
             evidence: e.message,
             location: "stack",
             severity: "info",
@@ -222,6 +227,7 @@ async fn test_infinite_loop() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -242,6 +248,7 @@ export function scan_transaction(transaction) {
         vuln_type: "loop_test",
         title: "Loop Test Completed",
         description: "Completed " + iterations + " iterations",
+        target_asset_types: vec![],
         evidence: "loop_test",
         location: "loop",
         severity: "info",
@@ -305,6 +312,7 @@ async fn test_large_object_allocation() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -349,6 +357,7 @@ export function scan_transaction(transaction) {
         vuln_type: "large_object_test",
         title: "Large Object Allocation Test",
         description: "Successfully allocated " + successful + "/" + sizes.length + " objects",
+        target_asset_types: vec![],
         evidence: JSON.stringify(results),
         location: "heap",
         severity: "info",
@@ -406,6 +415,7 @@ async fn test_string_length_limit() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -453,6 +463,7 @@ export function scan_transaction(transaction) {
         vuln_type: "string_length_test",
         title: "String Length Test",
         description: "Max string length: " + maxLength + " (" + successful + "/" + lengths.length + " succeeded)",
+        target_asset_types: vec![],
         evidence: JSON.stringify(results),
         location: "heap",
         severity: "info",
@@ -503,6 +514,7 @@ async fn test_object_properties_limit() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -549,6 +561,7 @@ export function scan_transaction(transaction) {
         vuln_type: "object_props_test",
         title: "Object Properties Test",
         description: "Max properties: " + maxProps + " (" + successful + "/" + counts.length + " succeeded)",
+        target_asset_types: vec![],
         evidence: JSON.stringify(results),
         location: "heap",
         severity: "info",
@@ -599,6 +612,7 @@ async fn test_multi_engine_isolation() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -614,6 +628,7 @@ export function scan_transaction(transaction) {
         vuln_type: "isolation_test",
         title: "Engine Isolation Test",
         description: "Global counter: " + globalThis.globalCounter,
+        target_asset_types: vec![],
         evidence: "counter_" + globalThis.globalCounter,
         location: "global",
         severity: "info",

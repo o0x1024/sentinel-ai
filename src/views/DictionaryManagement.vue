@@ -37,10 +37,30 @@
       </div>
     </div>
 
+    <div v-if="subtypeFilterVisible" class="mb-6 max-w-sm">
+      <div class="form-control">
+        <label class="label">
+          <span class="label-text">{{ t('dictionary.subtypeFilter', '子类型筛选') }}</span>
+        </label>
+        <select v-model="selectedSubtype" class="select select-bordered">
+          <option value="">{{ t('dictionary.allSubtypes', '全部子类型') }}</option>
+          <option
+            v-for="option in availableSubtypeOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </option>
+        </select>
+      </div>
+    </div>
+
     <DictionaryCardGrid
       :dictionaries="filteredDictionaries"
       :default-map="defaultMap"
       :get-dictionary-type-label="getDictionaryTypeLabel"
+      :get-dictionary-subtype-label="getDictionarySubtypeLabel"
+      :get-dictionary-subtype-badge-class="getDictionarySubtypeBadgeClass"
       :get-service-type-label="getServiceTypeLabel"
       :format-date="formatDate"
       @edit="editDictionary"
@@ -70,6 +90,25 @@
         <h3 class="font-bold text-lg mb-4">
           {{ t('dictionary.manageWords', '管理词条') }} - {{ managingDictionary.name }}
         </h3>
+
+        <div class="flex flex-wrap gap-2 mb-4">
+          <div class="badge badge-primary">
+            {{ getDictionaryTypeLabel(managingDictionary.dict_type) }}
+          </div>
+          <div
+            v-if="getDictionarySubtypeLabel(managingDictionary)"
+            class="badge"
+            :class="getDictionarySubtypeBadgeClass(managingDictionary)"
+          >
+            {{ getDictionarySubtypeLabel(managingDictionary) }}
+          </div>
+          <div v-if="managingDictionary.service_type" class="badge badge-secondary">
+            {{ getServiceTypeLabel(managingDictionary.service_type) }}
+          </div>
+          <div v-if="managingDictionary.is_builtin" class="badge badge-accent">
+            {{ t('dictionary.builtin', '内置') }}
+          </div>
+        </div>
         
         <div class="flex gap-4 mb-4">
           <template v-if="!isStructuredManagingDictionary">
@@ -113,16 +152,29 @@
 
         <StructuredRuleFilters
           v-if="isStructuredManagingDictionary"
+          :dictionary-type="managingDictionary?.dict_type || ''"
           v-model:category="ruleCategoryFilter"
           v-model:severity="ruleSeverityFilter"
           v-model:matcher="ruleMatcherFilter"
           v-model:enabled="ruleEnabledFilter"
+          v-model:service="ruleServiceFilter"
+          v-model:probe-name="ruleProbeNameFilter"
           :category-options="structuredCategoryOptions"
           :severity-options="structuredSeverityOptions"
+          :service-options="structuredServiceOptions"
+          :probe-name-options="structuredProbeNameOptions"
+        />
+
+        <DictionaryEmptyRuleState
+          v-if="isStructuredManagingDictionary && !isLoadingMore && listItems.length === 0"
+          :subtype="managingDictionarySubtypeKey"
+          :supports-nmap-import="supportsNmapServiceProbeImport"
+          @import-nmap="importMethod = 'nmap'; showImportModal = true"
+          @create-starter-rule="openRuleEditor()"
         />
 
         <StructuredRuleWordList
-          v-if="isStructuredManagingDictionary"
+          v-if="isStructuredManagingDictionary && listItems.length > 0"
           v-model:selected-words="selectedWords"
           :items="listItems"
           :dictionary-type="managingDictionary?.dict_type || ''"
@@ -207,6 +259,7 @@
     <RuleEntryEditorModal
       :open="showRuleEditor"
       :dictionary-type="managingDictionary?.dict_type || ''"
+      :dictionary-subtype="managingDictionary ? getDictionarySubtypeKey(managingDictionary) || '' : ''"
       :value="editingRuleEntry"
       @cancel="closeRuleEditor"
       @save="saveRuleEntry"
@@ -232,6 +285,14 @@
           <a class="tab" :class="{ 'tab-active': importMethod === 'file' }" @click="importMethod = 'file'">
             {{ t('dictionary.importFromFile', '文件导入') }}
           </a>
+          <a
+            v-if="supportsNmapServiceProbeImport"
+            class="tab"
+            :class="{ 'tab-active': importMethod === 'nmap' }"
+            @click="importMethod = 'nmap'"
+          >
+            {{ t('dictionary.importFromNmap', 'Nmap Service Probes') }}
+          </a>
         </div>
         
         <div v-if="importMethod === 'text'">
@@ -256,6 +317,23 @@
               type="file" 
               class="file-input file-input-bordered" 
               accept=".txt,.json,.csv"
+              @change="handleFileSelect"
+            >
+          </div>
+        </div>
+
+        <div v-if="importMethod === 'nmap'">
+          <div class="alert alert-info mb-4">
+            <span>{{ t('dictionary.nmapImportHelp', '导入 nmap-service-probes 的 Probe/match/softmatch/ports/sslports 子集，并转换为服务识别规则。') }}</span>
+          </div>
+          <div class="form-control mb-4">
+            <label class="label">
+              <span class="label-text">{{ t('dictionary.selectFile', '选择文件') }}</span>
+            </label>
+            <input
+              type="file"
+              class="file-input file-input-bordered"
+              accept=".txt,.probes,.conf"
               @change="handleFileSelect"
             >
           </div>
@@ -288,12 +366,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { writeTextFile }  from '@tauri-apps/plugin-fs';
 import DictionaryCardGrid from '@/components/Dictionary/DictionaryCardGrid.vue'
+import DictionaryEmptyRuleState from '@/components/Dictionary/DictionaryEmptyRuleState.vue'
 import DictionaryFormModal from '@/components/Dictionary/DictionaryFormModal.vue'
 import VirtualList from '@/components/VirtualList.vue'
 import DictionaryWordActionBar from '@/components/Dictionary/DictionaryWordActionBar.vue'
@@ -301,6 +380,14 @@ import RuleEntryEditorModal from '@/components/Dictionary/RuleEntryEditorModal.v
 import RuleBatchEditModal from '@/components/Dictionary/RuleBatchEditModal.vue'
 import StructuredRuleFilters from '@/components/Dictionary/StructuredRuleFilters.vue'
 import StructuredRuleWordList from '@/components/Dictionary/StructuredRuleWordList.vue'
+import {
+  getSubtypeBadgeClass,
+  getSubtypeLabel,
+} from '@/components/Dictionary/dictionarySubtypeConfig'
+import {
+  inferDictionarySubtypeKey,
+  parseDictionaryMetadata,
+} from '@/components/Dictionary/dictionarySubtypeUtils'
 import { useDictionaryWordManager } from '@/composables/useDictionaryWordManager'
 import { getDefaultMap as getDefaultMapApi, setDefaultId, clearDefaultForType } from '@/services/dictionary'
 
@@ -319,7 +406,8 @@ interface Dictionary {
   updated_at: string;
   created_at: string;
   category?: string;
-  tags?: string[];
+  tags?: string[] | string;
+  metadata?: string | null;
 }
 
 interface DictionaryForm {
@@ -327,12 +415,18 @@ interface DictionaryForm {
   description: string;
   dictionary_type: string;
   service_type: string;
+  subtype: string;
   is_active: boolean;
+}
+
+type DictionaryView = Pick<Dictionary, 'id' | 'name' | 'dict_type' | 'service_type' | 'category' | 'tags' | 'metadata'> & {
+  is_builtin?: boolean;
 }
 
 // 响应式数据
 const dictionaries = ref<Dictionary[]>([])
 const selectedType = ref('all')
+const selectedSubtype = ref('')
 const showCreateModal = ref(false)
 const editingDictionary = ref<Dictionary | null>(null)
 const saving = ref(false)
@@ -346,6 +440,7 @@ const dictionaryForm = ref({
   description: '',
   dictionary_type: '',
   service_type: '',
+  subtype: '',
   is_active: true
 })
 
@@ -361,6 +456,7 @@ const dictionaryTypes = [
   { value: 'port', label: t('dictionary.types.port', '端口'), icon: 'fas fa-network-wired' },
   { value: 'api_endpoint', label: t('dictionary.types.api_endpoint', 'API端点'), icon: 'fas fa-plug' },
   { value: 'sensitive_file', label: t('dictionary.types.sensitive_file', '敏感文件规则'), icon: 'fas fa-shield-alt' },
+  { value: 'service_probe_rule', label: t('dictionary.types.service_probe_rule', '服务识别规则'), icon: 'fas fa-broadcast-tower' },
   { value: 'fingerprint_rule', label: t('dictionary.types.fingerprint_rule', '指纹规则'), icon: 'fas fa-fingerprint' },
   { value: 'poc_rule', label: t('dictionary.types.poc_rule', 'PoC规则'), icon: 'fas fa-bug' },
   { value: 'http_param', label: t('dictionary.types.parameter', 'HTTP参数'), icon: 'fas fa-code' },
@@ -381,10 +477,15 @@ const serviceTypes = [
 
 // 计算属性
 const filteredDictionaries = computed(() => {
-  if (selectedType.value === 'all') {
-    return dictionaries.value
-  }
-  return dictionaries.value.filter(dict => dict.dict_type === selectedType.value)
+  return dictionaries.value.filter(dict => {
+    if (selectedType.value !== 'all' && dict.dict_type !== selectedType.value) {
+      return false
+    }
+    if (selectedSubtype.value && getDictionarySubtypeKey(dict) !== selectedSubtype.value) {
+      return false
+    }
+    return true
+  })
 })
 
 // 方法
@@ -430,11 +531,30 @@ const saveDictionary = async (form: DictionaryForm) => {
   saving.value = true
   try {
     dictionaryForm.value = { ...form }
+    const metadata = (() => {
+      const existing = editingDictionary.value ? parseDictionaryMetadata(editingDictionary.value) : {}
+      if (form.subtype?.trim()) {
+        return JSON.stringify({
+          ...existing,
+          subtype: form.subtype.trim(),
+        })
+      }
+
+      if (existing.subtype) {
+        const next = { ...existing }
+        delete next.subtype
+        return Object.keys(next).length > 0 ? JSON.stringify(next) : null
+      }
+
+      return Object.keys(existing).length > 0 ? JSON.stringify(existing) : null
+    })()
+
     if (editingDictionary.value) {
       await invoke('update_dictionary', {
         dictionary: {
           ...editingDictionary.value,
-          ...form
+          ...form,
+          metadata
         }
       })
     } else {
@@ -444,7 +564,8 @@ const saveDictionary = async (form: DictionaryForm) => {
         service_type: form.service_type || null,
         description: form.description || null,
         category: null,
-        tags: null
+        tags: null,
+        metadata,
       })
     }
     await loadDictionaries()
@@ -463,6 +584,9 @@ const editDictionary = (dictionary: Dictionary) => {
     description: dictionary.description || '',
     dictionary_type: dictionary.dict_type,
     service_type: dictionary.service_type || '',
+    subtype: typeof parseDictionaryMetadata(dictionary).subtype === 'string'
+      ? parseDictionaryMetadata(dictionary).subtype
+      : '',
     is_active: dictionary.is_active
   }
 }
@@ -490,7 +614,8 @@ const duplicateDictionary = async (dictionary: Dictionary) => {
       service_type: dictionary.service_type || null,
       description: dictionary.description || null,
       category: dictionary.category || null,
-      tags: dictionary.tags || null
+      tags: dictionary.tags || null,
+      metadata: dictionary.metadata || null,
     })
     await loadDictionaries()
   } catch (error) {
@@ -552,6 +677,7 @@ const {
   importWords,
   isLoadingMore,
   isStructuredManagingDictionary,
+  supportsNmapServiceProbeImport,
   listItems,
   manageDictionaryWords,
   managingDictionary,
@@ -562,6 +688,8 @@ const {
   removeWord,
   ruleCategoryFilter,
   ruleEnabledFilter,
+  ruleProbeNameFilter,
+  ruleServiceFilter,
   ruleMatcherFilter,
   ruleSeverityFilter,
   searchQuery,
@@ -571,7 +699,9 @@ const {
   showImportModal,
   showRuleEditor,
   structuredCategoryOptions,
+  structuredProbeNameOptions,
   structuredSeverityOptions,
+  structuredServiceOptions,
   toggleSelectAll,
   viewDictionaryWords,
   virtualListRef,
@@ -591,6 +721,7 @@ const closeModal = () => {
     description: '',
     dictionary_type: '',
     service_type: '',
+    subtype: '',
     is_active: true
   }
 }
@@ -599,6 +730,52 @@ const getDictionaryTypeLabel = (type: string) => {
   const typeObj = dictionaryTypes.find(t => t.value === type)
   return typeObj ? t(`dictionary.types.${type}`, typeObj.label) : type
 }
+
+const getDictionarySubtypeKey = (dictionary: DictionaryView): string | null => {
+  return inferDictionarySubtypeKey(dictionary)
+}
+
+const getDictionarySubtypeLabel = (dictionary: DictionaryView) => {
+  const subtype = getDictionarySubtypeKey(dictionary)
+  return subtype ? t(`dictionary.subtypes.${subtype}`, getSubtypeLabel(subtype)) : null
+}
+
+const getDictionarySubtypeBadgeClass = (dictionary: DictionaryView) => {
+  return getSubtypeBadgeClass(getDictionarySubtypeKey(dictionary))
+}
+
+const availableSubtypeOptions = computed(() => {
+  const subtypeKeys = new Set<string>()
+  for (const dictionary of dictionaries.value) {
+    if (selectedType.value !== 'all' && dictionary.dict_type !== selectedType.value) {
+      continue
+    }
+    const subtype = getDictionarySubtypeKey(dictionary)
+    if (subtype) subtypeKeys.add(subtype)
+  }
+
+  return Array.from(subtypeKeys)
+    .sort()
+    .map(value => ({
+      value,
+      label: t(`dictionary.subtypes.${value}`, value),
+    }))
+})
+
+const subtypeFilterVisible = computed(() => availableSubtypeOptions.value.length > 0)
+const managingDictionarySubtypeKey = computed(() =>
+  managingDictionary.value ? getDictionarySubtypeKey(managingDictionary.value) : null
+)
+
+watch(selectedType, () => {
+  selectedSubtype.value = ''
+})
+
+watch(availableSubtypeOptions, options => {
+  if (!options.some(option => option.value === selectedSubtype.value)) {
+    selectedSubtype.value = ''
+  }
+})
 
 const getServiceTypeLabel = (type: string) => {
   const serviceObj = serviceTypes.find(s => s.value === type)

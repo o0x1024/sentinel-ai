@@ -18,6 +18,12 @@ pub async fn initialize_builtin_bounty_resources(db_service: &Arc<DatabaseServic
         "builtin_web_fingerprint_rules",
     )
     .await?;
+    ensure_default_dictionary(
+        db_service,
+        "service_probe_rule",
+        "builtin_service_fingerprint_rules",
+    )
+    .await?;
     ensure_default_dictionary(db_service, "poc_rule", "builtin_safe_poc_rules").await?;
 
     tracing::info!(

@@ -27,6 +27,7 @@ use sentinel_traffic::{
 
 use sentinel_db::DatabaseService;
 
+use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
 use crate::events::{
     emit_finding, emit_intercept_request, emit_intercept_response, emit_plugin_changed,
     emit_proxy_status, emit_scan_stats,
@@ -35,7 +36,6 @@ use crate::events::{
     FindingEvent, InterceptRequestEvent, InterceptResponseEvent, PluginChangedEvent,
     ProxyStatusEvent, ScanStatsEvent,
 };
-use crate::commands::monitor_config_support::infer_monitor_type_for_plugin;
 use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 
 /// 拦截请求（用于前端展示）
@@ -293,6 +293,7 @@ impl TrafficAnalysisState {
     /// 只返回已批准（Approved）的插件，待审核和已拒绝的插件不显示
     pub async fn list_plugins_internal(&self) -> Result<Vec<PluginRecord>, String> {
         let db = self.get_db_service();
+        let _ = cleanup_removed_agent_plugins(db.as_ref()).await?;
 
         let db_records = db
             .get_plugins_from_registry(Some("default"))
@@ -929,6 +930,7 @@ pub async fn start_traffic_analysis_internal(
             stats: ProxyStats::default(),
         },
     );
+    crate::update_proxy_menu_text(app, true);
 
     tracing::info!(
         "Traffic scan started on port {} (ScanPipeline running in dedicated thread)",
@@ -988,6 +990,7 @@ pub async fn stop_traffic_analysis_internal(
             stats: ProxyStats::default(),
         },
     );
+    crate::update_proxy_menu_text(app, false);
 
     tracing::info!("Traffic scan stopped");
     Ok(())
@@ -1168,6 +1171,16 @@ pub async fn enable_plugin(
 
     tracing::info!("Plugin enabled in database: {}", plugin_id);
 
+    if main_category == "agent" {
+        if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
+            tracing::warn!(
+                "Failed to refresh active agent tools after enabling plugin {}: {}",
+                plugin_id,
+                e
+            );
+        }
+    }
+
     // 3. 获取插件名称用于事件发送
     let plugin_name = db
         .get_plugin_name(&plugin_id)
@@ -1233,6 +1246,16 @@ pub async fn disable_plugin(
     }
 
     tracing::info!("Plugin disabled in database: {}", plugin_id);
+
+    if main_category == "agent" {
+        if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
+            tracing::warn!(
+                "Failed to refresh active agent tools after disabling plugin {}: {}",
+                plugin_id,
+                e
+            );
+        }
+    }
 
     // 3. 获取插件名称用于事件发送
     let plugin_name = db
@@ -1327,6 +1350,15 @@ pub async fn batch_enable_plugins(
         );
     }
 
+    if enabled_count > 0 {
+        if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
+            tracing::warn!(
+                "Failed to refresh active agent tools after batch enable: {}",
+                e
+            );
+        }
+    }
+
     Ok(CommandResponse::ok(BatchToggleResult {
         enabled_count,
         disabled_count: 0,
@@ -1367,6 +1399,15 @@ pub async fn batch_disable_plugins(
                 name: plugin_name,
             },
         );
+    }
+
+    if disabled_count > 0 {
+        if let Err(e) = refresh_active_agent_plugin_tools(db.as_ref()).await {
+            tracing::warn!(
+                "Failed to refresh active agent tools after batch disable: {}",
+                e
+            );
+        }
     }
 
     Ok(CommandResponse::ok(BatchToggleResult {
@@ -3361,10 +3402,17 @@ pub async fn get_plugin_output_schema(
 /// 删除插件
 #[tauri::command]
 pub async fn delete_plugin(
+    app: AppHandle,
     state: State<'_, TrafficAnalysisState>,
     plugin_id: String,
 ) -> Result<CommandResponse<()>, String> {
     let db = state.get_db_service();
+    let plugin_name = db
+        .get_plugin_name(&plugin_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| plugin_id.clone());
 
     // 先禁用插件
     db.update_traffic_plugin_enabled(&plugin_id, false)

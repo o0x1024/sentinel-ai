@@ -20,7 +20,10 @@ pub fn normalize_monitor_type(value: &str) -> Option<&'static str> {
     }
 }
 
-pub fn infer_monitor_type_for_plugin(normalized_name: &str, category: &str) -> Option<&'static str> {
+pub fn infer_monitor_type_for_plugin(
+    normalized_name: &str,
+    category: &str,
+) -> Option<&'static str> {
     match normalized_name {
         "subdomain_enumerator" | "subdomain_brute" => Some("dns"),
         "dns_resolver" => Some("ip"),

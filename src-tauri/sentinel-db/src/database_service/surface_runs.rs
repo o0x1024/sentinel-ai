@@ -181,6 +181,118 @@ impl DatabaseService {
         }
     }
 
+    pub async fn list_surface_observations_filtered(
+        &self,
+        program_id: Option<&str>,
+        source_plugin: Option<&str>,
+        artifact_type: Option<&str>,
+        object_key: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<SurfaceObservationRow>> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        let safe_limit = limit.map(|value| value.max(0));
+        let sql = "SELECT * FROM surface_observations WHERE 1=1";
+
+        match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder = QueryBuilder::<sqlx::Sqlite>::new(sql);
+                if let Some(program_id) = program_id {
+                    query_builder
+                        .push(" AND program_id = ")
+                        .push_bind(program_id.to_string());
+                }
+                if let Some(source_plugin) = source_plugin {
+                    query_builder
+                        .push(" AND source_plugin = ")
+                        .push_bind(source_plugin.to_string());
+                }
+                if let Some(artifact_type) = artifact_type {
+                    query_builder
+                        .push(" AND artifact_type = ")
+                        .push_bind(artifact_type.to_string());
+                }
+                if let Some(object_key) = object_key {
+                    query_builder
+                        .push(" AND object_key = ")
+                        .push_bind(object_key.to_string());
+                }
+                query_builder.push(" ORDER BY observed_at DESC, id DESC");
+                if let Some(limit) = safe_limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                Ok(query_builder
+                    .build_query_as::<SurfaceObservationRow>()
+                    .fetch_all(pool)
+                    .await?)
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder = QueryBuilder::<MySql>::new(sql);
+                if let Some(program_id) = program_id {
+                    query_builder
+                        .push(" AND program_id = ")
+                        .push_bind(program_id.to_string());
+                }
+                if let Some(source_plugin) = source_plugin {
+                    query_builder
+                        .push(" AND source_plugin = ")
+                        .push_bind(source_plugin.to_string());
+                }
+                if let Some(artifact_type) = artifact_type {
+                    query_builder
+                        .push(" AND artifact_type = ")
+                        .push_bind(artifact_type.to_string());
+                }
+                if let Some(object_key) = object_key {
+                    query_builder
+                        .push(" AND object_key = ")
+                        .push_bind(object_key.to_string());
+                }
+                query_builder.push(" ORDER BY observed_at DESC, id DESC");
+                if let Some(limit) = safe_limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                Ok(query_builder
+                    .build_query_as::<SurfaceObservationRow>()
+                    .fetch_all(pool)
+                    .await?)
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder = QueryBuilder::<Postgres>::new(sql);
+                if let Some(program_id) = program_id {
+                    query_builder
+                        .push(" AND program_id = ")
+                        .push_bind(program_id.to_string());
+                }
+                if let Some(source_plugin) = source_plugin {
+                    query_builder
+                        .push(" AND source_plugin = ")
+                        .push_bind(source_plugin.to_string());
+                }
+                if let Some(artifact_type) = artifact_type {
+                    query_builder
+                        .push(" AND artifact_type = ")
+                        .push_bind(artifact_type.to_string());
+                }
+                if let Some(object_key) = object_key {
+                    query_builder
+                        .push(" AND object_key = ")
+                        .push_bind(object_key.to_string());
+                }
+                query_builder.push(" ORDER BY observed_at DESC, id DESC");
+                if let Some(limit) = safe_limit {
+                    query_builder.push(" LIMIT ").push_bind(limit);
+                }
+                Ok(query_builder
+                    .build_query_as::<SurfaceObservationRow>()
+                    .fetch_all(pool)
+                    .await?)
+            }
+        }
+    }
+
     async fn list_surface_assets_for_run(
         &self,
         program_id: &str,

@@ -4,6 +4,7 @@
 pub mod ai;
 pub(crate) mod ai_execution_state_support;
 pub mod aisettings;
+pub mod api_inventory_commands;
 pub mod asset;
 pub mod asset_enrichment_commands;
 pub mod bounty_commands;
@@ -26,6 +27,7 @@ pub(crate) mod monitor_finding_support;
 pub(crate) mod monitor_notification_support;
 pub(crate) mod monitor_plugin_output_support;
 pub(crate) mod monitor_progress_support;
+pub(crate) mod monitor_snapshot_support;
 mod monitor_surface;
 mod monitor_surface_support;
 pub mod notifications;
@@ -56,6 +58,7 @@ pub(crate) mod workflow_notification_support;
 #[allow(ambiguous_glob_reexports)]
 pub use ai::*;
 pub use aisettings::*;
+pub use api_inventory_commands::*;
 pub use asset::*;
 pub use bounty_commands::*;
 pub use bounty_workflow_binding_support::*;

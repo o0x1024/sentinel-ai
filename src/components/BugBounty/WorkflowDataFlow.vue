@@ -248,8 +248,15 @@ interface WorkflowStep {
 
 interface PluginPortInfo {
   plugin_id: string
-  output_ports: { name: string; artifact_type: string }[]
+  output_ports: { name: string; artifact_type: string; fields?: ArtifactFieldDef[] }[]
   input_params: { name: string; expected_artifact_type: string; extract_path?: string; required: boolean }[]
+}
+
+interface ArtifactFieldDef {
+  name: string
+  field_type: string
+  required: boolean
+  description?: string
 }
 
 const props = defineProps<{

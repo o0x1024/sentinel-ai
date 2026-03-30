@@ -120,6 +120,114 @@ fn json_to_string(value: Option<&Value>) -> Option<String> {
     value.map(ToString::to_string)
 }
 
+fn required_string_field(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    plugin_id: &str,
+    artifact_type: &str,
+    index: usize,
+) -> Result<String, String> {
+    object
+        .get(field)
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!("{plugin_id} {artifact_type}[{index}] missing required string field `{field}`")
+        })
+}
+
+fn required_i64_field(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    plugin_id: &str,
+    artifact_type: &str,
+    index: usize,
+) -> Result<i64, String> {
+    object
+        .get(field)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| {
+            format!("{plugin_id} {artifact_type}[{index}] missing required integer field `{field}`")
+        })
+}
+
+fn validate_surface_web_artifact(web: &Value, plugin_id: &str, index: usize) -> Result<(), String> {
+    let object = web
+        .as_object()
+        .ok_or_else(|| format!("{plugin_id} webs[{index}] must be an object"))?;
+
+    required_string_field(object, "canonical_url", plugin_id, "webs", index)?;
+    required_string_field(object, "scheme", plugin_id, "webs", index)?;
+    required_i64_field(object, "http_status_code", plugin_id, "webs", index)?;
+    required_string_field(object, "content_summary", plugin_id, "webs", index)?;
+
+    if !matches!(object.get("response_headers"), Some(Value::Object(_))) {
+        return Err(format!(
+            "{plugin_id} webs[{index}] missing required object field `response_headers`"
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_surface_fingerprint_artifact(
+    fingerprint: &Value,
+    plugin_id: &str,
+    index: usize,
+) -> Result<(), String> {
+    let object = fingerprint
+        .as_object()
+        .ok_or_else(|| format!("{plugin_id} fingerprints[{index}] must be an object"))?;
+
+    for field in [
+        "asset_type",
+        "asset_key",
+        "fingerprint_type",
+        "fingerprint_value",
+        "rule_id",
+        "rule_word",
+        "rule_name",
+        "normalized_product",
+        "normalized_category",
+    ] {
+        required_string_field(object, field, plugin_id, "fingerprints", index)?;
+    }
+
+    Ok(())
+}
+
+fn validate_surface_evidence_artifact(
+    evidence: &Value,
+    plugin_id: &str,
+    index: usize,
+) -> Result<(), String> {
+    let object = evidence
+        .as_object()
+        .ok_or_else(|| format!("{plugin_id} evidences[{index}] must be an object"))?;
+
+    for field in ["asset_type", "asset_key", "evidence_type", "title"] {
+        required_string_field(object, field, plugin_id, "evidences", index)?;
+    }
+
+    let has_content = object
+        .get("content_text")
+        .and_then(|value| value.as_str())
+        .is_some()
+        || object
+            .get("content_path")
+            .and_then(|value| value.as_str())
+            .is_some()
+        || object.get("content_json").is_some();
+
+    if !has_content {
+        return Err(format!(
+            "{plugin_id} evidences[{index}] requires one of `content_text`, `content_path`, or `content_json`"
+        ));
+    }
+
+    Ok(())
+}
+
 async fn resolve_surface_asset_id(
     db_service: &Arc<DatabaseService>,
     ids: &HashMap<(String, String), String>,
@@ -178,53 +286,103 @@ async fn materialize_surface_fingerprints(
         return Ok(());
     };
 
-    for fingerprint in fingerprints {
-        let asset_type = fingerprint
-            .get("asset_type")
-            .and_then(|value| value.as_str())
-            .or_else(|| {
-                if fingerprint.get("web_key").is_some() {
-                    Some("web")
-                } else {
-                    None
-                }
-            });
-        let asset_key = fingerprint
-            .get("asset_key")
-            .and_then(|value| value.as_str())
-            .or_else(|| fingerprint.get("web_key").and_then(|value| value.as_str()));
-        let fingerprint_value = fingerprint
-            .get("fingerprint_value")
-            .and_then(|value| value.as_str());
+    let mut affected_asset_ids = Vec::new();
+    for (index, fingerprint) in fingerprints.iter().enumerate() {
+        validate_surface_fingerprint_artifact(fingerprint, plugin_id, index)?;
 
-        let (Some(asset_key), Some(fingerprint_value)) = (asset_key, fingerprint_value) else {
-            continue;
-        };
+        let object = fingerprint
+            .as_object()
+            .ok_or_else(|| format!("{plugin_id} fingerprints[{index}] must be an object"))?;
+        let asset_type =
+            required_string_field(object, "asset_type", plugin_id, "fingerprints", index)?;
+        let asset_key =
+            required_string_field(object, "asset_key", plugin_id, "fingerprints", index)?;
+        let fingerprint_value = required_string_field(
+            object,
+            "fingerprint_value",
+            plugin_id,
+            "fingerprints",
+            index,
+        )?;
 
         let Some(asset_id) =
-            resolve_surface_asset_id(db_service, ids, program_id, asset_type, asset_key).await?
+            resolve_surface_asset_id(db_service, ids, program_id, Some(&asset_type), &asset_key)
+                .await?
         else {
             continue;
         };
+        affected_asset_ids.push(asset_id.clone());
 
         let observed_at = Utc::now().to_rfc3339();
         let fingerprint_row = SurfaceFingerprintRow {
             id: Uuid::new_v4().to_string(),
             program_id: program_id.to_string(),
             asset_id: asset_id.clone(),
-            fingerprint_type: fingerprint
-                .get("fingerprint_type")
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            fingerprint_key: fingerprint
+            fingerprint_type: required_string_field(
+                object,
+                "fingerprint_type",
+                plugin_id,
+                "fingerprints",
+                index,
+            )?,
+            fingerprint_key: object
                 .get("fingerprint_key")
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
-            fingerprint_value: fingerprint_value.to_string(),
-            confidence_score: fingerprint
-                .get("confidence")
-                .and_then(|value| value.as_f64()),
+            fingerprint_value,
+            rule_id: Some(required_string_field(
+                object,
+                "rule_id",
+                plugin_id,
+                "fingerprints",
+                index,
+            )?),
+            rule_word: Some(required_string_field(
+                object,
+                "rule_word",
+                plugin_id,
+                "fingerprints",
+                index,
+            )?),
+            rule_name: Some(required_string_field(
+                object,
+                "rule_name",
+                plugin_id,
+                "fingerprints",
+                index,
+            )?),
+            normalized_product: Some(required_string_field(
+                object,
+                "normalized_product",
+                plugin_id,
+                "fingerprints",
+                index,
+            )?),
+            normalized_vendor: object
+                .get("normalized_vendor")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            normalized_category: Some(required_string_field(
+                object,
+                "normalized_category",
+                plugin_id,
+                "fingerprints",
+                index,
+            )?),
+            normalized_family: object
+                .get("normalized_family")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            version: object
+                .get("version")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            is_primary: object.get("is_primary").and_then(|value| value.as_bool()),
+            match_source_part: object
+                .get("match_source_part")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            confidence_score: object.get("confidence").and_then(|value| value.as_f64()),
             source: Some(plugin_id.to_string()),
             observed_at: observed_at.clone(),
             metadata_json: Some(fingerprint.to_string()),
@@ -235,16 +393,16 @@ async fn materialize_surface_fingerprints(
             .await
             .map_err(|e| e.to_string())?;
 
-        if let Some(evidence_text) = fingerprint.get("evidence").and_then(|value| value.as_str()) {
+        if let Some(evidence_text) = object.get("evidence").and_then(|value| value.as_str()) {
             let evidence_row = SurfaceEvidenceRow {
                 id: Uuid::new_v4().to_string(),
                 program_id: program_id.to_string(),
                 asset_id: Some(asset_id),
                 evidence_type: "fingerprint_evidence".to_string(),
-                title: fingerprint
-                    .get("fingerprint_value")
-                    .and_then(|value| value.as_str())
-                    .map(|value| format!("Fingerprint Evidence: {value}")),
+                title: Some(format!(
+                    "Fingerprint Evidence: {}",
+                    fingerprint_row.fingerprint_value
+                )),
                 content_text: Some(evidence_text.to_string()),
                 content_path: None,
                 content_json: Some(fingerprint.to_string()),
@@ -267,6 +425,15 @@ async fn materialize_surface_fingerprints(
         }
     }
 
+    if !affected_asset_ids.is_empty() {
+        affected_asset_ids.sort();
+        affected_asset_ids.dedup();
+        db_service
+            .refresh_surface_asset_classifications(program_id, &affected_asset_ids)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -284,42 +451,50 @@ async fn materialize_surface_evidence(
         return Ok(());
     };
 
-    for evidence in evidences {
-        let asset_type = evidence.get("asset_type").and_then(|value| value.as_str());
-        let asset_key = evidence.get("asset_key").and_then(|value| value.as_str());
-        let asset_id = match asset_key {
-            Some(asset_key) => {
-                resolve_surface_asset_id(db_service, ids, program_id, asset_type, asset_key).await?
-            }
-            None => None,
-        };
+    for (index, evidence) in evidences.iter().enumerate() {
+        validate_surface_evidence_artifact(evidence, plugin_id, index)?;
+
+        let object = evidence
+            .as_object()
+            .ok_or_else(|| format!("{plugin_id} evidences[{index}] must be an object"))?;
+        let asset_type =
+            required_string_field(object, "asset_type", plugin_id, "evidences", index)?;
+        let asset_key = required_string_field(object, "asset_key", plugin_id, "evidences", index)?;
+        let asset_id =
+            resolve_surface_asset_id(db_service, ids, program_id, Some(&asset_type), &asset_key)
+                .await?;
         let collected_at = Utc::now().to_rfc3339();
 
         let row = SurfaceEvidenceRow {
             id: Uuid::new_v4().to_string(),
             program_id: program_id.to_string(),
             asset_id,
-            evidence_type: evidence
-                .get("evidence_type")
-                .and_then(|value| value.as_str())
-                .unwrap_or("probe_artifact")
-                .to_string(),
-            title: evidence
-                .get("title")
-                .and_then(|value| value.as_str())
-                .map(str::to_string),
-            content_text: evidence
+            evidence_type: required_string_field(
+                object,
+                "evidence_type",
+                plugin_id,
+                "evidences",
+                index,
+            )?,
+            title: Some(required_string_field(
+                object,
+                "title",
+                plugin_id,
+                "evidences",
+                index,
+            )?),
+            content_text: object
                 .get("content_text")
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
-            content_path: evidence
+            content_path: object
                 .get("content_path")
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
-            content_json: json_to_string(evidence.get("content_json")),
+            content_json: json_to_string(object.get("content_json")),
             collected_at,
             collected_by: Some(plugin_id.to_string()),
-            probe_node: evidence
+            probe_node: object
                 .get("probe_node")
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
@@ -553,32 +728,33 @@ pub(crate) async fn materialize_surface_artifacts(
     }
 
     if let Some(webs) = artifacts.get("webs").and_then(|value| value.as_array()) {
-        for web in webs {
-            if let Some(canonical_url) = web
-                .get("canonical_url")
-                .or_else(|| web.get("url"))
-                .and_then(|value| value.as_str())
-            {
-                let display_name = web
-                    .get("site_title")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string)
-                    .or_else(|| Some(canonical_url.to_string()));
+        for (index, web) in webs.iter().enumerate() {
+            validate_surface_web_artifact(web, plugin_id, index)?;
 
-                upsert_artifact_asset(
-                    db_service,
-                    &mut ids,
-                    program_id,
-                    run_id,
-                    plugin_id,
-                    "web",
-                    canonical_url,
-                    display_name,
-                    web.clone(),
-                )
-                .await?;
-                materialized += 1;
-            }
+            let object = web
+                .as_object()
+                .ok_or_else(|| format!("{plugin_id} webs[{index}] must be an object"))?;
+            let canonical_url =
+                required_string_field(object, "canonical_url", plugin_id, "webs", index)?;
+            let display_name = object
+                .get("site_title")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| Some(canonical_url.clone()));
+
+            upsert_artifact_asset(
+                db_service,
+                &mut ids,
+                program_id,
+                run_id,
+                plugin_id,
+                "web",
+                &canonical_url,
+                display_name,
+                web.clone(),
+            )
+            .await?;
+            materialized += 1;
         }
     }
 

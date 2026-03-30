@@ -33,6 +33,7 @@ deno_webidl = "0.223.0"
 deno_web = "0.254.0"
 
 anyhow = "1.0"
+regex = "1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -40,6 +41,7 @@ serde_json = "1.0"
 
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
+futures = "0.3"
 
 # Logging
 tracing = "0.1"
@@ -54,12 +56,14 @@ tokio-rustls = "0.26"
 rustls = "0.23"
 webpki-roots = "0.26"
 x509-parser = "0.16"
+tauri = { version = "2.7.0", default-features = false }
 
 # JavaScript AST parsing
 oxc_parser = "0.110.0"
 oxc_allocator = "0.110.0"
 oxc_ast = "0.110.0"
 oxc_span = "0.110.0"
+rustscan = { package = "myrustscan", version = "2.4.2" }
 
 # HTTP client
 [target.'cfg(not(target_os = "windows"))'.dependencies]

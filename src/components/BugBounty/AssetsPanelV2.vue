@@ -55,6 +55,7 @@
 
     <div class="tabs tabs-boxed">
       <a class="tab" :class="{ 'tab-active': activeTab === 'inventory' }" @click="activeTab = 'inventory'">{{ t('bugBounty.surface.tabs.inventory') }}</a>
+      <a class="tab" :class="{ 'tab-active': activeTab === 'types' }" @click="activeTab = 'types'">{{ t('bugBounty.surface.tabs.types') }}</a>
       <a class="tab" :class="{ 'tab-active': activeTab === 'topology' }" @click="activeTab = 'topology'">{{ t('bugBounty.surface.tabs.topology') }}</a>
       <a class="tab" :class="{ 'tab-active': activeTab === 'runs' }" @click="activeTab = 'runs'">{{ t('bugBounty.surface.tabs.runs') }}</a>
     </div>
@@ -79,6 +80,34 @@
               <option value="active">{{ formatStatus('active') }}</option>
               <option value="inactive">{{ formatStatus('inactive') }}</option>
               <option value="unknown">{{ formatStatus('unknown') }}</option>
+            </select>
+            <select
+              v-if="showServiceFacetFilters"
+              v-model="serviceNameFilter"
+              class="select select-bordered select-sm"
+            >
+              <option value="">{{ t('bugBounty.filter.allServices') }}</option>
+              <option
+                v-for="option in serviceNameOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.value }} ({{ option.count }})
+              </option>
+            </select>
+            <select
+              v-if="showServiceFacetFilters"
+              v-model="transportProtocolFilter"
+              class="select select-bordered select-sm"
+            >
+              <option value="">{{ t('bugBounty.filter.allServiceTypes') }}</option>
+              <option
+                v-for="option in transportProtocolOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.value }} ({{ option.count }})
+              </option>
             </select>
             <input
               v-model="search"
@@ -268,6 +297,13 @@
       </div>
     </div>
 
+    <SurfaceFingerprintCategoryPanel
+      v-if="activeTab === 'types'"
+      :program-id="selectedProgramId || null"
+      :refresh-token="fingerprintRefreshToken"
+      @open-asset="openAssetDetail"
+    />
+
     <SurfaceTopologyPanel
       v-show="activeTab === 'topology'"
       :program-id="selectedProgramId || null"
@@ -422,6 +458,7 @@ import { useRouter } from 'vue-router'
 import SurfaceAssetListModal from './SurfaceAssetListModal.vue'
 import SurfaceAssetDetailModal from './SurfaceAssetDetailModal.vue'
 import SurfaceDiscoveryRunDetailModal from './SurfaceDiscoveryRunDetailModal.vue'
+import SurfaceFingerprintCategoryPanel from './SurfaceFingerprintCategoryPanel.vue'
 import SurfaceTopologyPanel from './SurfaceTopologyPanel.vue'
 import SurfaceAssetEditModal, { type SurfaceAssetEditPayload } from './SurfaceAssetEditModal.vue'
 import SurfaceAssetImportModal, { type SurfaceAssetImportPayload } from './SurfaceAssetImportModal.vue'
@@ -448,11 +485,13 @@ const loading = ref(false)
 const inventoryLoading = ref(false)
 const bulkDeleting = ref(false)
 const importing = ref(false)
-const activeTab = ref<'inventory' | 'topology' | 'runs'>('inventory')
+const activeTab = ref<'inventory' | 'types' | 'topology' | 'runs'>('inventory')
 const selectedProgramId = ref(props.programId || '')
 const search = ref('')
 const assetTypeFilter = ref('')
 const statusFilter = ref('')
+const serviceNameFilter = ref('')
+const transportProtocolFilter = ref('')
 const inventoryPage = ref(1)
 const inventoryHasNext = ref(false)
 const inventoryTotal = ref(0)
@@ -465,6 +504,7 @@ const runPageInput = ref('1')
 const runPageSizeOptions = [10, 20, 50, 100]
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const topologyRefreshToken = ref(0)
+const fingerprintRefreshToken = ref(0)
 
 const overview = ref({
   total_assets: 0,
@@ -489,6 +529,8 @@ const selectedAssetIds = ref<string[]>([])
 const showEditModal = ref(false)
 const editingAsset = ref<any | null>(null)
 const showImportModal = ref(false)
+const serviceNameOptions = ref<Array<{ value: string; count: number }>>([])
+const transportProtocolOptions = ref<Array<{ value: string; count: number }>>([])
 
 const assetTypeOptions = computed(() => {
   return Object.entries(overview.value.by_type || {})
@@ -496,6 +538,7 @@ const assetTypeOptions = computed(() => {
     .sort((a, b) => Number(b[1]) - Number(a[1]))
     .map(([type, count]) => ({ type, count: Number(count) }))
 })
+const showServiceFacetFilters = computed(() => assetTypeFilter.value === 'service')
 
 const inventoryPageCount = computed(() => Math.max(1, Math.ceil(inventoryTotal.value / inventoryPageSize.value)))
 const runTotal = computed(() => runs.value.length)
@@ -577,6 +620,7 @@ const inventoryColumns = computed(() => {
     service: [
       { key: 'name', label: t('bugBounty.surface.columns.name'), valueKey: 'asset_name', mono: true },
       { key: 'application_service_name', label: t('bugBounty.surface.inventory.fields.applicationServiceName'), detailKey: 'application_service_name' },
+      { key: 'transport_protocol', label: t('bugBounty.surface.inventory.fields.transportProtocol'), detailKey: 'transport_protocol' },
       { key: 'port_number', label: t('bugBounty.surface.inventory.fields.portNumber'), detailKey: 'port_number' },
       { key: 'product_name', label: t('bugBounty.surface.inventory.fields.productName'), detailKey: 'product_name' },
       { key: 'version', label: t('bugBounty.surface.inventory.fields.version'), detailKey: 'version' },
@@ -614,6 +658,8 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
         asset_type: assetTypeFilter.value || null,
         status: statusFilter.value || null,
         search: search.value.trim() || null,
+        service_name: serviceNameFilter.value || null,
+        transport_protocol: transportProtocolFilter.value || null,
         limit: inventoryPageSize.value + 1,
         offset: (inventoryPage.value - 1) * inventoryPageSize.value,
       },
@@ -637,6 +683,36 @@ const loadInventory = async (programId = selectedProgramId.value || null, useLoa
   }
 }
 
+const loadInventoryFacets = async (programId = selectedProgramId.value || null) => {
+  if (!showServiceFacetFilters.value) {
+    serviceNameOptions.value = []
+    transportProtocolOptions.value = []
+    return
+  }
+
+  try {
+    const response = await invoke<any>('surface_get_inventory_facets', {
+      filter: {
+        program_id: programId,
+        asset_type: assetTypeFilter.value || null,
+        status: statusFilter.value || null,
+        search: search.value.trim() || null,
+        service_name: null,
+        transport_protocol: null,
+        limit: null,
+        offset: null,
+      },
+    })
+
+    serviceNameOptions.value = Array.isArray(response?.service_names) ? response.service_names : []
+    transportProtocolOptions.value = Array.isArray(response?.transport_protocols) ? response.transport_protocols : []
+  } catch (error) {
+    console.error('Failed to load surface inventory facets:', error)
+    serviceNameOptions.value = []
+    transportProtocolOptions.value = []
+  }
+}
+
 const loadAll = async () => {
   try {
     loading.value = true
@@ -646,6 +722,7 @@ const loadAll = async () => {
       invoke<any[]>('surface_list_discovery_runs', { programId, limit: null }),
     ])
     await loadInventory(programId, false)
+    await loadInventoryFacets(programId)
 
     overview.value = overviewData
     runs.value = Array.isArray(runData) ? runData : []
@@ -679,6 +756,7 @@ const loadAll = async () => {
 const refreshAll = async () => {
   await loadAll()
   topologyRefreshToken.value += 1
+  fingerprintRefreshToken.value += 1
 }
 
 const assetStatsModalTitle = computed(() =>
@@ -745,6 +823,13 @@ const formatInventoryValue = (item: any, column: any) => {
       ? item?.typed_details?.[column.detailKey]
       : item?.asset?.[column.valueKey]
 
+  if (column.key === 'application_service_name') {
+    const fallback = item?.typed_details?.protocol_name
+    const preferred = raw ?? fallback
+    if (preferred === null || preferred === undefined || preferred === '') return '-'
+    return String(preferred)
+  }
+
   if (raw === null || raw === undefined || raw === '') return '-'
   if (column.formatter === 'time') return formatTime(String(raw))
   if (Array.isArray(raw)) return raw.join(', ')
@@ -781,6 +866,8 @@ const getInventoryFilterPayload = () => ({
   asset_type: assetTypeFilter.value || null,
   status: statusFilter.value || null,
   search: search.value.trim() || null,
+  service_name: serviceNameFilter.value || null,
+  transport_protocol: transportProtocolFilter.value || null,
   limit: null,
   offset: null,
 })
@@ -1058,8 +1145,19 @@ watch(selectedProgramId, () => {
   loadAll()
 })
 
-watch([assetTypeFilter, statusFilter], () => {
+watch([assetTypeFilter, statusFilter, serviceNameFilter, transportProtocolFilter], () => {
   reloadInventoryFromFirstPage()
+})
+
+watch(assetTypeFilter, (value) => {
+  if (value !== 'service') {
+    serviceNameFilter.value = ''
+    transportProtocolFilter.value = ''
+    serviceNameOptions.value = []
+    transportProtocolOptions.value = []
+    return
+  }
+  loadInventoryFacets()
 })
 
 watch(inventoryPage, () => {
@@ -1088,6 +1186,7 @@ watch(search, () => {
 
   searchDebounceTimer = setTimeout(() => {
     reloadInventoryFromFirstPage()
+    loadInventoryFacets()
   }, 250)
 })
 

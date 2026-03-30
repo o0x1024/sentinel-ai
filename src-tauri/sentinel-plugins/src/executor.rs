@@ -487,6 +487,7 @@ mod tests {
             default_severity: Severity::Info,
             tags: vec![],
             description: None,
+            target_asset_types: vec![],
         }
     }
 
@@ -497,6 +498,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Test",
         description: "Test",
+        target_asset_types: vec![],
         evidence: "test",
         location: "test",
         severity: "info",

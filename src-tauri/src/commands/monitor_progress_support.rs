@@ -48,23 +48,26 @@ pub fn collect_monitor_plugins(task: &MonitorTask) -> Vec<MonitorPluginConfig> {
     if task.config.enable_dns_monitoring {
         plugins.extend(task.config.dns_plugins.clone());
     }
-    if task.config.enable_cert_monitoring {
-        plugins.extend(task.config.cert_plugins.clone());
-    }
-    if task.config.enable_web_monitoring {
-        plugins.extend(task.config.web_plugins.clone());
-    }
-    if task.config.enable_api_monitoring {
-        plugins.extend(task.config.api_plugins.clone());
-    }
-    if task.config.enable_content_monitoring {
-        plugins.extend(task.config.content_plugins.clone());
+    if task.config.enable_ip_monitoring {
+        plugins.extend(task.config.ip_plugins.clone());
     }
     if task.config.enable_port_monitoring {
         plugins.extend(task.config.port_plugins.clone());
     }
     if task.config.enable_service_monitoring {
         plugins.extend(task.config.service_plugins.clone());
+    }
+    if task.config.enable_web_monitoring {
+        plugins.extend(task.config.web_plugins.clone());
+    }
+    if task.config.enable_cert_monitoring {
+        plugins.extend(task.config.cert_plugins.clone());
+    }
+    if task.config.enable_api_monitoring {
+        plugins.extend(task.config.api_plugins.clone());
+    }
+    if task.config.enable_content_monitoring {
+        plugins.extend(task.config.content_plugins.clone());
     }
     if task.config.enable_risk_monitoring {
         plugins.extend(task.config.risk_plugins.clone());

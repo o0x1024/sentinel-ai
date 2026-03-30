@@ -50,6 +50,7 @@ async fn example_basic_performance() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -60,6 +61,7 @@ export function scan_transaction(transaction) {
             vuln_type: "test",
             title: "Test Finding",
             description: "Found test URL",
+            target_asset_types: vec![],
             evidence: url,
             location: "url",
             severity: "info",
@@ -131,6 +133,7 @@ async fn example_concurrent_performance() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -143,6 +146,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Concurrent Test",
         description: "Sum: " + sum,
+        target_asset_types: vec![],
         evidence: "concurrent",
         location: "test",
         severity: "info",
@@ -242,6 +246,7 @@ async fn example_memory_monitoring() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -253,6 +258,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Memory Test",
         description: "Allocated " + data.length + " items",
+        target_asset_types: vec![],
         evidence: "memory",
         location: "test",
         severity: "info",
@@ -336,6 +342,7 @@ async fn example_find_optimal_concurrency() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -347,6 +354,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Optimal Test",
         description: "Sum: " + sum,
+        target_asset_types: vec![],
         evidence: "optimal",
         location: "test",
         severity: "info",

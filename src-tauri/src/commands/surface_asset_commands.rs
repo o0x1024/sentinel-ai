@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
-use sentinel_db::{DatabasePool, DatabaseService, SurfaceAssetFilter, SurfaceAssetRow};
+use sentinel_db::{DatabaseService, SurfaceAssetFilter, SurfaceAssetRow};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::State;
@@ -124,134 +124,6 @@ fn build_manual_import_artifact(asset_type: &str, asset_name: &str) -> Option<Va
             "scheme": asset_name.split("://").next().filter(|scheme| *scheme != asset_name),
         })),
         _ => None,
-    }
-}
-
-async fn delete_surface_extension_for_asset(
-    runtime: &DatabasePool,
-    asset_type: &str,
-    asset_id: &str,
-) -> Result<()> {
-    let table = match asset_type {
-        "org" => Some("surface_org_assets"),
-        "domain" => Some("surface_domain_assets"),
-        "ip" => Some("surface_ip_assets"),
-        "host" => Some("surface_host_assets"),
-        "port" => Some("surface_port_assets"),
-        "service" => Some("surface_service_assets"),
-        "web" => Some("surface_web_assets"),
-        "certificate" => Some("surface_cert_assets"),
-        _ => None,
-    };
-
-    let Some(table_name) = table else {
-        return Ok(());
-    };
-
-    let sql = format!("DELETE FROM {} WHERE asset_id = ?", table_name);
-    let sql_pg = format!("DELETE FROM {} WHERE asset_id = $1", table_name);
-
-    match runtime {
-        DatabasePool::SQLite(pool) => {
-            sqlx::query(&sql).bind(asset_id).execute(pool).await?;
-        }
-        DatabasePool::MySQL(pool) => {
-            sqlx::query(&sql).bind(asset_id).execute(pool).await?;
-        }
-        DatabasePool::PostgreSQL(pool) => {
-            sqlx::query(&sql_pg).bind(asset_id).execute(pool).await?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn delete_surface_asset_internal(
-    db_service: &Arc<DatabaseService>,
-    asset: &SurfaceAssetRow,
-) -> Result<bool> {
-    let runtime = db_service.get_runtime_pool()?;
-
-    delete_surface_extension_for_asset(&runtime, &asset.asset_type, &asset.id).await?;
-
-    match &runtime {
-        DatabasePool::SQLite(pool) => {
-            sqlx::query("DELETE FROM surface_relations WHERE from_asset_id = ? OR to_asset_id = ?")
-                .bind(&asset.id)
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_fingerprints WHERE asset_id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_evidence WHERE asset_id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_change_logs WHERE asset_id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            let affected = sqlx::query("DELETE FROM surface_assets WHERE id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?
-                .rows_affected();
-            Ok(affected > 0)
-        }
-        DatabasePool::MySQL(pool) => {
-            sqlx::query("DELETE FROM surface_relations WHERE from_asset_id = ? OR to_asset_id = ?")
-                .bind(&asset.id)
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_fingerprints WHERE asset_id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_evidence WHERE asset_id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_change_logs WHERE asset_id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            let affected = sqlx::query("DELETE FROM surface_assets WHERE id = ?")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?
-                .rows_affected();
-            Ok(affected > 0)
-        }
-        DatabasePool::PostgreSQL(pool) => {
-            sqlx::query(
-                "DELETE FROM surface_relations WHERE from_asset_id = $1 OR to_asset_id = $2",
-            )
-            .bind(&asset.id)
-            .bind(&asset.id)
-            .execute(pool)
-            .await?;
-            sqlx::query("DELETE FROM surface_fingerprints WHERE asset_id = $1")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_evidence WHERE asset_id = $1")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            sqlx::query("DELETE FROM surface_change_logs WHERE asset_id = $1")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?;
-            let affected = sqlx::query("DELETE FROM surface_assets WHERE id = $1")
-                .bind(&asset.id)
-                .execute(pool)
-                .await?
-                .rows_affected();
-            Ok(affected > 0)
-        }
     }
 }
 
@@ -409,16 +281,10 @@ pub async fn surface_delete_asset(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_id: String,
 ) -> Result<bool, String> {
-    let Some(asset) = db_service
-        .get_surface_asset_by_id(&asset_id)
+    db_service
+        .delete_surface_assets_by_ids(&[asset_id])
         .await
-        .map_err(|e| e.to_string())?
-    else {
-        return Ok(false);
-    };
-
-    delete_surface_asset_internal(db_service.inner(), &asset)
-        .await
+        .map(|deleted| deleted > 0)
         .map_err(|e| e.to_string())
 }
 
@@ -427,25 +293,10 @@ pub async fn surface_batch_delete_assets(
     db_service: State<'_, Arc<DatabaseService>>,
     asset_ids: Vec<String>,
 ) -> Result<usize, String> {
-    let mut deleted = 0usize;
-    for asset_id in asset_ids {
-        let Some(asset) = db_service
-            .get_surface_asset_by_id(&asset_id)
-            .await
-            .map_err(|e| e.to_string())?
-        else {
-            continue;
-        };
-
-        if delete_surface_asset_internal(db_service.inner(), &asset)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            deleted += 1;
-        }
-    }
-
-    Ok(deleted)
+    db_service
+        .delete_surface_assets_by_ids(&asset_ids)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -453,29 +304,8 @@ pub async fn surface_delete_inventory(
     db_service: State<'_, Arc<DatabaseService>>,
     filter: SurfaceAssetFilter,
 ) -> Result<usize, String> {
-    let delete_filter = SurfaceAssetFilter {
-        program_id: filter.program_id.clone(),
-        asset_type: filter.asset_type.clone(),
-        status: filter.status.clone(),
-        search: filter.search.clone(),
-        limit: None,
-        offset: None,
-    };
-
-    let assets = db_service
-        .list_surface_assets(&delete_filter)
+    db_service
+        .delete_surface_inventory(&filter)
         .await
-        .map_err(|e| e.to_string())?;
-
-    let mut deleted = 0usize;
-    for asset in assets {
-        if delete_surface_asset_internal(db_service.inner(), &asset)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            deleted += 1;
-        }
-    }
-
-    Ok(deleted)
+        .map_err(|e| e.to_string())
 }

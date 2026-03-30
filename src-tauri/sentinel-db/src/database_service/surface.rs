@@ -227,6 +227,16 @@ pub struct SurfaceFingerprintRow {
     pub fingerprint_type: String,
     pub fingerprint_key: Option<String>,
     pub fingerprint_value: String,
+    pub rule_id: Option<String>,
+    pub rule_word: Option<String>,
+    pub rule_name: Option<String>,
+    pub normalized_product: Option<String>,
+    pub normalized_vendor: Option<String>,
+    pub normalized_category: Option<String>,
+    pub normalized_family: Option<String>,
+    pub version: Option<String>,
+    pub is_primary: Option<bool>,
+    pub match_source_part: Option<String>,
     pub confidence_score: Option<f64>,
     pub source: Option<String>,
     pub observed_at: String,
@@ -321,6 +331,8 @@ pub struct SurfaceAssetFilter {
     pub asset_type: Option<String>,
     pub status: Option<String>,
     pub search: Option<String>,
+    pub service_name: Option<String>,
+    pub transport_protocol: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -345,6 +357,70 @@ pub struct SurfaceOverview {
 }
 
 impl DatabaseService {
+    pub async fn get_surface_assets_by_ids(
+        &self,
+        asset_ids: &[String],
+    ) -> Result<Vec<SurfaceAssetRow>> {
+        if asset_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+
+        let rows: Vec<SurfaceAssetRow> = match runtime {
+            DatabasePool::SQLite(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM surface_assets WHERE id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for asset_id in asset_ids {
+                        separated.push_bind(asset_id.clone());
+                    }
+                }
+                query_builder.push(") ORDER BY last_seen_at DESC, id DESC");
+                query_builder
+                    .build_query_as::<SurfaceAssetRow>()
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT * FROM surface_assets WHERE id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for asset_id in asset_ids {
+                        separated.push_bind(asset_id.clone());
+                    }
+                }
+                query_builder.push(") ORDER BY last_seen_at DESC, id DESC");
+                query_builder
+                    .build_query_as::<SurfaceAssetRow>()
+                    .fetch_all(pool)
+                    .await?
+            }
+            DatabasePool::PostgreSQL(pool) => {
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT * FROM surface_assets WHERE id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for asset_id in asset_ids {
+                        separated.push_bind(asset_id.clone());
+                    }
+                }
+                query_builder.push(") ORDER BY last_seen_at DESC, id DESC");
+                query_builder
+                    .build_query_as::<SurfaceAssetRow>()
+                    .fetch_all(pool)
+                    .await?
+            }
+        };
+
+        Ok(rows)
+    }
+
     pub async fn count_surface_assets(&self, filter: &SurfaceAssetFilter) -> Result<i64> {
         let runtime = self
             .runtime_pool
@@ -1232,39 +1308,92 @@ impl DatabaseService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
 
-        let mut rows: Vec<SurfaceRelationRow> = match runtime {
+        let rows: Vec<SurfaceRelationRow> = match runtime {
             DatabasePool::SQLite(pool) => {
-                sqlx::query_as("SELECT * FROM surface_relations")
+                let mut query_builder =
+                    QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM surface_relations WHERE 1=1");
+                if let Some(program_id) = filter.program_id.as_deref() {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = filter.asset_id.as_deref() {
+                    query_builder.push(" AND (from_asset_id = ");
+                    query_builder.push_bind(asset_id);
+                    query_builder.push(" OR to_asset_id = ");
+                    query_builder.push_bind(asset_id);
+                    query_builder.push(")");
+                }
+                if let Some(relation_type) = filter.relation_type.as_deref() {
+                    query_builder.push(" AND relation_type = ");
+                    query_builder.push_bind(relation_type);
+                }
+                query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
+                if let Some(limit) = filter.limit {
+                    query_builder.push(" LIMIT ");
+                    query_builder.push_bind(limit.max(0));
+                }
+                query_builder
+                    .build_query_as::<SurfaceRelationRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::MySQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_relations")
+                let mut query_builder =
+                    QueryBuilder::<MySql>::new("SELECT * FROM surface_relations WHERE 1=1");
+                if let Some(program_id) = filter.program_id.as_deref() {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = filter.asset_id.as_deref() {
+                    query_builder.push(" AND (from_asset_id = ");
+                    query_builder.push_bind(asset_id);
+                    query_builder.push(" OR to_asset_id = ");
+                    query_builder.push_bind(asset_id);
+                    query_builder.push(")");
+                }
+                if let Some(relation_type) = filter.relation_type.as_deref() {
+                    query_builder.push(" AND relation_type = ");
+                    query_builder.push_bind(relation_type);
+                }
+                query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
+                if let Some(limit) = filter.limit {
+                    query_builder.push(" LIMIT ");
+                    query_builder.push_bind(limit.max(0));
+                }
+                query_builder
+                    .build_query_as::<SurfaceRelationRow>()
                     .fetch_all(pool)
                     .await?
             }
             DatabasePool::PostgreSQL(pool) => {
-                sqlx::query_as("SELECT * FROM surface_relations")
+                let mut query_builder =
+                    QueryBuilder::<Postgres>::new("SELECT * FROM surface_relations WHERE 1=1");
+                if let Some(program_id) = filter.program_id.as_deref() {
+                    query_builder.push(" AND program_id = ");
+                    query_builder.push_bind(program_id);
+                }
+                if let Some(asset_id) = filter.asset_id.as_deref() {
+                    query_builder.push(" AND (from_asset_id = ");
+                    query_builder.push_bind(asset_id);
+                    query_builder.push(" OR to_asset_id = ");
+                    query_builder.push_bind(asset_id);
+                    query_builder.push(")");
+                }
+                if let Some(relation_type) = filter.relation_type.as_deref() {
+                    query_builder.push(" AND relation_type = ");
+                    query_builder.push_bind(relation_type);
+                }
+                query_builder.push(" ORDER BY last_seen_at DESC, id DESC");
+                if let Some(limit) = filter.limit {
+                    query_builder.push(" LIMIT ");
+                    query_builder.push_bind(limit.max(0));
+                }
+                query_builder
+                    .build_query_as::<SurfaceRelationRow>()
                     .fetch_all(pool)
                     .await?
             }
         };
-
-        if let Some(program_id) = filter.program_id.as_deref() {
-            rows.retain(|row| row.program_id == program_id);
-        }
-        if let Some(asset_id) = filter.asset_id.as_deref() {
-            rows.retain(|row| row.from_asset_id == asset_id || row.to_asset_id == asset_id);
-        }
-        if let Some(relation_type) = filter.relation_type.as_deref() {
-            rows.retain(|row| row.relation_type == relation_type);
-        }
-
-        rows.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
-
-        if let Some(limit) = filter.limit {
-            rows.truncate(limit.max(0) as usize);
-        }
 
         Ok(rows)
     }

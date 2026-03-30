@@ -6,11 +6,12 @@ use crate::database_service::surface::{
     SurfaceIpAssetRow, SurfaceOrgAssetRow, SurfacePortAssetRow, SurfaceRelationFilter,
     SurfaceRelationRow, SurfaceServiceAssetRow, SurfaceWebAssetRow,
 };
+use crate::database_service::surface_asset_classification::SurfaceAssetClassificationRow;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Encode, QueryBuilder, Type};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 async fn fetch_surface_extension_map_sqlite<T, F>(
     pool: &sqlx::SqlitePool,
@@ -377,6 +378,7 @@ pub struct SurfaceAssetRelationDetail {
 pub struct SurfaceAssetDetailResponse {
     pub asset: SurfaceAssetRow,
     pub typed_details: Option<Value>,
+    pub classification: Option<SurfaceAssetClassificationRow>,
     pub relations: Vec<SurfaceAssetRelationDetail>,
     pub fingerprints: Vec<crate::database_service::surface::SurfaceFingerprintRow>,
     pub evidence: Vec<crate::database_service::surface::SurfaceEvidenceRow>,
@@ -634,7 +636,7 @@ impl DatabaseService {
         }
     }
 
-    pub(crate) async fn list_surface_typed_details_map(
+    pub async fn list_surface_typed_details_map(
         &self,
         assets: &[SurfaceAssetRow],
     ) -> Result<HashMap<String, Value>> {
@@ -694,34 +696,51 @@ impl DatabaseService {
             return Ok(None);
         };
 
-        let typed_details = self.get_surface_typed_details(&asset).await?;
-        let fingerprints = self
-            .list_surface_fingerprints(Some(&asset.program_id), Some(asset_id), Some(50))
-            .await?;
-        let evidence = self
-            .list_surface_evidence(Some(&asset.program_id), Some(asset_id), Some(50))
-            .await?;
-        let changes = self
-            .list_surface_change_logs(Some(&asset.program_id), Some(asset_id), Some(50))
-            .await?;
+        let program_id = asset.program_id.clone();
+        let asset_row_id = asset.id.clone();
+        let relation_filter = SurfaceRelationFilter {
+            program_id: Some(program_id.clone()),
+            asset_id: Some(asset_row_id.clone()),
+            relation_type: None,
+            limit: Some(50),
+        };
+        let (typed_details, classification, fingerprints, evidence, changes, relation_rows) = tokio::try_join!(
+            self.get_surface_typed_details(&asset),
+            self.get_surface_asset_classification(asset_id),
+            self.list_surface_fingerprints(Some(&program_id), Some(asset_id), Some(50)),
+            self.list_surface_evidence(Some(&program_id), Some(asset_id), Some(50)),
+            self.list_surface_change_logs(Some(&program_id), Some(asset_id), Some(50)),
+            self.list_surface_relations(&relation_filter),
+        )?;
+
+        let peer_ids: Vec<String> = relation_rows
+            .iter()
+            .map(|relation| {
+                if relation.from_asset_id == asset_row_id {
+                    relation.to_asset_id.clone()
+                } else {
+                    relation.from_asset_id.clone()
+                }
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let peer_assets_by_id: HashMap<String, SurfaceAssetRow> = self
+            .get_surface_assets_by_ids(&peer_ids)
+            .await?
+            .into_iter()
+            .map(|peer_asset| (peer_asset.id.clone(), peer_asset))
+            .collect();
 
         let mut relations = Vec::new();
-        for relation in self
-            .list_surface_relations(&SurfaceRelationFilter {
-                program_id: Some(asset.program_id.clone()),
-                asset_id: Some(asset.id.clone()),
-                relation_type: None,
-                limit: Some(50),
-            })
-            .await?
-        {
+        for relation in relation_rows {
             let (peer_id, direction) = if relation.from_asset_id == asset.id {
                 (relation.to_asset_id.clone(), "outgoing")
             } else {
                 (relation.from_asset_id.clone(), "incoming")
             };
 
-            if let Some(peer_asset) = self.get_surface_asset_by_id(&peer_id).await? {
+            if let Some(peer_asset) = peer_assets_by_id.get(&peer_id).cloned() {
                 relations.push(SurfaceAssetRelationDetail {
                     relation,
                     direction: direction.to_string(),
@@ -733,6 +752,7 @@ impl DatabaseService {
         Ok(Some(SurfaceAssetDetailResponse {
             asset,
             typed_details,
+            classification,
             relations,
             fingerprints,
             evidence,

@@ -1,31 +1,31 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::Utc;
 use sentinel_bounty::services::{MonitorPluginConfig, MonitorTask};
 use sentinel_db::{
-    Database, DatabaseService, SurfaceAssetFilter, SurfaceDiscoveryRunRow, SurfaceObservationRow,
+    Database, DatabaseService, ProgramScopeRow, SurfaceAssetFilter, SurfaceAssetRow,
+    SurfaceDiscoveryRunRow, SurfaceObservationRow,
 };
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::commands::monitor_surface::materialize_surface_artifacts;
 
-fn normalize_host_like(value: &str) -> String {
-    value
+const MONITOR_TARGET_PAGE_SIZE: i64 = 5_000;
+const HTTP_SERVICE_PORTS: [i32; 4] = [80, 443, 8080, 8443];
+const HTTPS_SERVICE_PORTS: [i32; 3] = [443, 8443, 9443];
+
+fn extract_host(value: &str) -> Option<String> {
+    let normalized = value
         .trim()
         .trim_start_matches("http://")
         .trim_start_matches("https://")
         .trim_start_matches("wss://")
         .trim_start_matches("ws://")
         .trim_matches('/')
-        .to_string()
-}
-
-fn extract_host(value: &str) -> Option<String> {
-    let normalized = normalize_host_like(value);
+        .to_string();
     let host_port = normalized.split('/').next()?.trim();
     if host_port.is_empty() {
         return None;
@@ -42,279 +42,79 @@ fn extract_host(value: &str) -> Option<String> {
     )
 }
 
-fn is_ip_literal(value: &str) -> bool {
-    IpAddr::from_str(value).is_ok()
+#[derive(Debug, Clone, Default)]
+struct MonitorScopeBoundary {
+    domains: HashSet<String>,
+    ips: HashSet<String>,
 }
 
-fn push_unique(items: &mut Vec<Value>, seen: &mut HashSet<String>, key: String, value: Value) {
-    if seen.insert(key) {
-        items.push(value);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn absorb_web_artifact(
-    url: &str,
-    domains: &mut Vec<Value>,
-    ips: &mut Vec<Value>,
-    webs: &mut Vec<Value>,
-    relations: &mut Vec<Value>,
-    seen_domains: &mut HashSet<String>,
-    seen_ips: &mut HashSet<String>,
-    seen_webs: &mut HashSet<String>,
-    seen_relations: &mut HashSet<String>,
-) {
-    let canonical_url = url.trim().to_string();
-    if canonical_url.is_empty() {
-        return;
-    }
-
-    push_unique(
-        webs,
-        seen_webs,
-        canonical_url.clone(),
-        json!({ "canonical_url": canonical_url, "source": "legacy_output" }),
-    );
-
-    if let Some(host) = extract_host(url) {
-        if is_ip_literal(&host) {
-            push_unique(
-                ips,
-                seen_ips,
-                host.clone(),
-                json!({ "ip_address": host, "source": "legacy_output" }),
-            );
-            let relation_key = format!("ip:{host}->web:{url}");
-            push_unique(
-                relations,
-                seen_relations,
-                relation_key,
-                json!({
-                    "from_type": "ip",
-                    "from_key": host,
-                    "to_type": "web",
-                    "to_key": url,
-                    "relation_type": "exposes_web"
-                }),
-            );
-        } else {
-            push_unique(
-                domains,
-                seen_domains,
-                host.clone(),
-                json!({ "fqdn": host, "source": "legacy_output" }),
-            );
-            let relation_key = format!("domain:{host}->web:{url}");
-            push_unique(
-                relations,
-                seen_relations,
-                relation_key,
-                json!({
-                    "from_type": "domain",
-                    "from_key": host,
-                    "to_type": "web",
-                    "to_key": url,
-                    "relation_type": "exposes_web"
-                }),
-            );
-        }
+impl MonitorScopeBoundary {
+    fn is_empty(&self) -> bool {
+        self.domains.is_empty() && self.ips.is_empty()
     }
 }
 
-fn synthesize_surface_artifacts(output: &Value) -> Option<Map<String, Value>> {
-    let data = output.get("data").unwrap_or(output);
-    let mut artifacts = Map::new();
-
-    let mut domains = Vec::new();
-    let mut ips = Vec::new();
-    let mut webs = Vec::new();
-    let mut relations = Vec::new();
-
-    let mut seen_domains = HashSet::new();
-    let mut seen_ips = HashSet::new();
-    let mut seen_webs = HashSet::new();
-    let mut seen_relations = HashSet::new();
-
-    if let Some(items) = data.get("subdomains").and_then(Value::as_array) {
-        for item in items {
-            let Some(fqdn) = item
-                .as_str()
-                .or_else(|| item.get("subdomain").and_then(Value::as_str))
-                .or_else(|| item.get("domain").and_then(Value::as_str))
-                .map(normalize_host_like)
-                .filter(|value| !value.is_empty())
-            else {
-                continue;
-            };
-
-            push_unique(
-                &mut domains,
-                &mut seen_domains,
-                fqdn.clone(),
-                json!({ "fqdn": fqdn, "source": "legacy_output" }),
-            );
-        }
+fn normalize_scope_boundary_value(value: &str) -> Option<String> {
+    let normalized = extract_host(value).unwrap_or_else(|| value.trim().to_string());
+    let normalized = normalized
+        .trim()
+        .trim_start_matches("*.")
+        .trim_start_matches('.')
+        .trim()
+        .to_lowercase();
+    if normalized.is_empty() {
+        return None;
     }
+    Some(normalized)
+}
 
-    if let Some(items) = data.get("ips").and_then(Value::as_array) {
-        for item in items {
-            let Some(ip) = item
-                .as_str()
-                .or_else(|| item.get("ip").and_then(Value::as_str))
-                .or_else(|| item.get("ip_address").and_then(Value::as_str))
-                .or_else(|| item.get("address").and_then(Value::as_str))
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                continue;
-            };
+fn build_monitor_scope_boundary(scopes: &[ProgramScopeRow]) -> MonitorScopeBoundary {
+    let mut boundary = MonitorScopeBoundary::default();
 
-            push_unique(
-                &mut ips,
-                &mut seen_ips,
-                ip.to_string(),
-                json!({ "ip_address": ip, "source": "legacy_output" }),
-            );
+    for scope in scopes {
+        if scope.scope_type != "in_scope" {
+            continue;
         }
-    }
 
-    if let Some(items) = data.get("urls").and_then(Value::as_array) {
-        for item in items {
-            let Some(url) = item
-                .as_str()
-                .or_else(|| item.get("url").and_then(Value::as_str))
-                .or_else(|| item.get("value").and_then(Value::as_str))
-            else {
-                continue;
-            };
-            absorb_web_artifact(
-                url,
-                &mut domains,
-                &mut ips,
-                &mut webs,
-                &mut relations,
-                &mut seen_domains,
-                &mut seen_ips,
-                &mut seen_webs,
-                &mut seen_relations,
-            );
-        }
-    }
+        let Some(normalized) = normalize_scope_boundary_value(&scope.target) else {
+            continue;
+        };
 
-    if let Some(items) = data.get("results").and_then(Value::as_array) {
-        for item in items {
-            if item.get("alive").and_then(Value::as_bool) == Some(false) {
-                continue;
+        match scope.target_type.as_str() {
+            "ip" => {
+                boundary.ips.insert(normalized);
             }
-            if let Some(url) = item.get("url").and_then(Value::as_str) {
-                absorb_web_artifact(
-                    url,
-                    &mut domains,
-                    &mut ips,
-                    &mut webs,
-                    &mut relations,
-                    &mut seen_domains,
-                    &mut seen_ips,
-                    &mut seen_webs,
-                    &mut seen_relations,
-                );
+            "url" | "domain" | "wildcard" | "host" => {
+                boundary.domains.insert(normalized);
             }
+            _ => {}
         }
     }
 
-    if let Some(items) = data.get("assets").and_then(Value::as_array) {
-        for item in items {
-            let asset_type = item.get("type").and_then(Value::as_str).unwrap_or("domain");
-            match asset_type {
-                "domain" => {
-                    if let Some(fqdn) = item
-                        .get("value")
-                        .or_else(|| item.get("domain"))
-                        .and_then(Value::as_str)
-                        .map(normalize_host_like)
-                        .filter(|value| !value.is_empty())
-                    {
-                        push_unique(
-                            &mut domains,
-                            &mut seen_domains,
-                            fqdn.clone(),
-                            json!({ "fqdn": fqdn, "source": "legacy_output" }),
-                        );
-                    }
-                }
-                "ip" => {
-                    if let Some(ip) = item
-                        .get("value")
-                        .or_else(|| item.get("ip"))
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    {
-                        push_unique(
-                            &mut ips,
-                            &mut seen_ips,
-                            ip.to_string(),
-                            json!({ "ip_address": ip, "source": "legacy_output" }),
-                        );
-                    }
-                }
-                "web" | "website" | "url" => {
-                    if let Some(url) = item
-                        .get("value")
-                        .or_else(|| item.get("url"))
-                        .and_then(Value::as_str)
-                    {
-                        absorb_web_artifact(
-                            url,
-                            &mut domains,
-                            &mut ips,
-                            &mut webs,
-                            &mut relations,
-                            &mut seen_domains,
-                            &mut seen_ips,
-                            &mut seen_webs,
-                            &mut seen_relations,
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
+    boundary
+}
+
+fn monitor_scope_boundary_allows_target(boundary: &MonitorScopeBoundary, target: &str) -> bool {
+    if boundary.is_empty() {
+        return true;
     }
 
-    if !domains.is_empty() {
-        artifacts.insert("domains".to_string(), Value::Array(domains));
-    }
-    if !ips.is_empty() {
-        artifacts.insert("ips".to_string(), Value::Array(ips));
-    }
-    if !webs.is_empty() {
-        artifacts.insert("webs".to_string(), Value::Array(webs));
-    }
-    if !relations.is_empty() {
-        artifacts.insert("relations".to_string(), Value::Array(relations));
+    let Some(normalized) = normalize_scope_boundary_value(target) else {
+        return false;
+    };
+
+    if normalized.parse::<IpAddr>().is_ok() {
+        return boundary.ips.contains(&normalized);
     }
 
-    if let Some(changes) = data.get("changes").and_then(Value::as_array) {
-        if !changes.is_empty() {
-            artifacts.insert("changes".to_string(), Value::Array(changes.clone()));
-        }
+    if boundary.domains.contains(&normalized) {
+        return true;
     }
 
-    if let Some(certificates) = data.get("certificates").and_then(Value::as_array) {
-        if !certificates.is_empty() {
-            artifacts.insert(
-                "certificates".to_string(),
-                Value::Array(certificates.clone()),
-            );
-        }
-    }
-
-    if artifacts.is_empty() {
-        None
-    } else {
-        Some(artifacts)
-    }
+    boundary
+        .domains
+        .iter()
+        .any(|domain| normalized.ends_with(&format!(".{domain}")))
 }
 
 pub(crate) fn extract_surface_artifacts(output: &Value) -> Option<Map<String, Value>> {
@@ -329,7 +129,6 @@ pub(crate) fn extract_surface_artifacts(output: &Value) -> Option<Map<String, Va
                 .and_then(Value::as_object)
                 .cloned()
         })
-        .or_else(|| synthesize_surface_artifacts(output))
 }
 
 pub(crate) async fn ingest_surface_plugin_output(
@@ -443,6 +242,7 @@ pub(crate) async fn collect_monitor_targets(
         .list_program_scopes(Some(program_id), None)
         .await
         .map_err(|e| e.to_string())?;
+    let scope_boundary = build_monitor_scope_boundary(&scopes);
 
     let mut seen = HashSet::new();
     let mut targets = Vec::new();
@@ -469,42 +269,50 @@ pub(crate) async fn collect_monitor_targets(
             None,
             None,
             None,
-            Some(10_000),
-            Some(0),
+            None,
+            None,
         )
         .await
     {
         for asset in assets {
             if asset.asset_type == "domain" && asset.is_wildcard != Some(true) {
                 let target = asset.canonical_url.trim().to_string();
-                if !target.is_empty() && seen.insert(target.clone()) {
+                if !target.is_empty()
+                    && monitor_scope_boundary_allows_target(&scope_boundary, &target)
+                    && seen.insert(target.clone())
+                {
                     targets.push(target);
                 }
             }
         }
     }
 
-    if let Ok(surface_assets) = db_service
-        .list_surface_assets(&SurfaceAssetFilter {
+    visit_surface_assets(
+        db_service,
+        &SurfaceAssetFilter {
             program_id: Some(program_id.to_string()),
             asset_type: None,
             status: None,
             search: None,
-            limit: Some(10_000),
-            offset: Some(0),
-        })
-        .await
-    {
-        for asset in surface_assets {
+            service_name: None,
+            transport_protocol: None,
+            limit: None,
+            offset: None,
+        },
+        |asset| {
             if !matches!(asset.asset_type.as_str(), "domain" | "web" | "host" | "ip") {
-                continue;
+                return;
             }
             let target = asset.asset_name.trim().to_string();
-            if !target.is_empty() && seen.insert(target.clone()) {
+            if !target.is_empty()
+                && monitor_scope_boundary_allows_target(&scope_boundary, &target)
+                && seen.insert(target.clone())
+            {
                 targets.push(target);
             }
-        }
-    }
+        },
+    )
+    .await?;
 
     Ok(targets)
 }
@@ -539,6 +347,127 @@ fn normalize_monitor_target_asset_type(value: &str) -> Option<&'static str> {
     }
 }
 
+fn normalized_monitor_plugin_id(plugin_id: &str) -> &str {
+    plugin_id.strip_prefix("plugin__").unwrap_or(plugin_id)
+}
+
+fn plugin_uses_in_scope_domain_targets_only(plugin_id: &str) -> bool {
+    matches!(plugin_id, "subdomain_enumerator" | "subdomain_brute")
+}
+
+fn service_port_from_details(details: &Map<String, Value>) -> Option<i32> {
+    details
+        .get("port_number")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
+fn service_protocol_from_details(details: &Map<String, Value>) -> Option<String> {
+    details
+        .get("protocol_name")
+        .and_then(Value::as_str)
+        .or_else(|| details.get("transport_protocol").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase())
+}
+
+fn service_name_from_details(details: &Map<String, Value>) -> Option<String> {
+    details
+        .get("application_service_name")
+        .and_then(Value::as_str)
+        .or_else(|| details.get("protocol_name").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase())
+}
+
+fn service_encrypted_transport_from_details(details: &Map<String, Value>) -> Option<bool> {
+    details.get("encrypted_transport").and_then(Value::as_bool)
+}
+
+fn is_http_like_service(
+    port: Option<i32>,
+    protocol: Option<&str>,
+    service_name: Option<&str>,
+) -> bool {
+    let normalized_protocol = protocol
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase());
+    let normalized_service_name = service_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase());
+
+    if matches!(normalized_protocol.as_deref(), Some("http" | "https")) {
+        return true;
+    }
+    if matches!(normalized_service_name.as_deref(), Some("http" | "https")) {
+        return true;
+    }
+
+    port.is_some_and(|value| HTTP_SERVICE_PORTS.contains(&value))
+}
+
+fn is_https_like_service(
+    port: Option<i32>,
+    protocol: Option<&str>,
+    service_name: Option<&str>,
+    encrypted_transport: Option<bool>,
+) -> bool {
+    let normalized_protocol = protocol
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase());
+    let normalized_service_name = service_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_lowercase());
+
+    if matches!(
+        normalized_protocol.as_deref(),
+        Some("https" | "tls" | "ssl" | "https-alt")
+    ) {
+        return true;
+    }
+    if matches!(
+        normalized_service_name.as_deref(),
+        Some("https" | "tls" | "ssl" | "https-alt")
+    ) {
+        return true;
+    }
+    if matches!(encrypted_transport, Some(true))
+        && is_http_like_service(port, protocol, service_name)
+    {
+        return true;
+    }
+
+    port.is_some_and(|value| HTTPS_SERVICE_PORTS.contains(&value))
+}
+
+fn build_surface_service_target_object(
+    asset: &SurfaceAssetRow,
+    details: Option<&Map<String, Value>>,
+) -> Value {
+    let host = extract_host(&asset.asset_name);
+    let port = details.and_then(service_port_from_details);
+    let protocol = details.and_then(service_protocol_from_details);
+    let service_name = details.and_then(service_name_from_details);
+
+    json!({
+        "type": "service",
+        "value": &asset.asset_name,
+        "source": "surface_asset",
+        "asset_id": &asset.id,
+        "host": host,
+        "port": port,
+        "protocol": protocol,
+        "service_name": service_name,
+    })
+}
+
 fn format_service_target(
     hostname: Option<&str>,
     ip_or_host: Option<&str>,
@@ -560,14 +489,55 @@ fn format_service_target(
         .map(str::to_string)
 }
 
+async fn visit_surface_assets<F>(
+    db_service: &Arc<DatabaseService>,
+    base_filter: &SurfaceAssetFilter,
+    mut visitor: F,
+) -> Result<(), String>
+where
+    F: FnMut(SurfaceAssetRow),
+{
+    let mut offset = 0i64;
+
+    loop {
+        let assets = db_service
+            .list_surface_assets(&SurfaceAssetFilter {
+                program_id: base_filter.program_id.clone(),
+                asset_type: base_filter.asset_type.clone(),
+                status: base_filter.status.clone(),
+                search: base_filter.search.clone(),
+                service_name: base_filter.service_name.clone(),
+                transport_protocol: base_filter.transport_protocol.clone(),
+                limit: Some(MONITOR_TARGET_PAGE_SIZE),
+                offset: Some(offset),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let fetched = assets.len();
+        if fetched == 0 {
+            break;
+        }
+
+        for asset in assets {
+            visitor(asset);
+        }
+
+        if fetched < MONITOR_TARGET_PAGE_SIZE as usize {
+            break;
+        }
+
+        offset += MONITOR_TARGET_PAGE_SIZE;
+    }
+
+    Ok(())
+}
+
 async fn resolve_plugin_target_asset_types(
     db_service: &Arc<DatabaseService>,
     plugin: &MonitorPluginConfig,
 ) -> Vec<String> {
-    let normalized_plugin_id = plugin
-        .plugin_id
-        .strip_prefix("plugin__")
-        .unwrap_or(&plugin.plugin_id);
+    let normalized_plugin_id = normalized_monitor_plugin_id(&plugin.plugin_id);
 
     let plugin_metadata_target_asset_types = db_service
         .get_plugin_from_registry(normalized_plugin_id)
@@ -585,6 +555,11 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
     task: &MonitorTask,
     plugin: &MonitorPluginConfig,
 ) -> Result<MonitorResolvedTargets, String> {
+    let normalized_plugin_id = normalized_monitor_plugin_id(&plugin.plugin_id);
+    let http_prober_mode = normalized_plugin_id == "http_prober";
+    let https_service_targets_only = matches!(normalized_plugin_id, "cert_monitor" | "ssl_scanner");
+    let in_scope_domain_targets_only =
+        plugin_uses_in_scope_domain_targets_only(normalized_plugin_id);
     let requested_asset_types: HashSet<String> =
         resolve_plugin_target_asset_types(db_service, plugin)
             .await
@@ -605,12 +580,17 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
     }
 
     let scopes = db_service
-        .list_program_scopes(Some(&task.program_id), None)
+        .list_program_scopes(
+            Some(&task.program_id),
+            in_scope_domain_targets_only.then_some("in_scope"),
+        )
         .await
         .map_err(|e| e.to_string())?;
+    let scope_boundary = build_monitor_scope_boundary(&scopes);
 
     let mut seen = HashSet::new();
     let mut resolved = MonitorResolvedTargets::default();
+    let mut surface_service_assets = Vec::new();
     for scope in scopes {
         match scope.target_type.as_str() {
             "url" if requested_asset_types.contains("web") => push_unique_resolved_target(
@@ -637,18 +617,27 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
         }
     }
 
-    if let Ok(surface_assets) = db_service
-        .list_surface_assets(&SurfaceAssetFilter {
+    if in_scope_domain_targets_only {
+        return Ok(resolved);
+    }
+
+    visit_surface_assets(
+        db_service,
+        &SurfaceAssetFilter {
             program_id: Some(task.program_id.clone()),
             asset_type: None,
             status: None,
             search: None,
-            limit: Some(10_000),
-            offset: Some(0),
-        })
-        .await
-    {
-        for asset in &surface_assets {
+            service_name: None,
+            transport_protocol: None,
+            limit: None,
+            offset: None,
+        },
+        |asset| {
+            if !monitor_scope_boundary_allows_target(&scope_boundary, &asset.asset_name) {
+                return;
+            }
+
             if asset.asset_type == "web" && requested_asset_types.contains("web") {
                 push_unique_resolved_target(
                     &mut resolved,
@@ -662,9 +651,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                     }),
                 );
             }
-        }
 
-        for asset in surface_assets {
             let should_include = match asset.asset_type.as_str() {
                 "domain" => requested_asset_types.contains("domain"),
                 "host" => requested_asset_types.contains("host"),
@@ -688,18 +675,72 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             if requested_asset_types.contains("service")
                 && matches!(asset.asset_type.as_str(), "service" | "port")
             {
-                push_unique_resolved_target(
-                    &mut resolved,
-                    &mut seen,
-                    &asset.asset_name,
-                    json!({
-                        "type": "service",
-                        "value": &asset.asset_name,
-                        "source": "surface_asset",
-                        "asset_id": &asset.id,
-                    }),
-                );
+                if http_prober_mode {
+                    if asset.asset_type == "service" {
+                        surface_service_assets.push(asset);
+                    }
+                } else if https_service_targets_only {
+                    if asset.asset_type == "service" {
+                        surface_service_assets.push(asset);
+                    }
+                } else {
+                    push_unique_resolved_target(
+                        &mut resolved,
+                        &mut seen,
+                        &asset.asset_name,
+                        json!({
+                            "type": "service",
+                            "value": &asset.asset_name,
+                            "source": "surface_asset",
+                            "asset_id": &asset.id,
+                        }),
+                    );
+                }
             }
+        },
+    )
+    .await?;
+
+    if requested_asset_types.contains("service")
+        && (http_prober_mode || https_service_targets_only)
+        && !surface_service_assets.is_empty()
+    {
+        let typed_details_by_id = db_service
+            .list_surface_typed_details_map(&surface_service_assets)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        for asset in &surface_service_assets {
+            let details = typed_details_by_id
+                .get(&asset.id)
+                .and_then(Value::as_object);
+            let port = details.and_then(service_port_from_details);
+            let protocol = details
+                .and_then(service_protocol_from_details)
+                .unwrap_or_default();
+            let service_name = details
+                .and_then(service_name_from_details)
+                .unwrap_or_default();
+            let encrypted_transport = details.and_then(service_encrypted_transport_from_details);
+
+            let protocol_ref = (!protocol.is_empty()).then_some(protocol.as_str());
+            let service_name_ref = (!service_name.is_empty()).then_some(service_name.as_str());
+            let should_include = if https_service_targets_only {
+                is_https_like_service(port, protocol_ref, service_name_ref, encrypted_transport)
+            } else {
+                is_http_like_service(port, protocol_ref, service_name_ref)
+            };
+
+            if !should_include {
+                continue;
+            }
+
+            push_unique_resolved_target(
+                &mut resolved,
+                &mut seen,
+                &asset.asset_name,
+                build_surface_service_target_object(asset, details),
+            );
         }
     }
 
@@ -713,12 +754,16 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             None,
             None,
             None,
-            Some(10_000),
-            Some(0),
+            None,
+            None,
         )
         .await
     {
         for asset in assets {
+            if !monitor_scope_boundary_allows_target(&scope_boundary, &asset.canonical_url) {
+                continue;
+            }
+
             let should_include = match asset.asset_type.as_str() {
                 "domain" => {
                     requested_asset_types.contains("domain") && asset.is_wildcard != Some(true)
@@ -745,6 +790,12 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
             if requested_asset_types.contains("service")
                 && matches!(asset.asset_type.as_str(), "service" | "port")
             {
+                if http_prober_mode && asset.asset_type != "service" {
+                    continue;
+                }
+                if https_service_targets_only && asset.asset_type != "service" {
+                    continue;
+                }
                 let canonical_host = extract_host(&asset.canonical_url);
                 if let Some(target) = format_service_target(
                     asset.hostname.as_deref(),
@@ -752,6 +803,28 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                     asset.port,
                     Some(&asset.canonical_url),
                 ) {
+                    if http_prober_mode
+                        && !is_http_like_service(
+                            asset.port,
+                            asset.transport_protocol.as_deref(),
+                            asset.service_name.as_deref(),
+                        )
+                    {
+                        continue;
+                    }
+                    if https_service_targets_only
+                        && !is_https_like_service(
+                            asset.port,
+                            asset
+                                .protocol
+                                .as_deref()
+                                .or(asset.transport_protocol.as_deref()),
+                            asset.service_name.as_deref(),
+                            asset.ssl_enabled,
+                        )
+                    {
+                        continue;
+                    }
                     push_unique_resolved_target(
                         &mut resolved,
                         &mut seen,
@@ -765,6 +838,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                             "port": asset.port,
                             "protocol": asset.transport_protocol.as_deref(),
                             "service_name": asset.service_name.as_deref(),
+                            "ssl_enabled": asset.ssl_enabled,
                         }),
                     );
                 }

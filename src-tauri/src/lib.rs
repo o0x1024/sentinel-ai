@@ -32,6 +32,7 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use services::{ai::AiServiceManager, database::DatabaseService};
 
 use crate::skills::scan_and_upsert_skills;
+use crate::utils::plugin_registry_cleanup::cleanup_removed_agent_plugins;
 use commands::{
     ai, ai_execution_state_support, aisettings, asset, cleanup_expired_cache, config,
     database as db_commands, delete_cache, dictionary, get_all_cache_keys, get_cache,
@@ -410,8 +411,8 @@ pub fn run() {
                     tracing::error!("Database initialize failed: {:#}", e);
                     eprintln!("Database initialization failed: {:#}", e);
                     eprintln!(
-                        "By default the app uses PostgreSQL at localhost:5432. \
-                         Install PostgreSQL, or create db_config.toml at:\n  {}",
+                        "Database config is loaded from:\n  {}\n\
+                         The current default backend is SQLite unless db_config.toml selects another database.",
                         config_path.display()
                     );
                     std::process::exit(1);
@@ -679,6 +680,9 @@ pub fn run() {
                 crate::agents::subagent_executor::init_subagent_executor();
                 tracing::info!("Subagent executor initialized");
 
+                sentinel_plugins::register_app_handle(handle.clone());
+                tracing::info!("Sentinel plugin runtime event bridge initialized");
+
                 // Initialize tool execution tracker
                 crate::trackers::init_tracker(db_for_tracker, handle.clone());
                 tracing::info!("Tool execution tracker initialized");
@@ -746,6 +750,10 @@ pub fn run() {
                     {
                         let tool_server = sentinel_tools::get_tool_server();
                         let db_plugin = db_service_for_mcp.clone();
+
+                        if let Err(e) = cleanup_removed_agent_plugins(db_plugin.as_ref()).await {
+                            tracing::warn!("Failed to clean up removed agent plugins: {}", e);
+                        }
 
                         // 使用 Database trait 获取已启用的 agent 插件
                         let active_plugins = db_plugin.get_active_agent_plugins().await;
@@ -965,6 +973,10 @@ pub fn run() {
             commands::bounty_get_change_event_stats,
             commands::bounty_update_change_event_status,
             commands::bounty_add_generated_finding,
+            commands::bounty_batch_delete_api_inventory_targets,
+            commands::bounty_get_api_inventory_target,
+            commands::bounty_list_api_inventory_target_keys,
+            commands::bounty_list_api_inventory_targets,
             commands::bounty_import_traffic_finding,
             commands::bounty_batch_import_traffic_findings,
             commands::bounty_export_report,
@@ -988,11 +1000,6 @@ pub fn run() {
             commands::bounty_trigger_workflows_for_event,
             // Bug Bounty Asset commands
             commands::bounty_create_asset,
-            commands::bounty_get_asset,
-            commands::bounty_list_assets,
-            commands::bounty_delete_asset,
-            commands::bounty_get_asset_stats,
-            commands::bounty_get_top_priority_assets,
             commands::bounty_import_assets_from_scope,
             // Bug Bounty Asset Fingerprint & Labels (P1-B4)
             commands::bounty_update_asset_fingerprint,
@@ -1040,8 +1047,11 @@ pub fn run() {
             commands::monitor_update_task_plugins,
             // Surface graph commands
             commands::surface_get_overview,
+            commands::surface_get_fingerprint_category_aggregation,
+            commands::surface_list_fingerprint_assets,
             commands::surface_list_assets,
             commands::surface_list_inventory,
+            commands::surface_get_inventory_facets,
             commands::surface_manual_import_assets,
             commands::surface_update_asset,
             commands::surface_delete_asset,
@@ -1132,6 +1142,7 @@ pub fn run() {
             dictionary::export_dictionary,
             dictionary::import_dictionary,
             dictionary::import_dictionary_from_file,
+            dictionary::import_nmap_service_probes,
             dictionary::export_dictionary_to_file,
             dictionary::get_dictionary_stats,
             dictionary::create_dictionary_set,
@@ -1273,11 +1284,6 @@ pub fn run() {
             proxifier_commands::save_proxifier_rules,
             proxifier_commands::get_proxifier_connections,
             proxifier_commands::clear_proxifier_connections,
-            proxifier_commands::get_transparent_proxy_status,
-            proxifier_commands::start_transparent_proxy,
-            proxifier_commands::stop_transparent_proxy,
-            proxifier_commands::add_transparent_redirect_port,
-            proxifier_commands::remove_transparent_redirect_port,
             proxifier_commands::load_proxifier_proxies_from_db,
             proxifier_commands::save_proxifier_proxies_to_db,
             proxifier_commands::load_proxifier_rules_from_db,
@@ -1526,7 +1532,7 @@ async fn toggle_proxy(app: &tauri::AppHandle) {
     }
 }
 
-fn update_proxy_menu_text(app: &tauri::AppHandle, is_running: bool) {
+pub(crate) fn update_proxy_menu_text(app: &tauri::AppHandle, is_running: bool) {
     if let Some(proxy_item) = app.try_state::<TrayProxyMenuItem>() {
         let text = if is_running {
             "关闭代理"

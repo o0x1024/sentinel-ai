@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-4">
     <div class="card bg-base-100 shadow-md">
-      <div class="card-body">
+      <div class="card-body p-4 pt-3">
         <div class="flex justify-between items-center mb-4">
           <div class="flex items-center gap-2">
             <h2 class="card-title">{{ t('bugBounty.changeEvents.title') }}</h2>

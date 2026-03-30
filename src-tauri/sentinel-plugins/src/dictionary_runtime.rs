@@ -74,7 +74,10 @@ fn get_dictionary_pool() -> Result<&'static DictionaryPool, JsErrorBox> {
 }
 
 #[cfg(feature = "db-postgres")]
-async fn resolve_dictionary_id(pool: &DictionaryPool, id_or_name: &str) -> Result<Option<String>, JsErrorBox> {
+async fn resolve_dictionary_id(
+    pool: &DictionaryPool,
+    id_or_name: &str,
+) -> Result<Option<String>, JsErrorBox> {
     sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = $1 OR name = $2")
         .bind(id_or_name)
         .bind(id_or_name)
@@ -84,7 +87,10 @@ async fn resolve_dictionary_id(pool: &DictionaryPool, id_or_name: &str) -> Resul
 }
 
 #[cfg(not(feature = "db-postgres"))]
-async fn resolve_dictionary_id(pool: &DictionaryPool, id_or_name: &str) -> Result<Option<String>, JsErrorBox> {
+async fn resolve_dictionary_id(
+    pool: &DictionaryPool,
+    id_or_name: &str,
+) -> Result<Option<String>, JsErrorBox> {
     sqlx::query_scalar("SELECT id FROM dictionaries WHERE id = ? OR name = ?")
         .bind(id_or_name)
         .bind(id_or_name)

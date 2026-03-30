@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 /// Standard artifact types produced by workflow steps
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -166,6 +167,23 @@ pub struct EvidenceArtifact {
     pub diff: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SurfaceEvidencesArtifact {
+    pub evidences: Vec<SurfaceEvidenceArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurfaceEvidenceArtifact {
+    pub asset_type: String,
+    pub asset_key: String,
+    pub evidence_type: String,
+    pub title: String,
+    pub content_text: Option<String>,
+    pub content_path: Option<String>,
+    pub content_json: Option<Value>,
+    pub probe_node: Option<String>,
+}
+
 /// Asset artifact payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetArtifact {
@@ -183,17 +201,72 @@ pub struct AssetArtifact {
 /// Multi-object surface graph payload for network asset mapping workflows.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SurfaceBundleArtifact {
-    pub organizations: Vec<serde_json::Value>,
-    pub domains: Vec<serde_json::Value>,
-    pub ips: Vec<serde_json::Value>,
-    pub hosts: Vec<serde_json::Value>,
-    pub ports: Vec<serde_json::Value>,
-    pub services: Vec<serde_json::Value>,
-    pub webs: Vec<serde_json::Value>,
-    pub certificates: Vec<serde_json::Value>,
-    pub fingerprints: Vec<serde_json::Value>,
-    pub relations: Vec<serde_json::Value>,
-    pub changes: Vec<serde_json::Value>,
+    pub organizations: Vec<Value>,
+    pub domains: Vec<Value>,
+    pub ips: Vec<Value>,
+    pub hosts: Vec<Value>,
+    pub ports: Vec<Value>,
+    pub services: Vec<Value>,
+    pub webs: Vec<SurfaceWebArtifact>,
+    pub certificates: Vec<Value>,
+    pub fingerprints: Vec<SurfaceFingerprintArtifact>,
+    pub relations: Vec<Value>,
+    pub changes: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SurfaceWebsArtifact {
+    pub webs: Vec<SurfaceWebArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SurfaceFingerprintsArtifact {
+    pub fingerprints: Vec<SurfaceFingerprintArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurfaceWebArtifact {
+    pub canonical_url: String,
+    pub scheme: String,
+    pub site_title: Option<String>,
+    pub http_status_code: i32,
+    pub server_header: Option<String>,
+    pub response_headers: Map<String, Value>,
+    pub page_fingerprint: Option<String>,
+    pub favicon_hash: Option<String>,
+    pub framework: Option<String>,
+    pub cms: Option<String>,
+    pub waf_flag: Option<bool>,
+    pub cdn_flag: Option<bool>,
+    pub login_flag: Option<bool>,
+    pub api_flag: Option<bool>,
+    pub openapi_url: Option<String>,
+    pub business_type: Option<String>,
+    pub language: Option<String>,
+    pub filing_info: Option<String>,
+    pub content_summary: String,
+    pub last_accessed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurfaceFingerprintArtifact {
+    pub asset_type: String,
+    pub asset_key: String,
+    pub fingerprint_type: String,
+    pub fingerprint_key: Option<String>,
+    pub fingerprint_value: String,
+    pub rule_id: String,
+    pub rule_word: String,
+    pub rule_name: String,
+    pub normalized_product: String,
+    pub normalized_vendor: Option<String>,
+    pub normalized_category: String,
+    pub normalized_family: Option<String>,
+    pub version: Option<String>,
+    pub is_primary: Option<bool>,
+    pub match_source_part: Option<String>,
+    pub confidence: Option<f64>,
+    pub evidence: Option<String>,
 }
 
 /// Subdomain list artifact
@@ -289,8 +362,154 @@ pub struct DirectoryEntry {
 pub struct ArtifactExtractor;
 
 impl ArtifactExtractor {
+    fn required_string(obj: &Map<String, Value>, field: &str) -> Option<String> {
+        obj.get(field)?.as_str().map(str::to_string)
+    }
+
+    fn required_i32(obj: &Map<String, Value>, field: &str) -> Option<i32> {
+        obj.get(field)?.as_i64().map(|value| value as i32)
+    }
+
+    fn required_object(obj: &Map<String, Value>, field: &str) -> Option<Map<String, Value>> {
+        obj.get(field)?.as_object().cloned()
+    }
+
+    fn parse_surface_web(item: &Value) -> Option<SurfaceWebArtifact> {
+        let obj = item.as_object()?;
+
+        Some(SurfaceWebArtifact {
+            canonical_url: Self::required_string(obj, "canonical_url")?,
+            scheme: Self::required_string(obj, "scheme")?,
+            site_title: obj
+                .get("site_title")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            http_status_code: Self::required_i32(obj, "http_status_code")?,
+            server_header: obj
+                .get("server_header")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            response_headers: Self::required_object(obj, "response_headers")?,
+            page_fingerprint: obj
+                .get("page_fingerprint")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            favicon_hash: obj
+                .get("favicon_hash")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            framework: obj
+                .get("framework")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            cms: obj
+                .get("cms")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            waf_flag: obj.get("waf_flag").and_then(|value| value.as_bool()),
+            cdn_flag: obj.get("cdn_flag").and_then(|value| value.as_bool()),
+            login_flag: obj.get("login_flag").and_then(|value| value.as_bool()),
+            api_flag: obj.get("api_flag").and_then(|value| value.as_bool()),
+            openapi_url: obj
+                .get("openapi_url")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            business_type: obj
+                .get("business_type")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            language: obj
+                .get("language")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            filing_info: obj
+                .get("filing_info")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            content_summary: Self::required_string(obj, "content_summary")?,
+            last_accessed_at: obj
+                .get("last_accessed_at")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        })
+    }
+
+    fn parse_surface_fingerprint(item: &Value) -> Option<SurfaceFingerprintArtifact> {
+        let obj = item.as_object()?;
+
+        Some(SurfaceFingerprintArtifact {
+            asset_type: Self::required_string(obj, "asset_type")?,
+            asset_key: Self::required_string(obj, "asset_key")?,
+            fingerprint_type: Self::required_string(obj, "fingerprint_type")?,
+            fingerprint_key: obj
+                .get("fingerprint_key")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            fingerprint_value: Self::required_string(obj, "fingerprint_value")?,
+            rule_id: Self::required_string(obj, "rule_id")?,
+            rule_word: Self::required_string(obj, "rule_word")?,
+            rule_name: Self::required_string(obj, "rule_name")?,
+            normalized_product: Self::required_string(obj, "normalized_product")?,
+            normalized_vendor: obj
+                .get("normalized_vendor")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            normalized_category: Self::required_string(obj, "normalized_category")?,
+            normalized_family: obj
+                .get("normalized_family")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            version: obj
+                .get("version")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            is_primary: obj.get("is_primary").and_then(|value| value.as_bool()),
+            match_source_part: obj
+                .get("match_source_part")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            confidence: obj.get("confidence").and_then(|value| value.as_f64()),
+            evidence: obj
+                .get("evidence")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        })
+    }
+
+    fn parse_surface_evidence(item: &Value) -> Option<SurfaceEvidenceArtifact> {
+        let obj = item.as_object()?;
+
+        let content_text = obj
+            .get("content_text")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let content_path = obj
+            .get("content_path")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let content_json = obj.get("content_json").cloned();
+
+        if content_text.is_none() && content_path.is_none() && content_json.is_none() {
+            return None;
+        }
+
+        Some(SurfaceEvidenceArtifact {
+            asset_type: Self::required_string(obj, "asset_type")?,
+            asset_key: Self::required_string(obj, "asset_key")?,
+            evidence_type: Self::required_string(obj, "evidence_type")?,
+            title: Self::required_string(obj, "title")?,
+            content_text,
+            content_path,
+            content_json,
+            probe_node: obj
+                .get("probe_node")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        })
+    }
+
     /// Detect artifact type from raw output
-    pub fn detect_type(data: &serde_json::Value) -> ArtifactType {
+    pub fn detect_type(data: &Value) -> ArtifactType {
         if data.get("surface_artifacts").is_some() || data.get("surface").is_some() {
             return ArtifactType::SurfaceBundle;
         }
@@ -313,6 +532,9 @@ impl ArtifactExtractor {
             || data.get("findings").is_some()
         {
             return ArtifactType::Finding;
+        }
+        if data.get("evidences").is_some() || data.get("evidence").is_some() {
+            return ArtifactType::Evidence;
         }
         if data.get("subdomains").is_some() {
             return ArtifactType::Subdomains;
@@ -377,7 +599,7 @@ impl ArtifactExtractor {
     }
 
     /// Extract finding from raw output
-    pub fn extract_finding(data: &serde_json::Value) -> Option<FindingArtifact> {
+    pub fn extract_finding(data: &Value) -> Option<FindingArtifact> {
         // Check nested structures
         let finding_data = data
             .get("finding")
@@ -450,8 +672,18 @@ impl ArtifactExtractor {
         })
     }
 
+    pub fn extract_evidences(data: &Value) -> Option<SurfaceEvidencesArtifact> {
+        let evidences = data.get("evidences").and_then(|value| value.as_array())?;
+        let evidences = evidences
+            .iter()
+            .map(Self::parse_surface_evidence)
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(SurfaceEvidencesArtifact { evidences })
+    }
+
     /// Extract subdomains from raw output
-    pub fn extract_subdomains(data: &serde_json::Value) -> Option<SubdomainsArtifact> {
+    pub fn extract_subdomains(data: &Value) -> Option<SubdomainsArtifact> {
         let subdomains_arr = data.get("subdomains").and_then(|v| v.as_array())?;
 
         let domain = data
@@ -494,7 +726,7 @@ impl ArtifactExtractor {
     }
 
     /// Extract live hosts from raw output
-    pub fn extract_live_hosts(data: &serde_json::Value) -> Option<LiveHostsArtifact> {
+    pub fn extract_live_hosts(data: &Value) -> Option<LiveHostsArtifact> {
         let hosts_arr = data
             .get("hosts")
             .or_else(|| data.get("liveHosts"))
@@ -546,7 +778,7 @@ impl ArtifactExtractor {
     }
 
     /// Extract technologies from raw output
-    pub fn extract_technologies(data: &serde_json::Value) -> Option<TechnologiesArtifact> {
+    pub fn extract_technologies(data: &Value) -> Option<TechnologiesArtifact> {
         let tech_arr = data
             .get("technologies")
             .or_else(|| data.get("techStack"))
@@ -592,7 +824,7 @@ impl ArtifactExtractor {
     }
 
     /// Extract endpoints from raw output
-    pub fn extract_endpoints(data: &serde_json::Value) -> Option<EndpointsArtifact> {
+    pub fn extract_endpoints(data: &Value) -> Option<EndpointsArtifact> {
         let endpoints_arr = data.get("endpoints").and_then(|v| v.as_array())?;
 
         let base_url = data
@@ -654,7 +886,7 @@ impl ArtifactExtractor {
     }
 
     /// Extract secrets from raw output
-    pub fn extract_secrets(data: &serde_json::Value) -> Option<SecretsArtifact> {
+    pub fn extract_secrets(data: &Value) -> Option<SecretsArtifact> {
         let secrets_arr = data.get("secrets").and_then(|v| v.as_array())?;
 
         let secrets: Vec<SecretEntry> = secrets_arr
@@ -694,7 +926,7 @@ impl ArtifactExtractor {
     }
 
     /// Extract directories from raw output
-    pub fn extract_directories(data: &serde_json::Value) -> Option<DirectoriesArtifact> {
+    pub fn extract_directories(data: &Value) -> Option<DirectoriesArtifact> {
         let dirs_arr = data
             .get("directories")
             .or_else(|| data.get("paths"))
@@ -755,6 +987,234 @@ impl ArtifactExtractor {
             base_url,
             directories,
         })
+    }
+
+    pub fn extract_surface_webs(data: &Value) -> Option<SurfaceWebsArtifact> {
+        let webs = data.get("webs").and_then(|value| value.as_array())?;
+        let webs = webs
+            .iter()
+            .map(Self::parse_surface_web)
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(SurfaceWebsArtifact { webs })
+    }
+
+    pub fn extract_surface_fingerprints(data: &Value) -> Option<SurfaceFingerprintsArtifact> {
+        let fingerprints = data
+            .get("fingerprints")
+            .and_then(|value| value.as_array())?;
+        let fingerprints = fingerprints
+            .iter()
+            .map(Self::parse_surface_fingerprint)
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(SurfaceFingerprintsArtifact { fingerprints })
+    }
+
+    pub fn extract_surface_bundle(data: &Value) -> Option<SurfaceBundleArtifact> {
+        let bundle = data
+            .get("surface_artifacts")
+            .or_else(|| data.get("surface"))
+            .unwrap_or(data);
+        let obj = bundle.as_object()?;
+
+        let webs = obj
+            .get("webs")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(Self::parse_surface_web)
+                    .collect::<Option<Vec<_>>>()
+            })
+            .flatten()
+            .unwrap_or_default();
+
+        let fingerprints = obj
+            .get("fingerprints")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(Self::parse_surface_fingerprint)
+                    .collect::<Option<Vec<_>>>()
+            })
+            .flatten()
+            .unwrap_or_default();
+
+        Some(SurfaceBundleArtifact {
+            organizations: obj
+                .get("organizations")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            domains: obj
+                .get("domains")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            ips: obj
+                .get("ips")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            hosts: obj
+                .get("hosts")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            ports: obj
+                .get("ports")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            services: obj
+                .get("services")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            webs,
+            certificates: obj
+                .get("certificates")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            fingerprints,
+            relations: obj
+                .get("relations")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            changes: obj
+                .get("changes")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArtifactExtractor;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_surface_webs_with_strict_schema() {
+        let data = json!({
+            "webs": [
+                {
+                    "canonical_url": "https://example.com",
+                    "scheme": "https",
+                    "site_title": "Example",
+                    "http_status_code": 200,
+                    "response_headers": {
+                        "server": "nginx"
+                    },
+                    "content_summary": "homepage"
+                }
+            ]
+        });
+
+        let artifact =
+            ArtifactExtractor::extract_surface_webs(&data).expect("surface webs should parse");
+        assert_eq!(artifact.webs.len(), 1);
+        assert_eq!(artifact.webs[0].canonical_url, "https://example.com");
+        assert_eq!(artifact.webs[0].http_status_code, 200);
+    }
+
+    #[test]
+    fn rejects_surface_webs_missing_required_fields() {
+        let data = json!({
+            "webs": [
+                {
+                    "canonical_url": "https://example.com",
+                    "scheme": "https"
+                }
+            ]
+        });
+
+        assert!(ArtifactExtractor::extract_surface_webs(&data).is_none());
+    }
+
+    #[test]
+    fn extracts_surface_fingerprints_with_strict_schema() {
+        let data = json!({
+            "fingerprints": [
+                {
+                    "asset_type": "web",
+                    "asset_key": "https://example.com",
+                    "fingerprint_type": "header",
+                    "fingerprint_value": "nginx",
+                    "rule_id": "rule-nginx",
+                    "rule_word": "nginx",
+                    "rule_name": "Nginx",
+                    "normalized_product": "Nginx",
+                    "normalized_category": "web_server",
+                    "confidence": 0.95
+                }
+            ]
+        });
+
+        let artifact = ArtifactExtractor::extract_surface_fingerprints(&data)
+            .expect("surface fingerprints should parse");
+        assert_eq!(artifact.fingerprints.len(), 1);
+        assert_eq!(artifact.fingerprints[0].rule_id, "rule-nginx");
+        assert_eq!(artifact.fingerprints[0].normalized_category, "web_server");
+    }
+
+    #[test]
+    fn rejects_surface_fingerprints_missing_normalized_fields() {
+        let data = json!({
+            "fingerprints": [
+                {
+                    "asset_type": "web",
+                    "asset_key": "https://example.com",
+                    "fingerprint_type": "header",
+                    "fingerprint_value": "nginx"
+                }
+            ]
+        });
+
+        assert!(ArtifactExtractor::extract_surface_fingerprints(&data).is_none());
+    }
+
+    #[test]
+    fn extracts_surface_evidences_with_strict_schema() {
+        let data = json!({
+            "evidences": [
+                {
+                    "asset_type": "web",
+                    "asset_key": "https://example.com",
+                    "evidence_type": "http_response_headers",
+                    "title": "HTTP Response Headers",
+                    "content_json": {
+                        "server": "nginx"
+                    }
+                }
+            ]
+        });
+
+        let artifact =
+            ArtifactExtractor::extract_evidences(&data).expect("surface evidences should parse");
+        assert_eq!(artifact.evidences.len(), 1);
+        assert_eq!(artifact.evidences[0].evidence_type, "http_response_headers");
+    }
+
+    #[test]
+    fn rejects_surface_evidences_without_payload_content() {
+        let data = json!({
+            "evidences": [
+                {
+                    "asset_type": "web",
+                    "asset_key": "https://example.com",
+                    "evidence_type": "http_response_headers",
+                    "title": "HTTP Response Headers"
+                }
+            ]
+        });
+
+        assert!(ArtifactExtractor::extract_evidences(&data).is_none());
     }
 }
 

@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::buildin_tools::{
     HttpRequestTool, MemoryManagerTool, OcrTool, SearchExploitTool, ShellTool, SkillsTool,
-    TenthManTool, TodosTool, WebSearchTool,
+    SubdomainBruteTool, TenthManTool, TodosTool, WebSearchTool,
 };
 
 use crate::terminal::server::TerminalServer;
@@ -406,6 +406,40 @@ impl ToolServer {
             .expect("Failed to build web_search tool");
 
         self.registry.register(web_search_def).await;
+
+        // Register subdomain_brute tool
+        let subdomain_brute_def = DynamicToolBuilder::new(SubdomainBruteTool::NAME.to_string())
+            .description(SubdomainBruteTool::DESCRIPTION.to_string())
+            .input_schema(
+                serde_json::to_value(schemars::schema_for!(
+                    crate::buildin_tools::subdomain_brute::SubdomainBruteArgs
+                ))
+                .unwrap_or_default(),
+            )
+            .source(ToolSource::Builtin)
+            .category("monitor")
+            .executor(|args| async move {
+                use crate::buildin_tools::subdomain_brute::{
+                    SubdomainBruteArgs, SubdomainBruteTool,
+                };
+                use rig::tool::Tool;
+
+                let tool_args: SubdomainBruteArgs = serde_json::from_value(args)
+                    .map_err(|e| format!("Invalid arguments: {}", e))?;
+
+                let tool = SubdomainBruteTool;
+                let result = tool
+                    .call(tool_args)
+                    .await
+                    .map_err(|e| format!("Subdomain brute failed: {}", e))?;
+
+                serde_json::to_value(result)
+                    .map_err(|e| format!("Failed to serialize result: {}", e))
+            })
+            .build()
+            .expect("Failed to build subdomain_brute tool");
+
+        self.registry.register(subdomain_brute_def).await;
 
         // Register search_exploit tool
         let search_exploit_def = DynamicToolBuilder::new(SearchExploitTool::NAME.to_string())
@@ -1291,5 +1325,6 @@ mod tests {
         assert!(server.get_tool("shell").await.is_some());
         assert!(server.get_tool("todos").await.is_some());
         assert!(server.get_tool("web_search").await.is_some());
+        assert!(server.get_tool("subdomain_brute").await.is_some());
     }
 }

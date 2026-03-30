@@ -63,13 +63,27 @@
           <div 
             v-for="port in outputPorts" 
             :key="port.name"
-            class="flex items-center justify-between bg-base-100 rounded px-2 py-1"
+            class="bg-base-100 rounded px-2 py-1"
           >
-            <div class="flex items-center gap-2">
-              <span class="w-2 h-2 rounded-full" :class="getArtifactTypeColor(port.artifact_type)"></span>
-              <span class="text-sm font-mono">{{ port.name }}</span>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full" :class="getArtifactTypeColor(port.artifact_type)"></span>
+                <span class="text-sm font-mono">{{ port.name }}</span>
+              </div>
+              <span class="badge badge-ghost badge-xs">{{ port.artifact_type }}</span>
             </div>
-            <span class="badge badge-ghost badge-xs">{{ port.artifact_type }}</span>
+            <div v-if="port.fields?.length" class="mt-2 space-y-1">
+              <div
+                v-for="field in port.fields"
+                :key="`${port.name}-${field.name}`"
+                class="flex items-center gap-2 text-[11px] text-base-content/70"
+              >
+                <span class="font-mono">{{ field.name }}</span>
+                <span class="badge badge-outline badge-xs">{{ field.field_type }}</span>
+                <span v-if="field.required" class="text-error">*</span>
+                <span v-if="field.description" class="truncate">{{ field.description }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -160,6 +174,14 @@
       </div>
     </div>
 
+    <div v-if="validationError" class="rounded-lg border border-error/30 bg-error/10 p-3 text-sm text-error">
+      <div class="flex items-center gap-2 font-medium">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span>Output Schema Error</span>
+      </div>
+      <div class="mt-1 text-xs leading-5">{{ validationError }}</div>
+    </div>
+
     <!-- Step Config -->
     <div class="collapse collapse-arrow bg-base-200">
       <input type="checkbox" />
@@ -195,6 +217,14 @@ const { t } = useI18n()
 interface PortDef {
   name: string
   artifact_type: string
+  fields?: ArtifactFieldDef[]
+}
+
+interface ArtifactFieldDef {
+  name: string
+  field_type: string
+  required: boolean
+  description?: string
 }
 
 interface InputParamDef {
@@ -236,6 +266,7 @@ const props = defineProps<{
 const inputPorts = ref<InputParamDef[]>([])
 const outputPorts = ref<PortDef[]>([])
 const artifacts = ref<Artifact[]>([])
+const validationError = ref<string>('')
 const rateLimitStatus = ref<any>(null)
 const executionStatus = ref<string>('')
 const retryCount = ref(0)
@@ -323,8 +354,10 @@ const processStepResult = async () => {
       }
     })
     artifacts.value = result.artifacts || []
+    validationError.value = result.validation_error || ''
   } catch (error) {
     console.error('Failed to process step result:', error)
+    validationError.value = String(error)
   }
 }
 

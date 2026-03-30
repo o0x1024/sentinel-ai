@@ -37,10 +37,20 @@ pub struct ParamBindingSpec {
     pub required: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputFieldSpec {
+    pub name: String,
+    pub field_type: String,
+    pub required: bool,
+    pub description: Option<String>,
+}
+
 /// Plugin port registry - known plugin input/output contracts
 pub struct PluginPortRegistry {
     /// plugin_id -> output ports
     output_specs: HashMap<String, Vec<(String, ArtifactType)>>,
+    /// (plugin_id, output_port) -> output field contract
+    output_field_specs: HashMap<(String, String), Vec<OutputFieldSpec>>,
     /// plugin_id -> input binding specs
     input_specs: HashMap<String, Vec<(String, ParamBindingSpec)>>,
 }
@@ -55,10 +65,21 @@ impl PluginPortRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
             output_specs: HashMap::new(),
+            output_field_specs: HashMap::new(),
             input_specs: HashMap::new(),
         };
         registry.register_builtin_plugins();
         registry
+    }
+
+    fn register_output_field_specs(
+        &mut self,
+        plugin_id: &str,
+        port_name: &str,
+        fields: Vec<OutputFieldSpec>,
+    ) {
+        self.output_field_specs
+            .insert((plugin_id.to_string(), port_name.to_string()), fields);
     }
 
     fn register_builtin_plugins(&mut self) {
@@ -110,7 +131,10 @@ impl PluginPortRegistry {
             vec![
                 ("surface_domains".to_string(), ArtifactType::SurfaceDomains),
                 ("surface_ips".to_string(), ArtifactType::SurfaceIps),
-                ("surface_relations".to_string(), ArtifactType::SurfaceRelations),
+                (
+                    "surface_relations".to_string(),
+                    ArtifactType::SurfaceRelations,
+                ),
                 ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
             ],
         );
@@ -131,6 +155,7 @@ impl PluginPortRegistry {
             "http_prober".to_string(),
             vec![
                 ("live_hosts".to_string(), ArtifactType::LiveHosts),
+                ("evidences".to_string(), ArtifactType::Evidence),
                 ("surface_webs".to_string(), ArtifactType::SurfaceWebs),
                 ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
             ],
@@ -145,6 +170,57 @@ impl PluginPortRegistry {
                     required: true,
                 },
             )],
+        );
+        self.register_output_field_specs(
+            "http_prober",
+            "surface_webs",
+            vec![
+                OutputFieldSpec {
+                    name: "canonical_url".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some(
+                        "Normalized absolute URL for the probed web asset".to_string(),
+                    ),
+                },
+                OutputFieldSpec {
+                    name: "scheme".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("URL scheme such as http or https".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "http_status_code".to_string(),
+                    field_type: "integer".to_string(),
+                    required: true,
+                    description: Some("Final HTTP response status code".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "response_headers".to_string(),
+                    field_type: "object".to_string(),
+                    required: true,
+                    description: Some("HTTP response headers as a JSON object".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "content_summary".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some(
+                        "Sanitized response body summary for indexing and display".to_string(),
+                    ),
+                },
+            ],
+        );
+        self.register_output_field_specs(
+            "http_prober",
+            "evidences",
+            vec![
+                OutputFieldSpec { name: "asset_type".to_string(), field_type: "string".to_string(), required: true, description: Some("Owning asset type, typically web".to_string()) },
+                OutputFieldSpec { name: "asset_key".to_string(), field_type: "string".to_string(), required: true, description: Some("Owning asset identity, typically canonical_url".to_string()) },
+                OutputFieldSpec { name: "evidence_type".to_string(), field_type: "string".to_string(), required: true, description: Some("Evidence category such as http_response_headers or http_response_body_summary".to_string()) },
+                OutputFieldSpec { name: "title".to_string(), field_type: "string".to_string(), required: true, description: Some("Human-readable evidence title".to_string()) },
+                OutputFieldSpec { name: "content_text|content_path|content_json".to_string(), field_type: "union".to_string(), required: true, description: Some("At least one payload field must be provided".to_string()) },
+            ],
         );
 
         // Tech Fingerprinter
@@ -169,6 +245,68 @@ impl PluginPortRegistry {
                 },
             )],
         );
+        self.register_output_field_specs(
+            "tech_fingerprinter",
+            "surface_fingerprints",
+            vec![
+                OutputFieldSpec {
+                    name: "asset_type".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Resolved asset type such as web or service".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "asset_key".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Resolved asset identity".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "fingerprint_type".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some(
+                        "Fingerprint source such as header, html, favicon, banner".to_string(),
+                    ),
+                },
+                OutputFieldSpec {
+                    name: "fingerprint_value".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Observed raw fingerprint value".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_id".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched fingerprint rule id".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_word".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched dictionary word key".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_name".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched rule display name".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "normalized_product".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Normalized product name for aggregation".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "normalized_category".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Normalized category for aggregation".to_string()),
+                },
+            ],
+        );
 
         // Favicon Fingerprinter
         self.output_specs.insert(
@@ -177,6 +315,66 @@ impl PluginPortRegistry {
                 "surface_fingerprints".to_string(),
                 ArtifactType::SurfaceFingerprints,
             )],
+        );
+        self.register_output_field_specs(
+            "favicon_fingerprinter",
+            "surface_fingerprints",
+            vec![
+                OutputFieldSpec {
+                    name: "asset_type".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Resolved asset type, typically web".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "asset_key".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Resolved asset identity".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "fingerprint_type".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Should be favicon for favicon matches".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "fingerprint_value".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Observed favicon hash or normalized signature".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_id".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched favicon rule id".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_word".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched favicon dictionary word".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_name".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched favicon rule name".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "normalized_product".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Normalized product name".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "normalized_category".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Normalized category".to_string()),
+                },
+            ],
         );
         self.input_specs.insert(
             "favicon_fingerprinter".to_string(),
@@ -321,7 +519,10 @@ impl PluginPortRegistry {
             "port_monitor".to_string(),
             vec![
                 ("surface_ports".to_string(), ArtifactType::SurfacePorts),
-                ("surface_services".to_string(), ArtifactType::SurfaceServices),
+                (
+                    "surface_services".to_string(),
+                    ArtifactType::SurfaceServices,
+                ),
                 ("surface_changes".to_string(), ArtifactType::SurfaceChanges),
                 ("surface_bundle".to_string(), ArtifactType::SurfaceBundle),
             ],
@@ -338,11 +539,14 @@ impl PluginPortRegistry {
             )],
         );
 
-        // Service Fingerprinter
+        // Service Probe
         self.output_specs.insert(
-            "service_fingerprinter".to_string(),
+            "service_probe".to_string(),
             vec![
-                ("surface_services".to_string(), ArtifactType::SurfaceServices),
+                (
+                    "surface_services".to_string(),
+                    ArtifactType::SurfaceServices,
+                ),
                 (
                     "surface_fingerprints".to_string(),
                     ArtifactType::SurfaceFingerprints,
@@ -351,7 +555,7 @@ impl PluginPortRegistry {
             ],
         );
         self.input_specs.insert(
-            "service_fingerprinter".to_string(),
+            "service_probe".to_string(),
             vec![(
                 "targets".to_string(),
                 ParamBindingSpec {
@@ -360,6 +564,66 @@ impl PluginPortRegistry {
                     required: true,
                 },
             )],
+        );
+        self.register_output_field_specs(
+            "service_probe",
+            "surface_fingerprints",
+            vec![
+                OutputFieldSpec {
+                    name: "asset_type".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Resolved asset type, typically service".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "asset_key".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Resolved service asset identity".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "fingerprint_type".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Fingerprint source such as banner or protocol".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "fingerprint_value".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Observed banner or protocol fingerprint value".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_id".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched service rule id".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_word".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched service dictionary word".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "rule_name".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Matched service rule name".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "normalized_product".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Normalized service product".to_string()),
+                },
+                OutputFieldSpec {
+                    name: "normalized_category".to_string(),
+                    field_type: "string".to_string(),
+                    required: true,
+                    description: Some("Normalized service category".to_string()),
+                },
+            ],
         );
 
         // Certificate Monitor
@@ -395,6 +659,15 @@ impl PluginPortRegistry {
     /// Get input specs for a plugin
     pub fn get_input_specs(&self, plugin_id: &str) -> Option<&Vec<(String, ParamBindingSpec)>> {
         self.input_specs.get(plugin_id)
+    }
+
+    pub fn get_output_field_specs(
+        &self,
+        plugin_id: &str,
+        port_name: &str,
+    ) -> Option<&Vec<OutputFieldSpec>> {
+        self.output_field_specs
+            .get(&(plugin_id.to_string(), port_name.to_string()))
     }
 }
 

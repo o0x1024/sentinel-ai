@@ -6,6 +6,26 @@
       </h3>
 
       <form class="space-y-4" @submit.prevent="submit">
+        <div v-if="!editing && starterTemplates.length > 0" class="rounded-lg border border-base-300 bg-base-200/50 p-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div class="font-medium">快速模板</div>
+              <div class="text-sm text-base-content/70">先填一组常见字段和 matcher，再按你的资产场景微调。</div>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+              <button
+                v-for="template in starterTemplates"
+                :key="template.key"
+                type="button"
+                class="btn btn-sm btn-outline"
+                @click="applyStarterTemplate(template.key)"
+              >
+                {{ template.label }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div class="form-control md:col-span-2">
             <label class="label">
@@ -136,6 +156,167 @@
                 type="text"
                 class="input input-bordered"
                 placeholder="例如: Jenkins"
+              >
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">服务名</span>
+              </label>
+              <input
+                v-model.trim="form.service"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: http / ssh / redis"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">协议</span>
+              </label>
+              <input
+                v-model.trim="form.protocol"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: tcp / http / https"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">Probe 名称</span>
+              </label>
+              <input
+                v-model.trim="form.probeName"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: tcp_banner / http_head"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label cursor-pointer justify-start gap-3">
+                <input v-model="form.softmatch" type="checkbox" class="checkbox checkbox-primary">
+                <span class="label-text">Softmatch</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">资产分类</span>
+              </label>
+              <input
+                v-model.trim="form.assetCategory"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: web_server / router / middleware"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">资产家族</span>
+              </label>
+              <input
+                v-model.trim="form.assetFamily"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: network_device / observability"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">厂商</span>
+              </label>
+              <input
+                v-model.trim="form.vendor"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: Cisco / VMware / HashiCorp"
+              >
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">别名</span>
+              </label>
+              <input
+                v-model.trim="form.aliasesText"
+                type="text"
+                class="input input-bordered"
+                placeholder="用逗号分隔，例如 nginx,openresty"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">版本</span>
+              </label>
+              <input
+                v-model.trim="form.version"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: 1.24.0"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">优先级</span>
+              </label>
+              <input
+                v-model.number="form.priority"
+                type="number"
+                min="0"
+                step="1"
+                class="input input-bordered"
+                placeholder="数字越大越优先"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">规则 ID</span>
+              </label>
+              <input
+                v-model.trim="form.ruleId"
+                type="text"
+                class="input input-bordered"
+                placeholder="留空则按词条标识生成"
+              >
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">端口列表</span>
+              </label>
+              <input
+                v-model.trim="form.portsText"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: 80,443,8080 或 8000-8005"
+              >
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">SSL 端口列表</span>
+              </label>
+              <input
+                v-model.trim="form.sslPortsText"
+                type="text"
+                class="input input-bordered"
+                placeholder="例如: 443,8443"
               >
             </div>
           </div>
@@ -365,6 +546,9 @@
                   <option value="title">title</option>
                   <option value="header">header</option>
                   <option value="status">status</option>
+                  <option value="banner">banner</option>
+                  <option value="product">product</option>
+                  <option value="service">service</option>
                 </select>
               </div>
 
@@ -468,6 +652,10 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import {
+  getRuleStarterTemplate,
+  getRuleStarterTemplates,
+} from '@/components/Dictionary/ruleStarterTemplates'
 
 interface RuleMatcherForm {
   part: string
@@ -487,6 +675,7 @@ interface RuleEntryValue {
 const props = defineProps<{
   open: boolean
   dictionaryType: string
+  dictionarySubtype?: string
   value: RuleEntryValue | null
 }>()
 
@@ -497,7 +686,46 @@ const emit = defineEmits<{
 
 const handledMetadataKeysByType: Record<string, string[]> = {
   sensitive_file: ['path', 'severity', 'tags', 'description', 'cwe', 'remediation', 'matchers'],
-  fingerprint_rule: ['name', 'product', 'confidence', 'operator', 'matchers'],
+  fingerprint_rule: [
+    'name',
+    'service',
+    'product',
+    'vendor',
+    'version',
+    'asset_category',
+    'asset_family',
+    'rule_id',
+    'protocol',
+    'probeName',
+    'ports',
+    'sslPorts',
+    'softmatch',
+    'aliases',
+    'priority',
+    'confidence',
+    'operator',
+    'matchers',
+  ],
+  service_probe_rule: [
+    'name',
+    'service',
+    'product',
+    'vendor',
+    'version',
+    'asset_category',
+    'asset_family',
+    'rule_id',
+    'protocol',
+    'probeName',
+    'ports',
+    'sslPorts',
+    'softmatch',
+    'aliases',
+    'priority',
+    'confidence',
+    'operator',
+    'matchers',
+  ],
   poc_rule: [
     'name',
     'finding_type',
@@ -527,7 +755,20 @@ const form = reactive({
   cwe: '',
   remediation: '',
   name: '',
+  service: '',
   product: '',
+  vendor: '',
+  version: '',
+  assetCategory: '',
+  assetFamily: '',
+  ruleId: '',
+  protocol: '',
+  probeName: '',
+  portsText: '',
+  sslPortsText: '',
+  softmatch: false,
+  aliasesText: '',
+  priority: 100,
   confidence: 0.8,
   operator: 'or',
   findingType: 'risk_verification',
@@ -549,10 +790,15 @@ const validationError = ref('')
 const errorMessage = computed(() => validationError.value)
 
 const isSensitiveFile = computed(() => props.dictionaryType === 'sensitive_file')
-const isFingerprintRule = computed(() => props.dictionaryType === 'fingerprint_rule')
+const isFingerprintRule = computed(() =>
+  props.dictionaryType === 'fingerprint_rule' || props.dictionaryType === 'service_probe_rule'
+)
 const isPocRule = computed(() => props.dictionaryType === 'poc_rule')
 const showMatchers = computed(() => isSensitiveFile.value || isFingerprintRule.value || isPocRule.value)
 const editing = computed(() => Boolean(props.value?.id))
+const starterTemplates = computed(() =>
+  getRuleStarterTemplates(props.dictionaryType, props.dictionarySubtype)
+)
 const previewResult = computed(() => {
   try {
     return {
@@ -612,7 +858,24 @@ function resetForm() {
   form.cwe = metadata.cwe || ''
   form.remediation = metadata.remediation || ''
   form.name = metadata.name || ''
+  form.service = metadata.service || ''
   form.product = metadata.product || ''
+  form.vendor = metadata.vendor || ''
+  form.version = metadata.version || ''
+  form.assetCategory = metadata.asset_category || ''
+  form.assetFamily = metadata.asset_family || ''
+  form.ruleId = metadata.rule_id || ''
+  form.protocol = metadata.protocol || ''
+  form.probeName = metadata.probeName || metadata.probe_name || ''
+  form.portsText = Array.isArray(metadata.ports) ? metadata.ports.join(',') : ''
+  form.sslPortsText = Array.isArray(metadata.sslPorts)
+    ? metadata.sslPorts.join(',')
+    : Array.isArray(metadata.ssl_ports)
+      ? metadata.ssl_ports.join(',')
+      : ''
+  form.softmatch = metadata.softmatch === true
+  form.aliasesText = Array.isArray(metadata.aliases) ? metadata.aliases.join(',') : ''
+  form.priority = Number(metadata.priority ?? 100)
   form.confidence = Number(metadata.confidence ?? 0.8)
   form.operator = metadata.operator || 'or'
   form.findingType = metadata.finding_type || 'risk_verification'
@@ -658,6 +921,46 @@ function addMatcher() {
   })
 }
 
+function applyStarterTemplate(key: string) {
+  const template = getRuleStarterTemplate(props.dictionaryType, props.dictionarySubtype, key)
+  if (!template) return
+  const payload = template.payload
+
+  form.word = payload.word ?? form.word
+  form.category = payload.category ?? form.category
+  form.severity = payload.severity ?? form.severity
+  form.name = payload.name ?? form.name
+  form.service = payload.service ?? form.service
+  form.product = payload.product ?? form.product
+  form.vendor = payload.vendor ?? form.vendor
+  form.assetCategory = payload.assetCategory ?? form.assetCategory
+  form.assetFamily = payload.assetFamily ?? form.assetFamily
+  form.protocol = payload.protocol ?? form.protocol
+  form.probeName = payload.probeName ?? form.probeName
+  form.portsText = payload.portsText ?? form.portsText
+  form.sslPortsText = payload.sslPortsText ?? form.sslPortsText
+  form.softmatch = payload.softmatch ?? form.softmatch
+  form.priority = payload.priority ?? form.priority
+  form.confidence = payload.confidence ?? form.confidence
+  form.operator = payload.operator ?? form.operator
+  form.findingType = payload.findingType ?? form.findingType
+  form.requestMethod = payload.requestMethod ?? form.requestMethod
+  form.requestPath = payload.requestPath ?? form.requestPath
+  form.timeoutMs = payload.timeoutMs ?? form.timeoutMs
+  form.safeMode = payload.safeMode ?? form.safeMode
+  form.targetTypesText = payload.targetTypesText ?? form.targetTypesText
+  form.fingerprintScopeText = payload.fingerprintScopeText ?? form.fingerprintScopeText
+  form.productScopeText = payload.productScopeText ?? form.productScopeText
+  form.vendorScopeText = payload.vendorScopeText ?? form.vendorScopeText
+  form.portScopeText = payload.portScopeText ?? form.portScopeText
+  form.matchers = (payload.matchers || []).map(matcher => ({
+    part: matcher.part,
+    type: matcher.type,
+    key: matcher.key || '',
+    valueText: matcher.valueText || '',
+  }))
+}
+
 function removeMatcher(index: number) {
   form.matchers.splice(index, 1)
 }
@@ -667,6 +970,30 @@ function parseCommaSeparated(value: string): string[] {
     .split(',')
     .map(item => item.trim())
     .filter(Boolean)
+}
+
+function parsePortList(value: string): number[] {
+  const ports = new Set<number>()
+
+  for (const item of parseCommaSeparated(value)) {
+    const range = item.split('-').map(part => Number(part.trim()))
+    if (range.length === 2 && Number.isInteger(range[0]) && Number.isInteger(range[1])) {
+      const [start, end] = range[0] <= range[1] ? range : [range[1], range[0]]
+      for (let port = start; port <= end; port += 1) {
+        if (port > 0 && port <= 65535) {
+          ports.add(port)
+        }
+      }
+      continue
+    }
+
+    const port = Number(item)
+    if (Number.isInteger(port) && port > 0 && port <= 65535) {
+      ports.add(port)
+    }
+  }
+
+  return Array.from(ports).sort((left, right) => left - right)
 }
 
 function buildMatchers() {
@@ -724,7 +1051,21 @@ function buildRulePayload(): RuleEntryValue {
 
   if (isFingerprintRule.value) {
     metadata.name = form.name.trim() || form.word.trim()
+    metadata.service = form.service.trim() || undefined
     metadata.product = form.product.trim() || undefined
+    metadata.vendor = form.vendor.trim() || undefined
+    metadata.version = form.version.trim() || undefined
+    metadata.asset_category = form.assetCategory.trim() || undefined
+    metadata.asset_family = form.assetFamily.trim() || undefined
+    metadata.rule_id = form.ruleId.trim() || undefined
+    metadata.protocol = form.protocol.trim() || undefined
+    metadata.probeName = form.probeName.trim() || undefined
+    metadata.ports = parsePortList(form.portsText)
+    metadata.sslPorts = parsePortList(form.sslPortsText)
+    metadata.softmatch = form.softmatch
+    const aliases = parseCommaSeparated(form.aliasesText)
+    if (aliases.length > 0) metadata.aliases = aliases
+    metadata.priority = Number.isFinite(Number(form.priority)) ? Number(form.priority) : 100
     metadata.confidence = Number(form.confidence)
     metadata.operator = form.operator
     metadata.matchers = buildMatchers()

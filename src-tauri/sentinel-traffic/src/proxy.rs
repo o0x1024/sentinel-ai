@@ -703,6 +703,54 @@ impl TrafficProxyHandler {
             .and_then(|mut g| g.take())
     }
 
+    fn is_internal_request(req: &Request<Body>) -> bool {
+        req.headers()
+            .iter()
+            .find(|(key, _)| key.as_str().eq_ignore_ascii_case("x-sentinel-internal"))
+            .and_then(|(_, value)| value.to_str().ok())
+            .map(|value| value == "true" || value == "1")
+            .unwrap_or(false)
+    }
+
+    fn normalize_internal_request_uri(req: Request<Body>) -> Request<Body> {
+        if req.method() == hyper::Method::CONNECT {
+            return req;
+        }
+
+        if req.uri().scheme().is_some() && req.uri().authority().is_some() {
+            return req;
+        }
+
+        let host = req
+            .headers()
+            .get("host")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        let Some(host) = host else {
+            return req;
+        };
+
+        let path_and_query = req
+            .uri()
+            .path_and_query()
+            .map(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("/");
+
+        let Some(normalized_uri) = format!("http://{}{}", host, path_and_query)
+            .parse::<hyper::Uri>()
+            .ok()
+        else {
+            return req;
+        };
+
+        let (mut parts, body) = req.into_parts();
+        parts.uri = normalized_uri;
+        Request::from_parts(parts, body)
+    }
+
     /// 从 CONNECT 请求中提取 host（去掉端口）
     fn parse_connect_host(req: &Request<Body>) -> Option<String> {
         // CONNECT 请求的 URI 通常为 authority 形式，如 host:443
@@ -1495,6 +1543,16 @@ impl HttpHandler for TrafficProxyHandler {
     }
 
     async fn handle_request(&mut self, ctx: &HttpContext, req: Request<Body>) -> RequestOrResponse {
+        if Self::is_internal_request(&req) {
+            let normalized_req = Self::normalize_internal_request_uri(req);
+            debug!(
+                "Bypassing capture pipeline for internal request: {} {}",
+                normalized_req.method(),
+                normalized_req.uri()
+            );
+            return RequestOrResponse::Request(normalized_req);
+        }
+
         let method = req.method().clone();
         let uri = req.uri().clone();
 

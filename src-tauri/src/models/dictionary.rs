@@ -29,6 +29,8 @@ pub enum DictionaryType {
     ApiEndpoint,
     /// 自定义字典
     Custom(String),
+    /// 服务识别规则字典
+    ServiceProbeRule,
 }
 
 impl ToString for DictionaryType {
@@ -45,6 +47,7 @@ impl ToString for DictionaryType {
             DictionaryType::Extension => "extension".to_string(),
             DictionaryType::Port => "port".to_string(),
             DictionaryType::ApiEndpoint => "api_endpoint".to_string(),
+            DictionaryType::ServiceProbeRule => "service_probe_rule".to_string(),
             DictionaryType::Custom(name) => format!("custom_{}", name),
         }
     }
@@ -64,6 +67,7 @@ impl From<String> for DictionaryType {
             "extension" => DictionaryType::Extension,
             "port" => DictionaryType::Port,
             "api_endpoint" => DictionaryType::ApiEndpoint,
+            "service_probe_rule" => DictionaryType::ServiceProbeRule,
             custom if custom.starts_with("custom_") => {
                 DictionaryType::Custom(custom.strip_prefix("custom_").unwrap_or("").to_string())
             }

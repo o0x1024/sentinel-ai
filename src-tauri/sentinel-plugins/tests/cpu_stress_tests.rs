@@ -112,6 +112,7 @@ async fn test_regex_backtracking_explosion() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -145,6 +146,7 @@ export function scan_transaction(transaction) {
         vuln_type: "regex_test",
         title: "Regex Backtracking Test",
         description: "Tested " + dangerousPatterns.length + " patterns, " + matchCount + " matches",
+        target_asset_types: vec![],
         evidence: "regex_backtracking",
         location: "body",
         severity: "info",
@@ -186,6 +188,7 @@ async fn test_large_data_sorting() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -221,6 +224,7 @@ export function scan_transaction(transaction) {
         vuln_type: "sort_test",
         title: "Large Data Sorting Test",
         description: "Processed " + dataSize + " items, " + Object.keys(grouped).length + " groups",
+        target_asset_types: vec![],
         evidence: "data_sorting",
         location: "computation",
         severity: "info",
@@ -262,6 +266,7 @@ async fn test_recursive_algorithms() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -304,6 +309,7 @@ export function scan_transaction(transaction) {
         vuln_type: "recursive_test",
         title: "Recursive Algorithms Test",
         description: "fib(20)=" + fib20 + ", fact(10)=" + fact10 + ", ack(3,4)=" + ack,
+        target_asset_types: vec![],
         evidence: "recursive_computation",
         location: "computation",
         severity: "info",
@@ -345,6 +351,7 @@ async fn test_intensive_math_computation() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -404,6 +411,7 @@ export function scan_transaction(transaction) {
         vuln_type: "math_test",
         title: "Intensive Math Test",
         description: "Found " + primes.length + " primes, matrix " + size + "x" + size,
+        target_asset_types: vec![],
         evidence: "math_computation",
         location: "computation",
         severity: "info",
@@ -445,6 +453,7 @@ async fn test_string_processing_intensive() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -487,6 +496,7 @@ export function scan_transaction(transaction) {
         vuln_type: "string_test",
         title: "String Processing Test",
         description: "Processed string operations",
+        target_asset_types: vec![],
         evidence: "string_processing",
         location: "computation",
         severity: "info",
@@ -528,6 +538,7 @@ async fn test_concurrent_cpu_intensive() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -554,6 +565,7 @@ export function scan_transaction(transaction) {
         vuln_type: "concurrent_cpu_test",
         title: "Concurrent CPU Test",
         description: "Processed " + data.length + " items",
+        target_asset_types: vec![],
         evidence: "concurrent_cpu",
         location: "computation",
         severity: "info",

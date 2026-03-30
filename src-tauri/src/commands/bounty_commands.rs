@@ -4,8 +4,7 @@ use super::bounty_workflow_event_support::{
     bounty_trigger_workflows_for_event_internal, run_workflow_template_with_inputs,
 };
 use crate::commands::workflow_notification_support::{
-    build_workflow_result_summary_event, emit_workflow_result_summary,
-    summarize_workflow_results,
+    build_workflow_result_summary_event, emit_workflow_result_summary, summarize_workflow_results,
 };
 use chrono::Utc;
 use sentinel_bounty::services::{
@@ -14,8 +13,8 @@ use sentinel_bounty::services::{
     UpdateSubmissionInput,
 };
 use sentinel_db::{
-    BountyAssetRow, BountyAssetStats, BountyChangeEventRow, BountyChangeEventStats,
-    BountyEvidenceRow, BountyFindingRow, BountyFindingStats, BountyProgramRow, BountySubmissionRow,
+    BountyAssetRow, BountyChangeEventRow, BountyChangeEventStats, BountyEvidenceRow,
+    BountyFindingRow, BountyFindingStats, BountyProgramRow, BountySubmissionRow,
     BountySubmissionStats, BountyWorkflowBindingRow, BountyWorkflowTemplateRow, Database,
     DatabaseService, ProgramScopeRow,
 };
@@ -2188,14 +2187,15 @@ fn build_builtin_workflow_templates() -> Vec<BountyWorkflowTemplateRow> {
         },
         WorkflowStepDefinition {
             id: "step_service_fp".to_string(),
-            name: "Service Fingerprint".to_string(),
+            name: "Service Probe".to_string(),
             step_type: "plugin".to_string(),
             tool_name: None,
-            plugin_id: Some("service_fingerprinter".to_string()),
+            plugin_id: Some("service_probe".to_string()),
             config: serde_json::json!({
                 "targets": [],
                 "readBanner": true,
                 "followHttpRedirects": true,
+                "serviceProbeEngine": "native",
             }),
             depends_on: vec!["step_port_monitor".to_string()],
             input_mappings: vec![],
@@ -2594,7 +2594,8 @@ pub(crate) async fn execute_workflow_steps(
         status
     );
 
-    if let Some((findings_count, asset_count)) = summarize_workflow_results(&step_results, errors.len())
+    if let Some((findings_count, asset_count)) =
+        summarize_workflow_results(&step_results, errors.len())
     {
         let workflow_name = db
             .get_workflow_run_detail(&execution_id)
@@ -3587,20 +3588,6 @@ pub struct CreateAssetRequest {
     pub labels: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssetFilter {
-    pub program_id: Option<String>,
-    pub scope_id: Option<String>,
-    pub asset_type: Option<String>,
-    pub is_alive: Option<bool>,
-    pub has_findings: Option<bool>,
-    pub search: Option<String>,
-    pub sort_by: Option<String>,
-    pub sort_dir: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-}
-
 /// Canonicalize a URL
 fn canonicalize_url(
     url: &str,
@@ -3767,78 +3754,6 @@ pub async fn bounty_create_asset(
         .await
         .map_err(|e| e.to_string())?;
     Ok(asset)
-}
-
-/// Get a bounty asset by ID
-#[tauri::command]
-pub async fn bounty_get_asset(
-    db_service: State<'_, Arc<DatabaseService>>,
-    id: String,
-) -> Result<Option<BountyAssetRow>, String> {
-    db_service
-        .get_bounty_asset(&id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// List bounty assets
-#[tauri::command]
-pub async fn bounty_list_assets(
-    db_service: State<'_, Arc<DatabaseService>>,
-    filter: AssetFilter,
-) -> Result<Vec<BountyAssetRow>, String> {
-    db_service
-        .list_bounty_assets(
-            filter.program_id.as_deref(),
-            filter.scope_id.as_deref(),
-            filter.asset_type.as_deref(),
-            filter.is_alive,
-            filter.has_findings,
-            filter.search.as_deref(),
-            filter.sort_by.as_deref(),
-            filter.sort_dir.as_deref(),
-            filter.limit,
-            filter.offset,
-        )
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Delete a bounty asset
-#[tauri::command]
-pub async fn bounty_delete_asset(
-    db_service: State<'_, Arc<DatabaseService>>,
-    id: String,
-) -> Result<bool, String> {
-    db_service
-        .delete_bounty_asset(&id)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Get bounty asset statistics
-#[tauri::command]
-pub async fn bounty_get_asset_stats(
-    db_service: State<'_, Arc<DatabaseService>>,
-    program_id: Option<String>,
-) -> Result<BountyAssetStats, String> {
-    db_service
-        .get_bounty_asset_stats(program_id.as_deref())
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Get top priority assets
-#[tauri::command]
-pub async fn bounty_get_top_priority_assets(
-    db_service: State<'_, Arc<DatabaseService>>,
-    program_id: String,
-    limit: Option<i64>,
-) -> Result<Vec<BountyAssetRow>, String> {
-    db_service
-        .get_top_priority_assets(&program_id, limit.unwrap_or(10))
-        .await
-        .map_err(|e| e.to_string())
 }
 
 /// Bulk import assets from scope
@@ -5020,6 +4935,7 @@ pub struct ProcessedArtifact {
 pub struct ProcessStepOutputResponse {
     pub artifacts: Vec<ProcessedArtifact>,
     pub summary: ArtifactSummaryResponse,
+    pub validation_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -5053,8 +4969,14 @@ pub async fn bounty_process_step_output(
         target_host: None,
     };
 
-    let artifacts =
-        orchestrator.process_step_output(&step, &request.execution_id, &request.raw_output);
+    let (artifacts, validation_error) = match orchestrator.try_process_step_output(
+        &step,
+        &request.execution_id,
+        &request.raw_output,
+    ) {
+        Ok(artifacts) => (artifacts, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
 
     let mut summary = ArtifactSummaryResponse::default();
     let processed: Vec<ProcessedArtifact> = artifacts
@@ -5086,6 +5008,7 @@ pub async fn bounty_process_step_output(
     Ok(ProcessStepOutputResponse {
         artifacts: processed,
         summary,
+        validation_error,
     })
 }
 
@@ -5509,6 +5432,15 @@ pub struct PluginPortInfo {
 pub struct PortDef {
     pub name: String,
     pub artifact_type: String,
+    pub fields: Vec<ArtifactFieldDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactFieldDef {
+    pub name: String,
+    pub field_type: String,
+    pub required: bool,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5534,6 +5466,18 @@ pub async fn bounty_get_plugin_ports(plugin_id: String) -> Result<Option<PluginP
                 .map(|(name, atype)| PortDef {
                     name: name.clone(),
                     artifact_type: atype.as_str().to_string(),
+                    fields: registry
+                        .get_output_field_specs(&plugin_id, name)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|field| ArtifactFieldDef {
+                            name: field.name,
+                            field_type: field.field_type,
+                            required: field.required,
+                            description: field.description,
+                        })
+                        .collect(),
                 })
                 .collect()
         })
@@ -5581,7 +5525,7 @@ pub async fn bounty_list_plugin_ports() -> Result<Vec<PluginPortInfo>, String> {
         "tech_fingerprinter",
         "favicon_fingerprinter",
         "port_monitor",
-        "service_fingerprinter",
+        "service_probe",
         "cert_monitor",
         "directory_bruteforcer",
         "js_analyzer",
@@ -5604,6 +5548,18 @@ pub async fn bounty_list_plugin_ports() -> Result<Vec<PluginPortInfo>, String> {
                     .map(|(name, atype)| PortDef {
                         name: name.clone(),
                         artifact_type: atype.as_str().to_string(),
+                        fields: registry
+                            .get_output_field_specs(plugin_id, name)
+                            .cloned()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|field| ArtifactFieldDef {
+                                name: field.name,
+                                field_type: field.field_type,
+                                required: field.required,
+                                description: field.description,
+                            })
+                            .collect(),
                     })
                     .collect()
             })

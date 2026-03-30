@@ -963,8 +963,7 @@ pub async fn execute_workflow_steps(
                 // 如果启用了使用输入作为内容，从统一解析后的 input 字段获取数据
                 if use_input_as_content {
                     if let Some(input_value) = resolved_inputs.get("input") {
-                        content =
-                            serde_json::to_string_pretty(input_value).unwrap_or(content);
+                        content = serde_json::to_string_pretty(input_value).unwrap_or(content);
                     }
                 }
 

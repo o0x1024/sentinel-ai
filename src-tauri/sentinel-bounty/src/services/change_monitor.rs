@@ -58,7 +58,10 @@ impl MonitorPluginConfig {
         plugins
     }
 
-    pub fn resolved_target_asset_types(&self, plugin_metadata_target_asset_types: &[String]) -> Vec<String> {
+    pub fn resolved_target_asset_types(
+        &self,
+        plugin_metadata_target_asset_types: &[String],
+    ) -> Vec<String> {
         if !self.target_asset_types.is_empty() {
             return self
                 .target_asset_types
@@ -83,15 +86,57 @@ impl MonitorPluginConfig {
     }
 }
 
+fn ensure_service_probe_engine_default(plugin: &mut MonitorPluginConfig) {
+    let normalized_plugin_id = plugin
+        .plugin_id
+        .strip_prefix("plugin__")
+        .unwrap_or(&plugin.plugin_id);
+    if !matches!(normalized_plugin_id, "service_monitor" | "service_probe") {
+        return;
+    }
+
+    let current = plugin
+        .plugin_params
+        .get("serviceProbeEngine")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .map(str::to_lowercase);
+
+    if matches!(current.as_deref(), Some("native")) {
+        return;
+    }
+
+    let mut params = plugin
+        .plugin_params
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    params.insert(
+        "serviceProbeEngine".to_string(),
+        serde_json::Value::String("native".to_string()),
+    );
+    plugin.plugin_params = serde_json::Value::Object(params);
+}
+
 fn default_target_asset_types_for_plugin(plugin_id: &str) -> Vec<&'static str> {
     let normalized = plugin_id.strip_prefix("plugin__").unwrap_or(plugin_id);
     match normalized {
-        "sensitive_file_scanner" | "http_prober" | "tech_fingerprinter"
-        | "favicon_fingerprinter" | "content_monitor" | "api_monitor" | "js_analyzer"
-        | "js_link_finder" | "risk_scanner" => vec!["web"],
-        "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" | "cert_monitor"
-        | "ssl_scanner" => vec!["domain"],
-        "port_monitor" | "service_fingerprinter" | "service_monitor" => vec!["service"],
+        "http_prober" => vec!["web", "domain", "service"],
+        "sensitive_file_scanner"
+        | "tech_fingerprinter"
+        | "favicon_fingerprinter"
+        | "content_monitor"
+        | "api_monitor"
+        | "js_analyzer"
+        | "js_link_finder"
+        | "risk_scanner" => vec!["web"],
+        "subdomain_enumerator"
+        | "dns_resolver"
+        | "subdomain_brute"
+        | "cert_monitor"
+        | "ssl_scanner" => vec!["domain", "service"],
+        "port_monitor" => vec!["ip"],
+        "service_monitor" | "service_probe" => vec!["service"],
         "cidr_mapper" => vec!["ip"],
         _ => vec![],
     }
@@ -105,6 +150,13 @@ pub struct ChangeMonitorConfig {
     /// Plugin configuration for DNS monitoring
     #[serde(default)]
     pub dns_plugins: Vec<MonitorPluginConfig>,
+
+    /// Enable domain-driven IP resolution monitoring
+    #[serde(default)]
+    pub enable_ip_monitoring: bool,
+    /// Plugin configuration for IP resolution monitoring
+    #[serde(default)]
+    pub ip_plugins: Vec<MonitorPluginConfig>,
 
     /// Enable certificate change monitoring
     pub enable_cert_monitoring: bool,
@@ -163,10 +215,13 @@ impl Default for ChangeMonitorConfig {
     fn default() -> Self {
         Self {
             enable_dns_monitoring: true,
-            dns_plugins: vec![MonitorPluginConfig::with_fallbacks(
-                "subdomain_enumerator".to_string(),
-                vec!["dns_resolver".to_string()],
-            )],
+            dns_plugins: vec![
+                MonitorPluginConfig::new("subdomain_enumerator".to_string()),
+                MonitorPluginConfig::new("subdomain_brute".to_string()),
+            ],
+
+            enable_ip_monitoring: true,
+            ip_plugins: vec![MonitorPluginConfig::new("dns_resolver".to_string())],
 
             enable_cert_monitoring: true,
             cert_plugins: vec![MonitorPluginConfig::new("cert_monitor".to_string())],
@@ -183,7 +238,7 @@ impl Default for ChangeMonitorConfig {
             enable_service_monitoring: true,
             service_plugins: vec![MonitorPluginConfig::with_fallbacks(
                 "service_monitor".to_string(),
-                vec!["service_fingerprinter".to_string()],
+                vec!["service_probe".to_string()],
             )],
 
             enable_web_monitoring: true,
@@ -214,6 +269,14 @@ impl ChangeMonitorConfig {
     /// Get all certificate plugin IDs
     pub fn cert_plugin_ids(&self) -> Vec<String> {
         self.cert_plugins
+            .iter()
+            .flat_map(|p| p.all_plugins())
+            .collect()
+    }
+
+    /// Get all IP plugin IDs
+    pub fn ip_plugin_ids(&self) -> Vec<String> {
+        self.ip_plugins
             .iter()
             .flat_map(|p| p.all_plugins())
             .collect()
@@ -268,37 +331,87 @@ impl ChangeMonitorConfig {
     }
 
     pub fn migrate_legacy_port_service_plugins(&mut self) {
+        let mut migrated_ip_plugins = Vec::new();
+        let mut normalized_dns_plugins = Vec::new();
+
+        for mut plugin in self.dns_plugins.drain(..) {
+            if plugin.plugin_id == "dns_resolver" {
+                migrated_ip_plugins.push(plugin);
+                continue;
+            }
+
+            let (ip_fallbacks, retained_fallbacks): (Vec<_>, Vec<_>) = plugin
+                .fallback_plugins
+                .into_iter()
+                .partition(|fallback| fallback == "dns_resolver");
+            plugin.fallback_plugins = retained_fallbacks;
+
+            if !ip_fallbacks.is_empty() {
+                migrated_ip_plugins.push(MonitorPluginConfig::new("dns_resolver".to_string()));
+            }
+
+            normalized_dns_plugins.push(plugin);
+        }
+
+        self.dns_plugins = normalized_dns_plugins;
+
+        if self.ip_plugins.is_empty() && !migrated_ip_plugins.is_empty() {
+            self.ip_plugins = migrated_ip_plugins;
+        }
+
+        if !self.ip_plugins.is_empty() {
+            self.enable_ip_monitoring = true;
+        }
+
         let mut migrated_service_plugins = Vec::new();
         let mut normalized_port_plugins = Vec::new();
 
         for mut plugin in self.port_plugins.drain(..) {
-            if plugin.plugin_id == "service_fingerprinter" || plugin.plugin_id == "service_monitor" {
+            if plugin.plugin_id == "service_fingerprinter" {
+                plugin.plugin_id = "service_probe".to_string();
+            }
+            if matches!(
+                plugin.plugin_id.as_str(),
+                "service_monitor" | "service_probe"
+            ) {
                 migrated_service_plugins.push(plugin);
                 continue;
             }
 
-            let (service_fallbacks, retained_fallbacks): (Vec<_>, Vec<_>) = plugin
-                .fallback_plugins
-                .into_iter()
-                .partition(|fallback| fallback == "service_fingerprinter" || fallback == "service_monitor");
+            let (service_fallbacks, retained_fallbacks): (Vec<_>, Vec<_>) =
+                plugin.fallback_plugins.into_iter().partition(|fallback| {
+                    matches!(
+                        fallback.as_str(),
+                        "service_monitor" | "service_probe" | "service_fingerprinter"
+                    )
+                });
             plugin.fallback_plugins = retained_fallbacks;
 
             if !service_fallbacks.is_empty() {
                 const PRIMARY_SERVICE_MONITOR: &str = "service_monitor";
-                const FALLBACK_SERVICE_FINGERPRINTER: &str = "service_fingerprinter";
+                const FALLBACK_SERVICE_PROBE: &str = "service_probe";
 
-                let preferred_primary = if service_fallbacks.iter().any(|fallback| fallback == PRIMARY_SERVICE_MONITOR) {
+                let preferred_primary = if service_fallbacks
+                    .iter()
+                    .any(|fallback| fallback == PRIMARY_SERVICE_MONITOR)
+                {
                     PRIMARY_SERVICE_MONITOR
                 } else {
-                    FALLBACK_SERVICE_FINGERPRINTER
+                    FALLBACK_SERVICE_PROBE
                 };
                 let fallback_plugins = service_fallbacks
                     .into_iter()
+                    .map(|fallback| {
+                        if fallback == "service_fingerprinter" {
+                            "service_probe".to_string()
+                        } else {
+                            fallback
+                        }
+                    })
                     .filter(|fallback| fallback != preferred_primary)
                     .collect();
 
-                let mut service_plugin =
-                    MonitorPluginConfig::new(preferred_primary.to_string());
+                let mut service_plugin = MonitorPluginConfig::new(preferred_primary.to_string());
                 service_plugin.fallback_plugins = fallback_plugins;
                 migrated_service_plugins.push(service_plugin);
             }
@@ -314,6 +427,137 @@ impl ChangeMonitorConfig {
 
         if !self.service_plugins.is_empty() {
             self.enable_service_monitoring = true;
+        }
+
+        for plugin in &mut self.service_plugins {
+            if plugin.plugin_id == "service_fingerprinter" {
+                plugin.plugin_id = "service_probe".to_string();
+            }
+            plugin.fallback_plugins = plugin
+                .fallback_plugins
+                .iter()
+                .map(|fallback| {
+                    if fallback == "service_fingerprinter" {
+                        "service_probe".to_string()
+                    } else {
+                        fallback.clone()
+                    }
+                })
+                .collect();
+            ensure_service_probe_engine_default(plugin);
+        }
+
+        for plugin in &mut self.port_plugins {
+            if plugin
+                .plugin_id
+                .strip_prefix("plugin__")
+                .unwrap_or(&plugin.plugin_id)
+                != "port_monitor"
+            {
+                continue;
+            }
+
+            let normalized_target_types: Vec<String> = plugin
+                .target_asset_types
+                .iter()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect();
+
+            if normalized_target_types.is_empty()
+                || normalized_target_types
+                    .iter()
+                    .all(|value| matches!(value.as_str(), "service" | "port" | "endpoint"))
+            {
+                plugin.target_asset_types = vec!["ip".to_string()];
+            }
+        }
+
+        for plugin in &mut self.service_plugins {
+            let normalized_plugin_id = plugin
+                .plugin_id
+                .strip_prefix("plugin__")
+                .unwrap_or(&plugin.plugin_id);
+            if !matches!(normalized_plugin_id, "service_monitor" | "service_probe") {
+                continue;
+            }
+
+            let normalized_target_types: Vec<String> = plugin
+                .target_asset_types
+                .iter()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect();
+
+            if normalized_target_types.is_empty()
+                || normalized_target_types.iter().all(|value| {
+                    matches!(
+                        value.as_str(),
+                        "host"
+                            | "hostname"
+                            | "ip"
+                            | "ip_address"
+                            | "domain"
+                            | "wildcard"
+                            | "service"
+                            | "port"
+                            | "endpoint"
+                    )
+                })
+            {
+                plugin.target_asset_types = vec!["service".to_string()];
+            }
+        }
+
+        for plugin in &mut self.web_plugins {
+            let normalized_plugin_id = plugin
+                .plugin_id
+                .strip_prefix("plugin__")
+                .unwrap_or(&plugin.plugin_id);
+            if normalized_plugin_id != "http_prober" {
+                continue;
+            }
+
+            let normalized_target_types: Vec<String> = plugin
+                .target_asset_types
+                .iter()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect();
+
+            if normalized_target_types.is_empty() {
+                plugin.target_asset_types = vec![
+                    "web".to_string(),
+                    "domain".to_string(),
+                    "service".to_string(),
+                ];
+            }
+        }
+
+        for plugin in &mut self.cert_plugins {
+            let normalized_plugin_id = plugin
+                .plugin_id
+                .strip_prefix("plugin__")
+                .unwrap_or(&plugin.plugin_id);
+            if !matches!(normalized_plugin_id, "cert_monitor" | "ssl_scanner") {
+                continue;
+            }
+
+            let normalized_target_types: Vec<String> = plugin
+                .target_asset_types
+                .iter()
+                .map(|value| value.trim().to_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect();
+
+            if normalized_target_types.is_empty()
+                || normalized_target_types
+                    .iter()
+                    .all(|value| matches!(value.as_str(), "domain" | "host" | "hostname"))
+            {
+                plugin.target_asset_types =
+                    vec!["domain".to_string(), "service".to_string()];
+            }
         }
     }
 }

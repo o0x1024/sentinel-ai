@@ -86,11 +86,7 @@ cargo test --test v8_limits_tests --release -- --ignored --nocapture
 
 # 网络压力测试
 cargo test --test network_stress_tests --release -- --ignored --nocapture
-```
 
-### 运行单个测试
-
-```bash
 # 示例：运行最大并发测试
 cargo test --test concurrency_tests test_find_max_concurrency --release -- --ignored --nocapture
 
@@ -287,4 +283,3 @@ num_cpus = "1.0"
 ## 联系与反馈
 
 如果发现新的故障场景或有改进建议，请提交Issue或PR。
-

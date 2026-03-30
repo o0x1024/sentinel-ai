@@ -337,6 +337,9 @@ export default {
   network: {
     title: 'Network Settings',
     proxy: 'Proxy Settings',
+    globalProxyTitle: 'Global Outbound Proxy',
+    globalProxyDescription:
+      'Only affects outbound requests initiated by Sentinel itself, such as plugin fetch, model access, and built-in HTTP clients.',
     enableProxy: 'Enable Proxy',
     enableGlobalProxy: 'Enable Global Proxy',
     scheme: 'Scheme',
@@ -385,9 +388,30 @@ export default {
       generatedKeyNotice: 'Save this API key now. It will be shown only once.',
       generateFailed: 'Failed to generate API key: {error}'
     },
+    runtime: {
+      title: 'Effective Proxy Status',
+      description:
+        'This section shows which proxy-related features are currently affecting traffic. Local traffic capture can still be active even when the global outbound proxy is disabled.',
+      refresh: 'Refresh Status',
+      globalProxy: 'Global outbound proxy',
+      localProxy: 'Traffic analysis proxy',
+      active: 'Active',
+      inactive: 'Inactive',
+      unknown: 'Unknown',
+      notSupported: 'Not supported on this platform',
+      globalProxyActiveDetail: 'Sentinel outbound HTTP clients will use the configured proxy.',
+      globalProxyInactiveDetail: 'Sentinel outbound HTTP clients connect directly unless another capture mechanism is enabled.',
+      localProxyActiveDetail: 'Local listener is running on port {port}. Requests may appear in proxy history.',
+      localProxyInactiveDetail: 'Traffic analysis listener is not running.',
+      localProxyAutoStartOn: 'Auto-start: enabled',
+      localProxyAutoStartOff: 'Auto-start: disabled',
+      confusionHint:
+        'If requests still seem to “go through a proxy”, check the traffic analysis proxy status below.'
+    },
     toast: {
       proxySaved: 'Global proxy saved and applied',
-      proxySaveFailed: 'Failed to save global proxy'
+      proxySaveFailed: 'Failed to save global proxy',
+      runtimeStatusFailed: 'Failed to refresh effective proxy status'
     },
     timeout: 'Network Timeout',
     timeoutDesc: 'Network request timeout (seconds)',

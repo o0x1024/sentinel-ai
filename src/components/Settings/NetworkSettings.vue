@@ -2,10 +2,16 @@
     <!-- 网络(代理)设置 -->
     <div  class="card bg-base-100 shadow-md mb-6">
         <div class="card-body gap-4">
-            <div class="flex items-center gap-3">
-                <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled" :disabled="props.saving"
-                    @change="saveProxy" />
-                <span class="font-medium">{{ t('settings.network.enableGlobalProxy') }}</span>
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <div class="font-semibold">{{ t('settings.network.globalProxyTitle') }}</div>
+                    <div class="text-sm text-base-content/70 mt-1">{{ t('settings.network.globalProxyDescription') }}</div>
+                </div>
+                <div class="flex items-center gap-3 shrink-0">
+                    <input type="checkbox" class="toggle toggle-primary" v-model="network.proxy.enabled" :disabled="props.saving"
+                        @change="saveProxy" />
+                    <span class="font-medium">{{ t('settings.network.enableGlobalProxy') }}</span>
+                </div>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -51,6 +57,62 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-md mb-6">
+      <div class="card-body gap-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="card-title">{{ t('settings.network.runtime.title') }}</h2>
+            <p class="text-sm text-base-content/70">{{ t('settings.network.runtime.description') }}</p>
+          </div>
+          <button class="btn btn-outline btn-sm" :disabled="runtimeProxyBusy" @click="refreshRuntimeProxyStatus">
+            <span v-if="runtimeProxyBusy" class="loading loading-spinner loading-xs"></span>
+            {{ t('settings.network.runtime.refresh') }}
+          </button>
+        </div>
+
+        <div class="alert alert-warning text-sm">
+          <span>{{ t('settings.network.runtime.confusionHint') }}</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="rounded-xl border border-base-300 p-4 bg-base-200/30">
+            <div class="flex items-center justify-between gap-3">
+              <div class="font-medium">{{ t('settings.network.runtime.globalProxy') }}</div>
+              <div class="badge" :class="network.proxy.enabled ? 'badge-success' : 'badge-ghost'">
+                {{ network.proxy.enabled ? t('settings.network.runtime.active') : t('settings.network.runtime.inactive') }}
+              </div>
+            </div>
+            <div class="text-sm text-base-content/70 mt-3">
+              {{ network.proxy.enabled ? t('settings.network.runtime.globalProxyActiveDetail') : t('settings.network.runtime.globalProxyInactiveDetail') }}
+            </div>
+            <div v-if="network.proxy.enabled && globalProxyEndpoint" class="text-xs text-base-content/60 mt-2 break-all">
+              {{ globalProxyEndpoint }}
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-base-300 p-4 bg-base-200/30">
+            <div class="flex items-center justify-between gap-3">
+              <div class="font-medium">{{ t('settings.network.runtime.localProxy') }}</div>
+              <div class="badge" :class="runtimeProxyStatus.running ? 'badge-success' : 'badge-ghost'">
+                {{ runtimeProxyStatus.running ? t('settings.network.runtime.active') : t('settings.network.runtime.inactive') }}
+              </div>
+            </div>
+            <div class="text-sm text-base-content/70 mt-3">
+              {{ runtimeProxyStatus.running
+                ? t('settings.network.runtime.localProxyActiveDetail', { port: runtimeProxyStatus.port || 0 })
+                : t('settings.network.runtime.localProxyInactiveDetail') }}
+            </div>
+            <div class="text-xs text-base-content/60 mt-2">
+              {{ runtimeProxyAutoStart
+                ? t('settings.network.runtime.localProxyAutoStartOn')
+                : t('settings.network.runtime.localProxyAutoStartOff') }}
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
 
     <div class="card bg-base-100 shadow-md mb-6">
@@ -183,7 +245,8 @@ import {
 } from '@/api/httpGateway'
 import { dialog } from '@/composables/useDialog';
 import { invoke } from '@tauri-apps/api/core';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { listen } from '@tauri-apps/api/event';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n'
 
 
@@ -199,6 +262,13 @@ const props = defineProps({
 
 
 const network = reactive({ proxy: { enabled: false, scheme: 'http', host: '', port: 0, username: '', password: '', no_proxy: '' } })
+const runtimeProxyBusy = ref(false)
+const runtimeProxyStatus = reactive({
+  running: false,
+  port: 0,
+})
+const runtimeProxyAutoStart = ref(false)
+let unlistenProxyStatus: null | (() => void) = null
 
 const gatewayConfig = reactive<HttpGatewayConfig>({
   enabled: false,
@@ -225,6 +295,10 @@ const isGatewayWebMode = ref(false)
 const browserGatewayKey = ref('')
 const ethernetIpv4 = ref('')
 const hasBrowserGatewayKey = computed(() => !!browserGatewayKey.value.trim())
+const globalProxyEndpoint = computed(() => {
+  if (!network.proxy.enabled || !network.proxy.host || !network.proxy.port) return ''
+  return `${network.proxy.scheme || 'http'}://${network.proxy.host}:${network.proxy.port}`
+})
 
 interface NetworkInterface {
   name: string
@@ -360,6 +434,35 @@ const loadProxy = async () => {
   }
 }
 
+const refreshRuntimeProxyStatus = async () => {
+  runtimeProxyBusy.value = true
+  try {
+    const [proxyStatusResponse, autoStartResponse] = await Promise.all([
+      invoke<any>('get_proxy_status'),
+      invoke<any>('get_proxy_auto_start'),
+    ])
+
+    runtimeProxyStatus.running = !!proxyStatusResponse?.data?.running
+    runtimeProxyStatus.port = Number(proxyStatusResponse?.data?.port || 0)
+    runtimeProxyAutoStart.value = !!autoStartResponse?.data
+  } catch (e) {
+    console.error('refreshRuntimeProxyStatus failed', e)
+    dialog.toast.error(t('settings.network.toast.runtimeStatusFailed'))
+  } finally {
+    runtimeProxyBusy.value = false
+  }
+}
+
+const handleWindowFocus = () => {
+  refreshRuntimeProxyStatus()
+}
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    refreshRuntimeProxyStatus()
+  }
+}
+
 
 
 // 生命周期
@@ -372,9 +475,32 @@ onMounted(() => {
     browserGatewayKey.value = ''
   }
   loadProxy()
+  refreshRuntimeProxyStatus()
   loadGatewayConfig()
   refreshGatewayStatus()
   loadEthernetIpv4()
+
+  listen('proxy:status', (event: any) => {
+    const payload = event.payload || {}
+    runtimeProxyStatus.running = !!payload.running
+    runtimeProxyStatus.port = Number(payload.port || 0)
+  }).then((unlisten) => {
+    unlistenProxyStatus = unlisten
+  }).catch((error) => {
+    console.error('Failed to listen proxy:status in NetworkSettings:', error)
+  })
+
+  window.addEventListener('focus', handleWindowFocus)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onUnmounted(() => {
+  if (unlistenProxyStatus) {
+    unlistenProxyStatus()
+    unlistenProxyStatus = null
+  }
+  window.removeEventListener('focus', handleWindowFocus)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 const saveProxy = async () => {
@@ -389,6 +515,7 @@ const saveProxy = async () => {
       no_proxy: network.proxy.no_proxy || null,
     }
     await invoke('set_global_proxy_config', { cfg })
+    await refreshRuntimeProxyStatus()
     dialog.toast.success(t('settings.network.toast.proxySaved'))
   } catch (e) {
     dialog.toast.error(t('settings.network.toast.proxySaveFailed'))

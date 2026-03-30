@@ -154,6 +154,7 @@ fn create_simple_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec!["test".to_string()],
         description: Some("Simple plugin for stress testing".to_string()),
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -164,6 +165,7 @@ export function scan_transaction(transaction) {
             vuln_type: "test",
             title: "Test Finding",
             description: "Test description",
+            target_asset_types: vec![],
             evidence: url,
             location: "url",
             severity: "info",
@@ -189,6 +191,7 @@ fn create_cpu_intensive_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec!["test".to_string()],
         description: Some("CPU intensive plugin for stress testing".to_string()),
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -225,6 +228,7 @@ export function scan_transaction(transaction) {
         vuln_type: "cpu_test",
         title: "CPU Test",
         description: "Processed " + data.length + " items",
+        target_asset_types: vec![],
         evidence: "cpu_intensive",
         location: "body",
         severity: "info",
@@ -249,6 +253,7 @@ fn create_memory_intensive_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec!["test".to_string()],
         description: Some("Memory intensive plugin for stress testing".to_string()),
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -269,6 +274,7 @@ export function scan_transaction(transaction) {
         vuln_type: "memory_test",
         title: "Memory Test",
         description: "Allocated " + largeArrays.length + " arrays",
+        target_asset_types: vec![],
         evidence: bigString.substring(0, 100),
         location: "memory",
         severity: "info",

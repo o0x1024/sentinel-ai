@@ -1,6 +1,7 @@
 use crate::database_service::connection_manager::DatabasePool;
 use crate::database_service::sqlx_compat::PgPool;
 use anyhow::Result;
+use sqlx::Row;
 use tracing::info;
 
 pub struct SurfaceGraphMigration;
@@ -210,9 +211,34 @@ impl SurfaceGraphMigration {
                 fingerprint_type TEXT NOT NULL,
                 fingerprint_key TEXT,
                 fingerprint_value TEXT NOT NULL,
+                rule_id TEXT,
+                rule_word TEXT,
+                rule_name TEXT,
+                normalized_product TEXT,
+                normalized_vendor TEXT,
+                normalized_category TEXT,
+                normalized_family TEXT,
+                version TEXT,
+                is_primary BOOLEAN DEFAULT FALSE,
+                match_source_part TEXT,
                 confidence_score DOUBLE PRECISION,
                 source TEXT,
                 observed_at TIMESTAMPTZ NOT NULL,
+                metadata_json TEXT
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS surface_asset_classifications (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                primary_category TEXT NOT NULL,
+                primary_product TEXT NOT NULL,
+                primary_vendor TEXT,
+                primary_family TEXT,
+                rule_id TEXT,
+                rule_name TEXT,
+                confidence_score DOUBLE PRECISION,
+                source TEXT,
+                classified_at TIMESTAMPTZ NOT NULL,
                 metadata_json TEXT
             )"#,
             r#"CREATE TABLE IF NOT EXISTS surface_evidence (
@@ -306,9 +332,18 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_web_assets_url ON surface_web_assets(canonical_url)",
             "CREATE INDEX IF NOT EXISTS idx_surface_cert_assets_sha256 ON surface_cert_assets(sha256)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_program ON surface_relations(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_asset ON surface_relations(from_asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_relations_to_asset ON surface_relations(to_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_to ON surface_relations(from_asset_id, to_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_type ON surface_relations(relation_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_asset ON surface_fingerprints(asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_program_category ON surface_fingerprints(program_id, normalized_category)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_program_product ON surface_fingerprints(program_id, normalized_product)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_asset_classifications_asset ON surface_asset_classifications(asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_asset_classifications_program_category ON surface_asset_classifications(program_id, primary_category)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_asset_classifications_program_product ON surface_asset_classifications(program_id, primary_product)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_evidence_asset ON surface_evidence(asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_asset ON surface_change_logs(asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_program ON surface_change_logs(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_source_run ON surface_change_logs(source_run_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_detected ON surface_change_logs(detected_at DESC)",
@@ -331,6 +366,29 @@ impl SurfaceGraphMigration {
                     sqlx::query(sql).execute(mysql).await?;
                 }
             }
+        }
+
+        let alter_columns = [
+            ("rule_id", "TEXT"),
+            ("rule_word", "TEXT"),
+            ("rule_name", "TEXT"),
+            ("normalized_product", "TEXT"),
+            ("normalized_vendor", "TEXT"),
+            ("normalized_category", "TEXT"),
+            ("normalized_family", "TEXT"),
+            ("version", "TEXT"),
+            ("is_primary", "BOOLEAN DEFAULT FALSE"),
+            ("match_source_part", "TEXT"),
+        ];
+
+        for (column, column_type) in alter_columns {
+            Self::add_column_if_not_exists_runtime(
+                pool,
+                "surface_fingerprints",
+                column,
+                column_type,
+            )
+            .await?;
         }
 
         for sql in index_sql {
@@ -551,9 +609,34 @@ impl SurfaceGraphMigration {
                 fingerprint_type TEXT NOT NULL,
                 fingerprint_key TEXT,
                 fingerprint_value TEXT NOT NULL,
+                rule_id TEXT,
+                rule_word TEXT,
+                rule_name TEXT,
+                normalized_product TEXT,
+                normalized_vendor TEXT,
+                normalized_category TEXT,
+                normalized_family TEXT,
+                version TEXT,
+                is_primary BOOLEAN DEFAULT FALSE,
+                match_source_part TEXT,
                 confidence_score DOUBLE PRECISION,
                 source TEXT,
                 observed_at TIMESTAMPTZ NOT NULL,
+                metadata_json TEXT
+            )"#,
+            r#"CREATE TABLE IF NOT EXISTS surface_asset_classifications (
+                id TEXT PRIMARY KEY,
+                program_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                primary_category TEXT NOT NULL,
+                primary_product TEXT NOT NULL,
+                primary_vendor TEXT,
+                primary_family TEXT,
+                rule_id TEXT,
+                rule_name TEXT,
+                confidence_score DOUBLE PRECISION,
+                source TEXT,
+                classified_at TIMESTAMPTZ NOT NULL,
                 metadata_json TEXT
             )"#,
             r#"CREATE TABLE IF NOT EXISTS surface_evidence (
@@ -651,9 +734,18 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_web_assets_url ON surface_web_assets(canonical_url)",
             "CREATE INDEX IF NOT EXISTS idx_surface_cert_assets_sha256 ON surface_cert_assets(sha256)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_program ON surface_relations(program_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_asset ON surface_relations(from_asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_relations_to_asset ON surface_relations(to_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_from_to ON surface_relations(from_asset_id, to_asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_relations_type ON surface_relations(relation_type)",
             "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_asset ON surface_fingerprints(asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_program_category ON surface_fingerprints(program_id, normalized_category)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_fingerprints_program_product ON surface_fingerprints(program_id, normalized_product)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_asset_classifications_asset ON surface_asset_classifications(asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_asset_classifications_program_category ON surface_asset_classifications(program_id, primary_category)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_asset_classifications_program_product ON surface_asset_classifications(program_id, primary_product)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_evidence_asset ON surface_evidence(asset_id)",
+            "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_asset ON surface_change_logs(asset_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_program ON surface_change_logs(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_source_run ON surface_change_logs(source_run_id)",
             "CREATE INDEX IF NOT EXISTS idx_surface_change_logs_detected ON surface_change_logs(detected_at DESC)",
@@ -664,11 +756,107 @@ impl SurfaceGraphMigration {
             "CREATE INDEX IF NOT EXISTS idx_surface_seeds_program ON surface_seeds(program_id)",
         ];
 
+        let alter_columns = [
+            ("rule_id", "TEXT"),
+            ("rule_word", "TEXT"),
+            ("rule_name", "TEXT"),
+            ("normalized_product", "TEXT"),
+            ("normalized_vendor", "TEXT"),
+            ("normalized_category", "TEXT"),
+            ("normalized_family", "TEXT"),
+            ("version", "TEXT"),
+            ("is_primary", "BOOLEAN DEFAULT FALSE"),
+            ("match_source_part", "TEXT"),
+        ];
+
+        for (column, column_type) in alter_columns {
+            Self::add_column_if_not_exists_postgres(
+                pool,
+                "surface_fingerprints",
+                column,
+                column_type,
+            )
+            .await?;
+        }
+
         for sql in index_sql {
             sqlx::query(sql).execute(pool).await?;
         }
 
         info!("Surface graph migration completed successfully");
+        Ok(())
+    }
+
+    async fn add_column_if_not_exists_runtime(
+        pool: &DatabasePool,
+        table: &str,
+        column: &str,
+        column_type: &str,
+    ) -> Result<()> {
+        let exists = match pool {
+            DatabasePool::PostgreSQL(pg) => {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)",
+                )
+                .bind(table)
+                .bind(column)
+                .fetch_one(pg)
+                .await?
+            }
+            DatabasePool::SQLite(sqlite) => {
+                let pragma = format!("PRAGMA table_info({table})");
+                let rows = sqlx::query(&pragma).fetch_all(sqlite).await?;
+                rows.iter().any(|row| row.get::<String, _>("name") == column)
+            }
+            DatabasePool::MySQL(mysql) => {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                )
+                .bind(table)
+                .bind(column)
+                .fetch_one(mysql)
+                .await?
+                    > 0
+            }
+        };
+
+        if !exists {
+            let alter_sql = format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}");
+            match pool {
+                DatabasePool::PostgreSQL(pg) => {
+                    sqlx::query(&alter_sql).execute(pg).await?;
+                }
+                DatabasePool::SQLite(sqlite) => {
+                    sqlx::query(&alter_sql).execute(sqlite).await?;
+                }
+                DatabasePool::MySQL(mysql) => {
+                    sqlx::query(&alter_sql).execute(mysql).await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn add_column_if_not_exists_postgres(
+        pool: &PgPool,
+        table: &str,
+        column: &str,
+        column_type: &str,
+    ) -> Result<()> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)",
+        )
+        .bind(table)
+        .bind(column)
+        .fetch_one(pool)
+        .await?;
+
+        if !exists {
+            let alter_sql = format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}");
+            sqlx::query(&alter_sql).execute(pool).await?;
+        }
+
         Ok(())
     }
 }

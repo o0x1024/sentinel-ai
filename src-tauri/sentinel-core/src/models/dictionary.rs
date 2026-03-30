@@ -33,6 +33,8 @@ pub enum DictionaryType {
     SensitiveFile,
     /// 技术指纹规则字典
     FingerprintRule,
+    /// 服务识别规则字典
+    ServiceProbeRule,
     /// PoC/风险验证规则字典
     PocRule,
     /// 自定义字典
@@ -55,6 +57,7 @@ impl fmt::Display for DictionaryType {
             DictionaryType::ApiEndpoint => "api_endpoint",
             DictionaryType::SensitiveFile => "sensitive_file",
             DictionaryType::FingerprintRule => "fingerprint_rule",
+            DictionaryType::ServiceProbeRule => "service_probe_rule",
             DictionaryType::PocRule => "poc_rule",
             DictionaryType::Custom(name) => return write!(f, "custom_{}", name),
         };
@@ -78,6 +81,7 @@ impl From<String> for DictionaryType {
             "api_endpoint" => DictionaryType::ApiEndpoint,
             "sensitive_file" => DictionaryType::SensitiveFile,
             "fingerprint_rule" => DictionaryType::FingerprintRule,
+            "service_probe_rule" => DictionaryType::ServiceProbeRule,
             "poc_rule" => DictionaryType::PocRule,
             custom if custom.starts_with("custom_") => {
                 DictionaryType::Custom(custom.strip_prefix("custom_").unwrap_or("").to_string())
@@ -289,7 +293,9 @@ impl DictionaryWordInput {
             word.weight = weight;
         }
         word.category = self.category;
-        word.metadata = self.metadata.and_then(|value| serde_json::to_string(&value).ok());
+        word.metadata = self
+            .metadata
+            .and_then(|value| serde_json::to_string(&value).ok());
         word
     }
 }

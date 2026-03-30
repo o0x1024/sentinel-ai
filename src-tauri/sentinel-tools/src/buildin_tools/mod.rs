@@ -5,6 +5,7 @@ pub mod search_exploit;
 pub mod shell;
 pub mod skills;
 pub mod subagent_tool;
+pub mod subdomain_brute;
 pub mod tenth_man_tool;
 pub mod todos;
 pub mod web_search;
@@ -16,6 +17,7 @@ pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
 pub use skills::SkillsTool;
 pub use subagent_tool::{SubagentAwaitTool, SubagentChannelTool, SubagentExecuteTool};
+pub use subdomain_brute::SubdomainBruteTool;
 pub use tenth_man_tool::TenthManTool;
 pub use todos::TodosTool;
 pub use web_search::WebSearchTool;
@@ -33,6 +35,7 @@ pub fn create_buildin_toolset() -> ToolSet {
     toolset.add_tool(MemoryManagerTool);
     toolset.add_tool(OcrTool);
     toolset.add_tool(SkillsTool);
+    toolset.add_tool(SubdomainBruteTool);
     // Condensed subagent tools
     toolset.add_tool(SubagentExecuteTool::new());
     toolset.add_tool(SubagentAwaitTool::new());
@@ -51,6 +54,7 @@ pub async fn get_tool_definitions() -> Vec<rig::completion::ToolDefinition> {
         Box::new(MemoryManagerTool),
         Box::new(OcrTool),
         Box::new(SkillsTool),
+        Box::new(SubdomainBruteTool),
         // Condensed subagent tools
         Box::new(SubagentExecuteTool::new()),
         Box::new(SubagentAwaitTool::new()),

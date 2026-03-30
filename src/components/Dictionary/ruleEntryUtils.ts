@@ -19,9 +19,19 @@ export function describeRuleEntry(word: RuleWordLike, dictionaryType?: string | 
     return metadata.description || metadata.path || '敏感文件探测规则'
   }
 
-  if (dictionaryType === 'fingerprint_rule') {
+  if (dictionaryType === 'fingerprint_rule' || dictionaryType === 'service_probe_rule') {
     const matcherCount = Array.isArray(metadata.matchers) ? metadata.matchers.length : 0
-    return `${metadata.name || metadata.product || word.word}${matcherCount > 0 ? ` · ${matcherCount} matcher` : ''}`
+    const service = typeof metadata.service === 'string' ? metadata.service : ''
+    const probeName = typeof metadata.probeName === 'string'
+      ? metadata.probeName
+      : typeof metadata.probe_name === 'string'
+        ? metadata.probe_name
+        : ''
+    const summaryParts = [metadata.name || metadata.product || word.word]
+    if (service) summaryParts.push(service)
+    if (probeName) summaryParts.push(probeName)
+    if (matcherCount > 0) summaryParts.push(`${matcherCount} matcher`)
+    return summaryParts.join(' · ')
   }
 
   if (dictionaryType === 'poc_rule') {
@@ -45,4 +55,15 @@ export function getRuleMatcherCount(word: RuleWordLike): number {
 export function isRuleEnabled(word: RuleWordLike): boolean {
   const metadata = parseRuleMetadata(word)
   return metadata.enabled !== false
+}
+
+export function getRuleService(word: RuleWordLike): string {
+  const metadata = parseRuleMetadata(word)
+  return typeof metadata.service === 'string' ? metadata.service : ''
+}
+
+export function getRuleProbeName(word: RuleWordLike): string {
+  const metadata = parseRuleMetadata(word)
+  if (typeof metadata.probeName === 'string') return metadata.probeName
+  return typeof metadata.probe_name === 'string' ? metadata.probe_name : ''
 }

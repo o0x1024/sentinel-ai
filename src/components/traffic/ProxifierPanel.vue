@@ -39,14 +39,6 @@
             <i class="fas fa-filter mr-1"></i>
             Rules
           </button>
-          <button 
-            class="tab tab-sm" 
-            :class="{ 'tab-active': activeSubTab === 'system' }"
-            @click="activeSubTab = 'system'"
-          >
-            <i class="fas fa-cog mr-1"></i>
-            System
-          </button>
         </div>
       </div>
     </div>
@@ -165,138 +157,6 @@
           :proxies="proxies"
           @update:rules="saveRules"
         />
-
-        <!-- System 子面板 - pf 透明代理 -->
-        <div v-if="activeSubTab === 'system'" class="flex flex-col h-full overflow-auto">
-          <div class="p-3 border-b border-base-300">
-            <h3 class="font-semibold text-sm flex items-center gap-2">
-              <i class="fas fa-shield-alt text-primary"></i>
-              {{ $t('trafficAnalysis.proxifierPanel.transparentProxy') }}
-            </h3>
-          </div>
-
-          <div class="p-4 space-y-4">
-
-            <div class="bg-base-200 rounded-lg p-3">
-              <h4 class="text-xs font-semibold text-base-content/70 mb-2">
-                {{ $t('trafficAnalysis.proxifierPanel.transparentProxyStatus') }}
-              </h4>
-              <div class="space-y-2 text-sm">
-                <div class="flex justify-between items-center">
-                  <span>{{ $t('trafficAnalysis.proxifierPanel.status') }}</span>
-                  <span :class="transparentProxy.enabled ? 'text-success' : 'text-base-content/50'">
-                    {{ transparentProxy.enabled ? $t('trafficAnalysis.proxifierPanel.running') : $t('trafficAnalysis.proxifierPanel.stopped') }}
-                  </span>
-                </div>
-                <div class="flex justify-between items-center">
-                  <span>{{ $t('trafficAnalysis.proxifierPanel.pfFirewall') }}</span>
-                  <span :class="transparentProxy.pfEnabled ? 'text-success' : 'text-base-content/50'">
-                    {{ transparentProxy.pfEnabled ? $t('trafficAnalysis.proxifierPanel.enabled') : $t('trafficAnalysis.proxifierPanel.disabled') }}
-                  </span>
-                </div>
-                <div v-if="transparentProxy.enabled" class="flex justify-between items-center">
-                  <span>{{ $t('trafficAnalysis.proxifierPanel.proxyPort') }}</span>
-                  <span class="text-info">{{ transparentProxy.proxyPort }}</span>
-                </div>
-                <div v-if="transparentProxy.enabled && transparentProxy.redirectPorts.length > 0" class="flex justify-between items-center">
-                  <span>{{ $t('trafficAnalysis.proxifierPanel.redirectPorts') }}</span>
-                  <span class="text-info">{{ transparentProxy.redirectPorts.join(', ') }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 透明代理配置 -->
-            <div class="space-y-3">
-              <div class="form-control">
-                <label class="label py-1">
-                  <span class="label-text text-sm">{{ $t('trafficAnalysis.proxifierPanel.proxyPort') }}</span>
-                </label>
-                <input 
-                  type="number" 
-                  v-model.number="transparentProxyConfig.proxyPort"
-                  class="input input-bordered input-sm"
-                  placeholder="8080"
-                  :disabled="transparentProxy.enabled"
-                />
-              </div>
-
-              <div class="form-control">
-                <label class="label py-1">
-                  <span class="label-text text-sm">{{ $t('trafficAnalysis.proxifierPanel.redirectPorts') }}</span>
-                </label>
-                <input 
-                  type="text" 
-                  v-model="transparentProxyConfig.redirectPortsStr"
-                  class="input input-bordered input-sm"
-                  placeholder="80, 443"
-                  :disabled="transparentProxy.enabled"
-                />
-              </div>
-
-              <div class="flex gap-2">
-                <button 
-                  v-if="!transparentProxy.enabled"
-                  class="btn btn-sm btn-primary flex-1"
-                  @click="startTransparentProxy"
-                  :disabled="isTransparentProxyStarting"
-                >
-                  <i :class="['fas mr-1', isTransparentProxyStarting ? 'fa-spinner fa-spin' : 'fa-play']"></i>
-                  {{ $t('trafficAnalysis.proxifierPanel.startTransparentProxy') }}
-                </button>
-                <button 
-                  v-else
-                  class="btn btn-sm btn-warning flex-1"
-                  @click="stopTransparentProxy"
-                  :disabled="isTransparentProxyStarting"
-                >
-                  <i :class="['fas mr-1', isTransparentProxyStarting ? 'fa-spinner fa-spin' : 'fa-stop']"></i>
-                  {{ $t('trafficAnalysis.proxifierPanel.stopTransparentProxy') }}
-                </button>
-              </div>
-            </div>
-
-            <!-- 透明代理说明 -->
-            <div class="alert alert-info text-xs">
-              <i class="fas fa-info-circle"></i>
-              <div>
-                <p><strong>{{ $t('trafficAnalysis.proxifierPanel.transparentProxy') }}</strong> {{ $t('trafficAnalysis.proxifierPanel.transparentProxyDesc') }}</p>
-                <p class="mt-1">{{ $t('trafficAnalysis.proxifierPanel.startTransparentProxyDesc') }}</p>
-                <p class="mt-1">{{ $t('trafficAnalysis.proxifierPanel.stopTransparentProxyDesc') }}</p>
-              </div>
-            </div>
-
-            <!-- Electron/Node.js 应用说明 -->
-            <div v-if="transparentProxy.enabled" class="bg-base-200 rounded-lg p-3">
-              <h4 class="text-xs font-semibold text-base-content/70 mb-2 flex items-center gap-2">
-                <i class="fab fa-node-js text-success"></i>
-                {{ $t('trafficAnalysis.proxifierPanel.electronNodeJsApp') }}
-              </h4>
-              <p class="text-xs text-base-content/70 mb-2">
-                {{ $t('trafficAnalysis.proxifierPanel.electronNodeJsAppDesc') }}
-              </p>
-              <div class="bg-base-300 rounded p-2 font-mono text-xs mb-2 break-all">
-                export HTTP_PROXY=http://127.0.0.1:{{ transparentProxy.proxyPort }}<br>
-                export HTTPS_PROXY=http://127.0.0.1:{{ transparentProxy.proxyPort }}
-              </div>
-              <button 
-                class="btn btn-xs btn-ghost"
-                @click="copyProxyEnvCommand"
-              >
-                <i class="fas fa-copy mr-1"></i>
-                {{ $t('trafficAnalysis.proxifierPanel.copyEnvCommand') }}
-              </button>
-              
-              <div class="divider my-2"></div>
-              
-              <p class="text-xs text-base-content/70 mb-2">
-                {{ $t('trafficAnalysis.proxifierPanel.startElectronAppDesc') }}
-              </p>
-              <div class="bg-base-300 rounded p-2 font-mono text-xs break-all">
-                /path/to/app --proxy-server=http://127.0.0.1:{{ transparentProxy.proxyPort }}
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -365,31 +225,9 @@ interface LogEntry {
 // State
 const isEnabled = ref(false)
 const isToggling = ref(false)
-const activeSubTab = ref<'proxies' | 'rules' | 'system'>('proxies')
+const activeSubTab = ref<'proxies' | 'rules'>('proxies')
 const bottomTab = ref<'connections' | 'traffic' | 'statistics'>('connections')
 const selectedConnection = ref<string | null>(null)
-
-// pf 透明代理状态
-interface TransparentProxyState {
-  enabled: boolean
-  proxyPort: number
-  redirectPorts: number[]
-  pfEnabled: boolean
-}
-
-const transparentProxy = ref<TransparentProxyState>({
-  enabled: false,
-  proxyPort: 8080,
-  redirectPorts: [],
-  pfEnabled: false
-})
-
-const transparentProxyConfig = ref({
-  proxyPort: 8080,
-  redirectPortsStr: '80, 443'
-})
-
-const isTransparentProxyStarting = ref(false)
 
 // 代理服务器列表（从数据库加载）
 const proxies = ref<ProxyServer[]>([])
@@ -455,18 +293,6 @@ function addLog(type: 'info' | 'warning' | 'error', message: string) {
   })
   if (logs.value.length > 100) {
     logs.value.shift()
-  }
-}
-
-// 复制代理环境变量命令
-async function copyProxyEnvCommand() {
-  const port = transparentProxy.value.proxyPort
-  const command = `export HTTP_PROXY=http://127.0.0.1:${port}\nexport HTTPS_PROXY=http://127.0.0.1:${port}`
-  try {
-    await navigator.clipboard.writeText(command)
-    addLog('info', '已复制代理环境变量命令到剪贴板')
-  } catch (error) {
-    addLog('error', '复制失败，请手动复制')
   }
 }
 
@@ -544,101 +370,6 @@ async function loadConfig() {
   }
 }
 
-// pf 透明代理相关方法
-async function refreshTransparentProxyStatus() {
-  try {
-    const result = await invoke<any>('get_transparent_proxy_status')
-    if (result.success && result.data) {
-      transparentProxy.value = {
-        enabled: result.data.enabled,
-        proxyPort: result.data.proxy_port,
-        redirectPorts: result.data.redirect_ports || [],
-        pfEnabled: result.data.pf_enabled
-      }
-    }
-  } catch (error) {
-    console.error('Failed to get transparent proxy status:', error)
-  }
-}
-
-async function startTransparentProxy() {
-  isTransparentProxyStarting.value = true
-  try {
-    // 解析重定向端口
-    const redirectPorts = transparentProxyConfig.value.redirectPortsStr
-      .split(',')
-      .map(s => parseInt(s.trim()))
-      .filter(n => !isNaN(n) && n > 0 && n < 65536)
-    
-    const proxyPort = transparentProxyConfig.value.proxyPort
-    
-    // 1. 先启动代理服务器在对应端口
-    addLog('info', `正在启动代理服务器在端口 ${proxyPort}...`)
-    const proxyConfig = {
-      start_port: proxyPort,
-      max_port_attempts: 1,  // 只尝试指定端口
-      mitm_enabled: true,
-      max_request_body_size: 2 * 1024 * 1024,
-      max_response_body_size: 2 * 1024 * 1024,
-    }
-    
-    const proxyResult = await invoke<any>('start_traffic_analysis', { config: proxyConfig })
-    if (proxyResult.success && proxyResult.data) {
-      addLog('info', `代理服务器已启动，监听端口: ${proxyResult.data}`)
-    } else if (proxyResult.error && proxyResult.error.includes('already running')) {
-      addLog('info', '代理服务器已在运行中')
-    } else if (proxyResult.error) {
-      addLog('error', `启动代理服务器失败: ${proxyResult.error}`)
-      return
-    }
-    
-    // 2. 再启动 pf 透明代理
-    const result = await invoke<any>('start_transparent_proxy', {
-      proxyPort,
-      redirectPorts
-    })
-    
-    if (result.success) {
-      addLog('info', `pf 透明代理已启动，重定向端口 ${redirectPorts.join(', ')} 到 ${proxyPort}`)
-    } else {
-      addLog('error', `启动透明代理失败: ${result.error}`)
-    }
-    await refreshTransparentProxyStatus()
-  } catch (error: any) {
-    addLog('error', `启动透明代理失败: ${error}`)
-  } finally {
-    isTransparentProxyStarting.value = false
-  }
-}
-
-async function stopTransparentProxy() {
-  isTransparentProxyStarting.value = true
-  try {
-    // 1. 先停止 pf 透明代理
-    const result = await invoke<any>('stop_transparent_proxy')
-    if (result.success) {
-      addLog('info', 'pf 透明代理已停止')
-    } else {
-      addLog('error', `停止透明代理失败: ${result.error}`)
-    }
-    
-    // 2. 停止代理监听器
-    addLog('info', '正在停止代理监听器...')
-    const stopResult = await invoke<any>('stop_traffic_analysis')
-    if (stopResult.success) {
-      addLog('info', '代理监听器已停止')
-    } else if (stopResult.error) {
-      addLog('warning', `停止代理监听器: ${stopResult.error}`)
-    }
-    
-    await refreshTransparentProxyStatus()
-  } catch (error: any) {
-    addLog('error', `停止透明代理失败: ${error}`)
-  } finally {
-    isTransparentProxyStarting.value = false
-  }
-}
-
 // 从数据库加载代理服务器
 async function loadProxiesFromDb() {
   try {
@@ -677,7 +408,7 @@ function proxyRequestToConnection(req: ProxyRequest): Connection {
     timeOrStatus: req.status_code > 0 ? `${req.response_time}ms` : 'pending',
     status: req.status_code > 0 ? 'closed' : 'open',
     rule: 'Default',
-    proxy: transparentProxy.value.enabled ? `pf:${transparentProxy.value.proxyPort}` : 'Direct',
+    proxy: isEnabled.value ? 'Proxifier' : 'Direct',
     sent: 0,  // 暂时没有发送字节数
     received: req.response_size || 0,
   }
@@ -689,7 +420,6 @@ onMounted(async () => {
   await loadProxiesFromDb()
   await loadRulesFromDb()
   await loadConfig()
-  await refreshTransparentProxyStatus()
   
   // 如果数据库没有数据，添加默认配置
   if (proxies.value.length === 0) {

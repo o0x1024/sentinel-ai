@@ -5,6 +5,7 @@ pub mod image_ocr;
 pub mod mcp_tracking;
 pub mod message_emitter;
 pub mod ordered_message;
+pub mod plugin_registry_cleanup;
 pub mod plugin_tracking;
 pub mod streaming_optimizer;
 

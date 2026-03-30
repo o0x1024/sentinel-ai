@@ -54,6 +54,7 @@ fn create_network_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec!["network".to_string()],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -73,6 +74,7 @@ export async function scan_transaction(transaction) {
             vuln_type: "network_test",
             title: "Network Request Test",
             description: "Request completed: " + response.status,
+            target_asset_types: vec![],
             evidence: JSON.stringify(data).substring(0, 100),
             location: "network",
             severity: "info",
@@ -83,6 +85,7 @@ export async function scan_transaction(transaction) {
             vuln_type: "network_error",
             title: "Network Request Failed",
             description: "Error: " + e.message,
+            target_asset_types: vec![],
             evidence: "network_error",
             location: "network",
             severity: "info",
@@ -108,6 +111,7 @@ fn create_concurrent_http_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec!["network".to_string()],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -132,6 +136,7 @@ export async function scan_transaction(transaction) {
             vuln_type: "concurrent_http_test",
             title: "Concurrent HTTP Test",
             description: "Completed " + successCount + "/" + urls.length + " requests",
+            target_asset_types: vec![],
             evidence: "concurrent_http",
             location: "network",
             severity: "info",
@@ -142,6 +147,7 @@ export async function scan_transaction(transaction) {
             vuln_type: "concurrent_http_error",
             title: "Concurrent HTTP Failed",
             description: "Error: " + e.message,
+            target_asset_types: vec![],
             evidence: "error",
             location: "network",
             severity: "info",
@@ -167,6 +173,7 @@ fn create_timeout_plugin() -> (PluginMetadata, String) {
         default_severity: Severity::Info,
         tags: vec!["network".to_string()],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -186,6 +193,7 @@ export async function scan_transaction(transaction) {
             vuln_type: "timeout_test",
             title: "Timeout Test",
             description: "Request completed: " + response.status,
+            target_asset_types: vec![],
             evidence: "timeout_test",
             location: "network",
             severity: "info",
@@ -196,6 +204,7 @@ export async function scan_transaction(transaction) {
             vuln_type: "timeout_error",
             title: "Timeout Error",
             description: "Error: " + e.message,
+            target_asset_types: vec![],
             evidence: "timeout",
             location: "network",
             severity: "info",
@@ -722,6 +731,7 @@ async fn test_various_network_conditions() {
             default_severity: Severity::Info,
             tags: vec!["network".to_string()],
             description: None,
+            target_asset_types: vec![],
         };
 
         let code = format!(
@@ -735,6 +745,7 @@ export async function scan_transaction(transaction) {{
             vuln_type: "network_test",
             title: "Network Test",
             description: "Status: " + response.status,
+            target_asset_types: vec![],
             evidence: "network",
             location: "test",
             severity: "info",
@@ -745,6 +756,7 @@ export async function scan_transaction(transaction) {{
             vuln_type: "network_error",
             title: "Network Error",
             description: "Error: " + e.message,
+            target_asset_types: vec![],
             evidence: "error",
             location: "test",
             severity: "info",

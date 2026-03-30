@@ -285,7 +285,7 @@
                 <option value="tech_fingerprinter">Tech Fingerprinter</option>
                 <option value="favicon_fingerprinter">Favicon Fingerprinter</option>
                 <option value="port_monitor">Port Monitor</option>
-                <option value="service_fingerprinter">Service Fingerprinter</option>
+                <option value="service_probe">Service Probe</option>
                 <option value="cert_monitor">Certificate Monitor</option>
               </optgroup>
               <optgroup label="Discovery">

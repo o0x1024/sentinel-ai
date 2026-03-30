@@ -37,6 +37,7 @@ export default {
      port: '端口',
      api_endpoint: 'API端点',
      sensitive_file: '敏感文件规则',
+     service_probe_rule: '服务识别规则',
      fingerprint_rule: '指纹规则',
      poc_rule: 'PoC规则',
      http_param: 'HTTP参数',
@@ -86,13 +87,30 @@ export default {
     confirmDelete: '您确定要删除此字典吗？',
     confirmClear: '您确定要清空此字典吗？',
     importWords: '导入词汇',
+    subtypeFilter: '子类型筛选',
+    allSubtypes: '全部子类型',
     importFromText: '从文本导入',
     importFromFile: '从文件导入',
+    importFromNmap: '导入 Nmap Service Probes',
+    importNmapServiceProbes: '导入 Nmap Service Probes',
     pasteWords: '粘贴条目（每行一个）',
     importTextPlaceholder: '每行输入一个条目...',
-    mergeModes: {
+    nmapImportHelp: '导入 nmap-service-probes 的 Probe/match/softmatch/ports/sslports 子集，并转换为服务识别规则。',
+    emptyRuleTitle: '当前字典还没有规则',
+    emptyServiceRuleHint: '这是服务识别字典。你可以先导入 Nmap Service Probes 子集，或者先新增一条 starter 规则再逐步扩充。',
+    emptyWebRuleHint: '这是 Web 指纹字典。建议先新增一条 starter 规则，用标题、Header 或 favicon 相关特征开始。',
+    emptyGenericRuleHint: '你可以先新增一条 starter 规则，或者导入现有 JSON / 规则文件。',
+    createStarterRule: '新增 Starter 规则',
+   mergeModes: {
       append: '追加（保留现有条目）',
       replace: '替换（清空并导入）',
       merge: '合并（去重）'
+    },
+    subtypes: {
+      service_identification: '服务识别',
+      web_fingerprint: 'Web 指纹',
+      favicon_fingerprint: 'Favicon 指纹',
+      generic_fingerprint: '通用指纹',
+      risk_verification: '风险验证'
     }
 }

@@ -24,20 +24,31 @@
 pub mod dictionary_runtime;
 pub mod error;
 pub mod executor;
+mod monitor_progress;
+mod network_scan;
 pub mod plugin;
 pub mod plugin_engine;
 pub mod plugin_ops;
+mod runtime_events;
+mod service_probe;
+mod service_probe_engine;
+mod service_probe_native;
+mod service_probe_runtime;
 pub mod types;
 
+pub use dictionary_runtime::init_dictionary_pool;
 pub use error::{PluginError, Result};
 pub use executor::{ExecutorStats, PluginExecutor};
+pub use monitor_progress::{
+    emit_plugin_monitor_progress, MonitorProgressContext, PluginMonitorProgressUpdate,
+};
 pub use plugin::{
     get_input_schema_from_code, get_output_schema_from_code, PluginManager, PluginRecord,
     PluginStatus,
 };
 pub use plugin_engine::PluginEngine;
-pub use dictionary_runtime::init_dictionary_pool;
 pub use plugin_ops::{sentinel_plugin_ext, PluginContext};
+pub use runtime_events::register_app_handle;
 pub use types::*;
 
 /// 获取内置插件目录路径

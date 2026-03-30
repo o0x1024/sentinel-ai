@@ -139,6 +139,7 @@ async fn test_simple_plugin_memory_leak() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -150,6 +151,7 @@ export function scan_transaction(transaction) {
             vuln_type: "test",
             title: "Test",
             description: "Test",
+            target_asset_types: vec![],
             evidence: url,
             location: "url",
             severity: "info",
@@ -200,6 +202,7 @@ async fn test_large_object_memory_leak() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -217,6 +220,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Large Object Test",
         description: "Processed " + filtered.length + " items",
+        target_asset_types: vec![],
         evidence: "large_object",
         location: "memory",
         severity: "info",
@@ -266,6 +270,7 @@ async fn test_closure_memory_leak() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -300,6 +305,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Closure Test",
         description: "Processed " + processed.length + " items",
+        target_asset_types: vec![],
         evidence: "closure",
         location: "memory",
         severity: "info",
@@ -349,6 +355,7 @@ async fn test_string_concatenation_memory_leak() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -369,6 +376,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "String Test",
         description: "Processed string of length " + result.length,
+        target_asset_types: vec![],
         evidence: result.substring(0, 100),
         location: "string",
         severity: "info",
@@ -418,6 +426,7 @@ async fn test_async_operations_memory_leak() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -440,6 +449,7 @@ export async function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Async Test",
         description: "Processed " + results.length + " async operations",
+        target_asset_types: vec![],
         evidence: "async",
         location: "async",
         severity: "info",
@@ -489,6 +499,7 @@ async fn test_multi_engine_memory_isolation() {
         default_severity: Severity::Info,
         tags: vec![],
         description: None,
+        target_asset_types: vec![],
     };
 
     let code = r#"
@@ -505,6 +516,7 @@ export function scan_transaction(transaction) {
         vuln_type: "test",
         title: "Multi Engine Test",
         description: "Global data size: " + globalData.length,
+        target_asset_types: vec![],
         evidence: "multi_engine",
         location: "global",
         severity: "info",

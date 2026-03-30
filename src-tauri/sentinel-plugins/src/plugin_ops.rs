@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use tracing::{debug, error, info, warn};
@@ -19,6 +20,10 @@ use x509_parser::extensions::GeneralName;
 use x509_parser::parse_x509_certificate;
 
 use crate::dictionary_runtime;
+use crate::monitor_progress::{emit_plugin_monitor_progress, PluginMonitorProgressRequest};
+use crate::network_scan::op_scan_ports;
+use crate::service_probe::op_get_service_probe_capabilities;
+use crate::service_probe_runtime::op_probe_services;
 use crate::types::{Confidence, Finding, Severity};
 
 /// 插件执行上下文（用于收集插件发现的漏洞）
@@ -228,8 +233,13 @@ extension!(
         op_plugin_log,
         op_plugin_return,
         op_fetch,
+        op_abort_fetch,
         op_tls_peer_certificate,
         op_get_tls_certificate,
+        op_scan_ports,
+        op_probe_services,
+        op_get_service_probe_capabilities,
+        op_report_monitor_progress,
         // File system operations
         op_read_text_file,
         op_write_text_file,
@@ -281,6 +291,16 @@ fn op_plugin_return(state: &mut OpState, #[serde] value: serde_json::Value) -> b
     true
 }
 
+#[op2]
+fn op_report_monitor_progress(#[serde] request: PluginMonitorProgressRequest) -> bool {
+    let Some(context) = request.monitor_progress else {
+        return false;
+    };
+
+    emit_plugin_monitor_progress(&context, request.update);
+    true
+}
+
 /// Fetch request options from JavaScript
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchOptions {
@@ -296,6 +316,10 @@ pub struct FetchOptions {
     pub redirect: Option<String>,
     #[serde(default)]
     pub max_redirects: Option<usize>,
+    #[serde(default)]
+    pub max_body_bytes: Option<usize>,
+    #[serde(default)]
+    pub request_id: Option<String>,
 }
 
 /// Fetch response to JavaScript
@@ -319,9 +343,38 @@ struct FetchClientKey {
 }
 
 static FETCH_CLIENTS: OnceLock<Mutex<HashMap<FetchClientKey, reqwest::Client>>> = OnceLock::new();
+static FETCH_ABORTS: OnceLock<Mutex<HashMap<String, oneshot::Sender<()>>>> = OnceLock::new();
 
 fn fetch_client_cache() -> &'static Mutex<HashMap<FetchClientKey, reqwest::Client>> {
     FETCH_CLIENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn fetch_abort_cache() -> &'static Mutex<HashMap<String, oneshot::Sender<()>>> {
+    FETCH_ABORTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn read_response_body(
+    mut response: reqwest::Response,
+    max_body_bytes: Option<usize>,
+) -> Result<String, reqwest::Error> {
+    if let Some(limit) = max_body_bytes.filter(|value| *value > 0) {
+        let mut body = Vec::with_capacity(limit.min(8192));
+        while let Some(chunk) = response.chunk().await? {
+            let remaining = limit.saturating_sub(body.len());
+            if remaining == 0 {
+                break;
+            }
+            if chunk.len() <= remaining {
+                body.extend_from_slice(&chunk);
+                continue;
+            }
+            body.extend_from_slice(&chunk[..remaining]);
+            break;
+        }
+        return Ok(String::from_utf8_lossy(&body).into_owned());
+    }
+
+    response.text().await
 }
 
 async fn get_fetch_client(
@@ -381,6 +434,22 @@ async fn get_fetch_client(
     Ok(client)
 }
 
+#[op2(fast)]
+fn op_abort_fetch(#[string] request_id: String) -> bool {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return false;
+    }
+
+    let sender = fetch_abort_cache().lock().unwrap().remove(request_id);
+    if let Some(sender) = sender {
+        let _ = sender.send(());
+        return true;
+    }
+
+    false
+}
+
 /// Op: HTTP fetch (网络请求)
 #[op2(async)]
 #[serde]
@@ -391,15 +460,24 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         method: "GET".to_string(),
         headers: std::collections::HashMap::new(),
         body: None,
-        timeout: Some(5000), // 5s default
+        timeout: Some(3000), // 5s default
         redirect: Some("follow".to_string()),
         max_redirects: Some(10),
+        max_body_bytes: None,
+        request_id: None,
     });
 
     let method = opts.method.to_uppercase();
-    let timeout_ms = opts.timeout.unwrap_or(5000);
+    let timeout_ms = opts.timeout.unwrap_or(3000);
     let follow_redirects = !matches!(opts.redirect.as_deref(), Some("manual"));
-    let max_redirects = opts.max_redirects.unwrap_or(10);
+    let max_redirects = opts.max_redirects.unwrap_or(1);
+    let max_body_bytes = opts.max_body_bytes.filter(|value| *value > 0);
+    let request_id = opts
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let client = match get_fetch_client(follow_redirects, max_redirects).await {
         Ok(c) => c,
         Err(e) => {
@@ -416,88 +494,117 @@ async fn op_fetch(#[string] url: String, #[serde] options: Option<FetchOptions>)
         }
     };
 
-    // Build request
-    let mut req_builder = match method.as_str() {
-        "GET" => client.get(&url),
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
-        "PATCH" => client.patch(&url),
-        "HEAD" => client.head(&url),
-        _ => client.get(&url),
-    };
-
-    // Add headers
-    for (key, value) in opts.headers {
-        req_builder = req_builder.header(&key, &value);
-    }
-
-    req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
-
-    // Add body if present
-    if let Some(body) = opts.body {
-        req_builder = req_builder.body(body);
-    }
-
-    // Execute request
-    let response = match req_builder.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return FetchResponse {
-                success: false,
-                status: 0,
-                headers: std::collections::HashMap::new(),
-                body: String::new(),
-                ok: false,
-                redirected: false,
-                final_url: url.clone(),
-                error: Some(format!("HTTP request failed: {}", e)),
-            };
-        }
-    };
-
-    let status = response.status().as_u16();
-    let ok = response.status().is_success();
-    let final_url = response.url().to_string();
-    let redirected = final_url != url;
-
-    // Extract headers
-    let mut headers = std::collections::HashMap::new();
-    for (key, value) in response.headers() {
-        if let Ok(v) = value.to_str() {
-            headers.insert(key.to_string(), v.to_string());
+    let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
+    let mut local_abort_tx = Some(abort_tx);
+    if let Some(id) = request_id.as_ref() {
+        if let Some(previous) = fetch_abort_cache()
+            .lock()
+            .unwrap()
+            .insert(id.clone(), local_abort_tx.take().unwrap())
+        {
+            let _ = previous.send(());
         }
     }
 
-    // Read body
-    let body = match response.text().await {
-        Ok(b) => b,
-        Err(e) => {
-            return FetchResponse {
-                success: false,
-                status,
-                headers,
-                body: String::new(),
-                ok: false,
-                redirected,
-                final_url,
-                error: Some(format!("Failed to read response body: {}", e)),
-            };
+    let request_future = async {
+        let mut req_builder = match method.as_str() {
+            "GET" => client.get(&url),
+            "POST" => client.post(&url),
+            "PUT" => client.put(&url),
+            "DELETE" => client.delete(&url),
+            "PATCH" => client.patch(&url),
+            "HEAD" => client.head(&url),
+            _ => client.get(&url),
+        };
+
+        for (key, value) in opts.headers {
+            req_builder = req_builder.header(&key, &value);
+        }
+
+        req_builder = req_builder.timeout(Duration::from_millis(timeout_ms));
+
+        if let Some(body) = opts.body {
+            req_builder = req_builder.body(body);
+        }
+
+        let response = match req_builder.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return FetchResponse {
+                    success: false,
+                    status: 0,
+                    headers: std::collections::HashMap::new(),
+                    body: String::new(),
+                    ok: false,
+                    redirected: false,
+                    final_url: url.clone(),
+                    error: Some(format!("HTTP request failed: {}", e)),
+                };
+            }
+        };
+
+        let status = response.status().as_u16();
+        let ok = response.status().is_success();
+        let final_url = response.url().to_string();
+        let redirected = final_url != url;
+
+        let mut headers = std::collections::HashMap::new();
+        for (key, value) in response.headers() {
+            if let Ok(v) = value.to_str() {
+                headers.insert(key.to_string(), v.to_string());
+            }
+        }
+
+        let body = match read_response_body(response, max_body_bytes).await {
+            Ok(b) => b,
+            Err(e) => {
+                return FetchResponse {
+                    success: false,
+                    status,
+                    headers,
+                    body: String::new(),
+                    ok: false,
+                    redirected,
+                    final_url,
+                    error: Some(format!("Failed to read response body: {}", e)),
+                };
+            }
+        };
+
+        debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
+
+        FetchResponse {
+            success: true,
+            status,
+            headers,
+            body,
+            ok,
+            redirected,
+            final_url,
+            error: None,
         }
     };
 
-    debug!("[Plugin] Fetch completed: {} (status: {})", url, status);
+    let response = tokio::select! {
+        result = request_future => result,
+        _ = &mut abort_rx => FetchResponse {
+            success: false,
+            status: 0,
+            headers: std::collections::HashMap::new(),
+            body: String::new(),
+            ok: false,
+            redirected: false,
+            final_url: url.clone(),
+            error: Some("HTTP request aborted".to_string()),
+        }
+    };
 
-    FetchResponse {
-        success: true,
-        status,
-        headers,
-        body,
-        ok,
-        redirected,
-        final_url,
-        error: None,
+    if let Some(id) = request_id {
+        fetch_abort_cache().lock().unwrap().remove(&id);
     }
+    drop(local_abort_tx);
+
+    response
 }
 
 /// Stub op for TLS peer certificate (required by deno_net 02_tls.js)
@@ -534,28 +641,33 @@ async fn op_get_tls_certificate(
     #[smi] port: u16,
     #[smi] timeout_ms: u32,
 ) -> TlsCertificateResponse {
-    let timeout_ms = if timeout_ms == 0 { 10_000 } else { timeout_ms as u64 };
+    let timeout_ms = if timeout_ms == 0 {
+        10_000
+    } else {
+        timeout_ms as u64
+    };
     let port = if port == 0 { 443 } else { port };
 
     let addr = format!("{}:{}", hostname, port);
 
-    let tcp_stream = match timeout(Duration::from_millis(timeout_ms), TcpStream::connect(&addr)).await {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(e)) => {
-            return TlsCertificateResponse {
-                success: false,
-                cert: None,
-                error: Some(format!("TCP connect failed: {}", e)),
-            };
-        }
-        Err(_) => {
-            return TlsCertificateResponse {
-                success: false,
-                cert: None,
-                error: Some(format!("TCP connect timeout after {} ms", timeout_ms)),
-            };
-        }
-    };
+    let tcp_stream =
+        match timeout(Duration::from_millis(timeout_ms), TcpStream::connect(&addr)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(e)) => {
+                return TlsCertificateResponse {
+                    success: false,
+                    cert: None,
+                    error: Some(format!("TCP connect failed: {}", e)),
+                };
+            }
+            Err(_) => {
+                return TlsCertificateResponse {
+                    success: false,
+                    cert: None,
+                    error: Some(format!("TCP connect timeout after {} ms", timeout_ms)),
+                };
+            }
+        };
 
     let root_store = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -658,12 +770,10 @@ async fn op_get_tls_certificate(
     .map(|dt| dt.to_rfc3339())
     .unwrap_or_else(|| parsed.validity().not_before.to_string());
 
-    let valid_to = chrono::DateTime::<chrono::Utc>::from_timestamp(
-        parsed.validity().not_after.timestamp(),
-        0,
-    )
-    .map(|dt| dt.to_rfc3339())
-    .unwrap_or_else(|| parsed.validity().not_after.to_string());
+    let valid_to =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(parsed.validity().not_after.timestamp(), 0)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| parsed.validity().not_after.to_string());
 
     let cert_json = serde_json::json!({
         "subject": parsed.subject().to_string(),

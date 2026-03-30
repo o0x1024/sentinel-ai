@@ -445,7 +445,9 @@ impl ShellTool {
             }
 
             if ch == '2'
-                && chars.windows(4).any(|window| window == ['2', '>', '&', '1'])
+                && chars
+                    .windows(4)
+                    .any(|window| window == ['2', '>', '&', '1'])
             {
                 stderr_to_stdout = true;
             }
@@ -984,10 +986,9 @@ mod tests {
         assert!(ShellTool::background_command_keeps_stdio_attached(
             "python3 -m http.server 8000 &"
         ));
-        assert!(ShellTool::build_background_command_guidance(
-            "python3 -m http.server 8000 &"
-        )
-        .is_some());
+        assert!(
+            ShellTool::build_background_command_guidance("python3 -m http.server 8000 &").is_some()
+        );
     }
 
     #[test]

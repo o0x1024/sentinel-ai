@@ -1,7 +1,7 @@
 export { default as ProgramsPanel } from './ProgramsPanel.vue'
+export { default as ApiInventoryPanel } from './ApiInventoryPanel.vue'
 export { default as FindingsPanel } from './FindingsPanel.vue'
 export { default as SubmissionsPanel } from './SubmissionsPanel.vue'
-export { default as AssetsPanel } from './AssetsPanel.vue'
 export { default as ChangeEventsPanel } from './ChangeEventsPanel.vue'
 export { default as ChangeEventDetailModal } from './ChangeEventDetailModal.vue'
 export { default as WorkflowTemplatesPanel } from './WorkflowTemplatesPanel.vue'

@@ -2658,11 +2658,12 @@ pub async fn agent_execute(
             .unwrap_or(false)
     );
 
-    if let Err(e) = crate::commands::ai_execution_state_support::clear_persisted_agent_execution_state(
-        &app_handle,
-        &conversation_id,
-    )
-    .await
+    if let Err(e) =
+        crate::commands::ai_execution_state_support::clear_persisted_agent_execution_state(
+            &app_handle,
+            &conversation_id,
+        )
+        .await
     {
         tracing::warn!(
             "Failed to clear persisted execution state for conversation {}: {}",

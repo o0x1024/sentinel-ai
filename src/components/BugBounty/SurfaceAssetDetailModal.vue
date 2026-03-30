@@ -3,8 +3,14 @@
     <div v-if="visible" class="fixed inset-0 z-[70]">
       <div class="absolute inset-0 bg-black/45 backdrop-blur-sm" @click="$emit('close')"></div>
 
-      <div class="relative flex min-h-full items-start justify-center overflow-y-auto px-4 py-20 md:px-6 md:py-24">
-        <div class="modal-box relative flex max-h-[calc(100vh-6rem)] w-full max-w-5xl flex-col overflow-hidden p-0 md:max-h-[calc(100vh-8rem)]">
+      <div
+        class="relative flex min-h-full items-start justify-center overflow-y-auto px-4 py-20 md:px-6 md:py-24"
+        @click.self="emit('close')"
+      >
+        <div
+          class="modal-box relative flex max-h-[calc(100vh-6rem)] w-full max-w-5xl flex-col overflow-hidden p-0 md:max-h-[calc(100vh-8rem)]"
+          @click.stop
+        >
           <div class="sticky top-0 z-10 border-b border-base-300 bg-base-100/95 px-6 py-4 backdrop-blur">
             <div class="flex items-start justify-between gap-4">
               <div class="min-w-0">
@@ -12,13 +18,33 @@
                   <h3 class="text-lg font-semibold break-all">
                     {{ detail?.asset?.display_name || detail?.asset?.asset_name || t('bugBounty.surface.detail.titleFallback') }}
                   </h3>
+                  <button
+                    v-if="canCopyValue(detail?.asset?.display_name || detail?.asset?.asset_name)"
+                    class="btn btn-ghost btn-xs shrink-0"
+                    type="button"
+                    :title="t('bugBounty.surface.detail.copy')"
+                    @click="copyValue(detail?.asset?.display_name || detail?.asset?.asset_name, 'asset-display')"
+                  >
+                    <i :class="copyIconClass('asset-display')"></i>
+                  </button>
                   <span v-if="detail?.asset?.asset_type" class="badge badge-outline badge-sm shrink-0">
                     {{ formatAssetType(detail.asset.asset_type) }}
                   </span>
                 </div>
-                <p class="mt-1 font-mono text-xs text-base-content/60 break-all">
-                  {{ detail?.asset?.asset_name || '-' }}
-                </p>
+                <div class="mt-1 flex items-start gap-2">
+                  <p class="min-w-0 flex-1 font-mono text-xs text-base-content/60 break-all">
+                    {{ detail?.asset?.asset_name || '-' }}
+                  </p>
+                  <button
+                    v-if="canCopyValue(detail?.asset?.asset_name)"
+                    class="btn btn-ghost btn-xs shrink-0"
+                    type="button"
+                    :title="t('bugBounty.surface.detail.copy')"
+                    @click="copyValue(detail?.asset?.asset_name, 'asset-name')"
+                  >
+                    <i :class="copyIconClass('asset-name')"></i>
+                  </button>
+                </div>
               </div>
               <button class="btn btn-sm btn-ghost shrink-0" @click="$emit('close')">✕</button>
             </div>
@@ -39,19 +65,131 @@
               <section class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
                   <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.status') }}</div>
-                  <div class="mt-1 font-medium">{{ formatStatus(detail.asset.status) }}</div>
+                  <div class="mt-1 flex items-start justify-between gap-2">
+                    <div class="min-w-0 flex-1 font-medium break-all">{{ formatStatus(detail.asset.status) }}</div>
+                    <button
+                      v-if="canCopyValue(formatStatus(detail.asset.status))"
+                      class="btn btn-ghost btn-xs shrink-0"
+                      type="button"
+                      :title="t('bugBounty.surface.detail.copy')"
+                      @click="copyValue(formatStatus(detail.asset.status), 'asset-status')"
+                    >
+                      <i :class="copyIconClass('asset-status')"></i>
+                    </button>
+                  </div>
                 </div>
                 <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
                   <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.exposure') }}</div>
-                  <div class="mt-1 font-medium">{{ detail.asset.internet_exposure || '-' }}</div>
+                  <div class="mt-1 flex items-start justify-between gap-2">
+                    <div class="min-w-0 flex-1 font-medium break-all">{{ detail.asset.internet_exposure || '-' }}</div>
+                    <button
+                      v-if="canCopyValue(detail.asset.internet_exposure)"
+                      class="btn btn-ghost btn-xs shrink-0"
+                      type="button"
+                      :title="t('bugBounty.surface.detail.copy')"
+                      @click="copyValue(detail.asset.internet_exposure, 'asset-exposure')"
+                    >
+                      <i :class="copyIconClass('asset-exposure')"></i>
+                    </button>
+                  </div>
                 </div>
                 <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
                   <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.source') }}</div>
-                  <div class="mt-1 font-medium">{{ detail.asset.source || '-' }}</div>
+                  <div class="mt-1 flex items-start justify-between gap-2">
+                    <div class="min-w-0 flex-1 font-medium break-all">{{ detail.asset.source || '-' }}</div>
+                    <button
+                      v-if="canCopyValue(detail.asset.source)"
+                      class="btn btn-ghost btn-xs shrink-0"
+                      type="button"
+                      :title="t('bugBounty.surface.detail.copy')"
+                      @click="copyValue(detail.asset.source, 'asset-source')"
+                    >
+                      <i :class="copyIconClass('asset-source')"></i>
+                    </button>
+                  </div>
                 </div>
                 <div class="rounded-lg border border-base-300 bg-base-200/50 p-3">
                   <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.lastSeen') }}</div>
-                  <div class="mt-1 font-medium">{{ formatTime(detail.asset.last_seen_at) }}</div>
+                  <div class="mt-1 flex items-start justify-between gap-2">
+                    <div class="min-w-0 flex-1 font-medium break-all">{{ formatTime(detail.asset.last_seen_at) }}</div>
+                    <button
+                      v-if="canCopyValue(formatTime(detail.asset.last_seen_at))"
+                      class="btn btn-ghost btn-xs shrink-0"
+                      type="button"
+                      :title="t('bugBounty.surface.detail.copy')"
+                      @click="copyValue(formatTime(detail.asset.last_seen_at), 'asset-last-seen')"
+                    >
+                      <i :class="copyIconClass('asset-last-seen')"></i>
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="detail.classification" class="card border border-base-300 bg-base-100">
+                <div class="card-body">
+                  <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.classification') }}</h4>
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div class="rounded-lg border border-base-300 px-3 py-2">
+                      <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.primaryCategory') }}</div>
+                      <div class="mt-1 flex items-start justify-between gap-2">
+                        <div class="min-w-0 flex-1 text-sm font-medium break-all">{{ formatCategory(detail.classification.primary_category) }}</div>
+                        <button
+                          v-if="canCopyValue(formatCategory(detail.classification.primary_category))"
+                          class="btn btn-ghost btn-xs shrink-0"
+                          type="button"
+                          :title="t('bugBounty.surface.detail.copy')"
+                          @click="copyValue(formatCategory(detail.classification.primary_category), 'classification-category')"
+                        >
+                          <i :class="copyIconClass('classification-category')"></i>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="rounded-lg border border-base-300 px-3 py-2">
+                      <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.primaryProduct') }}</div>
+                      <div class="mt-1 flex items-start justify-between gap-2">
+                        <div class="min-w-0 flex-1 text-sm font-medium break-all">{{ detail.classification.primary_product || '-' }}</div>
+                        <button
+                          v-if="canCopyValue(detail.classification.primary_product)"
+                          class="btn btn-ghost btn-xs shrink-0"
+                          type="button"
+                          :title="t('bugBounty.surface.detail.copy')"
+                          @click="copyValue(detail.classification.primary_product, 'classification-product')"
+                        >
+                          <i :class="copyIconClass('classification-product')"></i>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="rounded-lg border border-base-300 px-3 py-2">
+                      <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.primaryVendor') }}</div>
+                      <div class="mt-1 flex items-start justify-between gap-2">
+                        <div class="min-w-0 flex-1 text-sm font-medium break-all">{{ detail.classification.primary_vendor || '-' }}</div>
+                        <button
+                          v-if="canCopyValue(detail.classification.primary_vendor)"
+                          class="btn btn-ghost btn-xs shrink-0"
+                          type="button"
+                          :title="t('bugBounty.surface.detail.copy')"
+                          @click="copyValue(detail.classification.primary_vendor, 'classification-vendor')"
+                        >
+                          <i :class="copyIconClass('classification-vendor')"></i>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="rounded-lg border border-base-300 px-3 py-2">
+                      <div class="text-xs text-base-content/60">{{ t('bugBounty.surface.detail.classifiedAt') }}</div>
+                      <div class="mt-1 flex items-start justify-between gap-2">
+                        <div class="min-w-0 flex-1 text-sm font-medium break-all">{{ formatTime(detail.classification.classified_at) }}</div>
+                        <button
+                          v-if="canCopyValue(formatTime(detail.classification.classified_at))"
+                          class="btn btn-ghost btn-xs shrink-0"
+                          type="button"
+                          :title="t('bugBounty.surface.detail.copy')"
+                          @click="copyValue(formatTime(detail.classification.classified_at), 'classification-time')"
+                        >
+                          <i :class="copyIconClass('classification-time')"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </section>
 
@@ -61,7 +199,18 @@
                   <div v-if="typedEntries.length" class="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div v-for="[key, value] in typedEntries" :key="key" class="rounded-lg border border-base-300 px-3 py-2">
                       <div class="text-xs text-base-content/60">{{ key }}</div>
-                      <div class="mt-1 break-all whitespace-pre-wrap text-sm">{{ formatValue(value) }}</div>
+                      <div class="mt-1 flex items-start justify-between gap-2">
+                        <div class="min-w-0 flex-1 break-all whitespace-pre-wrap text-sm">{{ formatValue(value) }}</div>
+                        <button
+                          v-if="canCopyValue(value)"
+                          class="btn btn-ghost btn-xs shrink-0"
+                          type="button"
+                          :title="t('bugBounty.surface.detail.copy')"
+                          @click="copyValue(value, `typed-${key}`)"
+                        >
+                          <i :class="copyIconClass(`typed-${key}`)"></i>
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noTypedDetails') }}</div>
@@ -87,7 +236,20 @@
                           <td>{{ relation.relation.relation_type }}</td>
                           <td>{{ formatAssetType(relation.peer_asset.asset_type) }}</td>
                           <td class="font-mono text-xs break-all">
-                            {{ relation.peer_asset.display_name || relation.peer_asset.asset_name }}
+                            <div class="flex items-start justify-between gap-2">
+                              <span class="min-w-0 flex-1 break-all">
+                                {{ relation.peer_asset.display_name || relation.peer_asset.asset_name }}
+                              </span>
+                              <button
+                                v-if="canCopyValue(relation.peer_asset.display_name || relation.peer_asset.asset_name)"
+                                class="btn btn-ghost btn-xs shrink-0"
+                                type="button"
+                                :title="t('bugBounty.surface.detail.copy')"
+                                @click="copyValue(relation.peer_asset.display_name || relation.peer_asset.asset_name, `relation-${relation.relation.id}`)"
+                              >
+                                <i :class="copyIconClass(`relation-${relation.relation.id}`)"></i>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       </tbody>
@@ -101,12 +263,23 @@
                 <div class="card border border-base-300 bg-base-100">
                   <div class="card-body">
                     <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.fingerprints') }}</h4>
-                    <div v-if="detail.fingerprints.length" class="space-y-2">
+                  <div v-if="detail.fingerprints.length" class="space-y-2">
                       <div v-for="fingerprint in detail.fingerprints" :key="fingerprint.id" class="rounded-lg border border-base-300 px-3 py-2">
                         <div class="text-xs text-base-content/60">
                           {{ fingerprint.fingerprint_type }} / {{ fingerprint.fingerprint_key || '-' }}
                         </div>
-                        <div class="mt-1 break-all text-sm">{{ fingerprint.fingerprint_value }}</div>
+                        <div class="mt-1 flex items-start justify-between gap-2">
+                          <div class="min-w-0 flex-1 break-all text-sm">{{ fingerprint.fingerprint_value }}</div>
+                          <button
+                            v-if="canCopyValue(fingerprint.fingerprint_value)"
+                            class="btn btn-ghost btn-xs shrink-0"
+                            type="button"
+                            :title="t('bugBounty.surface.detail.copy')"
+                            @click="copyValue(fingerprint.fingerprint_value, `fingerprint-${fingerprint.id}`)"
+                          >
+                            <i :class="copyIconClass(`fingerprint-${fingerprint.id}`)"></i>
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <div v-else class="text-sm text-base-content/60">{{ t('bugBounty.surface.detail.noFingerprints') }}</div>
@@ -116,12 +289,34 @@
                 <div class="card border border-base-300 bg-base-100">
                   <div class="card-body">
                     <h4 class="card-title text-base">{{ t('bugBounty.surface.detail.evidence') }}</h4>
-                    <div v-if="detail.evidence.length" class="space-y-2">
+                  <div v-if="detail.evidence.length" class="space-y-2">
                       <div v-for="evidence in detail.evidence" :key="evidence.id" class="rounded-lg border border-base-300 px-3 py-2">
                         <div class="text-xs text-base-content/60">{{ evidence.evidence_type }}</div>
-                        <div class="mt-1 text-sm">{{ evidence.title || '-' }}</div>
-                        <div class="mt-1 whitespace-pre-wrap break-all text-xs text-base-content/70">
-                          {{ evidence.content_text || formatJsonSnippet(evidence.content_json) }}
+                        <div class="mt-1 flex items-start justify-between gap-2">
+                          <div class="min-w-0 flex-1 text-sm break-all">{{ evidence.title || '-' }}</div>
+                          <button
+                            v-if="canCopyValue(evidence.title)"
+                            class="btn btn-ghost btn-xs shrink-0"
+                            type="button"
+                            :title="t('bugBounty.surface.detail.copy')"
+                            @click="copyValue(evidence.title, `evidence-title-${evidence.id}`)"
+                          >
+                            <i :class="copyIconClass(`evidence-title-${evidence.id}`)"></i>
+                          </button>
+                        </div>
+                        <div class="mt-1 flex items-start justify-between gap-2">
+                          <div class="min-w-0 flex-1 whitespace-pre-wrap break-all text-xs text-base-content/70">
+                            {{ evidence.content_text || formatJsonSnippet(evidence.content_json) }}
+                          </div>
+                          <button
+                            v-if="canCopyValue(evidence.content_text || evidence.content_json)"
+                            class="btn btn-ghost btn-xs shrink-0"
+                            type="button"
+                            :title="t('bugBounty.surface.detail.copy')"
+                            @click="copyValue(evidence.content_text || evidence.content_json, `evidence-content-${evidence.id}`)"
+                          >
+                            <i :class="copyIconClass(`evidence-content-${evidence.id}`)"></i>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -135,7 +330,18 @@
                     <div v-if="detail.changes.length" class="space-y-2">
                       <div v-for="change in detail.changes" :key="change.id" class="rounded-lg border border-base-300 px-3 py-2">
                         <div class="text-xs text-base-content/60">{{ change.change_type }}</div>
-                        <div class="mt-1 text-sm">{{ change.summary }}</div>
+                        <div class="mt-1 flex items-start justify-between gap-2">
+                          <div class="min-w-0 flex-1 text-sm break-all">{{ change.summary }}</div>
+                          <button
+                            v-if="canCopyValue(change.summary)"
+                            class="btn btn-ghost btn-xs shrink-0"
+                            type="button"
+                            :title="t('bugBounty.surface.detail.copy')"
+                            @click="copyValue(change.summary, `change-${change.id}`)"
+                          >
+                            <i :class="copyIconClass(`change-${change.id}`)"></i>
+                          </button>
+                        </div>
                         <div class="mt-1 text-xs text-base-content/60">{{ formatTime(change.detected_at) }}</div>
                       </div>
                     </div>
@@ -152,24 +358,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from 'vue-i18n'
+import { useToast } from '../../composables/useToast'
 
 const props = defineProps<{
   visible: boolean
   assetId?: string | null
 }>()
 
-const { t } = useI18n()
-
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void
 }>()
+const { t } = useI18n()
+const toast = useToast()
 
 const loading = ref(false)
 const error = ref('')
 const detail = ref<any | null>(null)
+const copiedFieldKey = ref<string | null>(null)
+let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 const typedEntries = computed(() => {
   const typed = detail.value?.typed_details
@@ -201,6 +410,53 @@ const formatJsonSnippet = (value?: string | null) => {
   return value.length > 180 ? `${value.slice(0, 180)}...` : value
 }
 
+const normalizeCopyValue = (value: unknown) => {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed ? trimmed : null
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+const canCopyValue = (value: unknown) => normalizeCopyValue(value) !== null
+
+const copyIconClass = (fieldKey: string) =>
+  copiedFieldKey.value === fieldKey ? 'fas fa-check text-success' : 'fas fa-copy'
+
+const resetCopyFeedback = () => {
+  if (copyFeedbackTimer) {
+    clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = null
+  }
+}
+
+const copyValue = async (value: unknown, fieldKey: string) => {
+  const text = normalizeCopyValue(value)
+  if (!text) return
+
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedFieldKey.value = fieldKey
+    toast.success(t('bugBounty.surface.detail.copySuccess'))
+    resetCopyFeedback()
+    copyFeedbackTimer = setTimeout(() => {
+      if (copiedFieldKey.value === fieldKey) {
+        copiedFieldKey.value = null
+      }
+      copyFeedbackTimer = null
+    }, 1500)
+  } catch (err) {
+    console.error('Failed to copy asset detail value:', err)
+    toast.error(t('bugBounty.surface.detail.copyFailed'))
+  }
+}
+
 const formatStatus = (value?: string) => {
   if (!value) return '-'
   const key = `bugBounty.surface.status.${value}`
@@ -213,6 +469,18 @@ const formatAssetType = (value?: string) => {
   const key = `bugBounty.surface.assetTypes.${value}`
   const translated = t(key)
   return translated === key ? value : translated
+}
+
+const formatCategory = (value?: string) => {
+  if (!value) return '-'
+  const key = `bugBounty.surface.fingerprintCategories.${value}`
+  const translated = t(key)
+  if (translated !== key) return translated
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
+    .join(' ')
 }
 
 const formatDirection = (value?: string) => {
@@ -244,4 +512,8 @@ watch(
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  resetCopyFeedback()
+})
 </script>

@@ -807,6 +807,9 @@ const toggleJsonView = (stepId: string) => {
   jsonViewStates[stepId] = !jsonViewStates[stepId]
 }
 
+// Store refresh interval for cleanup
+let refreshInterval: ReturnType<typeof setInterval> | null = null
+
 // Lifecycle
 onMounted(async () => {
   totalSteps.value = props.steps.length
@@ -820,11 +823,13 @@ onMounted(async () => {
   ])
 
   // Refresh rate limit stats periodically
-  const refreshInterval = setInterval(loadRateLimitStats, 5000)
-  onUnmounted(() => clearInterval(refreshInterval))
+  refreshInterval = setInterval(loadRateLimitStats, 5000)
 })
 
 onUnmounted(() => {
+  if (refreshInterval) {
+    clearInterval(refreshInterval)
+  }
   stopDurationTimer()
   unlistenProgress?.()
   unlistenStepStart?.()

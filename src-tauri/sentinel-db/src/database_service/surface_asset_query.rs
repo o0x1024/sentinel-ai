@@ -374,6 +374,38 @@ pub(crate) fn push_surface_asset_filters<'args, DB>(
             .push(" AND status = ")
             .push_bind(status.to_string());
     }
+    if let Some(service_name) = filter
+        .service_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        query_builder.push(
+            " AND EXISTS (SELECT 1 FROM surface_service_assets WHERE surface_service_assets.asset_id = surface_assets.id AND LOWER(COALESCE(surface_service_assets.application_service_name, surface_service_assets.protocol_name, '')) = ",
+        );
+        query_builder
+            .push_bind(service_name.to_lowercase())
+            .push(")");
+    }
+    if let Some(transport_protocol) = filter
+        .transport_protocol
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let normalized = transport_protocol.to_lowercase();
+        query_builder.push(" AND (");
+        query_builder.push(
+            "EXISTS (SELECT 1 FROM surface_service_assets WHERE surface_service_assets.asset_id = surface_assets.id AND LOWER(COALESCE(surface_service_assets.transport_protocol, '')) = ",
+        );
+        query_builder.push_bind(normalized.clone()).push(")");
+        query_builder.push(" OR ");
+        query_builder.push(
+            "EXISTS (SELECT 1 FROM surface_port_assets WHERE surface_port_assets.asset_id = surface_assets.id AND LOWER(COALESCE(surface_port_assets.transport_protocol, '')) = ",
+        );
+        query_builder.push_bind(normalized).push(")");
+        query_builder.push(")");
+    }
     push_surface_asset_search_filters(query_builder, filter);
 }
 

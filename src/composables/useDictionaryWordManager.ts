@@ -5,15 +5,23 @@ import { writeTextFile } from '@tauri-apps/plugin-fs'
 import { dialog } from '@/composables/useDialog'
 import {
   getRuleMatcherCount,
+  getRuleProbeName,
+  getRuleService,
   getRuleSeverity,
   isRuleEnabled,
   parseRuleMetadata,
 } from '@/components/Dictionary/ruleEntryUtils'
+import { inferDictionarySubtypeKey } from '@/components/Dictionary/dictionarySubtypeUtils'
 
 export interface ManagedDictionary {
   id: string
   name: string
   dict_type: string
+  service_type?: string
+  is_builtin?: boolean
+  category?: string | null
+  tags?: string[] | string
+  metadata?: string | null
 }
 
 export interface DictionaryWord {
@@ -39,6 +47,17 @@ export interface BatchRuleEditPayload {
   category: string
   severityMode: 'keep' | 'set' | 'clear'
   severity: string
+  serviceMode: 'keep' | 'set' | 'clear'
+  service: string
+  protocolMode: 'keep' | 'set' | 'clear'
+  protocol: string
+  probeNameMode: 'keep' | 'set' | 'clear'
+  probeName: string
+  portsMode: 'keep' | 'set' | 'clear'
+  ports: number[]
+  sslPortsMode: 'keep' | 'set' | 'clear'
+  sslPorts: number[]
+  softmatchAction: 'keep' | 'enable' | 'disable'
   addTags: string[]
   removeTags: string[]
   safeModeAction: 'keep' | 'enable' | 'disable'
@@ -59,7 +78,7 @@ interface UseDictionaryWordManagerOptions {
 
 const ROW_HEIGHT = 40
 const LIST_HEIGHT = 384
-const structuredDictionaryTypes = new Set(['sensitive_file', 'fingerprint_rule', 'poc_rule'])
+const structuredDictionaryTypes = new Set(['sensitive_file', 'fingerprint_rule', 'service_probe_rule', 'poc_rule'])
 
 export function useDictionaryWordManager(options: UseDictionaryWordManagerOptions) {
   const managingDictionary = ref<ManagedDictionary | null>(null)
@@ -82,6 +101,8 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
   const ruleSeverityFilter = ref('')
   const ruleMatcherFilter = ref('')
   const ruleEnabledFilter = ref('')
+  const ruleServiceFilter = ref('')
+  const ruleProbeNameFilter = ref('')
   const batchSize = ref(500)
   const isLoadingMore = ref(false)
   const hasMore = ref(true)
@@ -103,8 +124,32 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
     return ['critical', 'high', 'medium', 'low', 'info'].filter(value => values.has(value))
   })
 
+  const structuredServiceOptions = computed(() => {
+    const values = new Set<string>()
+    for (const word of dictionaryWords.value) {
+      const service = getRuleService(word)
+      if (service) values.add(service)
+    }
+    return Array.from(values).sort()
+  })
+
+  const structuredProbeNameOptions = computed(() => {
+    const values = new Set<string>()
+    for (const word of dictionaryWords.value) {
+      const probeName = getRuleProbeName(word)
+      if (probeName) values.add(probeName)
+    }
+    return Array.from(values).sort()
+  })
+
   const isStructuredManagingDictionary = computed(() =>
     managingDictionary.value ? structuredDictionaryTypes.has(managingDictionary.value.dict_type) : false
+  )
+  const supportsNmapServiceProbeImport = computed(() =>
+    managingDictionary.value
+      ? managingDictionary.value.dict_type === 'service_probe_rule'
+        || inferDictionarySubtypeKey(managingDictionary.value) === 'service_identification'
+      : false
   )
 
   const listItems = computed(() => {
@@ -120,6 +165,8 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
       const enabled = isRuleEnabled(word)
       if (ruleEnabledFilter.value === 'enabled' && !enabled) return false
       if (ruleEnabledFilter.value === 'disabled' && enabled) return false
+      if (ruleServiceFilter.value && getRuleService(word) !== ruleServiceFilter.value) return false
+      if (ruleProbeNameFilter.value && getRuleProbeName(word) !== ruleProbeNameFilter.value) return false
       return true
     })
   })
@@ -134,6 +181,8 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
     ruleSeverityFilter.value = ''
     ruleMatcherFilter.value = ''
     ruleEnabledFilter.value = ''
+    ruleServiceFilter.value = ''
+    ruleProbeNameFilter.value = ''
   }
 
   async function manageDictionaryWords(dictionary: ManagedDictionary) {
@@ -321,6 +370,42 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
           delete metadata.severity
         }
 
+        if (payload.serviceMode === 'set') {
+          metadata.service = payload.service
+        } else if (payload.serviceMode === 'clear') {
+          delete metadata.service
+        }
+
+        if (payload.protocolMode === 'set') {
+          metadata.protocol = payload.protocol
+        } else if (payload.protocolMode === 'clear') {
+          delete metadata.protocol
+        }
+
+        if (payload.probeNameMode === 'set') {
+          metadata.probeName = payload.probeName
+        } else if (payload.probeNameMode === 'clear') {
+          delete metadata.probeName
+        }
+
+        if (payload.portsMode === 'set') {
+          metadata.ports = payload.ports
+        } else if (payload.portsMode === 'clear') {
+          delete metadata.ports
+        }
+
+        if (payload.sslPortsMode === 'set') {
+          metadata.sslPorts = payload.sslPorts
+        } else if (payload.sslPortsMode === 'clear') {
+          delete metadata.sslPorts
+        }
+
+        if (payload.softmatchAction === 'enable') {
+          metadata.softmatch = true
+        } else if (payload.softmatchAction === 'disable') {
+          metadata.softmatch = false
+        }
+
         if (payload.addTags.length > 0 || payload.removeTags.length > 0) {
           const currentTags = Array.isArray(metadata.tags)
             ? metadata.tags.filter((tag: unknown): tag is string => typeof tag === 'string')
@@ -441,6 +526,20 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
             .map(word => word.trim())
             .filter(word => word.length > 0)
         }
+      } else if (importMethod.value === 'nmap' && selectedFile.value && managingDictionary.value) {
+        const content = await selectedFile.value.text()
+        const affectedCount = await invoke<number>('import_nmap_service_probes', {
+          dictionary_id: managingDictionary.value.id,
+          file_content: content,
+          replace_existing: mergeMode.value === 'replace',
+        })
+        dialog.toast.success(`Imported ${affectedCount} Nmap service probe rules`)
+        importText.value = ''
+        selectedFile.value = null
+        showImportModal.value = false
+        await resetAndLoadFirstPage()
+        await options.onDictionaryChanged()
+        return
       }
 
       if ((words.length > 0 || entries.length > 0) && managingDictionary.value) {
@@ -464,6 +563,7 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
       }
     } catch (error) {
       console.error('Failed to import words:', error)
+      await dialog.error(error instanceof Error ? error.message : String(error))
     } finally {
       importing.value = false
     }
@@ -531,6 +631,7 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
     importing,
     isLoadingMore,
     isStructuredManagingDictionary,
+    supportsNmapServiceProbeImport,
     listItems,
     manageDictionaryWords,
     managingDictionary,
@@ -542,6 +643,8 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
     resetAndLoadFirstPage,
     ruleCategoryFilter,
     ruleEnabledFilter,
+    ruleProbeNameFilter,
+    ruleServiceFilter,
     ruleMatcherFilter,
     ruleSeverityFilter,
     searchQuery,
@@ -551,7 +654,9 @@ export function useDictionaryWordManager(options: UseDictionaryWordManagerOption
     showImportModal,
     showRuleEditor,
     structuredCategoryOptions,
+    structuredProbeNameOptions,
     structuredSeverityOptions,
+    structuredServiceOptions,
     toggleSelectAll,
     viewDictionaryWords,
     virtualListRef,

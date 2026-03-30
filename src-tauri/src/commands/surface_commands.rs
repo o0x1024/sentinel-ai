@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use sentinel_db::{
     DatabaseService, SurfaceAssetDetailResponse, SurfaceAssetFilter,
-    SurfaceDiscoveryRunDetailResponse, SurfaceDiscoveryRunRow, SurfaceInventoryResponse,
-    SurfaceObservationRow, SurfaceOverview, SurfaceRelationFilter, SurfaceRelationRow,
-    SurfaceTopologyResponse,
+    SurfaceDiscoveryRunDetailResponse, SurfaceDiscoveryRunRow, SurfaceFingerprintAssetFilter,
+    SurfaceFingerprintAssetInventoryResponse, SurfaceFingerprintCategoryAggregation,
+    SurfaceInventoryFacetsResponse, SurfaceInventoryResponse, SurfaceObservationRow,
+    SurfaceOverview, SurfaceRelationFilter, SurfaceRelationRow, SurfaceTopologyResponse,
 };
 use tauri::State;
 
@@ -15,6 +16,34 @@ pub async fn surface_get_overview(
 ) -> Result<SurfaceOverview, String> {
     db_service
         .get_surface_overview(program_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_get_fingerprint_category_aggregation(
+    db_service: State<'_, Arc<DatabaseService>>,
+    program_id: Option<String>,
+    category_limit: Option<i64>,
+    product_limit: Option<i64>,
+) -> Result<SurfaceFingerprintCategoryAggregation, String> {
+    db_service
+        .get_surface_fingerprint_category_aggregation(
+            program_id.as_deref(),
+            category_limit,
+            product_limit,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_list_fingerprint_assets(
+    db_service: State<'_, Arc<DatabaseService>>,
+    filter: SurfaceFingerprintAssetFilter,
+) -> Result<SurfaceFingerprintAssetInventoryResponse, String> {
+    db_service
+        .list_surface_fingerprint_assets(&filter)
         .await
         .map_err(|e| e.to_string())
 }
@@ -37,6 +66,17 @@ pub async fn surface_list_inventory(
 ) -> Result<SurfaceInventoryResponse, String> {
     db_service
         .list_surface_inventory(&filter)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn surface_get_inventory_facets(
+    db_service: State<'_, Arc<DatabaseService>>,
+    filter: SurfaceAssetFilter,
+) -> Result<SurfaceInventoryFacetsResponse, String> {
+    db_service
+        .get_surface_inventory_facets(&filter)
         .await
         .map_err(|e| e.to_string())
 }

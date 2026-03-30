@@ -307,7 +307,13 @@ impl MonitorScheduler {
     /// List all monitoring tasks
     pub async fn list_tasks(&self) -> Vec<MonitorTask> {
         let tasks = self.tasks.read().await;
-        tasks.values().cloned().collect()
+        let mut ordered: Vec<MonitorTask> = tasks.values().cloned().collect();
+        ordered.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        ordered
     }
 
     /// Update task configuration

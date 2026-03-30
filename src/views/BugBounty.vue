@@ -66,6 +66,10 @@
         {{ t('bugBounty.tabs.assets') }}
         <span v-if="assetStats.total > 0" class="badge badge-sm ml-2">{{ assetStats.total }}</span>
       </a>
+      <a class="tab" :class="{ 'tab-active': activeTab === 'api-inventory' }" @click="switchTab('api-inventory')">
+        <i class="fas fa-plug mr-2"></i>
+        {{ t('bugBounty.tabs.apiInventory') }}
+      </a>
       <a class="tab" :class="{ 'tab-active': activeTab === 'findings' }" @click="switchTab('findings')">
         <i class="fas fa-bug mr-2"></i>
         {{ t('bugBounty.tabs.findings') }}
@@ -104,15 +108,125 @@
     </div>
 
     <!-- Tab Content -->
-    <div class="flex-1 min-h-0 overflow-auto">
-      <KeepAlive>
-        <component
-          :is="currentTabComponent"
-          :key="activeTab"
-          v-bind="currentTabProps"
-          v-on="currentTabListeners"
+    <div class="flex-1 min-h-0">
+      <div v-if="mountedTabs.programs" v-show="activeTab === 'programs'" class="h-full overflow-auto">
+        <ProgramsPanel
+          :programs="programs"
+          :loading="loading"
+          @create="showCreateProgramModal = true"
+          @select="selectProgram"
+          @edit="editProgram"
+          @delete="deleteProgram"
         />
-      </KeepAlive>
+      </div>
+
+      <div v-if="mountedTabs.assets" v-show="activeTab === 'assets'" class="h-full overflow-auto">
+        <AssetsPanelV2
+          :program-id="selectedProgram?.id"
+          :programs="programs"
+          @refresh="onAssetsRefreshNeeded"
+        />
+      </div>
+
+      <div v-if="mountedTabs['api-inventory']" v-show="activeTab === 'api-inventory'" class="h-full overflow-auto">
+        <ApiInventoryPanel
+          :selected-program="selectedProgram"
+          :programs="programs"
+        />
+      </div>
+
+      <div v-if="mountedTabs.findings" v-show="activeTab === 'findings'" class="h-full overflow-auto">
+        <FindingsPanel
+          :findings="findings"
+          :programs="programs"
+          :loading="loadingFindings"
+          :batch-action-loading="findingBatchActionLoading"
+          :batch-action-version="findingBatchActionVersion"
+          :page="findingPage"
+          :page-size="findingPageSize"
+          :page-count="findingPageCount"
+          :total="findingTotal"
+          :has-next="findingHasNext"
+          @create="showCreateFindingModal = true"
+          @view="viewFinding"
+          @delete="deleteFinding"
+          @create-submission="createSubmissionFromFinding"
+          @filter-change="onFindingFilterChange"
+          @batch-update-status="batchUpdateFindingStatus"
+          @batch-delete="batchDeleteFindings"
+          @page-change="onFindingPageChange"
+          @page-size-change="onFindingPageSizeChange"
+        />
+      </div>
+
+      <div v-if="mountedTabs.submissions" v-show="activeTab === 'submissions'" class="h-full overflow-auto">
+        <SubmissionsPanel
+          :submissions="submissions"
+          :loading="loadingSubmissions"
+          :batch-action-loading="submissionBatchActionLoading"
+          :batch-action-version="submissionBatchActionVersion"
+          :page="submissionPage"
+          :page-size="pageSize"
+          :total="submissionTotal"
+          :has-next="submissionHasNext"
+          @create="showCreateSubmissionModal = true"
+          @view="viewSubmission"
+          @edit="editSubmission"
+          @delete="deleteSubmission"
+          @filter-change="onSubmissionFilterChange"
+          @batch-update-status="batchUpdateSubmissionStatus"
+          @batch-delete="batchDeleteSubmissions"
+          @page-change="onSubmissionPageChange"
+        />
+      </div>
+
+      <div v-if="mountedTabs.statistics" v-show="activeTab === 'statistics'" class="h-full overflow-auto">
+        <StatisticsPanel
+          :finding-stats="findingStats"
+          :submission-stats="submissionStats"
+          :programs="programs"
+          :findings="findings"
+          :submissions="submissions"
+        />
+      </div>
+
+      <div v-if="mountedTabs['import-export']" v-show="activeTab === 'import-export'" class="h-full overflow-auto">
+        <ImportExportPanel
+          :programs="programs"
+          :findings="findings"
+          :submissions="submissions"
+          @imported="onDataImported"
+        />
+      </div>
+
+      <div v-if="mountedTabs.templates" v-show="activeTab === 'templates'" class="h-full overflow-auto">
+        <ReportTemplatesPanel
+          @use-template="onUseTemplate"
+        />
+      </div>
+
+      <div v-if="mountedTabs.changes" v-show="activeTab === 'changes'" class="h-full overflow-auto">
+        <ChangeEventsPanel
+          @view="viewChangeEvent"
+          @trigger-workflow="triggerWorkflowFromEvent"
+          @create="showCreateChangeEventModal = true"
+        />
+      </div>
+
+      <div v-if="mountedTabs.workflows" v-show="activeTab === 'workflows'" class="h-full overflow-auto">
+        <WorkflowTemplatesPanel
+          :programs="programs"
+          :selected-program="selectedProgram"
+          @view="viewWorkflowTemplate"
+        />
+      </div>
+
+      <div v-if="mountedTabs.monitor" v-show="activeTab === 'monitor'" class="h-full overflow-auto">
+        <MonitorPanel
+          :selected-program="selectedProgram"
+          :programs="programs"
+        />
+      </div>
     </div>
 
     <!-- Modals -->
@@ -208,6 +322,7 @@ import { useRoute } from 'vue-router'
 import { useToast } from '../composables/useToast'
 import { dialog } from '../composables/useDialog'
 import { 
+  ApiInventoryPanel,
   ProgramsPanel, 
   FindingsPanel, 
   SubmissionsPanel, 
@@ -251,6 +366,7 @@ const creating = ref(false)
 type BugBountyTab =
   | 'programs'
   | 'assets'
+  | 'api-inventory'
   | 'findings'
   | 'submissions'
   | 'statistics'
@@ -261,6 +377,19 @@ type BugBountyTab =
   | 'monitor'
 
 const activeTab = ref<BugBountyTab>('programs')
+const mountedTabs = ref<Record<BugBountyTab, boolean>>({
+  programs: true,
+  assets: false,
+  'api-inventory': false,
+  findings: false,
+  submissions: false,
+  statistics: false,
+  'import-export': false,
+  templates: false,
+  changes: false,
+  workflows: false,
+  monitor: false,
+})
 const loadedTabs = ref({
   findings: false,
   submissions: false,
@@ -357,155 +486,9 @@ const totalEarnings = computed(() =>
 const findingPageCount = computed(() => Math.max(1, Math.ceil(findingTotal.value / findingPageSize.value)))
 const submissionPageCount = computed(() => Math.max(1, Math.ceil(submissionTotal.value / pageSize.value)))
 
-const tabComponents: Record<BugBountyTab, any> = {
-  programs: ProgramsPanel,
-  assets: AssetsPanelV2,
-  findings: FindingsPanel,
-  submissions: SubmissionsPanel,
-  statistics: StatisticsPanel,
-  'import-export': ImportExportPanel,
-  templates: ReportTemplatesPanel,
-  changes: ChangeEventsPanel,
-  workflows: WorkflowTemplatesPanel,
-  monitor: MonitorPanel,
-}
-
-const currentTabComponent = computed(() => tabComponents[activeTab.value])
-
-const currentTabProps = computed(() => {
-  switch (activeTab.value) {
-    case 'programs':
-      return {
-        programs: programs.value,
-        loading: loading.value,
-      }
-    case 'assets':
-      return {
-        programId: selectedProgram.value?.id,
-        programs: programs.value,
-      }
-    case 'findings':
-      return {
-        findings: findings.value,
-        programs: programs.value,
-        loading: loadingFindings.value,
-        batchActionLoading: findingBatchActionLoading.value,
-        batchActionVersion: findingBatchActionVersion.value,
-        page: findingPage.value,
-        pageSize: findingPageSize.value,
-        pageCount: findingPageCount.value,
-        total: findingTotal.value,
-        hasNext: findingHasNext.value,
-      }
-    case 'submissions':
-      return {
-        submissions: submissions.value,
-        loading: loadingSubmissions.value,
-        batchActionLoading: submissionBatchActionLoading.value,
-        batchActionVersion: submissionBatchActionVersion.value,
-        page: submissionPage.value,
-        pageSize: pageSize.value,
-        total: submissionTotal.value,
-        hasNext: submissionHasNext.value,
-      }
-    case 'statistics':
-      return {
-        findingStats: findingStats.value,
-        submissionStats: submissionStats.value,
-        programs: programs.value,
-        findings: findings.value,
-        submissions: submissions.value,
-      }
-    case 'import-export':
-      return {
-        programs: programs.value,
-        findings: findings.value,
-        submissions: submissions.value,
-      }
-    case 'workflows':
-      return {
-        programs: programs.value,
-        selectedProgram: selectedProgram.value,
-      }
-    case 'monitor':
-      return {
-        selectedProgram: selectedProgram.value,
-        programs: programs.value,
-      }
-    default:
-      return {}
-  }
-})
-
-const currentTabListeners = computed(() => {
-  switch (activeTab.value) {
-    case 'programs':
-      return {
-        create: () => {
-          showCreateProgramModal.value = true
-        },
-        select: selectProgram,
-        edit: editProgram,
-        delete: deleteProgram,
-      }
-    case 'assets':
-      return {
-        refresh: onAssetsRefreshNeeded,
-      }
-    case 'findings':
-      return {
-        create: () => {
-          showCreateFindingModal.value = true
-        },
-        view: viewFinding,
-        delete: deleteFinding,
-        'create-submission': createSubmissionFromFinding,
-        'filter-change': onFindingFilterChange,
-        'batch-update-status': batchUpdateFindingStatus,
-        'batch-delete': batchDeleteFindings,
-        'page-change': onFindingPageChange,
-        'page-size-change': onFindingPageSizeChange,
-      }
-    case 'submissions':
-      return {
-        create: () => {
-          showCreateSubmissionModal.value = true
-        },
-        view: viewSubmission,
-        edit: editSubmission,
-        delete: deleteSubmission,
-        'filter-change': onSubmissionFilterChange,
-        'batch-update-status': batchUpdateSubmissionStatus,
-        'batch-delete': batchDeleteSubmissions,
-        'page-change': onSubmissionPageChange,
-      }
-    case 'import-export':
-      return {
-        imported: onDataImported,
-      }
-    case 'templates':
-      return {
-        'use-template': onUseTemplate,
-      }
-    case 'changes':
-      return {
-        view: viewChangeEvent,
-        'trigger-workflow': triggerWorkflowFromEvent,
-        create: () => {
-          showCreateChangeEventModal.value = true
-        },
-      }
-    case 'workflows':
-      return {
-        view: viewWorkflowTemplate,
-      }
-    default:
-      return {}
-  }
-})
-
 // Methods
 const switchTab = async (tab: BugBountyTab) => {
+  mountedTabs.value[tab] = true
   activeTab.value = tab
   if (tab === 'findings' && !loadedTabs.value.findings) {
     await loadFindings()
@@ -520,6 +503,7 @@ const isBugBountyTab = (value: string): value is BugBountyTab => {
   return [
     'programs',
     'assets',
+    'api-inventory',
     'findings',
     'submissions',
     'statistics',

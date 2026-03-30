@@ -385,7 +385,7 @@ const loadPlugins = async () => {
       { id: 'dns_resolver', name: 'DNS Resolver', category: 'recon', description: 'Resolve DNS records and build domain to IP relationships' },
       { id: 'http_prober', name: 'HTTP Prober', category: 'recon', description: 'Probe HTTP/HTTPS endpoints' },
       { id: 'favicon_fingerprinter', name: 'Favicon Fingerprinter', category: 'recon', description: 'Fetch favicons and emit web fingerprint artifacts' },
-      { id: 'service_fingerprinter', name: 'Service Fingerprinter', category: 'recon', description: 'Fingerprint exposed services from host and port targets' },
+      { id: 'service_probe', name: 'Service Probe', category: 'recon', description: 'Identify exposed services from host and port targets' },
       { id: 'port_monitor', name: 'Port Monitor', category: 'monitoring', description: 'Monitor open ports' },
     ]
   } finally {

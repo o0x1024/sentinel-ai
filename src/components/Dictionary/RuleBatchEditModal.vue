@@ -52,6 +52,123 @@
           </div>
         </div>
 
+        <div v-if="showFingerprintFields" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">服务名</span>
+            </label>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <select v-model="form.serviceMode" class="select select-bordered">
+                <option value="keep">保持不变</option>
+                <option value="set">统一设置</option>
+                <option value="clear">清空</option>
+              </select>
+              <input
+                v-if="form.serviceMode === 'set'"
+                v-model.trim="form.service"
+                type="text"
+                class="input input-bordered md:col-span-2"
+                placeholder="例如: http / ssh / redis"
+              >
+            </div>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">协议</span>
+            </label>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <select v-model="form.protocolMode" class="select select-bordered">
+                <option value="keep">保持不变</option>
+                <option value="set">统一设置</option>
+                <option value="clear">清空</option>
+              </select>
+              <input
+                v-if="form.protocolMode === 'set'"
+                v-model.trim="form.protocol"
+                type="text"
+                class="input input-bordered md:col-span-2"
+                placeholder="例如: tcp / http / https"
+              >
+            </div>
+          </div>
+        </div>
+
+        <div v-if="showFingerprintFields" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Probe 名称</span>
+            </label>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <select v-model="form.probeNameMode" class="select select-bordered">
+                <option value="keep">保持不变</option>
+                <option value="set">统一设置</option>
+                <option value="clear">清空</option>
+              </select>
+              <input
+                v-if="form.probeNameMode === 'set'"
+                v-model.trim="form.probeName"
+                type="text"
+                class="input input-bordered md:col-span-2"
+                placeholder="例如: tcp_banner / http_head"
+              >
+            </div>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">Softmatch</span>
+            </label>
+            <select v-model="form.softmatchAction" class="select select-bordered">
+              <option value="keep">保持不变</option>
+              <option value="enable">统一启用</option>
+              <option value="disable">统一关闭</option>
+            </select>
+          </div>
+        </div>
+
+        <div v-if="showFingerprintFields" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">端口列表</span>
+            </label>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <select v-model="form.portsMode" class="select select-bordered">
+                <option value="keep">保持不变</option>
+                <option value="set">统一设置</option>
+                <option value="clear">清空</option>
+              </select>
+              <input
+                v-if="form.portsMode === 'set'"
+                v-model.trim="form.portsText"
+                type="text"
+                class="input input-bordered md:col-span-2"
+                placeholder="例如: 80,443,8080 或 8000-8005"
+              >
+            </div>
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">SSL 端口列表</span>
+            </label>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <select v-model="form.sslPortsMode" class="select select-bordered">
+                <option value="keep">保持不变</option>
+                <option value="set">统一设置</option>
+                <option value="clear">清空</option>
+              </select>
+              <input
+                v-if="form.sslPortsMode === 'set'"
+                v-model.trim="form.sslPortsText"
+                type="text"
+                class="input input-bordered md:col-span-2"
+                placeholder="例如: 443,8443"
+              >
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="form-control">
             <label class="label">
@@ -110,6 +227,9 @@
                     <option value="title">title</option>
                     <option value="header">header</option>
                     <option value="status">status</option>
+                    <option value="banner">banner</option>
+                    <option value="product">product</option>
+                    <option value="service">service</option>
                   </select>
                 </div>
 
@@ -198,6 +318,17 @@ interface BatchRuleEditPayload {
   category: string
   severityMode: ChangeMode
   severity: string
+  serviceMode: ChangeMode
+  service: string
+  protocolMode: ChangeMode
+  protocol: string
+  probeNameMode: ChangeMode
+  probeName: string
+  portsMode: ChangeMode
+  ports: number[]
+  sslPortsMode: ChangeMode
+  sslPorts: number[]
+  softmatchAction: EnabledAction
   addTags: string[]
   removeTags: string[]
   safeModeAction: SafeModeAction
@@ -222,6 +353,17 @@ const form = reactive({
   category: '',
   severityMode: 'keep' as ChangeMode,
   severity: 'medium',
+  serviceMode: 'keep' as ChangeMode,
+  service: '',
+  protocolMode: 'keep' as ChangeMode,
+  protocol: '',
+  probeNameMode: 'keep' as ChangeMode,
+  probeName: '',
+  portsMode: 'keep' as ChangeMode,
+  portsText: '',
+  sslPortsMode: 'keep' as ChangeMode,
+  sslPortsText: '',
+  softmatchAction: 'keep' as EnabledAction,
   addTagsText: '',
   removeTagsText: '',
   safeModeAction: 'keep' as SafeModeAction,
@@ -238,9 +380,15 @@ const errorMessage = ref('')
 const showSeverity = computed(() =>
   props.dictionaryType === 'sensitive_file' || props.dictionaryType === 'poc_rule'
 )
+const showFingerprintFields = computed(() =>
+  props.dictionaryType === 'fingerprint_rule' || props.dictionaryType === 'service_probe_rule'
+)
 const showSafeMode = computed(() => props.dictionaryType === 'poc_rule')
 const supportsMatchers = computed(() =>
-  props.dictionaryType === 'sensitive_file' || props.dictionaryType === 'fingerprint_rule' || props.dictionaryType === 'poc_rule'
+  props.dictionaryType === 'sensitive_file'
+  || props.dictionaryType === 'fingerprint_rule'
+  || props.dictionaryType === 'service_probe_rule'
+  || props.dictionaryType === 'poc_rule'
 )
 
 const summaryText = computed(() => {
@@ -258,6 +406,41 @@ const summaryText = computed(() => {
     } else if (form.severityMode === 'clear') {
       actions.push('清空风险等级')
     }
+  }
+
+  if (showFingerprintFields.value) {
+    if (form.serviceMode === 'set' && form.service.trim()) {
+      actions.push(`服务名 -> ${form.service.trim()}`)
+    } else if (form.serviceMode === 'clear') {
+      actions.push('清空服务名')
+    }
+
+    if (form.protocolMode === 'set' && form.protocol.trim()) {
+      actions.push(`协议 -> ${form.protocol.trim()}`)
+    } else if (form.protocolMode === 'clear') {
+      actions.push('清空协议')
+    }
+
+    if (form.probeNameMode === 'set' && form.probeName.trim()) {
+      actions.push(`Probe -> ${form.probeName.trim()}`)
+    } else if (form.probeNameMode === 'clear') {
+      actions.push('清空 Probe')
+    }
+
+    if (form.portsMode === 'set' && form.portsText.trim()) {
+      actions.push(`端口 -> ${form.portsText.trim()}`)
+    } else if (form.portsMode === 'clear') {
+      actions.push('清空端口列表')
+    }
+
+    if (form.sslPortsMode === 'set' && form.sslPortsText.trim()) {
+      actions.push(`SSL 端口 -> ${form.sslPortsText.trim()}`)
+    } else if (form.sslPortsMode === 'clear') {
+      actions.push('清空 SSL 端口列表')
+    }
+
+    if (form.softmatchAction === 'enable') actions.push('Softmatch -> enabled')
+    if (form.softmatchAction === 'disable') actions.push('Softmatch -> disabled')
   }
 
   const addTags = parseCommaSeparated(form.addTagsText)
@@ -298,6 +481,17 @@ function resetForm() {
   form.category = ''
   form.severityMode = 'keep'
   form.severity = 'medium'
+  form.serviceMode = 'keep'
+  form.service = ''
+  form.protocolMode = 'keep'
+  form.protocol = ''
+  form.probeNameMode = 'keep'
+  form.probeName = ''
+  form.portsMode = 'keep'
+  form.portsText = ''
+  form.sslPortsMode = 'keep'
+  form.sslPortsText = ''
+  form.softmatchAction = 'keep'
   form.addTagsText = ''
   form.removeTagsText = ''
   form.safeModeAction = 'keep'
@@ -319,6 +513,25 @@ function parseCommaSeparated(value: string): string[] {
         .filter(Boolean)
     )
   )
+}
+
+function parsePortList(value: string): number[] {
+  const ports = new Set<number>()
+  for (const item of parseCommaSeparated(value)) {
+    const range = item.split('-').map(part => Number(part.trim()))
+    if (range.length === 2 && Number.isInteger(range[0]) && Number.isInteger(range[1])) {
+      const [start, end] = range[0] <= range[1] ? range : [range[1], range[0]]
+      for (let port = start; port <= end; port += 1) {
+        if (port > 0 && port <= 65535) ports.add(port)
+      }
+      continue
+    }
+    const port = Number(item)
+    if (Number.isInteger(port) && port > 0 && port <= 65535) {
+      ports.add(port)
+    }
+  }
+  return Array.from(ports).sort((left, right) => left - right)
 }
 
 function buildMatcher(): RuleMatcherPayload {
@@ -365,6 +578,17 @@ function submit() {
     category: form.category.trim(),
     severityMode: showSeverity.value ? form.severityMode : 'keep',
     severity: form.severity,
+    serviceMode: showFingerprintFields.value ? form.serviceMode : 'keep',
+    service: form.service.trim(),
+    protocolMode: showFingerprintFields.value ? form.protocolMode : 'keep',
+    protocol: form.protocol.trim(),
+    probeNameMode: showFingerprintFields.value ? form.probeNameMode : 'keep',
+    probeName: form.probeName.trim(),
+    portsMode: showFingerprintFields.value ? form.portsMode : 'keep',
+    ports: parsePortList(form.portsText),
+    sslPortsMode: showFingerprintFields.value ? form.sslPortsMode : 'keep',
+    sslPorts: parsePortList(form.sslPortsText),
+    softmatchAction: showFingerprintFields.value ? form.softmatchAction : 'keep',
     addTags: parseCommaSeparated(form.addTagsText),
     removeTags: parseCommaSeparated(form.removeTagsText),
     safeModeAction: showSafeMode.value ? form.safeModeAction : 'keep',
@@ -376,6 +600,12 @@ function submit() {
   const hasChanges =
     payload.categoryMode !== 'keep' ||
     payload.severityMode !== 'keep' ||
+    payload.serviceMode !== 'keep' ||
+    payload.protocolMode !== 'keep' ||
+    payload.probeNameMode !== 'keep' ||
+    payload.portsMode !== 'keep' ||
+    payload.sslPortsMode !== 'keep' ||
+    payload.softmatchAction !== 'keep' ||
     payload.safeModeAction !== 'keep' ||
     payload.enabledAction !== 'keep' ||
     payload.matcherMode !== 'keep' ||

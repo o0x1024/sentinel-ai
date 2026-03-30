@@ -38,6 +38,7 @@
         </div>
         <div class="flex gap-1">
           <button
+            type="button"
             class="btn btn-primary btn-xs"
             @click="emit('discover', task)"
             :title="t('bugBounty.monitor.discoverAssets')"
@@ -46,6 +47,7 @@
           </button>
           <button
             v-if="isRunning"
+            type="button"
             class="btn btn-error btn-xs"
             @click="emit('stop', task)"
             :disabled="stopping"
@@ -56,6 +58,7 @@
           </button>
           <button
             v-else
+            type="button"
             class="btn btn-ghost btn-xs"
             @click="emit('trigger', task)"
             :title="t('bugBounty.monitor.runNow')"
@@ -63,6 +66,7 @@
             <i class="fas fa-play"></i>
           </button>
           <button
+            type="button"
             class="btn btn-ghost btn-xs"
             @click="emit('edit', task)"
             :title="t('common.edit')"
@@ -70,6 +74,7 @@
             <i class="fas fa-edit"></i>
           </button>
           <button
+            type="button"
             class="btn btn-ghost btn-xs text-error"
             @click="emit('delete', task)"
             :title="t('common.delete')"
@@ -79,7 +84,7 @@
         </div>
       </div>
 
-      <div v-if="progress" class="mt-3 rounded-lg border border-info/20 bg-info/5 px-3 py-3">
+      <div v-if="showProgressCard" class="mt-3 rounded-lg border border-info/20 bg-info/5 px-3 py-3">
         <div class="flex items-center justify-between gap-3">
           <div class="flex items-center gap-2 min-w-0">
             <span
@@ -99,7 +104,30 @@
             {{ progress.progress }}%
           </span>
           <span v-else class="text-xs font-medium text-info/80">
-            Running
+            {{ t('bugBounty.monitor.runningNow') }}
+          </span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 mt-3">
+          <span v-if="activeStepLabel" class="badge badge-info badge-sm">{{ activeStepLabel }}</span>
+          <span v-if="serviceProbeStageLabel" class="badge badge-secondary badge-sm">
+            {{ serviceProbeStageLabel }}
+          </span>
+          <span v-if="portScanStageLabel" class="badge badge-accent badge-sm">
+            {{ portScanStageLabel }}
+          </span>
+          <span
+            v-if="genericPluginPhaseLabel && !serviceProbeStageLabel && !portScanStageLabel"
+            class="badge badge-primary badge-sm"
+          >
+            {{ genericPluginPhaseLabel }}
+          </span>
+          <span class="badge badge-sm" :class="heartbeatBadgeClass">{{ heartbeatLabel }}</span>
+          <span v-if="progress.execution_mode === 'scheduler'" class="badge badge-outline badge-sm">
+            {{ t('bugBounty.monitor.scheduledRun') }}
+          </span>
+          <span v-else class="badge badge-outline badge-sm">
+            {{ t('bugBounty.monitor.manualRun') }}
           </span>
         </div>
 
@@ -121,66 +149,42 @@
           <span v-if="progress.current_plugin">
             {{ t('bugBounty.monitor.currentPlugin') }}: {{ progress.current_plugin }}
           </span>
+          <span v-if="scanTargetProgressLabel">
+            {{ scanTargetProgressLabel }}
+          </span>
+          <span v-if="scanUnitProgressLabel">
+            {{ scanUnitProgressLabel }}
+          </span>
+          <span v-else-if="pluginUnitProgressLabel">
+            {{ pluginUnitProgressLabel }}
+          </span>
+          <span v-if="progress.current_target">
+            {{ t('bugBounty.monitor.currentTarget') }}: {{ progress.current_target }}
+          </span>
           <span v-if="progress.target_count > 0">
             {{ t('bugBounty.monitor.targetCount', { count: progress.target_count }) }}
           </span>
           <span v-if="progress.imported_assets > 0">
             {{ t('bugBounty.monitor.assetsImported') }}: {{ progress.imported_assets }}
           </span>
-          <span v-if="progress.execution_mode === 'scheduler'">
-            {{ t('bugBounty.monitor.scheduledRun') }}
-          </span>
-          <span v-else>
-            {{ t('bugBounty.monitor.manualRun') }}
+          <span v-if="progress.started_at">
+            {{ t('bugBounty.monitor.elapsedTime') }}: {{ elapsedLabel }}
           </span>
           <span v-if="progress.updated_at">
-            Last update: {{ formatDateTime(progress.updated_at) }}
+            {{ t('bugBounty.monitor.lastHeartbeat') }}: {{ heartbeatAgeLabel }}
+          </span>
+          <span v-if="progress.updated_at">
+            {{ t('bugBounty.monitor.lastUpdate') }}: {{ formatDateTime(progress.updated_at) }}
           </span>
         </div>
       </div>
 
-      <details v-if="logs.length > 0" class="collapse collapse-arrow bg-base-100/70 mt-3">
-        <summary class="collapse-title min-h-0 py-3 px-4 text-sm font-medium">
-          {{ t('bugBounty.monitor.executionLogs') }}
-          <span class="ml-2 text-xs text-base-content/50">({{ logs.length }})</span>
-        </summary>
-        <div class="collapse-content px-4 pb-4">
-          <div class="space-y-2">
-            <div
-              v-for="(log, index) in logs"
-              :key="`${log.plugin_id}-${log.occurred_at}-${index}`"
-              class="rounded-lg border border-base-300 bg-base-100 px-3 py-2"
-            >
-              <div class="flex items-center justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <span class="font-mono text-xs text-base-content/70">
-                      #{{ log.step_index }}/{{ log.total_steps }}
-                    </span>
-                    <span class="font-medium truncate">{{ log.plugin_id }}</span>
-                    <span class="badge badge-xs" :class="getLogBadgeClass(log.status)">
-                      {{ getLogStatusLabel(log.status) }}
-                    </span>
-                  </div>
-                  <div class="text-xs text-base-content/60 mt-1 break-words">
-                    {{ log.message }}
-                  </div>
-                </div>
-                <div class="text-right text-xs text-base-content/50 shrink-0">
-                  <div v-if="log.duration_ms != null">{{ formatDuration(log.duration_ms) }}</div>
-                  <div v-if="log.imported_assets_delta > 0" class="text-success">
-                    +{{ log.imported_assets_delta }} {{ t('bugBounty.monitor.assetsImported') }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </details>
-
       <div class="flex flex-wrap gap-2 mt-2">
         <span v-if="task.config.enable_dns_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-network-wired mr-1"></i>DNS
+          <i class="fas fa-network-wired mr-1"></i>{{ t('bugBounty.monitor.dns') }}
+        </span>
+        <span v-if="task.config.enable_ip_monitoring" class="badge badge-outline badge-xs">
+          <i class="fas fa-diagram-project mr-1"></i>{{ t('bugBounty.monitor.ip') }}
         </span>
         <span v-if="task.config.enable_cert_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-certificate mr-1"></i>{{ t('bugBounty.monitor.cert') }}
@@ -189,19 +193,26 @@
           <i class="fas fa-file-alt mr-1"></i>{{ t('bugBounty.monitor.content') }}
         </span>
         <span v-if="task.config.enable_api_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-plug mr-1"></i>API
+          <i class="fas fa-plug mr-1"></i>{{ t('bugBounty.monitor.api') }}
         </span>
         <span v-if="task.config.enable_port_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-network-wired mr-1"></i>Port
+          <i class="fas fa-network-wired mr-1"></i>{{ t('bugBounty.monitor.port') }}
         </span>
         <span v-if="task.config.enable_service_monitoring" class="badge badge-outline badge-xs">
           <i class="fas fa-server mr-1"></i>{{ t('bugBounty.monitor.service') }}
         </span>
+        <span
+          v-for="engine in serviceProbeEngineBadges"
+          :key="`service-engine-${engine.id}`"
+          class="badge badge-outline badge-xs"
+        >
+          <i class="fas fa-microchip mr-1"></i>{{ t('bugBounty.monitor.serviceProbeEngine') }}: {{ engine.label }}
+        </span>
         <span v-if="task.config.enable_web_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-globe mr-1"></i>Web
+          <i class="fas fa-globe mr-1"></i>{{ t('bugBounty.monitor.web') }}
         </span>
         <span v-if="task.config.enable_risk_monitoring" class="badge badge-outline badge-xs">
-          <i class="fas fa-shield-alt mr-1"></i>Risk
+          <i class="fas fa-shield-alt mr-1"></i>{{ t('bugBounty.monitor.vuln') }}
         </span>
       </div>
     </div>
@@ -209,7 +220,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 interface MonitorTaskProgress {
@@ -218,23 +229,23 @@ interface MonitorTaskProgress {
   completed_steps: number
   total_steps: number
   current_plugin?: string | null
+  current_plugin_index?: number | null
   target_count: number
   imported_assets: number
   indeterminate?: boolean
   message?: string | null
   execution_mode: string
+  started_at?: string
   updated_at?: string
-}
-
-interface MonitorTaskLog {
-  plugin_id: string
-  status: string
-  step_index: number
-  total_steps: number
-  duration_ms?: number | null
-  imported_assets_delta: number
-  message: string
-  occurred_at: string
+  scan_completed_targets?: number
+  scan_total_targets?: number
+  scan_completed_units?: number
+  scan_total_units?: number
+  current_target?: string | null
+  plugin_completed_units?: number
+  plugin_total_units?: number
+  plugin_phase?: string | null
+  plugin_phase_label?: string | null
 }
 
 const props = defineProps<{
@@ -242,7 +253,6 @@ const props = defineProps<{
   isRunning: boolean
   stopping: boolean
   progress: MonitorTaskProgress | null
-  logs: MonitorTaskLog[]
 }>()
 
 const emit = defineEmits<{
@@ -255,6 +265,26 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const now = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  ticker = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (ticker) {
+    clearInterval(ticker)
+  }
+})
+
+const toTimestamp = (value?: string | null) => {
+  if (!value) return null
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? timestamp : null
+}
 
 const progressStatusLabel = computed(() => {
   switch (props.progress?.status) {
@@ -269,7 +299,306 @@ const progressStatusLabel = computed(() => {
   }
 })
 
+const startedAtMs = computed(() => toTimestamp(props.progress?.started_at))
+const updatedAtMs = computed(() => toTimestamp(props.progress?.updated_at))
+const isProgressRunning = computed(() => props.progress?.status === 'running')
+const showProgressCard = computed(() => Boolean(props.progress && props.isRunning))
+
+const elapsedMs = computed(() => {
+  if (!startedAtMs.value) return null
+  const endTime = isProgressRunning.value ? now.value : (updatedAtMs.value ?? now.value)
+  return Math.max(0, endTime - startedAtMs.value)
+})
+
+const heartbeatAgeMs = computed(() => {
+  if (!updatedAtMs.value) return null
+  if (!isProgressRunning.value) return 0
+  return Math.max(0, now.value - updatedAtMs.value)
+})
+
+const activeStepLabel = computed(() => {
+  if (!props.progress) return null
+  const current = props.progress.current_plugin_index || props.progress.completed_steps || 0
+  const total = props.progress.total_steps || 0
+  if (current <= 0 && total <= 0) return null
+  return t('bugBounty.monitor.activeStep', { current, total })
+})
+
+const heartbeatState = computed(() => {
+  if (!isProgressRunning.value) return 'idle'
+  const age = heartbeatAgeMs.value ?? 0
+  if (age <= 10_000) return 'fresh'
+  if (age <= 30_000) return 'lagging'
+  return 'stale'
+})
+
+const heartbeatBadgeClass = computed(() => {
+  switch (heartbeatState.value) {
+    case 'fresh':
+      return 'badge-success'
+    case 'lagging':
+      return 'badge-warning'
+    case 'stale':
+      return 'badge-error'
+    default:
+      return 'badge-ghost'
+  }
+})
+
+const heartbeatLabel = computed(() => {
+  switch (heartbeatState.value) {
+    case 'fresh':
+      return t('bugBounty.monitor.heartbeatFresh')
+    case 'lagging':
+      return t('bugBounty.monitor.heartbeatLagging')
+    case 'stale':
+      return t('bugBounty.monitor.heartbeatStale')
+    default:
+      return t('bugBounty.monitor.heartbeatIdle')
+  }
+})
+
+const formatCompactDuration = (durationMs: number | null) => {
+  if (durationMs == null) return '--'
+
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+const elapsedLabel = computed(() => formatCompactDuration(elapsedMs.value))
+const heartbeatAgeLabel = computed(() => formatCompactDuration(heartbeatAgeMs.value))
+const genericPluginPhaseLabel = computed(() => {
+  if (props.progress?.plugin_phase_label) {
+    return props.progress.plugin_phase_label
+  }
+
+  switch (props.progress?.plugin_phase) {
+    case 'prepare':
+      return t('bugBounty.monitor.pluginPhasePrepare')
+    case 'resolve':
+      return t('bugBounty.monitor.pluginPhaseResolve')
+    case 'probe':
+      return t('bugBounty.monitor.pluginPhaseProbe')
+    case 'discover':
+      return t('bugBounty.monitor.pluginPhaseDiscover')
+    case 'compare':
+      return t('bugBounty.monitor.pluginPhaseCompare')
+    case 'build':
+      return t('bugBounty.monitor.pluginPhaseBuild')
+    default:
+      return null
+  }
+})
+const isServiceProbePlugin = computed(() =>
+  ['service_monitor', 'service_probe'].includes(String(props.progress?.current_plugin || ''))
+)
+const isPortMonitorPlugin = computed(() =>
+  String(props.progress?.current_plugin || '') === 'port_monitor'
+)
+
+const extractServiceProbeTarget = (message?: string | null) => {
+  const source = String(message || '')
+  const forMatch = source.match(/\sfor\s(.+)$/i)
+  if (forMatch?.[1]) return forMatch[1].trim()
+
+  const progressMatch = source.match(/\(([^)]+)\)\s*$/)
+  if (progressMatch?.[1]) return progressMatch[1].trim()
+
+  return null
+}
+
+const resolveServiceProbeStageLabel = (
+  message?: string | null,
+  completedUnits?: number | null,
+  totalUnits?: number | null,
+) => {
+  const normalizedMessage = String(message || '').toLowerCase()
+
+  if (normalizedMessage.includes('preparing service probe')) {
+    return t('bugBounty.monitor.serviceProbeStagePreparing')
+  }
+  if (normalizedMessage.includes('matching fingerprints')) {
+    return t('bugBounty.monitor.serviceProbeStageFingerprint')
+  }
+  if (normalizedMessage.includes('parsing http response headers')) {
+    return t('bugBounty.monitor.serviceProbeStageResponse')
+  }
+  if (normalizedMessage.includes('opening ') || normalizedMessage.includes('preparing http request')) {
+    return t('bugBounty.monitor.serviceProbeStageConnect')
+  }
+  if (
+    normalizedMessage.includes('reading ')
+    || normalizedMessage.includes('sending ')
+    || normalizedMessage.includes('probe evidence')
+  ) {
+    return t('bugBounty.monitor.serviceProbeStageProbe')
+  }
+  if (normalizedMessage.includes('target progress')) {
+    return t('bugBounty.monitor.serviceProbeStageComplete')
+  }
+
+  const completed = Number(completedUnits || 0)
+  const total = Number(totalUnits || 0)
+  if (total <= 0) return null
+  if (completed >= total) return t('bugBounty.monitor.serviceProbeStageComplete')
+  if (completed >= 3) return t('bugBounty.monitor.serviceProbeStageFingerprint')
+  if (completed >= 2) return t('bugBounty.monitor.serviceProbeStageProbe')
+  return t('bugBounty.monitor.serviceProbeStageConnect')
+}
+
+const formatServiceProbeStatus = (
+  message?: string | null,
+  target?: string | null,
+  completedUnits?: number | null,
+  totalUnits?: number | null,
+) => {
+  const stage = resolveServiceProbeStageLabel(message, completedUnits, totalUnits)
+  if (!stage) return null
+
+  const resolvedTarget = target || extractServiceProbeTarget(message)
+  if (resolvedTarget) {
+    return t('bugBounty.monitor.serviceProbeStageRunning', {
+      stage,
+      target: resolvedTarget,
+    })
+  }
+
+  return stage
+}
+
+const extractPortScanTarget = (message?: string | null) => {
+  const source = String(message || '')
+  const scanningForMatch = source.match(/scanning\s+\d+\s+sockets\s+for\s+(.+)$/i)
+  if (scanningForMatch?.[1]) return scanningForMatch[1].trim()
+
+  const progressMatch = source.match(/scanning\s+(.+?):\s+socket progress/i)
+  if (progressMatch?.[1]) return progressMatch[1].trim()
+
+  return null
+}
+
+const resolvePortScanStageLabel = (
+  message?: string | null,
+  completedUnits?: number | null,
+  totalUnits?: number | null,
+) => {
+  const normalizedMessage = String(message || '').toLowerCase()
+  if (normalizedMessage.includes('preparing port scan')) {
+    return t('bugBounty.monitor.portScanStagePreparing')
+  }
+  if (normalizedMessage.includes('socket progress')) {
+    return t('bugBounty.monitor.portScanStageScanning')
+  }
+  if (normalizedMessage.includes('scanning ') && normalizedMessage.includes(' sockets for ')) {
+    return t('bugBounty.monitor.portScanStageConnecting')
+  }
+
+  const completed = Number(completedUnits || 0)
+  const total = Number(totalUnits || 0)
+  if (total <= 0) return null
+  if (completed >= total) return t('bugBounty.monitor.portScanStageScanning')
+  if (completed > 0) return t('bugBounty.monitor.portScanStageScanning')
+  return t('bugBounty.monitor.portScanStageConnecting')
+}
+
+const formatPortScanStatus = (
+  message?: string | null,
+  target?: string | null,
+  completedUnits?: number | null,
+  totalUnits?: number | null,
+) => {
+  const stage = resolvePortScanStageLabel(message, completedUnits, totalUnits)
+  if (!stage) return null
+
+  const resolvedTarget = target || extractPortScanTarget(message)
+  if (resolvedTarget) {
+    return t('bugBounty.monitor.portScanStageRunning', {
+      stage,
+      target: resolvedTarget,
+    })
+  }
+
+  return stage
+}
+
+const serviceProbeStageLabel = computed(() => {
+  if (!isServiceProbePlugin.value || props.progress?.status !== 'running' || props.progress?.plugin_phase) {
+    return null
+  }
+  return resolveServiceProbeStageLabel(
+    props.progress?.message,
+    props.progress?.scan_completed_units,
+    props.progress?.scan_total_units,
+  )
+})
+
+const portScanStageLabel = computed(() => {
+  if (!isPortMonitorPlugin.value || props.progress?.status !== 'running' || props.progress?.plugin_phase) {
+    return null
+  }
+  return resolvePortScanStageLabel(
+    props.progress?.message,
+    props.progress?.scan_completed_units,
+    props.progress?.scan_total_units,
+  )
+})
+
+const scanTargetProgressLabel = computed(() => {
+  const completed = props.progress?.scan_completed_targets
+  const total = props.progress?.scan_total_targets
+  if (completed == null || total == null || total <= 0) return null
+  return t('bugBounty.monitor.scanTargetProgress', { current: completed, total })
+})
+
+const scanUnitProgressLabel = computed(() => {
+  const completed = props.progress?.scan_completed_units
+  const total = props.progress?.scan_total_units
+  if (completed == null || total == null || total <= 0) return null
+  if (['service_monitor', 'service_probe'].includes(String(props.progress?.current_plugin || ''))) {
+    return t('bugBounty.monitor.serviceProbePhaseProgress', { current: completed, total })
+  }
+  return t('bugBounty.monitor.scanSocketProgress', { current: completed, total })
+})
+
+const pluginUnitProgressLabel = computed(() => {
+  const completed = props.progress?.plugin_completed_units
+  const total = props.progress?.plugin_total_units
+  if (completed == null || total == null || total <= 0) return null
+  return t('bugBounty.monitor.pluginUnitProgress', { current: completed, total })
+})
+
 const progressSummary = computed(() => {
+  if (isServiceProbePlugin.value && serviceProbeStageLabel.value) {
+    return formatServiceProbeStatus(
+      props.progress?.message,
+      props.progress?.current_target,
+      props.progress?.scan_completed_units,
+      props.progress?.scan_total_units,
+    )
+  }
+  if (isPortMonitorPlugin.value && portScanStageLabel.value) {
+    return formatPortScanStatus(
+      props.progress?.message,
+      props.progress?.current_target,
+      props.progress?.scan_completed_units,
+      props.progress?.scan_total_units,
+    )
+  }
+  if (genericPluginPhaseLabel.value) {
+    if (props.progress?.current_target) {
+      return t('bugBounty.monitor.genericPhaseRunning', {
+        stage: genericPluginPhaseLabel.value,
+        target: props.progress.current_target,
+      })
+    }
+    return genericPluginPhaseLabel.value
+  }
   if (props.progress?.message) {
     return props.progress.message
   }
@@ -308,36 +637,26 @@ const progressIconClass = computed(() => {
   }
 })
 
-const getLogStatusLabel = (status: string) => {
-  switch (status) {
-    case 'completed':
-      return t('bugBounty.monitor.progressCompleted')
-    case 'failed':
-      return t('bugBounty.monitor.progressFailed')
-    case 'stopped':
-      return t('bugBounty.monitor.progressStopped')
-    default:
-      return t('bugBounty.monitor.progressRunning')
-  }
-}
+const serviceProbeEngineBadges = computed(() => {
+  const plugins = Array.isArray(props.task?.config?.service_plugins)
+    ? props.task.config.service_plugins
+    : []
 
-const getLogBadgeClass = (status: string) => {
-  switch (status) {
-    case 'completed':
-      return 'badge-success'
-    case 'failed':
-      return 'badge-error'
-    case 'stopped':
-      return 'badge-warning'
-    default:
-      return 'badge-info'
-  }
-}
+  const engines = new Set<string>()
+  for (const plugin of plugins) {
+    const pluginId = String(plugin?.plugin_id || '').trim()
+    if (!['service_monitor', 'service_probe'].includes(pluginId)) {
+      continue
+    }
 
-const formatDuration = (durationMs: number) => {
-  if (durationMs >= 1000) return `${(durationMs / 1000).toFixed(1)}s`
-  return `${durationMs}ms`
-}
+    engines.add('native')
+  }
+
+  return Array.from(engines).map(engine => ({
+    id: engine,
+    label: t('bugBounty.monitor.serviceProbeEngineNative'),
+  }))
+})
 
 const formatInterval = (secs: number) => {
   const hours = secs / 3600

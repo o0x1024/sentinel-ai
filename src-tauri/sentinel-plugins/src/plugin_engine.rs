@@ -164,6 +164,15 @@ impl ModuleLoader for PluginModuleLoader {
     ) -> std::result::Result<ModuleSpecifier, JsErrorBox> {
         // 简单解析：如果是相对路径，基于 referrer 解析；否则直接作为 URL
         if specifier.starts_with("./") || specifier.starts_with("../") {
+            if referrer.starts_with("sentinel://") {
+                let normalized = specifier.trim_start_matches("./").trim_start_matches('/');
+                return Url::parse(&format!("sentinel://{}", normalized)).map_err(|e| {
+                    JsErrorBox::generic(format!(
+                        "Failed to resolve sentinel module {}: {}",
+                        specifier, e
+                    ))
+                });
+            }
             let base = Url::parse(referrer)
                 .map_err(|e| JsErrorBox::generic(format!("Failed to parse referrer: {}", e)))?;
             base.join(specifier)
@@ -346,6 +355,11 @@ impl PluginEngine {
                 loader.register_module(file.specifier, code);
             }
         }
+        loader.register_module(
+            "sentinel://monitor_progress.ts",
+            include_str!("../../../../sentinel-plugin/plugins/agent/monitor_progress.ts")
+                .to_string(),
+        );
 
         // Create Deno Runtime with extensions and module loader
         let mut runtime = JsRuntime::new(RuntimeOptions {

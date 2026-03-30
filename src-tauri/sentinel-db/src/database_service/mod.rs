@@ -24,9 +24,13 @@ pub mod sliding_window;
 pub mod sqlx_compat;
 pub mod surface;
 pub mod surface_artifacts;
+pub mod surface_asset_classification;
 pub mod surface_asset_query;
+pub mod surface_delete;
 pub mod surface_detail;
 pub mod surface_extensions;
+pub mod surface_fingerprint_aggregation;
+pub mod surface_fingerprint_inventory;
 pub mod surface_inventory;
 pub mod surface_migrations;
 pub mod surface_overview;
@@ -87,11 +91,19 @@ pub use surface::*;
 #[allow(unused_imports)]
 pub use surface_artifacts::*;
 #[allow(unused_imports)]
+pub use surface_asset_classification::*;
+#[allow(unused_imports)]
 pub use surface_asset_query::*;
+#[allow(unused_imports)]
+pub use surface_delete::*;
 #[allow(unused_imports)]
 pub use surface_detail::*;
 #[allow(unused_imports)]
 pub use surface_extensions::*;
+#[allow(unused_imports)]
+pub use surface_fingerprint_aggregation::*;
+#[allow(unused_imports)]
+pub use surface_fingerprint_inventory::*;
 #[allow(unused_imports)]
 pub use surface_inventory::*;
 #[allow(unused_imports)]

@@ -9,6 +9,7 @@ use sentinel_core::models::dictionary::{
     DictionaryStats, DictionaryType, DictionaryWord, DictionaryWordInput, ServiceType,
 };
 use sentinel_db::Database;
+use sentinel_services::nmap_service_probes::parse_nmap_service_probes;
 use std::collections::HashMap;
 
 /// 获取字典列表
@@ -76,6 +77,7 @@ pub async fn create_dictionary(
     description: Option<String>,
     category: Option<String>,
     tags: Option<Vec<String>>,
+    metadata: Option<String>,
 ) -> Result<Dictionary, String> {
     let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
     let dictionary_service = DictionaryService::new(pool.clone());
@@ -88,6 +90,7 @@ pub async fn create_dictionary(
     );
 
     dictionary.category = category;
+    dictionary.metadata = metadata;
     if let Some(tags) = tags {
         dictionary.set_tags(tags);
     }
@@ -334,6 +337,47 @@ pub async fn import_dictionary_from_file(
         .add_words(&dictionary_id, words)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 从 nmap-service-probes 导入服务识别规则
+#[tauri::command(rename_all = "snake_case")]
+pub async fn import_nmap_service_probes(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dictionary_id: String,
+    file_content: String,
+    replace_existing: Option<bool>,
+) -> Result<usize, String> {
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
+    let dictionary_service = DictionaryService::new(pool.clone());
+    let entries = parse_nmap_service_probes(&file_content).map_err(|e| e.to_string())?;
+    let affected_words = dictionary_service
+        .sync_word_entries(&dictionary_id, entries, replace_existing.unwrap_or(false))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut dictionary) = dictionary_service
+        .get_dictionary(&dictionary_id)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        let mut metadata = dictionary
+            .metadata
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        metadata.insert(
+            "subtype".to_string(),
+            serde_json::Value::String("service_identification".to_string()),
+        );
+        dictionary.metadata = Some(serde_json::Value::Object(metadata).to_string());
+        dictionary_service
+            .update_dictionary(dictionary)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(affected_words.len())
 }
 
 /// 导出字典到文件格式

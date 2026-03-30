@@ -37,6 +37,7 @@ export default {
      port: 'Port',
      api_endpoint: 'API Endpoint',
      sensitive_file: 'Sensitive File Rule',
+     service_probe_rule: 'Service Identification Rule',
      fingerprint_rule: 'Fingerprint Rule',
      poc_rule: 'PoC Rule',
      http_param: 'HTTP Parameter',
@@ -85,14 +86,31 @@ export default {
     copyPrefix: '(Copy)',
     confirmDelete: 'Are you sure you want to delete this dictionary?',
     confirmClear: 'Are you sure you want to clear this dictionary?',
-    importWords: 'Import Words',
+   importWords: 'Import Words',
+    subtypeFilter: 'Subtype Filter',
+    allSubtypes: 'All Subtypes',
     importFromText: 'Import from Text',
     importFromFile: 'Import from File',
+    importFromNmap: 'Import Nmap Service Probes',
+    importNmapServiceProbes: 'Import Nmap Service Probes',
     pasteWords: 'Paste entries (one per line)',
     importTextPlaceholder: 'Enter one entry per line...',
+    nmapImportHelp: 'Import the Probe/match/softmatch/ports/sslports subset from nmap-service-probes and convert it into service identification rules.',
+    emptyRuleTitle: 'This dictionary has no rules yet',
+    emptyServiceRuleHint: 'This is a service identification dictionary. You can import the Nmap Service Probes subset first, or start with a starter rule and expand from there.',
+    emptyWebRuleHint: 'This is a web fingerprint dictionary. Start with a starter rule using title, header, or favicon-related signals.',
+    emptyGenericRuleHint: 'Start with a starter rule, or import an existing JSON or rule file.',
+    createStarterRule: 'Create Starter Rule',
     mergeModes: {
       append: 'Append (keep existing entries)',
       replace: 'Replace (clear and import)',
       merge: 'Merge (deduplicate)'
+    },
+    subtypes: {
+      service_identification: 'Service Identification',
+      web_fingerprint: 'Web Fingerprint',
+      favicon_fingerprint: 'Favicon Fingerprint',
+      generic_fingerprint: 'Generic Fingerprint',
+      risk_verification: 'Risk Verification'
     }
 }

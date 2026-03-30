@@ -31,6 +31,13 @@
 
         <div class="flex flex-wrap gap-2 mb-3">
           <div class="badge badge-primary">{{ getDictionaryTypeLabel(dictionary.dict_type) }}</div>
+          <div
+            v-if="getDictionarySubtypeLabel(dictionary)"
+            class="badge"
+            :class="getDictionarySubtypeBadgeClass(dictionary)"
+          >
+            {{ getDictionarySubtypeLabel(dictionary) }}
+          </div>
           <div v-if="dictionary.service_type" class="badge badge-secondary">{{ getServiceTypeLabel(dictionary.service_type) }}</div>
           <div v-if="dictionary.is_builtin" class="badge badge-accent">内置</div>
           <div v-if="defaultMap[dictionary.dict_type] === dictionary.id" class="badge badge-success">默认</div>
@@ -72,12 +79,16 @@ interface DictionaryCard {
   is_builtin: boolean
   word_count?: number
   updated_at: string
+  category?: string
+  tags?: string[] | string
 }
 
 defineProps<{
   dictionaries: DictionaryCard[]
   defaultMap: Record<string, string>
   getDictionaryTypeLabel: (type: string) => string
+  getDictionarySubtypeLabel: (dictionary: DictionaryCard) => string | null
+  getDictionarySubtypeBadgeClass: (dictionary: DictionaryCard) => string
   getServiceTypeLabel: (type: string) => string
   formatDate: (dateString: string) => string
 }>()

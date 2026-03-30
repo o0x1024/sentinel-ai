@@ -85,6 +85,35 @@ globalThis.Sentinel = {
       return await Deno.core.ops.op_get_tls_certificate(hostname, port, timeout)
     },
   },
+
+  Network: {
+    /**
+     * High-performance port discovery powered by native Rust scanning.
+     * @param {object} request
+     * @param {{host: string, ports?: number[]}[]} request.targets
+     * @param {number[]} [request.ports]
+     * @param {number} [request.timeout_ms=1500]
+     * @param {number} [request.batch_size=512]
+     * @param {number} [request.concurrency=32]
+     * @param {number} [request.tries=1]
+     * @returns {Promise<{success: boolean, results: any[], summary: object, error?: string}>}
+     */
+    scanPorts: async (request = {}) => {
+      return await Deno.core.ops.op_scan_ports(request)
+    },
+    probeServices: async (request = {}) => {
+      return await Deno.core.ops.op_probe_services(request)
+    },
+    getServiceProbeCapabilities: () => {
+      return Deno.core.ops.op_get_service_probe_capabilities()
+    },
+  },
+
+  Monitor: {
+    reportProgress: async (request = {}) => {
+      return await Deno.core.ops.op_report_monitor_progress(request)
+    },
+  },
   
   // JavaScript AST parsing API (powered by oxc_parser)
   AST: {
@@ -555,6 +584,7 @@ globalThis.Deno.core = globalThis.Deno.core || Deno.core
 globalThis.fetch = async function (input, init = {}) {
   const url = typeof input === 'string' ? input : input.url
   const method = init.method || (input.method || 'GET')
+  const signal = init.signal || input.signal || null
   const headers = {}
 
   if (init.headers) {
@@ -574,16 +604,63 @@ globalThis.fetch = async function (input, init = {}) {
     typeof init.maxRedirects === 'number' && Number.isFinite(init.maxRedirects)
       ? Math.max(0, Math.trunc(init.maxRedirects))
       : undefined
-  const result = await Deno.core.ops.op_fetch(url, {
-    method,
-    headers,
-    body,
-    timeout,
-    redirect,
-    max_redirects: maxRedirects,
-  })
+  const maxBodyBytes =
+    typeof init.maxBodyBytes === 'number' && Number.isFinite(init.maxBodyBytes)
+      ? Math.max(0, Math.trunc(init.maxBodyBytes))
+      : undefined
+  const requestId =
+    typeof crypto?.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `fetch_${Date.now()}_${Math.random().toString(36).slice(2)}`
+
+  if (signal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError')
+  }
+
+  let timeoutId = null
+  let didTimeout = false
+  let aborted = false
+  const abortRequest = () => {
+    aborted = true
+    Deno.core.ops.op_abort_fetch(requestId)
+  }
+
+  if (signal) {
+    signal.addEventListener('abort', abortRequest, { once: true })
+  }
+  if (timeout > 0) {
+    timeoutId = setTimeout(() => {
+      didTimeout = true
+      abortRequest()
+    }, timeout)
+  }
+
+  let result
+  try {
+    result = await Deno.core.ops.op_fetch(url, {
+      method,
+      headers,
+      body,
+      timeout,
+      redirect,
+      max_redirects: maxRedirects,
+      max_body_bytes: maxBodyBytes,
+      request_id: requestId,
+    })
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+    if (signal) {
+      signal.removeEventListener('abort', abortRequest)
+    }
+  }
 
   if (!result.success) {
+    if (didTimeout || /timeout/i.test(result.error || '')) {
+      throw new Error(`Timeout after ${timeout}ms`)
+    }
+    if (aborted || /aborted/i.test(result.error || '')) {
+      throw new DOMException('The operation was aborted.', 'AbortError')
+    }
     throw new Error(result.error || 'Fetch failed')
   }
 
