@@ -307,6 +307,7 @@ impl TrafficAnalysisState {
                 main_category: db_rec.metadata.main_category,
                 category: db_rec.metadata.category,
                 description: db_rec.metadata.description,
+                monitor_type: db_rec.metadata.monitor_type,
                 default_severity: match db_rec.metadata.default_severity {
                     sentinel_plugins::Severity::Critical => sentinel_traffic::Severity::Critical,
                     sentinel_plugins::Severity::High => sentinel_traffic::Severity::High,
@@ -2298,6 +2299,11 @@ pub async fn create_plugin_in_db(
     db.register_traffic_plugin_with_code(&traffic_plugin, &plugin_code)
         .await
         .map_err(|e| format!("Failed to create plugin in database: {}", e))?;
+    let metadata_json = serde_json::to_value(&plugin)
+        .map_err(|e| format!("Failed to serialize plugin metadata: {}", e))?;
+    db.update_plugin(&metadata_json, &plugin_code)
+        .await
+        .map_err(|e| format!("Failed to persist plugin metadata: {}", e))?;
 
     tracing::info!("Plugin created/updated in database: {}", plugin_id);
 
@@ -2389,6 +2395,11 @@ pub async fn update_plugin(
     db.update_traffic_plugin(&traffic_plugin, &plugin_code)
         .await
         .map_err(|e| format!("Failed to update plugin: {}", e))?;
+    let metadata_json = serde_json::to_value(&plugin)
+        .map_err(|e| format!("Failed to serialize plugin metadata: {}", e))?;
+    db.update_plugin(&metadata_json, &plugin_code)
+        .await
+        .map_err(|e| format!("Failed to persist plugin metadata: {}", e))?;
 
     tracing::info!("Plugin updated in database: {}", plugin_id);
 
@@ -2437,6 +2448,7 @@ pub async fn update_plugin(
             category: plugin_category
                 .clone()
                 .unwrap_or_else(|| "other".to_string()),
+            monitor_type: None,
             default_severity: sentinel_plugins::Severity::Medium,
             tags: vec![],
             description: Some(plugin_description.clone()),
@@ -2603,6 +2615,7 @@ pub async fn test_plugin(
                         author: metadata.author.clone(),
                         main_category: metadata.main_category.clone(),
                         category: metadata.category.clone(),
+                        monitor_type: metadata.monitor_type.clone(),
                         description: metadata.description.clone(),
                         default_severity: severity,
                         tags: metadata.tags.clone(),
@@ -2810,6 +2823,7 @@ pub async fn test_plugin_advanced(
                 author: plugin_record.metadata.author,
                 main_category: plugin_record.metadata.main_category,
                 category: plugin_record.metadata.category,
+                monitor_type: plugin_record.metadata.monitor_type,
                 description: plugin_record.metadata.description,
                 default_severity: match plugin_record.metadata.default_severity {
                     sentinel_plugins::Severity::Critical => sentinel_traffic::Severity::Critical,
@@ -3068,6 +3082,7 @@ pub async fn test_agent_plugin(
                 author: None,
                 main_category: "agent".to_string(),
                 category: "tool".to_string(),
+                monitor_type: None,
                 default_severity: sentinel_plugins::Severity::Medium,
                 tags: vec![],
                 description: Some(format!("Agent tool plugin: {}", name)),
@@ -3175,6 +3190,7 @@ pub async fn get_plugin_input_schema(
         author: None,
         main_category: "agent".to_string(),
         category: "tool".to_string(),
+        monitor_type: None,
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: None,
@@ -3230,6 +3246,7 @@ pub async fn get_plugin_output_schema(
         author: None,
         main_category: "agent".to_string(),
         category: "tool".to_string(),
+        monitor_type: None,
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: None,
@@ -4967,6 +4984,7 @@ pub async fn install_store_plugin(
         author: Some(plugin.author),
         category: plugin.category,
         main_category: plugin.main_category,
+        monitor_type: None,
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,
@@ -5064,6 +5082,7 @@ pub async fn update_store_plugin(
         author: Some(plugin.author),
         category: plugin.category,
         main_category: plugin.main_category,
+        monitor_type: None,
         description: Some(plugin.description),
         default_severity: severity,
         tags: plugin.tags,

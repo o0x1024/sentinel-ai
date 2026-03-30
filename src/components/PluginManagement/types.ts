@@ -7,6 +7,7 @@ export interface PluginMetadata {
   author?: string
   category: string
   main_category: string
+  monitor_type?: string
   description?: string
   default_severity: string
   tags: string[]
@@ -107,6 +108,7 @@ export interface NewPluginMetadata {
   author: string
   mainCategory: string
   category: string
+  monitorType: string
   default_severity: string
   description: string
   tagsString: string

@@ -38,7 +38,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
   // 插件元数据
   const newPluginMetadata = ref<NewPluginMetadata>({
     id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'traffic', category: 'vulnerability',
+    mainCategory: 'traffic', category: 'vulnerability', monitorType: '',
     default_severity: 'medium', description: '', tagsString: ''
   })
 
@@ -138,6 +138,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
         author: plugin.metadata.author || '',
         mainCategory: plugin.metadata.main_category,
         category: plugin.metadata.category,
+        monitorType: plugin.metadata.monitor_type || '',
         default_severity: plugin.metadata.default_severity,
         description: plugin.metadata.description || '',
         tagsString: plugin.metadata.tags.join(', ')
@@ -148,7 +149,7 @@ export const usePluginEditorStore = defineStore('pluginEditor', () => {
       // 重置为新插件
       newPluginMetadata.value = {
         id: '', name: '', version: '1.0.0', author: '',
-        mainCategory: 'agent', category: 'vulnerability',
+        mainCategory: 'agent', category: 'vulnerability', monitorType: '',
         default_severity: 'medium', description: '', tagsString: ''
       }
       aiChatMessages.value = []

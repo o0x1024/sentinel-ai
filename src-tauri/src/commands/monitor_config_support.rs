@@ -5,21 +5,39 @@ pub fn normalize_loaded_monitor_task(mut task: MonitorTask) -> MonitorTask {
     task
 }
 
-pub fn monitor_type_for_plugin(normalized_name: &str, category: &str) -> Option<&'static str> {
+pub fn normalize_monitor_type(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "dns" => Some("dns"),
+        "ip" => Some("ip"),
+        "cert" => Some("cert"),
+        "content" => Some("content"),
+        "api" => Some("api"),
+        "port" => Some("port"),
+        "service" => Some("service"),
+        "web" => Some("web"),
+        "risk" => Some("risk"),
+        _ => None,
+    }
+}
+
+pub fn infer_monitor_type_for_plugin(normalized_name: &str, category: &str) -> Option<&'static str> {
     match normalized_name {
-        "subdomain_enumerator" | "dns_resolver" | "subdomain_brute" => Some("dns"),
+        "subdomain_enumerator" | "subdomain_brute" => Some("dns"),
+        "dns_resolver" => Some("ip"),
         "cert_monitor" | "ssl_scanner" => Some("cert"),
         "content_monitor" => Some("content"),
         "api_monitor" | "js_analyzer" | "js_link_finder" => Some("api"),
-        "port_monitor" | "cidr_mapper" => Some("port"),
-        "service_fingerprinter" | "service_monitor" => Some("service"),
+        "cidr_mapper" => Some("ip"),
+        "port_monitor" => Some("port"),
+        "service_monitor" | "service_probe" => Some("service"),
         "http_prober" | "tech_fingerprinter" | "favicon_fingerprinter" => Some("web"),
         "sensitive_file_scanner" | "risk_scanner" => Some("risk"),
         _ => match category.to_lowercase().as_str() {
-            "monitor" | "recon" | "reconnaissance"
-                if normalized_name.contains("dns") || normalized_name.contains("subdomain") =>
-            {
+            "monitor" | "recon" | "reconnaissance" if normalized_name.contains("subdomain") => {
                 Some("dns")
+            }
+            "monitor" | "recon" | "reconnaissance" if normalized_name.contains("resolver") => {
+                Some("ip")
             }
             "monitor" if normalized_name.contains("cert") || normalized_name.contains("ssl") => {
                 Some("cert")
@@ -66,6 +84,7 @@ pub fn apply_plugins_to_monitor_type(
 ) {
     match monitor_type {
         "dns" => config.dns_plugins = plugins,
+        "ip" => config.ip_plugins = plugins,
         "cert" => config.cert_plugins = plugins,
         "content" => config.content_plugins = plugins,
         "api" => config.api_plugins = plugins,

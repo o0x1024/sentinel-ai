@@ -69,6 +69,23 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
         return record;
     }
 
+    if let Ok(metadata) = serde_json::from_str::<sentinel_plugins::PluginMetadata>(&row.metadata) {
+        let status = if row.enabled {
+            sentinel_plugins::PluginStatus::Enabled
+        } else {
+            sentinel_plugins::PluginStatus::Disabled
+        };
+
+        #[allow(deprecated)]
+        return PluginRecord {
+            metadata,
+            path: None,
+            status,
+            last_error: None,
+            is_favorited,
+        };
+    }
+
     let severity = match row.default_severity.to_lowercase().as_str() {
         "critical" => sentinel_plugins::Severity::Critical,
         "high" => sentinel_plugins::Severity::High,
@@ -93,6 +110,7 @@ fn row_to_plugin_record(row: PluginRegistryRow, is_favorited: bool) -> PluginRec
         default_severity: severity,
         tags,
         description: row.description,
+        monitor_type: None,
         target_asset_types: Vec::new(),
     };
 

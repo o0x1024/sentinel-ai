@@ -27,6 +27,9 @@ pub struct PluginMetadata {
     pub tags: Vec<String>,
     /// 描述
     pub description: Option<String>,
+    /// Explicit monitor scheduler stage for agent plugins
+    #[serde(default)]
+    pub monitor_type: Option<String>,
     /// Preferred asset target types for monitor tasks
     #[serde(default)]
     pub target_asset_types: Vec<String>,

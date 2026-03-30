@@ -675,6 +675,7 @@ async fn get_plugin_input_schema_async(
         author: None,
         main_category: "agent".to_string(),
         category: "tool".to_string(),
+        monitor_type: None,
         default_severity: sentinel_plugins::Severity::Medium,
         tags: vec![],
         description: Some(format!("Agent tool plugin: {}", plugin_name)),

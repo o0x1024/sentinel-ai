@@ -3029,6 +3029,7 @@ async fn execute_single_step(
                 author: plugin_data.metadata.author.clone(),
                 main_category: plugin_data.metadata.main_category.clone(),
                 category: plugin_data.metadata.category.clone(),
+                monitor_type: plugin_data.metadata.monitor_type.clone(),
                 description: plugin_data.metadata.description.clone(),
                 default_severity: sentinel_traffic::types::Severity::Medium,
                 tags: plugin_data.metadata.tags.clone(),

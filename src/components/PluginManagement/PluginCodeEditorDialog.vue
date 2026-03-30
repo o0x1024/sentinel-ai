@@ -118,6 +118,17 @@
           </select>
         </div>
 
+        <div v-if="newPluginMetadata.mainCategory === 'agent'" class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.monitorType', '监控调度分类') }}</span>
+          </label>
+          <select :value="newPluginMetadata.monitorType" @change="updateMetadata('monitorType', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
+            <option value="">{{ $t('plugins.none', '不参与监控调度') }}</option>
+            <option v-for="option in monitorTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </div>
+
         <div class="form-control">
           <label class="label"><span class="label-text">{{ $t('plugins.defaultSeverity', '默认严重程度') }}</span></label>
           <select :value="newPluginMetadata.default_severity" @change="updateMetadata('default_severity', ($event.target as HTMLSelectElement).value)"
@@ -546,6 +557,18 @@ const resetToolbarPosition = () => {
 const isNewPluginValid = computed(() => {
   return props.newPluginMetadata.id.trim() !== '' && props.newPluginMetadata.name.trim() !== ''
 })
+
+const monitorTypeOptions = [
+  { value: 'dns', label: 'DNS监控' },
+  { value: 'ip', label: 'IP监控' },
+  { value: 'port', label: '端口监控' },
+  { value: 'service', label: '服务监控' },
+  { value: 'web', label: 'Web监控' },
+  { value: 'cert', label: 'SSL证书监控' },
+  { value: 'api', label: 'API监控' },
+  { value: 'content', label: '内容监控' },
+  { value: 'risk', label: '风险监控' },
+]
 
 const updateMetadata = (key: keyof NewPluginMetadata, value: string) => {
   emit('update:newPluginMetadata', { ...props.newPluginMetadata, [key]: value })

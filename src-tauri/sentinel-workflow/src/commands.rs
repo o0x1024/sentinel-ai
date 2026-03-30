@@ -457,6 +457,7 @@ pub async fn execute_workflow_steps(
                                 default_severity: sentinel_traffic::types::Severity::Medium,
                                 tags,
                                 target_asset_types: Vec::new(),
+                                monitor_type: None,
                             };
 
                             // 注册到内存并缓存代码

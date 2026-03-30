@@ -1,7 +1,8 @@
 //! Asset Monitor Scheduler Commands
 
 use crate::commands::monitor_config_support::{
-    apply_plugins_to_monitor_type, monitor_type_for_plugin, normalize_loaded_monitor_task,
+    apply_plugins_to_monitor_type, infer_monitor_type_for_plugin, normalize_loaded_monitor_task,
+    normalize_monitor_type,
 };
 use crate::commands::monitor_execution_heartbeat_support::start_monitor_execution_heartbeat;
 use crate::commands::monitor_finding_support::import_monitor_findings_from_output;
@@ -4537,14 +4538,70 @@ pub struct MonitorPluginInfo {
     pub id: String,
     pub name: String,
     pub category: String,
-    pub monitor_type: String, // dns, cert, content, api, port, service, web, risk
+    pub monitor_type: String, // dns, ip, cert, content, api, port, service, web, risk
     pub description: Option<String>,
     pub is_available: bool,
 }
 
+async fn resolve_monitor_type_from_metadata(
+    db_service: &Arc<DatabaseService>,
+    tool_name: &str,
+    category: &str,
+) -> Result<Option<String>, String> {
+    let normalized_name = tool_name.strip_prefix("plugin__").unwrap_or(tool_name);
+    let plugin_record = db_service
+        .get_plugin_from_registry(normalized_name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let Some(plugin_record) = plugin_record else {
+        if tool_name.starts_with("plugin__") {
+            return Ok(None);
+        }
+        return Ok(infer_monitor_type_for_plugin(normalized_name, category).map(str::to_string));
+    };
+
+    if let Some(monitor_type) = plugin_record
+        .metadata
+        .monitor_type
+        .as_deref()
+        .and_then(normalize_monitor_type)
+    {
+        return Ok(Some(monitor_type.to_string()));
+    }
+
+    let Some(inferred_monitor_type) = infer_monitor_type_for_plugin(normalized_name, category) else {
+        return Ok(None);
+    };
+
+    let mut metadata_value =
+        serde_json::to_value(&plugin_record.metadata).map_err(|e| e.to_string())?;
+    if let Some(metadata_obj) = metadata_value.as_object_mut() {
+        metadata_obj.insert(
+            "monitor_type".to_string(),
+            serde_json::Value::String(inferred_monitor_type.to_string()),
+        );
+    }
+
+    let plugin_code = db_service
+        .get_plugin_code(normalized_name)
+        .await
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+
+    db_service
+        .update_plugin(&metadata_value, &plugin_code)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(Some(inferred_monitor_type.to_string()))
+}
+
 /// Get available plugins for monitoring types
 #[tauri::command]
-pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, String> {
+pub async fn monitor_get_available_plugins(
+    db_service: State<'_, Arc<DatabaseService>>,
+) -> Result<Vec<MonitorPluginInfo>, String> {
     let tool_server = sentinel_tools::get_tool_server();
     let all_tools = tool_server.list_tools().await;
 
@@ -4563,10 +4620,13 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
             tool.enabled
         );
 
-        // Normalize name by removing prefix if it's a plugin
-        let normalized_name = tool.name.strip_prefix("plugin__").unwrap_or(&tool.name);
-
-        let Some(monitor_type) = monitor_type_for_plugin(normalized_name, &tool.category) else {
+        let Some(monitor_type) = resolve_monitor_type_from_metadata(
+            db_service.inner(),
+            &tool.name,
+            &tool.category,
+        )
+        .await?
+        else {
             continue;
         };
 
@@ -4576,7 +4636,7 @@ pub async fn monitor_get_available_plugins() -> Result<Vec<MonitorPluginInfo>, S
             id: tool.name.clone(),
             name: tool.name.clone(),
             category: tool.category.clone(),
-            monitor_type: monitor_type.to_string(),
+            monitor_type,
             description: Some(tool.description.clone()),
             is_available: tool.enabled,
         });
@@ -4601,7 +4661,7 @@ pub async fn monitor_test_plugin(plugin_id: String) -> Result<bool, String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePluginConfigRequest {
-    pub monitor_type: String, // dns, cert, content, api, port, service, web, risk
+    pub monitor_type: String, // dns, ip, cert, content, api, port, service, web, risk
     pub plugins: Vec<MonitorPluginConfigDto>,
 }
 

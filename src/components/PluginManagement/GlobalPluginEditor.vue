@@ -805,6 +805,9 @@ const handleSavePlugin = async () => {
       author: store.newPluginMetadata.author || 'Unknown',
       main_category: store.newPluginMetadata.mainCategory,
       category: backendCategory,
+      monitor_type: store.newPluginMetadata.mainCategory === 'agent'
+        ? (store.newPluginMetadata.monitorType || null)
+        : null,
       description: store.newPluginMetadata.description || '',
       default_severity: store.newPluginMetadata.default_severity,
       tags: tags
@@ -860,6 +863,9 @@ const handleCreateNewPlugin = async () => {
       author: store.newPluginMetadata.author || 'Unknown',
       main_category: store.newPluginMetadata.mainCategory,
       category: backendCategory,
+      monitor_type: store.newPluginMetadata.mainCategory === 'agent'
+        ? (store.newPluginMetadata.monitorType || null)
+        : null,
       description: store.newPluginMetadata.description || '',
       default_severity: store.newPluginMetadata.default_severity,
       tags: tags

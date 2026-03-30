@@ -90,7 +90,7 @@ export function usePluginManagement() {
   // New Plugin Metadata
   const newPluginMetadata = ref<NewPluginMetadata>({
     id: '', name: '', version: '1.0.0', author: '',
-    mainCategory: 'traffic', category: 'vulnerability',
+    mainCategory: 'traffic', category: 'vulnerability', monitorType: '',
     default_severity: 'medium', description: '', tagsString: ''
   })
 
