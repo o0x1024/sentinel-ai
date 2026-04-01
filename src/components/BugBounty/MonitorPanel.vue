@@ -1,6 +1,5 @@
 <template>
   <div class="space-y-4">
-    <!-- Scheduler Status Card -->
     <div class="card bg-base-100 shadow-md">
       <div class="card-body p-4 pt-3">
         <div class="flex justify-between items-center">
@@ -49,8 +48,6 @@
             </button>
           </div>
         </div>
-
-        <!-- Stats -->
         <div v-if="stats" class="grid grid-cols-4 gap-4 mt-4">
           <div class="stat bg-base-200 rounded-lg p-3">
             <div class="stat-title text-xs">{{ t('bugBounty.monitor.totalTasks') }}</div>
@@ -73,23 +70,22 @@
       </div>
     </div>
 
-    <!-- Monitor Tasks -->
     <div class="card bg-base-100 shadow-md">
       <div class="card-body">
         <div class="flex justify-between items-center mb-4">
           <h3 class="card-title">{{ t('bugBounty.monitor.tasks') }}</h3>
           <div class="flex gap-2">
-            <button 
-              v-if="selectedProgram"
-              class="btn btn-sm btn-outline"
-              @click="createDefaultTasks"
-            >
+            <button v-if="selectedProgram" class="btn btn-sm btn-outline" @click="createDefaultTasks">
               <i class="fas fa-magic mr-2"></i>
               {{ t('bugBounty.monitor.createDefault') }}
             </button>
-            <button class="btn btn-sm btn-primary" @click="openCreateModal">
+            <button type="button" class="btn btn-sm btn-primary" @click="openCreateModal">
               <i class="fas fa-plus mr-2"></i>
               {{ t('bugBounty.monitor.createTask') }}
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" @click="showRunHistoryDrawer = true">
+              <i class="fas fa-history mr-2"></i>
+              {{ t('bugBounty.monitor.runHistory') }}
             </button>
           </div>
         </div>
@@ -129,7 +125,8 @@
       </div>
     </div>
 
-    <!-- Create/Edit Task Modal -->
+    <MonitorRunHistoryDrawer :open="showRunHistoryDrawer" :programs="props.programs" @close="showRunHistoryDrawer = false" />
+
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="showCreateModal || editingTask" class="modal modal-open">
@@ -172,19 +169,16 @@
 
           <div class="divider">{{ t('bugBounty.monitor.monitorTypes') }}</div>
           
-          <!-- Plugin loading status -->
           <div v-if="loadingPlugins" class="alert alert-info mb-3">
             <span class="loading loading-spinner loading-sm"></span>
             <span>{{ t('bugBounty.monitor.pluginsLoading') }}</span>
           </div>
           
-          <!-- Available plugins count -->
           <div v-if="!loadingPlugins && availablePlugins.length > 0" class="text-xs text-base-content/60 mb-2">
             <i class="fas fa-plug mr-1"></i>
             {{ availablePlugins.length }} {{ t('bugBounty.monitor.availablePlugins') }}
           </div>
 
-          <!-- DNS Monitoring -->
           <div class="card bg-base-200 p-4 mb-3">
             <div class="flex items-center justify-between mb-2">
               <label class="label cursor-pointer gap-2">
@@ -204,7 +198,6 @@
               </button>
             </div>
             
-            <!-- Empty state hint -->
             <div v-if="taskForm.config.enable_dns_monitoring && taskForm.config.dns_plugins.length === 0" class="text-center py-4 text-sm text-base-content/60 ml-6">
               <i class="fas fa-info-circle mr-1"></i>
               {{ t('bugBounty.monitor.noPluginsConfigured') }}
@@ -1124,6 +1117,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useToast } from '../../composables/useToast'
 import { useMonitorTaskProgress } from '../../composables/useMonitorTaskProgress'
+import MonitorRunHistoryDrawer from './MonitorRunHistoryDrawer.vue'
 import MonitorTaskCard from './MonitorTaskCard.vue'
 import MonitorTargetAssetSelector from './MonitorTargetAssetSelector.vue'
 import { formatInvokeError, formatUptime } from './monitorPanelUtils'
@@ -1144,6 +1138,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const stats = ref<any>(null)
 const tasks = ref<any[]>([])
+const showRunHistoryDrawer = ref(false)
 const showCreateModal = ref(false)
 const editingTask = ref<any>(null)
 const showDiscoverModal = ref(false)
@@ -1273,12 +1268,29 @@ const normalizeAllowedTargetAssetTypes = (
   return normalized.filter(assetType => allowedSet.has(assetType))
 }
 
+const sanitizeMonitorPluginParams = (value: unknown) => {
+  const params = value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {}
+
+  delete params.targets
+  delete params.target_objects
+  delete params.service_targets
+  delete params.urls
+  delete params.url
+  delete params.domains
+  delete params.domain
+  delete params.__monitorExecution
+
+  return params
+}
+
 const normalizePluginConfig = (plugin: any, monitorType = '') => {
   const pluginId = plugin?.plugin_id === 'service_fingerprinter' ? 'service_probe' : (plugin?.plugin_id || '')
   return {
     plugin_id: pluginId,
     fallback_plugins: Array.isArray(plugin?.fallback_plugins) ? plugin.fallback_plugins : [],
-    plugin_params: plugin?.plugin_params && typeof plugin?.plugin_params === 'object' ? plugin.plugin_params : {},
+    plugin_params: sanitizeMonitorPluginParams(plugin?.plugin_params),
     target_asset_types: normalizeAllowedTargetAssetTypes(monitorType, pluginId, plugin?.target_asset_types),
   }
 }

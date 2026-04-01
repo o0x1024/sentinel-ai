@@ -115,9 +115,15 @@ globalThis.fetch = async function(input, init) {
         .as_array()
         .expect("snapshot endpoints should be an array");
 
-    assert!(endpoints.iter().any(|endpoint| endpoint["path"] == "/api/health"));
-    assert!(endpoints.iter().any(|endpoint| endpoint["path"] == "/api/users"));
-    assert!(endpoints.iter().any(|endpoint| endpoint["path"] == "/api/profile"));
+    assert!(endpoints
+        .iter()
+        .any(|endpoint| endpoint["path"] == "/api/health"));
+    assert!(endpoints
+        .iter()
+        .any(|endpoint| endpoint["path"] == "/api/users"));
+    assert!(endpoints
+        .iter()
+        .any(|endpoint| endpoint["path"] == "/api/profile"));
 }
 
 #[cfg(feature = "plugin-ts-transpile")]
@@ -223,7 +229,9 @@ globalThis.fetch = async function(input, init) {
         .as_array()
         .expect("snapshot endpoints should be an array");
 
-    assert!(endpoints.iter().any(|endpoint| endpoint["path"] == "/api/steady"));
+    assert!(endpoints
+        .iter()
+        .any(|endpoint| endpoint["path"] == "/api/steady"));
 }
 
 #[cfg(feature = "plugin-ts-transpile")]
@@ -324,7 +332,9 @@ globalThis.fetch = async function(input, init) {
     let endpoints = target_result["snapshot"]["endpoints"]
         .as_array()
         .expect("snapshot endpoints should be an array");
-    assert!(endpoints.iter().any(|endpoint| endpoint["path"] == "/api/health"));
+    assert!(endpoints
+        .iter()
+        .any(|endpoint| endpoint["path"] == "/api/health"));
 }
 
 #[cfg(feature = "plugin-ts-transpile")]
@@ -398,7 +408,10 @@ globalThis.fetch = async function(input, init) {
         "includeOpenAPI": false,
     });
 
-    let (_findings, result) = engine.execute_agent(&input).await.expect("Failed to execute api_monitor");
+    let (_findings, result) = engine
+        .execute_agent(&input)
+        .await
+        .expect("Failed to execute api_monitor");
     let result = result.expect("api_monitor should return a result");
 
     assert_eq!(result["success"], true);
@@ -482,10 +495,19 @@ globalThis.fetch = async function(input, init) {
         "includeOpenAPI": false,
     });
 
-    let (_findings, result) = engine.execute_agent(&input).await.expect("Failed to execute api_monitor");
+    let (_findings, result) = engine
+        .execute_agent(&input)
+        .await
+        .expect("Failed to execute api_monitor");
     let result = result.expect("api_monitor should return a result");
 
     assert_eq!(result["success"], true);
     assert_eq!(result["data"]["summary"]["totalEndpoints"], 0);
-    assert_eq!(result["data"]["results"][0]["snapshot"]["endpoints"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        result["data"]["results"][0]["snapshot"]["endpoints"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 }

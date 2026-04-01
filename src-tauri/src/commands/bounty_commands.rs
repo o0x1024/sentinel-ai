@@ -16,7 +16,8 @@ use sentinel_db::{
     BountyAssetRow, BountyChangeEventRow, BountyChangeEventStats, BountyEvidenceRow,
     BountyFindingRow, BountyFindingStats, BountyProgramRow, BountySubmissionRow,
     BountySubmissionStats, BountyWorkflowBindingRow, BountyWorkflowTemplateRow, Database,
-    DatabaseService, ProgramScopeRow,
+    DatabaseService, FindingQueryFilter, ProgramQueryFilter, ProgramScopeRow,
+    SubmissionQueryFilter,
 };
 use sentinel_traffic::PluginManager;
 use serde::{Deserialize, Serialize};
@@ -211,13 +212,16 @@ pub async fn bounty_list_programs(
     let filter = filter.unwrap_or_default();
 
     db_service
-        .list_bounty_programs(
-            filter.platforms.as_deref(),
-            filter.statuses.as_deref(),
-            filter.search.as_deref(),
-            None,
-            None,
-        )
+        .list_bounty_programs_filtered(ProgramQueryFilter {
+            platforms: filter.platforms.as_deref(),
+            statuses: filter.statuses.as_deref(),
+            program_types: filter.program_types.as_deref(),
+            tags: filter.tags.as_deref(),
+            search: filter.search.as_deref(),
+            min_priority: filter.min_priority,
+            limit: None,
+            offset: None,
+        })
         .await
         .map_err(|e| e.to_string())
 }
@@ -228,7 +232,7 @@ pub async fn bounty_get_program_stats(
     db_service: State<'_, Arc<DatabaseService>>,
 ) -> Result<ProgramStats, String> {
     let stats = db_service
-        .get_bounty_program_stats()
+        .get_bounty_program_stats_live()
         .await
         .map_err(|e| e.to_string())?;
 
@@ -618,17 +622,41 @@ pub async fn bounty_list_findings(
     let filter = filter.unwrap_or_default();
 
     db_service
-        .list_bounty_findings(
-            filter.program_id.as_deref(),
-            filter.scope_id.as_deref(),
-            filter.severities.as_deref(),
-            filter.statuses.as_deref(),
-            filter.search.as_deref(),
-            filter.sort_by.as_deref(),
-            filter.sort_dir.as_deref(),
-            filter.limit,
-            filter.offset,
-        )
+        .list_bounty_findings_filtered(FindingQueryFilter {
+            program_id: filter.program_id.as_deref(),
+            scope_id: filter.scope_id.as_deref(),
+            severities: filter.severities.as_deref(),
+            statuses: filter.statuses.as_deref(),
+            search: filter.search.as_deref(),
+            sort_by: filter.sort_by.as_deref(),
+            sort_dir: filter.sort_dir.as_deref(),
+            limit: filter.limit,
+            offset: filter.offset,
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Count findings with optional filter
+#[tauri::command]
+pub async fn bounty_count_findings(
+    db_service: State<'_, Arc<DatabaseService>>,
+    filter: Option<FindingFilter>,
+) -> Result<i64, String> {
+    let filter = filter.unwrap_or_default();
+
+    db_service
+        .count_bounty_findings_filtered(FindingQueryFilter {
+            program_id: filter.program_id.as_deref(),
+            scope_id: filter.scope_id.as_deref(),
+            severities: filter.severities.as_deref(),
+            statuses: filter.statuses.as_deref(),
+            search: filter.search.as_deref(),
+            sort_by: None,
+            sort_dir: None,
+            limit: None,
+            offset: None,
+        })
         .await
         .map_err(|e| e.to_string())
 }
@@ -998,16 +1026,39 @@ pub async fn bounty_list_submissions(
     let filter = filter.unwrap_or_default();
 
     db_service
-        .list_bounty_submissions(
-            filter.program_id.as_deref(),
-            filter.finding_id.as_deref(),
-            filter.statuses.as_deref(),
-            filter.search.as_deref(),
-            filter.sort_by.as_deref(),
-            filter.sort_dir.as_deref(),
-            filter.limit,
-            filter.offset,
-        )
+        .list_bounty_submissions_filtered(SubmissionQueryFilter {
+            program_id: filter.program_id.as_deref(),
+            finding_id: filter.finding_id.as_deref(),
+            statuses: filter.statuses.as_deref(),
+            search: filter.search.as_deref(),
+            sort_by: filter.sort_by.as_deref(),
+            sort_dir: filter.sort_dir.as_deref(),
+            limit: filter.limit,
+            offset: filter.offset,
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Count submissions with optional filter
+#[tauri::command]
+pub async fn bounty_count_submissions(
+    db_service: State<'_, Arc<DatabaseService>>,
+    filter: Option<SubmissionFilter>,
+) -> Result<i64, String> {
+    let filter = filter.unwrap_or_default();
+
+    db_service
+        .count_bounty_submissions_filtered(SubmissionQueryFilter {
+            program_id: filter.program_id.as_deref(),
+            finding_id: filter.finding_id.as_deref(),
+            statuses: filter.statuses.as_deref(),
+            search: filter.search.as_deref(),
+            sort_by: None,
+            sort_dir: None,
+            limit: None,
+            offset: None,
+        })
         .await
         .map_err(|e| e.to_string())
 }

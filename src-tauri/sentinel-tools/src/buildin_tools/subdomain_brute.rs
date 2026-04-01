@@ -175,7 +175,12 @@ pub struct SubdomainBruteTool;
 
 impl SubdomainBruteTool {
     pub const NAME: &'static str = "subdomain_brute";
-    pub const DESCRIPTION: &'static str = "Dictionary-based DNS subdomain monitoring powered by rsubdomain. Use for scheduled DNS exposure monitoring, baseline snapshots, and change detection on root domains.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Dictionary-based DNS subdomain enumeration and monitoring for root domains, powered by rsubdomain. ",
+        "Use when the input is a base domain such as example.com and you want to discover exposed subdomains, ",
+        "compare against previous snapshots, or generate DNS change events. Best for asset discovery and scheduled monitoring, ",
+        "not for generic web search or single-URL HTTP probing."
+    );
 }
 
 impl Tool for SubdomainBruteTool {

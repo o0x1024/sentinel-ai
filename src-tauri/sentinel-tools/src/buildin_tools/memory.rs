@@ -66,7 +66,12 @@ pub struct MemoryManagerTool;
 
 impl MemoryManagerTool {
     pub const NAME: &'static str = "memory";
-    pub const DESCRIPTION: &'static str = "Long-term memory tool. Use 'store' to save solutions, techniques, and findings after completing tasks. Use 'retrieve' to search past experiences before starting new work. Always store results after task completion to build knowledge base.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Long-term memory for durable agent knowledge across tasks. ",
+        "Use action='retrieve' before non-trivial work when prior fixes, commands, environment quirks, ",
+        "or workflows may help. Use action='store' after finishing a task to save reusable findings, ",
+        "solutions, and playbooks. Do not store transient chat filler or incomplete guesses."
+    );
 }
 
 impl Tool for MemoryManagerTool {

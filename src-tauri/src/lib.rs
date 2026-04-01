@@ -851,6 +851,8 @@ pub fn run() {
             aisettings::get_provider_models,
             aisettings::save_ai_config,
             aisettings::add_custom_provider,
+            aisettings::delete_ai_provider,
+            aisettings::restore_builtin_ai_provider,
             aisettings::get_ai_config,
             ai::print_ai_conversations,
             aisettings::set_default_llm_model,
@@ -948,6 +950,7 @@ pub fn run() {
             commands::bounty_batch_update_finding_status,
             commands::bounty_batch_delete_findings,
             commands::bounty_list_findings,
+            commands::bounty_count_findings,
             commands::bounty_get_finding_stats,
             // Bug Bounty Evidence commands
             commands::bounty_create_evidence,
@@ -963,6 +966,7 @@ pub fn run() {
             commands::bounty_batch_update_submission_status,
             commands::bounty_batch_delete_submissions,
             commands::bounty_list_submissions,
+            commands::bounty_count_submissions,
             commands::bounty_get_submission_stats,
             // Bug Bounty Change Event commands
             commands::bounty_create_change_event,
@@ -1044,6 +1048,7 @@ pub fn run() {
             commands::monitor_discover_and_import_assets,
             commands::monitor_get_available_plugins,
             commands::monitor_test_plugin,
+            commands::monitor_list_run_history,
             commands::monitor_update_task_plugins,
             // Surface graph commands
             commands::surface_get_overview,
@@ -1126,6 +1131,7 @@ pub fn run() {
             performance::record_error,
             // Dictionary commands
             dictionary::get_dictionaries,
+            dictionary::get_dictionaries_paged,
             dictionary::get_dictionary,
             dictionary::create_dictionary,
             dictionary::update_dictionary,

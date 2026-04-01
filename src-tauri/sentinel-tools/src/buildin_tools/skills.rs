@@ -94,7 +94,7 @@ pub struct SkillsTool;
 impl SkillsTool {
     pub const NAME: &'static str = "skills";
     pub const DESCRIPTION: &'static str =
-        "Claude-style skills tool. Use action=list to see all skills, action=load to read SKILL.md, and action=read_file to read referenced files inside a skill.";
+        "Discover and progressively load reusable local skills. Use action='list' to find candidate skills, action='load' to read a skill's SKILL.md instructions, and action='read_file' to inspect referenced files inside that skill. Prefer this when a specialized workflow may already exist instead of guessing the process from scratch.";
 
     fn skills_root() -> PathBuf {
         dirs::data_dir()

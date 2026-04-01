@@ -97,7 +97,12 @@ impl HttpRequestTool {
     }
 
     pub const NAME: &'static str = "http_request";
-    pub const DESCRIPTION: &'static str = "Make HTTP requests to any URL. Supports GET, POST, PUT, DELETE methods with custom headers and body.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Send a direct HTTP request to a known URL and inspect the exact response. ",
+        "Use when you already have a target endpoint and need precise status code, headers, body, ",
+        "redirect behavior, custom headers, or a request body. Supports GET/POST/PUT/DELETE/HEAD/PATCH. ",
+        "Prefer web_search for discovering sources, and prefer shell only when you specifically need CLI composition."
+    );
 }
 
 impl Tool for HttpRequestTool {

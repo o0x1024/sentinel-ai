@@ -734,6 +734,27 @@ impl DatabaseService {
         .await?;
 
         sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_dictionaries_created_at
+               ON dictionaries(created_at DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_dictionaries_dict_type_created_at
+               ON dictionaries(dict_type, created_at DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_dictionaries_service_type_created_at
+               ON dictionaries(service_type, created_at DESC)"#,
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_dictionary_words_word 
                ON dictionary_words(word)"#,
         )
@@ -1418,19 +1439,30 @@ impl DatabaseService {
             "CREATE INDEX IF NOT EXISTS idx_bounty_programs_platform ON bounty_programs(platform)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_programs_status ON bounty_programs(status)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_programs_priority ON bounty_programs(priority_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_programs_priority_updated ON bounty_programs(priority_score DESC, updated_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_scopes_program ON bounty_scopes(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_scopes_type ON bounty_scopes(scope_type)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program ON bounty_findings(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_status ON bounty_findings(status)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_severity ON bounty_findings(severity)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_findings_fingerprint ON bounty_findings(fingerprint)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_created ON bounty_findings(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_created ON bounty_findings(program_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_status_created ON bounty_findings(program_id, status, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_findings_program_severity_created ON bounty_findings(program_id, severity, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program ON bounty_submissions(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_status ON bounty_submissions(status)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_finding ON bounty_submissions(finding_id)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_created ON bounty_submissions(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program_created ON bounty_submissions(program_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_submissions_program_status_created ON bounty_submissions(program_id, status, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_evidence_finding ON bounty_evidence(finding_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program ON bounty_change_events(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_status ON bounty_change_events(status)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_severity ON bounty_change_events(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_created ON bounty_change_events(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program_created ON bounty_change_events(program_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_bounty_change_events_program_status_created ON bounty_change_events(program_id, status, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_templates_category ON bounty_workflow_templates(category)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_bindings_program ON bounty_workflow_bindings(program_id)",
             "CREATE INDEX IF NOT EXISTS idx_bounty_workflow_bindings_template ON bounty_workflow_bindings(workflow_template_id)",

@@ -108,32 +108,22 @@ fn inject_monitor_plugin_targets(
     let plugin_targets = &resolved_targets.targets;
     let plugin_target_domains = plugin_targets.join(",");
 
-    if input.get("domains").is_none() {
-        input["domains"] = serde_json::Value::String(plugin_target_domains.clone());
-    }
-    if input.get("domain").is_none() {
-        if let Some(first) = plugin_targets.first() {
-            input["domain"] = serde_json::Value::String(first.clone());
-        }
-    }
-    if input.get("urls").is_none() {
-        input["urls"] = serde_json::Value::String(plugin_target_domains.clone());
-    }
-    if input.get("targets").is_none() {
-        input["targets"] = serde_json::to_value(plugin_targets).unwrap_or(serde_json::json!([]));
-    }
-    if input.get("url").is_none() {
-        if let Some(first) = plugin_targets.first() {
-            let url = if first.starts_with("http") {
-                first.clone()
-            } else {
-                format!("https://{}", first)
-            };
-            input["url"] = serde_json::Value::String(url);
-        }
-    }
-    if input.get("target_objects").is_none() && !resolved_targets.target_objects.is_empty() {
-        input["target_objects"] = serde_json::Value::Array(resolved_targets.target_objects.clone());
+    input["domains"] = serde_json::Value::String(plugin_target_domains.clone());
+    input["urls"] = serde_json::Value::String(plugin_target_domains.clone());
+    input["targets"] = serde_json::to_value(plugin_targets).unwrap_or(serde_json::json!([]));
+    input["target_objects"] = serde_json::Value::Array(resolved_targets.target_objects.clone());
+
+    if let Some(first) = plugin_targets.first() {
+        input["domain"] = serde_json::Value::String(first.clone());
+        let url = if first.starts_with("http") {
+            first.clone()
+        } else {
+            format!("https://{}", first)
+        };
+        input["url"] = serde_json::Value::String(url);
+    } else {
+        input["domain"] = serde_json::Value::Null;
+        input["url"] = serde_json::Value::Null;
     }
 
     let service_targets: Vec<serde_json::Value> = resolved_targets
@@ -142,9 +132,7 @@ fn inject_monitor_plugin_targets(
         .filter(|target| target.get("type").and_then(|value| value.as_str()) == Some("service"))
         .cloned()
         .collect();
-    if input.get("service_targets").is_none() && !service_targets.is_empty() {
-        input["service_targets"] = serde_json::Value::Array(service_targets);
-    }
+    input["service_targets"] = serde_json::Value::Array(service_targets);
 }
 
 fn inject_monitor_execution_context(

@@ -61,6 +61,8 @@
                     @save-ai-config="saveAiConfig"
                     @test-custom-provider="testCustomProvider"
                     @add-custom-provider="addCustomProvider"
+                    @delete-provider="deleteProvider"
+                    @restore-builtin-provider="restoreBuiltinProvider"
                     @refresh-models="refreshModels"
                     @apply-manual-config="applyManualConfig"
                     @set-default-provider="setDefaultProvider"
@@ -849,6 +851,54 @@ const addCustomProvider = async () => {
     dialog.toast.error(`添加失败: ${e}`)
   } finally {
     addingCustomProvider.value = false
+  }
+}
+
+const deleteProvider = async (provider: string) => {
+  const confirmed = await dialog.confirm({
+    title: t('common.confirm', '确认'),
+    message: t('settings.ai.confirmDeleteProvider', `确定删除 AI 提供商 "${provider}" 吗？`),
+    variant: 'warning',
+  })
+
+  if (!confirmed) {
+    return
+  }
+
+  try {
+    await invoke('delete_ai_provider', {
+      request: { provider },
+    })
+    await loadAiConfig()
+
+    const providerKeys = Object.keys(aiConfig.value.providers || {})
+    if (!providerKeys.some(key => key.toLowerCase() === selectedAiProvider.value.toLowerCase())) {
+      const defaultProvider = String(aiConfig.value.default_llm_provider || '').toLowerCase()
+      const fallbackKey =
+        providerKeys.find(key => key.toLowerCase() === defaultProvider) ||
+        providerKeys[0] ||
+        'OpenAI'
+      selectedAiProvider.value = fallbackKey
+    }
+
+    dialog.toast.success(`AI 提供商 "${provider}" 已删除`)
+  } catch (e) {
+    console.error('Delete AI provider failed:', e)
+    dialog.toast.error(`删除失败: ${e}`)
+  }
+}
+
+const restoreBuiltinProvider = async (provider: string) => {
+  try {
+    await invoke('restore_builtin_ai_provider', {
+      request: { provider },
+    })
+    await loadAiConfig()
+    selectedAiProvider.value = provider
+    dialog.toast.success(`已恢复内置 AI 提供商 "${provider}"`)
+  } catch (e) {
+    console.error('Restore built-in AI provider failed:', e)
+    dialog.toast.error(`恢复失败: ${e}`)
   }
 }
 

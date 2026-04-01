@@ -300,7 +300,10 @@ pub(crate) async fn collect_monitor_targets(
             offset: None,
         },
         |asset| {
-            if !matches!(asset.asset_type.as_str(), "domain" | "web" | "host" | "ip") {
+            if !matches!(
+                asset.asset_type.as_str(),
+                "domain" | "url" | "web" | "website" | "host" | "ip"
+            ) {
                 return;
             }
             let target = asset.asset_name.trim().to_string();
@@ -638,7 +641,9 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                 return;
             }
 
-            if asset.asset_type == "web" && requested_asset_types.contains("web") {
+            if matches!(asset.asset_type.as_str(), "url" | "web" | "website")
+                && requested_asset_types.contains("web")
+            {
                 push_unique_resolved_target(
                     &mut resolved,
                     &mut seen,
@@ -768,7 +773,7 @@ pub(crate) async fn collect_monitor_target_payload_for_plugin(
                 "domain" => {
                     requested_asset_types.contains("domain") && asset.is_wildcard != Some(true)
                 }
-                "website" | "web" => requested_asset_types.contains("web"),
+                "url" | "website" | "web" => requested_asset_types.contains("web"),
                 "host" => requested_asset_types.contains("host"),
                 "ip" => requested_asset_types.contains("ip"),
                 _ => false,

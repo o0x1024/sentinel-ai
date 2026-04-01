@@ -555,8 +555,7 @@ impl ChangeMonitorConfig {
                     .iter()
                     .all(|value| matches!(value.as_str(), "domain" | "host" | "hostname"))
             {
-                plugin.target_asset_types =
-                    vec!["domain".to_string(), "service".to_string()];
+                plugin.target_asset_types = vec!["domain".to_string(), "service".to_string()];
             }
         }
     }

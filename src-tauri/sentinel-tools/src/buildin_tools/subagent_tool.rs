@@ -509,7 +509,7 @@ impl SubagentExecuteTool {
 
     pub const NAME: &'static str = "subagent_execute";
     pub const DESCRIPTION: &'static str =
-        "Execute subagent tasks in unified modes: sync, async, or workflow.";
+        "Create and run subagent work under a parent execution. Use mode='sync' for one bounded delegated task whose result is needed now, mode='async' to launch background work that you will await later, and mode='workflow' for multiple dependency-ordered tasks. Use this only when decomposition or parallelism is helpful, not for trivial single-step work.";
 }
 
 impl Tool for SubagentExecuteTool {
@@ -543,7 +543,7 @@ impl SubagentAwaitTool {
 
     pub const NAME: &'static str = "subagent_await";
     pub const DESCRIPTION: &'static str =
-        "Wait for subagent tasks to complete with policy all or any.";
+        "Wait for previously launched async subagent tasks. Use after subagent_execute with mode='async' when you need results. policy='all' waits for every task; policy='any' returns whichever tasks have completed first.";
 }
 
 impl Tool for SubagentAwaitTool {
@@ -577,7 +577,7 @@ impl SubagentChannelTool {
 
     pub const NAME: &'static str = "subagent_channel";
     pub const DESCRIPTION: &'static str =
-        "Operate shared state and events for subagents using op: state.put, state.get, event.publish, event.poll.";
+        "Coordinate parallel subagents that share the same parent execution. Use op='state.put' and op='state.get' for small shared structured state, and op='event.publish' and op='event.poll' for lightweight progress, handoff, or discovery events. Prefer direct subagent results when no cross-task coordination is needed.";
 }
 
 impl Tool for SubagentChannelTool {

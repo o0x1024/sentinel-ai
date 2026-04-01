@@ -1,95 +1,97 @@
 <template>
-  <div v-if="open" class="modal modal-open">
-    <div class="modal-box max-w-2xl">
-      <h3 class="font-bold text-lg mb-4">
-        {{ isEditing ? '编辑字典' : '创建字典' }}
-      </h3>
+  <Teleport to="body">
+    <div v-if="open" class="modal modal-open dictionary-modal">
+      <div class="modal-box max-w-2xl dictionary-modal-box">
+        <h3 class="font-bold text-lg mb-4">
+          {{ isEditing ? '编辑字典' : '创建字典' }}
+        </h3>
 
-      <form class="space-y-4" @submit.prevent="submit">
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text">字典名称</span>
-          </label>
-          <input
-            v-model="localForm.name"
-            type="text"
-            class="input input-bordered"
-            placeholder="请输入字典名称"
-            required
-          >
-        </div>
-
-        <div class="form-control">
-          <label class="label">
-            <span class="label-text">描述</span>
-          </label>
-          <textarea
-            v-model="localForm.description"
-            class="textarea textarea-bordered"
-            placeholder="请输入字典描述"
-          />
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <form class="space-y-4" @submit.prevent="submit">
           <div class="form-control">
             <label class="label">
-              <span class="label-text">字典类型</span>
+              <span class="label-text">字典名称</span>
             </label>
-            <select v-model="localForm.dictionary_type" class="select select-bordered" required>
-              <option value="">选择类型</option>
-              <option v-for="type in selectableDictionaryTypes" :key="type.value" :value="type.value">
+            <input
+              v-model="localForm.name"
+              type="text"
+              class="input input-bordered"
+              placeholder="请输入字典名称"
+              required
+            >
+          </div>
+
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">描述</span>
+            </label>
+            <textarea
+              v-model="localForm.description"
+              class="textarea textarea-bordered"
+              placeholder="请输入字典描述"
+            />
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">字典类型</span>
+              </label>
+              <select v-model="localForm.dictionary_type" class="select select-bordered" required>
+                <option value="">选择类型</option>
+                <option v-for="type in selectableDictionaryTypes" :key="type.value" :value="type.value">
+                  {{ type.label }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">服务类型</span>
+              </label>
+              <select v-model="localForm.service_type" class="select select-bordered">
+                <option value="">选择服务类型（可选）</option>
+                <option v-for="service in serviceTypes" :key="service.value" :value="service.value">
+                  {{ service.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div v-if="showSubtypeField" class="form-control">
+            <label class="label">
+              <span class="label-text">子类型</span>
+            </label>
+            <select v-model="localForm.subtype" class="select select-bordered">
+              <option value="">未设置</option>
+              <option v-for="type in subtypeOptions" :key="type.value" :value="type.value">
                 {{ type.label }}
               </option>
             </select>
+            <label v-if="subtypeHint" class="label">
+              <span class="label-text-alt text-base-content/70">{{ subtypeHint }}</span>
+            </label>
+            <label v-if="subtypeConsistencyHint" class="label pt-0">
+              <span class="label-text-alt text-warning">{{ subtypeConsistencyHint }}</span>
+            </label>
           </div>
 
           <div class="form-control">
-            <label class="label">
-              <span class="label-text">服务类型</span>
+            <label class="label cursor-pointer">
+              <span class="label-text">启用字典</span>
+              <input v-model="localForm.is_active" type="checkbox" class="toggle toggle-primary">
             </label>
-            <select v-model="localForm.service_type" class="select select-bordered">
-              <option value="">选择服务类型（可选）</option>
-              <option v-for="service in serviceTypes" :key="service.value" :value="service.value">
-                {{ service.label }}
-              </option>
-            </select>
           </div>
-        </div>
 
-        <div v-if="showSubtypeField" class="form-control">
-          <label class="label">
-            <span class="label-text">子类型</span>
-          </label>
-          <select v-model="localForm.subtype" class="select select-bordered">
-            <option value="">未设置</option>
-            <option v-for="type in subtypeOptions" :key="type.value" :value="type.value">
-              {{ type.label }}
-            </option>
-          </select>
-          <label v-if="subtypeHint" class="label">
-            <span class="label-text-alt text-base-content/70">{{ subtypeHint }}</span>
-          </label>
-          <label v-if="subtypeConsistencyHint" class="label pt-0">
-            <span class="label-text-alt text-warning">{{ subtypeConsistencyHint }}</span>
-          </label>
-        </div>
-
-        <div class="form-control">
-          <label class="label cursor-pointer">
-            <span class="label-text">启用字典</span>
-            <input v-model="localForm.is_active" type="checkbox" class="toggle toggle-primary">
-          </label>
-        </div>
-
-        <div class="modal-action">
-          <button type="button" class="btn" @click="$emit('cancel')">取消</button>
-          <button type="submit" class="btn btn-primary" :disabled="saving">
-            {{ saving ? '保存中...' : '保存' }}
-          </button>
-        </div>
-      </form>
+          <div class="modal-action">
+            <button type="button" class="btn" @click="$emit('cancel')">取消</button>
+            <button type="submit" class="btn btn-primary" :disabled="saving">
+              {{ saving ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -199,3 +201,16 @@ function submit() {
   })
 }
 </script>
+
+<style scoped>
+.dictionary-modal {
+  z-index: 70;
+  align-items: flex-start;
+  padding: 5rem 1rem 1.5rem;
+}
+
+.dictionary-modal-box {
+  max-height: calc(100vh - 6.5rem);
+  overflow-y: auto;
+}
+</style>

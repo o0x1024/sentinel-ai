@@ -7,7 +7,12 @@
     >
       <div class="card-body">
         <div class="flex justify-between items-start mb-2">
-          <h3 class="card-title text-lg">{{ dictionary.name }}</h3>
+          <div class="min-w-0">
+            <div class="text-xs font-mono text-base-content/60 mb-1">
+              {{ dictionary.dict_type }}
+            </div>
+            <h3 class="card-title text-lg break-all">{{ dictionary.name }}</h3>
+          </div>
           <div class="dropdown dropdown-end z-50 relative">
             <label tabindex="0" class="btn btn-ghost btn-sm">
               <i class="fas fa-ellipsis-v"></i>

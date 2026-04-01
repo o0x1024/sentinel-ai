@@ -116,6 +116,37 @@ impl DatabaseService {
         Ok(())
     }
 
+    pub async fn delete_config_internal(&self, category: &str, key: &str) -> Result<()> {
+        let runtime = self
+            .runtime_pool
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("数据库未初始化"))?;
+        match runtime {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("DELETE FROM configurations WHERE category = $1 AND key = $2")
+                    .bind(category)
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("DELETE FROM configurations WHERE category = ? AND key = ?")
+                    .bind(category)
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("DELETE FROM configurations WHERE category = ? AND `key` = ?")
+                    .bind(category)
+                    .bind(key)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn get_configs_by_category_internal(
         &self,
         category: &str,

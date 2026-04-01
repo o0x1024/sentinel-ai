@@ -259,7 +259,13 @@ impl TodosTool {
     }
 
     pub const NAME: &'static str = "todos";
-    pub const DESCRIPTION: &'static str = "Manage and track the agent's execution todos. Actions: add_items (append), update_status (change status), get_list (view existing todos), reset (clear all), replan (replace all items), update_item (modify description), delete_item (remove), insert_item (add at position), cleanup (remove list). Todos persist across sessions - use get_list first to check existing todos before creating new ones.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Persistent task tracker for the current agent execution. ",
+        "Use it to create or revise a multi-step plan, mark progress, record step results, ",
+        "and recover existing todos across sessions. Call action='get_list' before creating new items ",
+        "to avoid duplicates. Actions: add_items, update_status, get_list, reset, replan, update_item, ",
+        "delete_item, insert_item, cleanup. Use this for execution tracking, not as a general note store."
+    );
 }
 
 impl Tool for TodosTool {

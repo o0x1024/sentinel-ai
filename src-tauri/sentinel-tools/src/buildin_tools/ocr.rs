@@ -95,7 +95,12 @@ pub struct OcrTool;
 
 impl OcrTool {
     pub const NAME: &'static str = "ocr";
-    pub const DESCRIPTION: &'static str = "Extract text from an image file using OCR (Optical Character Recognition). Supports Chinese and English text.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Extract machine-readable text from an image file using OCR. ",
+        "Use when the needed information is inside screenshots, scanned documents, photos, ",
+        "or terminal captures and you need the text content. Supports Chinese and English. ",
+        "Prefer text-native tools if the source is already available as plain text or HTML."
+    );
 
     fn get_model_path(model_name: &str) -> Result<PathBuf> {
         let data_dir = dirs::data_dir()

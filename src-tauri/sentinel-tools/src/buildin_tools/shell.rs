@@ -335,7 +335,12 @@ impl ShellTool {
     }
 
     pub const NAME: &'static str = "shell";
-    pub const DESCRIPTION: &'static str = "Execute one-time shell commands and get immediate results (e.g., ls, cat, grep, curl). For interactive tools, long-lived services, or background commands that keep running (like msfconsole, sqlmap, database clients, Python REPL, dev servers), use interactive_shell instead.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Execute a one-shot shell command and return stdout/stderr when the command finishes. ",
+        "Use for filesystem inspection, CLI utilities, scripting, build/test commands, and quick network tools ",
+        "that exit on their own. Prefer this over other tools when direct command execution is the simplest path. ",
+        "Do not use for interactive REPLs, TUIs, long-lived services, or attached background jobs; use interactive_shell instead."
+    );
 
     /// Check if command is reading files from /workspace/context/ to avoid recursive storage
     fn is_reading_context_file(command: &str) -> bool {

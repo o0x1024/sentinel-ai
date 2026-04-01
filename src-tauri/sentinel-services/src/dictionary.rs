@@ -201,44 +201,7 @@ impl DictionaryService {
         &self,
         filter: Option<DictionaryFilter>,
     ) -> Result<Vec<Dictionary>> {
-        let mut query = "SELECT * FROM dictionaries WHERE 1=1".to_string();
-        let mut param_idx = 1;
-        let mut params: Vec<String> = Vec::new();
-
-        if let Some(filter) = filter {
-            if let Some(dict_type) = filter.dict_type {
-                query.push_str(&format!(" AND dict_type = ${}", param_idx));
-                param_idx += 1;
-                params.push(dict_type.to_string());
-            }
-            if let Some(service_type) = filter.service_type {
-                query.push_str(&format!(" AND service_type = ${}", param_idx));
-                param_idx += 1;
-                params.push(service_type.to_string());
-            }
-            if let Some(category) = filter.category {
-                query.push_str(&format!(" AND category = ${}", param_idx));
-                param_idx += 1;
-                params.push(category);
-            }
-            if let Some(is_builtin) = filter.is_builtin {
-                query.push_str(&format!(" AND is_builtin = ${}", param_idx));
-                param_idx += 1;
-                params.push(is_builtin.to_string());
-            }
-            if let Some(is_active) = filter.is_active {
-                query.push_str(&format!(" AND is_active = ${}", param_idx));
-                param_idx += 1;
-                params.push(is_active.to_string());
-            }
-            if let Some(search_term) = filter.search_term {
-                query.push_str(&format!(
-                    " AND (name LIKE ${0} OR description LIKE ${0})",
-                    param_idx
-                ));
-                params.push(format!("%{}%", search_term));
-            }
-        }
+        let (mut query, params) = self.build_dictionary_filter_query(filter, None);
 
         query.push_str(" ORDER BY created_at DESC");
         let query = self.sql(&query);
@@ -268,6 +231,237 @@ impl DictionaryService {
         };
 
         Ok(dictionaries)
+    }
+
+    pub async fn list_dictionaries_paged(
+        &self,
+        filter: Option<DictionaryFilter>,
+        subtype: Option<String>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<Dictionary>> {
+        let (mut query, params) = self.build_dictionary_filter_query(filter, subtype.as_deref());
+        query.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            limit, offset
+        ));
+        let query = self.sql(&query);
+
+        let dictionaries = match &self.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_all(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_all(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut sql_query = sqlx::query_as::<_, Dictionary>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_all(pool).await?
+            }
+        };
+
+        Ok(dictionaries)
+    }
+
+    pub async fn count_dictionaries(
+        &self,
+        filter: Option<DictionaryFilter>,
+        subtype: Option<String>,
+    ) -> Result<i64> {
+        let (query, params) = self.build_dictionary_count_query(filter, subtype.as_deref());
+        let query = self.sql(&query);
+
+        let total = match &self.pool {
+            DatabasePool::PostgreSQL(pool) => {
+                let mut sql_query = sqlx::query_scalar::<_, i64>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_one(pool).await?
+            }
+            DatabasePool::SQLite(pool) => {
+                let mut sql_query = sqlx::query_scalar::<_, i64>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_one(pool).await?
+            }
+            DatabasePool::MySQL(pool) => {
+                let mut sql_query = sqlx::query_scalar::<_, i64>(&query);
+                for param in params {
+                    sql_query = sql_query.bind(param);
+                }
+                sql_query.fetch_one(pool).await?
+            }
+        };
+
+        Ok(total)
+    }
+
+    fn build_dictionary_count_query(
+        &self,
+        filter: Option<DictionaryFilter>,
+        subtype: Option<&str>,
+    ) -> (String, Vec<String>) {
+        let (query, params) = self.build_dictionary_filter_query(filter, subtype);
+        (query.replacen("SELECT *", "SELECT COUNT(*)", 1), params)
+    }
+
+    fn build_dictionary_filter_query(
+        &self,
+        filter: Option<DictionaryFilter>,
+        subtype: Option<&str>,
+    ) -> (String, Vec<String>) {
+        let mut query = "SELECT * FROM dictionaries WHERE 1=1".to_string();
+        let mut param_idx = 1;
+        let mut params: Vec<String> = Vec::new();
+        let mut selected_dict_type: Option<String> = None;
+
+        if let Some(filter) = filter {
+            if let Some(dict_type) = filter.dict_type {
+                let value = dict_type.to_string();
+                query.push_str(&format!(" AND dict_type = ${}", param_idx));
+                param_idx += 1;
+                params.push(value.clone());
+                selected_dict_type = Some(value);
+            }
+            if let Some(service_type) = filter.service_type {
+                query.push_str(&format!(" AND service_type = ${}", param_idx));
+                param_idx += 1;
+                params.push(service_type.to_string());
+            }
+            if let Some(category) = filter.category {
+                query.push_str(&format!(" AND category = ${}", param_idx));
+                param_idx += 1;
+                params.push(category);
+            }
+            if let Some(is_builtin) = filter.is_builtin {
+                query.push_str(&format!(" AND is_builtin = ${}", param_idx));
+                param_idx += 1;
+                params.push(is_builtin.to_string());
+            }
+            if let Some(is_active) = filter.is_active {
+                query.push_str(&format!(" AND is_active = ${}", param_idx));
+                param_idx += 1;
+                params.push(is_active.to_string());
+            }
+            if let Some(search_term) = filter.search_term {
+                query.push_str(&format!(
+                    " AND (LOWER(name) LIKE ${0} OR LOWER(COALESCE(description, '')) LIKE ${0})",
+                    param_idx
+                ));
+                params.push(format!("%{}%", search_term.to_lowercase()));
+                param_idx += 1;
+            }
+        }
+
+        if let Some(subtype) = subtype {
+            self.append_dictionary_subtype_filter(
+                &mut query,
+                &mut param_idx,
+                &mut params,
+                selected_dict_type.as_deref(),
+                subtype,
+            );
+        }
+
+        (query, params)
+    }
+
+    fn append_dictionary_subtype_filter(
+        &self,
+        query: &mut String,
+        param_idx: &mut i32,
+        params: &mut Vec<String>,
+        selected_dict_type: Option<&str>,
+        subtype: &str,
+    ) {
+        if subtype == "service_identification" && selected_dict_type == Some("service_probe_rule") {
+            return;
+        }
+
+        let metadata_pattern = format!("%{}%", subtype.to_lowercase());
+        let push_param = |params: &mut Vec<String>, param_idx: &mut i32, value: String| {
+            let placeholder = format!("${}", *param_idx);
+            params.push(value);
+            *param_idx += 1;
+            placeholder
+        };
+        let marker_clause =
+            |params: &mut Vec<String>, param_idx: &mut i32, markers: &[&str]| -> String {
+                markers
+                    .iter()
+                    .map(|marker| {
+                        let placeholder =
+                            push_param(params, param_idx, format!("%{}%", marker.to_lowercase()));
+                        format!(
+                            "(LOWER(id) LIKE {0} OR LOWER(name) LIKE {0} OR LOWER(COALESCE(tags, '')) LIKE {0})",
+                            placeholder
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            };
+
+        let metadata_placeholder = push_param(params, param_idx, metadata_pattern);
+
+        match subtype {
+            "service_identification" => {
+                let markers = marker_clause(params, param_idx, &["service", "banner"]);
+                query.push_str(&format!(
+                    " AND (LOWER(COALESCE(metadata, '')) LIKE {} OR {})",
+                    metadata_placeholder, markers
+                ));
+            }
+            "web_fingerprint" => {
+                let markers = marker_clause(params, param_idx, &["web", "technology", "tech"]);
+                query.push_str(&format!(
+                    " AND (LOWER(COALESCE(metadata, '')) LIKE {} OR {})",
+                    metadata_placeholder, markers
+                ));
+            }
+            "favicon_fingerprint" => {
+                let markers = marker_clause(params, param_idx, &["favicon"]);
+                query.push_str(&format!(
+                    " AND (LOWER(COALESCE(metadata, '')) LIKE {} OR {})",
+                    metadata_placeholder, markers
+                ));
+            }
+            "generic_fingerprint" => {
+                let service_markers = marker_clause(params, param_idx, &["service", "banner"]);
+                let web_markers = marker_clause(params, param_idx, &["web", "technology", "tech"]);
+                let favicon_markers = marker_clause(params, param_idx, &["favicon"]);
+                query.push_str(&format!(
+                    " AND (LOWER(COALESCE(metadata, '')) LIKE {0} OR NOT (({1}) OR ({2}) OR ({3})))",
+                    metadata_placeholder, service_markers, web_markers, favicon_markers
+                ));
+            }
+            "risk_verification" => {
+                let verification_markers = marker_clause(params, param_idx, &["verification", "poc"]);
+                let category_placeholder = push_param(params, param_idx, "risk".to_string());
+                query.push_str(&format!(
+                    " AND (LOWER(COALESCE(metadata, '')) LIKE {0} OR LOWER(COALESCE(category, '')) = {1} OR {2})",
+                    metadata_placeholder, category_placeholder, verification_markers
+                ));
+            }
+            _ => {
+                query.push_str(&format!(
+                    " AND LOWER(COALESCE(metadata, '')) LIKE {}",
+                    metadata_placeholder
+                ));
+            }
+        }
     }
 
     pub async fn update_dictionary(&self, mut dictionary: Dictionary) -> Result<Dictionary> {
@@ -993,7 +1187,7 @@ impl DictionaryService {
         )
         .await?;
 
-        self.ensure_builtin_dictionary(
+        self.ensure_builtin_dictionary_metadata_only(
             Dictionary {
                 id: "builtin_sensitive_files_web".to_string(),
                 name: "Sensitive Web Files".to_string(),
@@ -1017,54 +1211,6 @@ impl DictionaryService {
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
-            vec![
-                ("swagger-ui.html", "medium", "swagger"),
-                ("swagger/index.html", "medium", "swagger"),
-                ("swagger-resources", "medium", "swagger"),
-                ("api-docs", "high", "openapi"),
-                ("v2/api-docs", "high", "openapi"),
-                ("v3/api-docs", "high", "openapi"),
-                ("openapi.json", "high", "openapi"),
-                (".env", "critical", "config"),
-                (".env.local", "critical", "config"),
-                (".env.production", "critical", "config"),
-                (".git/config", "critical", "git"),
-                (".svn/entries", "high", "svn"),
-                (".hg/hgrc", "high", "hg"),
-                ("config", "medium", "config"),
-                ("config.js", "medium", "config"),
-                ("config.json", "high", "config"),
-                ("package.json", "medium", "javascript"),
-                ("composer.json", "medium", "php"),
-                ("web.config", "high", "iis"),
-                ("docker-compose.yml", "high", "docker"),
-                ("docker-compose.yaml", "high", "docker"),
-                ("application.properties", "high", "config"),
-                ("nohup.out", "medium", "log"),
-                ("actuator/env", "high", "spring"),
-                ("actuator/health", "low", "spring"),
-                ("actuator/configprops", "high", "spring"),
-                ("actuator/heapdump", "critical", "spring"),
-                ("actuator/logfile", "high", "spring"),
-                ("metrics", "medium", "metrics"),
-                ("server-status", "medium", "apache"),
-                ("phpinfo.php", "high", "php"),
-                ("backup.zip", "high", "backup"),
-            ]
-            .into_iter()
-            .map(|(path, severity, tag)| DictionaryWordInput {
-                word: path.to_string(),
-                weight: None,
-                category: Some(tag.to_string()),
-                metadata: Some(serde_json::json!({
-                    "path": path,
-                    "severity": severity,
-                    "tags": [tag],
-                    "description": format!("Potentially exposed sensitive resource at {}", path),
-                    "remediation": "Restrict public access, remove unnecessary debug/config files, and enforce authentication where needed."
-                })),
-            })
-            .collect(),
         )
         .await?;
 
@@ -1793,6 +1939,31 @@ impl DictionaryService {
         } else {
             self.create_dictionary(dictionary.clone()).await?;
             self.add_word_entries(&dictionary.id, entries).await?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_builtin_dictionary_metadata_only(&self, dictionary: Dictionary) -> Result<()> {
+        if let Some(existing) = self.get_dictionary(&dictionary.id).await? {
+            let mut updated = existing;
+            updated.name = dictionary.name;
+            updated.description = dictionary.description;
+            updated.dict_type = dictionary.dict_type;
+            updated.service_type = dictionary.service_type;
+            updated.category = dictionary.category;
+            updated.is_builtin = dictionary.is_builtin;
+            updated.is_active = dictionary.is_active;
+            updated.file_size = dictionary.file_size;
+            updated.checksum = dictionary.checksum;
+            updated.version = dictionary.version;
+            updated.author = dictionary.author;
+            updated.source_url = dictionary.source_url;
+            updated.tags = dictionary.tags;
+            updated.metadata = dictionary.metadata;
+
+            self.update_dictionary(updated).await?;
+        } else {
+            self.create_dictionary(dictionary).await?;
         }
         Ok(())
     }

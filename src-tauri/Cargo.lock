@@ -8625,7 +8625,9 @@ dependencies = [
 
 [[package]]
 name = "rsubdomain"
-version = "1.2.8"
+version = "1.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cf1ef1d65a6503332a1e293b8ced7520933490e80d10862b52cfa56f526eebd"
 dependencies = [
  "byteorder",
  "chrono",

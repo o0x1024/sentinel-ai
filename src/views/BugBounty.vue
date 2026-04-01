@@ -148,6 +148,7 @@
           :total="findingTotal"
           :has-next="findingHasNext"
           @create="showCreateFindingModal = true"
+          @refresh="refreshFindingsData"
           @view="viewFinding"
           @delete="deleteFinding"
           @create-submission="createSubmissionFromFinding"
@@ -486,13 +487,35 @@ const totalEarnings = computed(() =>
 const findingPageCount = computed(() => Math.max(1, Math.ceil(findingTotal.value / findingPageSize.value)))
 const submissionPageCount = computed(() => Math.max(1, Math.ceil(submissionTotal.value / pageSize.value)))
 
+const refreshProgramsOverview = async () => {
+  await Promise.all([loadPrograms(), loadStats()])
+}
+
+const refreshFindingsData = async () => {
+  await Promise.all([
+    loadFindingStats(),
+    loadedTabs.value.findings ? loadFindings() : Promise.resolve(),
+  ])
+}
+
+const refreshSubmissionsData = async () => {
+  await Promise.all([
+    loadSubmissionStats(),
+    loadedTabs.value.submissions ? loadSubmissions() : Promise.resolve(),
+  ])
+}
+
 // Methods
 const switchTab = async (tab: BugBountyTab) => {
   mountedTabs.value[tab] = true
   activeTab.value = tab
-  if (tab === 'findings' && !loadedTabs.value.findings) {
-    await loadFindings()
-    loadedTabs.value.findings = true
+  if (tab === 'findings') {
+    if (!loadedTabs.value.findings) {
+      await loadFindings()
+      loadedTabs.value.findings = true
+    } else {
+      await refreshFindingsData()
+    }
   } else if (tab === 'submissions' && !loadedTabs.value.submissions) {
     await loadSubmissions()
     loadedTabs.value.submissions = true
@@ -579,17 +602,17 @@ const loadFindings = async () => {
       offset: (findingPage.value - 1) * findingPageSize.value,
     }
 
-    const [pagedRows, allRows] = await Promise.all([
+    const [pagedRows, total] = await Promise.all([
       invoke<any[]>('bounty_list_findings', {
         filter: Object.keys(pagedFilter).length > 0 ? pagedFilter : null,
       }),
-      invoke<any[]>('bounty_list_findings', {
+      invoke<number>('bounty_count_findings', {
         filter: Object.keys(baseFilter).length > 0 ? baseFilter : null,
       }),
     ])
 
     findings.value = Array.isArray(pagedRows) ? pagedRows : []
-    findingTotal.value = Array.isArray(allRows) ? allRows.length : 0
+    findingTotal.value = Number.isFinite(total) ? Number(total) : 0
     findingHasNext.value = findingPage.value < findingPageCount.value
 
     if (findingPage.value > findingPageCount.value) {
@@ -632,17 +655,17 @@ const loadSubmissions = async () => {
       offset: (submissionPage.value - 1) * pageSize.value,
     }
 
-    const [pagedRows, allRows] = await Promise.all([
+    const [pagedRows, total] = await Promise.all([
       invoke<any[]>('bounty_list_submissions', {
         filter: Object.keys(pagedFilter).length > 0 ? pagedFilter : null,
       }),
-      invoke<any[]>('bounty_list_submissions', {
+      invoke<number>('bounty_count_submissions', {
         filter: Object.keys(baseFilter).length > 0 ? baseFilter : null,
       }),
     ])
 
     submissions.value = Array.isArray(pagedRows) ? pagedRows : []
-    submissionTotal.value = Array.isArray(allRows) ? allRows.length : 0
+    submissionTotal.value = Number.isFinite(total) ? Number(total) : 0
     submissionHasNext.value = submissionPage.value < submissionPageCount.value
 
     if (submissionPage.value > submissionPageCount.value) {
@@ -728,8 +751,7 @@ const saveProgram = async (data: any) => {
     }
     
     closeProgramModal()
-    await loadPrograms()
-    await loadStats()
+    await refreshProgramsOverview()
   } catch (error) {
     console.error('Failed to save program:', error)
     toast.error(data.id ? t('bugBounty.errors.updateFailed') : t('bugBounty.errors.createFailed'))
@@ -763,8 +785,7 @@ const createFinding = async (data: any) => {
     await invoke('bounty_create_finding', { request })
     toast.success(t('bugBounty.success.findingCreated'))
     showCreateFindingModal.value = false
-    await loadFindings()
-    await loadFindingStats()
+    await refreshFindingsData()
   } catch (error: any) {
     console.error('Failed to create finding:', error)
     if (error.toString().includes('Duplicate')) {
@@ -817,8 +838,7 @@ const createSubmission = async (data: any) => {
       toast.success(t('bugBounty.success.submissionCreated'))
     }
     closeSubmissionModal()
-    await loadSubmissions()
-    await loadSubmissionStats()
+    await refreshSubmissionsData()
   } catch (error) {
     console.error('Failed to create submission:', error)
     toast.error(t('bugBounty.errors.createFailed'))
@@ -832,8 +852,7 @@ const deleteFinding = async (finding: any) => {
   try {
     await invoke('bounty_delete_finding', { id: finding.id })
     toast.success(t('bugBounty.success.findingDeleted'))
-    await loadFindings()
-    await loadFindingStats()
+    await refreshFindingsData()
   } catch (error) {
     console.error('Failed to delete finding:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
@@ -845,8 +864,7 @@ const deleteSubmission = async (submission: any) => {
   try {
     await invoke('bounty_delete_submission', { id: submission.id })
     toast.success(t('bugBounty.success.submissionDeleted'))
-    await loadSubmissions()
-    await loadSubmissionStats()
+    await refreshSubmissionsData()
   } catch (error) {
     console.error('Failed to delete submission:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
@@ -858,8 +876,7 @@ const deleteProgram = async (program: any) => {
   try {
     await invoke('bounty_delete_program', { id: program.id })
     toast.success(t('bugBounty.success.programDeleted'))
-    await loadPrograms()
-    await loadStats()
+    await refreshProgramsOverview()
   } catch (error) {
     console.error('Failed to delete program:', error)
     toast.error(t('bugBounty.errors.deleteFailed'))
@@ -896,8 +913,7 @@ const selectProgram = (program: any) => {
 }
 
 const onProgramUpdated = async () => {
-  await loadPrograms()
-  await loadStats()
+  await refreshProgramsOverview()
 }
 
 const editProgram = (program: any) => {
@@ -916,8 +932,7 @@ const viewFinding = (finding: any) => {
 }
 
 const onFindingUpdated = async () => {
-  await loadFindings()
-  await loadFindingStats()
+  await refreshFindingsData()
 }
 
 const viewSubmission = (submission: any) => {
@@ -926,8 +941,7 @@ const viewSubmission = (submission: any) => {
 }
 
 const onSubmissionUpdated = async () => {
-  await loadSubmissions()
-  await loadSubmissionStats()
+  await refreshSubmissionsData()
   // Refresh selected submission data
   if (selectedSubmission.value?.id) {
     try {
@@ -980,13 +994,18 @@ const onSubmissionPageChange = (page: number) => {
 }
 
 const onDataImported = async () => {
-  await loadPrograms()
-  await loadStats()
-  await loadAssetStats()
-  await loadFindings()
-  await loadFindingStats()
-  await loadSubmissions()
-  await loadSubmissionStats()
+  await Promise.all([
+    refreshProgramsOverview(),
+    loadAssetStats(),
+    loadFindingStats(),
+    loadSubmissionStats(),
+  ])
+  if (loadedTabs.value.findings) {
+    await loadFindings()
+  }
+  if (loadedTabs.value.submissions) {
+    await loadSubmissions()
+  }
 }
 
 const onUseTemplate = (template: any) => {
@@ -1102,8 +1121,7 @@ const batchUpdateFindingStatus = async (ids: string[], status: string) => {
     findingBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_update_finding_status', { ids, status })
     toast.success(t('bugBounty.batch.updateSuccess', { count: successCount }))
-    await loadFindings()
-    await loadFindingStats()
+    await refreshFindingsData()
     findingBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch update failed:', error)
@@ -1120,8 +1138,7 @@ const batchDeleteFindings = async (ids: string[]) => {
     findingBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_delete_findings', { ids })
     toast.success(t('bugBounty.batch.deleteSuccess', { count: successCount }))
-    await loadFindings()
-    await loadFindingStats()
+    await refreshFindingsData()
     findingBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch delete failed:', error)
@@ -1139,8 +1156,7 @@ const batchUpdateSubmissionStatus = async (ids: string[], status: string) => {
     submissionBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_update_submission_status', { ids, status })
     toast.success(t('bugBounty.batch.updateSuccess', { count: successCount }))
-    await loadSubmissions()
-    await loadSubmissionStats()
+    await refreshSubmissionsData()
     submissionBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch update failed:', error)
@@ -1157,8 +1173,7 @@ const batchDeleteSubmissions = async (ids: string[]) => {
     submissionBatchActionLoading.value = true
     const successCount = await invoke('bounty_batch_delete_submissions', { ids })
     toast.success(t('bugBounty.batch.deleteSuccess', { count: successCount }))
-    await loadSubmissions()
-    await loadSubmissionStats()
+    await refreshSubmissionsData()
     submissionBatchActionVersion.value += 1
   } catch (error) {
     console.error('Batch delete failed:', error)
@@ -1170,12 +1185,14 @@ const batchDeleteSubmissions = async (ids: string[]) => {
 
 // Lifecycle
 onMounted(async () => {
-  await loadPrograms()
-  await loadStats()
-  await loadAssetStats()
-  await loadFindingStats()
-  await loadSubmissionStats()
-  await loadChangeEventStats()
+  await Promise.all([
+    loadPrograms(),
+    loadStats(),
+    loadAssetStats(),
+    loadFindingStats(),
+    loadSubmissionStats(),
+    loadChangeEventStats(),
+  ])
   await syncTabFromRoute()
 })
 

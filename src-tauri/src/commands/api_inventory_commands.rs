@@ -227,7 +227,9 @@ fn apply_inventory_filters(
             Some("scheduler") | Some("manual") => target
                 .execution_mode
                 .as_deref()
-                .map(|value| value.eq_ignore_ascii_case(execution_mode.as_deref().unwrap_or_default()))
+                .map(|value| {
+                    value.eq_ignore_ascii_case(execution_mode.as_deref().unwrap_or_default())
+                })
                 .unwrap_or(false),
             _ => true,
         })
@@ -287,8 +289,10 @@ fn build_inventory_stats(rows: &[ApiInventoryTargetSummary]) -> ApiInventoryList
 fn collect_latest_targets(
     observations: Vec<SurfaceObservationRow>,
 ) -> Vec<ApiInventoryTargetSummary> {
-    let mut latest_by_target: HashMap<String, (SurfaceObservationRow, ApiInventoryObservationPayload)> =
-        HashMap::new();
+    let mut latest_by_target: HashMap<
+        String,
+        (SurfaceObservationRow, ApiInventoryObservationPayload),
+    > = HashMap::new();
 
     for observation in observations {
         let Some(payload) = parse_observation_payload(&observation) else {

@@ -77,6 +77,13 @@ export function getSubtypeOptions(dictionaryType: string): DictionarySubtypeOpti
     }))
 }
 
+export function getAllSubtypeOptions(): DictionarySubtypeOption[] {
+  return Object.entries(subtypeDefinitions).map(([value, definition]) => ({
+    value,
+    label: definition.label,
+  }))
+}
+
 export function getSubtypeHint(subtype: string): string {
   return subtypeDefinitions[subtype]?.hint || ''
 }

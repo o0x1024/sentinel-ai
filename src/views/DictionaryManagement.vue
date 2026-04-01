@@ -29,7 +29,7 @@
         :key="type.value"
         class="tab dictionary-tab"
         :class="{ 'tab-active': selectedType === type.value }"
-        @click="selectedType = type.value"
+        @click="onTypeChange(type.value)"
       >
         <i :class="type.icon"></i>
         <span class="dictionary-tab-label">{{ t(`dictionary.types.${type.value}`, type.label) }}</span>
@@ -37,41 +37,143 @@
       </div>
     </div>
 
-    <div v-if="subtypeFilterVisible" class="mb-6 max-w-sm">
-      <div class="form-control">
-        <label class="label">
-          <span class="label-text">{{ t('dictionary.subtypeFilter', '子类型筛选') }}</span>
-        </label>
-        <select v-model="selectedSubtype" class="select select-bordered">
-          <option value="">{{ t('dictionary.allSubtypes', '全部子类型') }}</option>
-          <option
-            v-for="option in availableSubtypeOptions"
-            :key="option.value"
-            :value="option.value"
-          >
-            {{ option.label }}
-          </option>
-        </select>
+    <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div class="flex flex-col gap-4 self-start lg:self-auto lg:flex-row lg:items-end">
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-base-content/70">{{ t('dictionary.viewMode', '显示方式') }}</span>
+          <div class="join">
+            <button
+              class="btn btn-sm join-item"
+              :class="viewMode === 'list' ? 'btn-primary' : 'btn-ghost'"
+              @click="viewMode = 'list'"
+            >
+              <i class="fas fa-list mr-2"></i>
+              {{ t('dictionary.viewModes.list', '列表') }}
+            </button>
+            <button
+              class="btn btn-sm join-item"
+              :class="viewMode === 'card' ? 'btn-primary' : 'btn-ghost'"
+              @click="viewMode = 'card'"
+            >
+              <i class="fas fa-th-large mr-2"></i>
+              {{ t('dictionary.viewModes.card', '卡片') }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="subtypeFilterVisible" class="min-w-60 max-w-sm">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text">{{ t('dictionary.subtypeFilter', '子类型筛选') }}</span>
+            </label>
+            <select v-model="selectedSubtype" class="select select-bordered" @change="onSubtypeChange">
+              <option value="">{{ t('dictionary.allSubtypes', '全部子类型') }}</option>
+              <option
+                v-for="option in availableSubtypeOptions"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
 
-    <DictionaryCardGrid
-      :dictionaries="filteredDictionaries"
-      :default-map="defaultMap"
-      :get-dictionary-type-label="getDictionaryTypeLabel"
-      :get-dictionary-subtype-label="getDictionarySubtypeLabel"
-      :get-dictionary-subtype-badge-class="getDictionarySubtypeBadgeClass"
-      :get-service-type-label="getServiceTypeLabel"
-      :format-date="formatDate"
-      @edit="editDictionary"
-      @export="exportDictionary"
-      @duplicate="duplicateDictionary"
-      @mark-default="markAsDefault"
-      @clear-default="clearDefault"
-      @delete="deleteDictionary"
-      @view-words="viewDictionaryWords"
-      @manage-words="manageDictionaryWords"
-    />
+    <div v-if="loadingDictionaries" class="flex justify-center py-10">
+      <span class="loading loading-spinner loading-lg"></span>
+    </div>
+
+    <template v-else-if="dictionaries.length > 0">
+      <DictionaryListTable
+        v-if="viewMode === 'list'"
+        :dictionaries="dictionaries"
+        :default-map="defaultMap"
+        :get-dictionary-type-label="getDictionaryTypeLabel"
+        :get-dictionary-subtype-label="getDictionarySubtypeLabel"
+        :get-dictionary-subtype-badge-class="getDictionarySubtypeBadgeClass"
+        :get-service-type-label="getServiceTypeLabel"
+        :format-date="formatDate"
+        @edit="editDictionary"
+        @export="exportDictionary"
+        @duplicate="duplicateDictionary"
+        @mark-default="markAsDefault"
+        @clear-default="clearDefault"
+        @delete="deleteDictionary"
+        @view-words="viewDictionaryWords"
+        @manage-words="manageDictionaryWords"
+      />
+
+      <DictionaryCardGrid
+        v-else
+        :dictionaries="dictionaries"
+        :default-map="defaultMap"
+        :get-dictionary-type-label="getDictionaryTypeLabel"
+        :get-dictionary-subtype-label="getDictionarySubtypeLabel"
+        :get-dictionary-subtype-badge-class="getDictionarySubtypeBadgeClass"
+        :get-service-type-label="getServiceTypeLabel"
+        :format-date="formatDate"
+        @edit="editDictionary"
+        @export="exportDictionary"
+        @duplicate="duplicateDictionary"
+        @mark-default="markAsDefault"
+        @clear-default="clearDefault"
+        @delete="deleteDictionary"
+        @view-words="viewDictionaryWords"
+        @manage-words="manageDictionaryWords"
+      />
+    </template>
+
+    <div v-else class="rounded-lg border border-dashed border-base-300 py-12 text-center text-base-content/60 mb-6">
+      {{ t('dictionary.empty', '暂无字典') }}
+    </div>
+
+    <div v-if="totalDictionaries > 0" class="flex flex-col gap-3 pt-2 xl:flex-row xl:items-center xl:justify-between">
+      <div class="flex items-center gap-2 text-sm">
+        <span class="text-base-content/70">{{ t('dictionary.pageSize', '每页显示') }}</span>
+        <select v-model.number="pageSize" class="select select-bordered select-sm" :disabled="loadingDictionaries" @change="onPageSizeChange">
+          <option v-for="size in pageSizeOptions" :key="size" :value="size">
+            {{ size }}
+          </option>
+        </select>
+      </div>
+
+      <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+        <div class="join">
+          <button class="join-item btn btn-sm" :disabled="currentPage <= 1 || loadingDictionaries" @click="goToFirstPage">
+            {{ t('bugBounty.surface.inventory.firstPage', '首页') }}
+          </button>
+          <button class="join-item btn btn-sm" :disabled="currentPage <= 1 || loadingDictionaries" @click="goToPrevPage">
+            {{ t('common.previous', '上一页') }}
+          </button>
+          <button class="join-item btn btn-sm">
+            {{ t('bugBounty.surface.inventory.pageInfo', { page: currentPage, total: pageCount }) }}
+          </button>
+          <button class="join-item btn btn-sm" :disabled="currentPage >= pageCount || loadingDictionaries" @click="goToNextPage">
+            {{ t('common.next', '下一页') }}
+          </button>
+          <button class="join-item btn btn-sm" :disabled="currentPage >= pageCount || loadingDictionaries" @click="goToLastPage">
+            {{ t('bugBounty.surface.inventory.lastPage', '末页') }}
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <input
+            v-model="pageInput"
+            type="number"
+            min="1"
+            :max="pageCount"
+            class="input input-bordered input-sm w-24"
+            :placeholder="t('bugBounty.surface.inventory.jumpPlaceholder', '跳转页码')"
+            @keyup.enter="applyPageJump"
+          />
+          <button class="btn btn-sm btn-outline" :disabled="loadingDictionaries" @click="applyPageJump">
+            {{ t('bugBounty.surface.inventory.jump', '跳转') }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <DictionaryFormModal
       :open="showCreateModal || Boolean(editingDictionary)"
@@ -85,8 +187,9 @@
     />
 
     <!-- 词条管理模态框 -->
-    <div v-if="managingDictionary" class="modal modal-open">
-      <div class="modal-box max-w-4xl max-h-[80vh]">
+    <Teleport to="body">
+    <div v-if="managingDictionary" class="modal modal-open dictionary-modal">
+      <div class="modal-box max-w-4xl dictionary-modal-box">
         <h3 class="font-bold text-lg mb-4">
           {{ t('dictionary.manageWords', '管理词条') }} - {{ managingDictionary.name }}
         </h3>
@@ -255,6 +358,7 @@
         
       </div>
     </div>
+    </Teleport>
 
     <RuleEntryEditorModal
       :open="showRuleEditor"
@@ -274,8 +378,9 @@
     />
 
     <!-- 导入模态框 -->
-    <div v-if="showImportModal" class="modal modal-open">
-      <div class="modal-box">
+    <Teleport to="body">
+    <div v-if="showImportModal" class="modal modal-open dictionary-modal">
+      <div class="modal-box dictionary-modal-box">
         <h3 class="font-bold text-lg mb-4">{{ t('dictionary.importWords', '导入词条') }}</h3>
         
         <div class="tabs tabs-boxed mb-4">
@@ -362,16 +467,18 @@
         </div>
       </div>
     </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { writeTextFile }  from '@tauri-apps/plugin-fs';
 import DictionaryCardGrid from '@/components/Dictionary/DictionaryCardGrid.vue'
+import DictionaryListTable from '@/components/Dictionary/DictionaryListTable.vue'
 import DictionaryEmptyRuleState from '@/components/Dictionary/DictionaryEmptyRuleState.vue'
 import DictionaryFormModal from '@/components/Dictionary/DictionaryFormModal.vue'
 import VirtualList from '@/components/VirtualList.vue'
@@ -381,6 +488,8 @@ import RuleBatchEditModal from '@/components/Dictionary/RuleBatchEditModal.vue'
 import StructuredRuleFilters from '@/components/Dictionary/StructuredRuleFilters.vue'
 import StructuredRuleWordList from '@/components/Dictionary/StructuredRuleWordList.vue'
 import {
+  getAllSubtypeOptions,
+  getSubtypeOptions,
   getSubtypeBadgeClass,
   getSubtypeLabel,
 } from '@/components/Dictionary/dictionarySubtypeConfig'
@@ -410,6 +519,11 @@ interface Dictionary {
   metadata?: string | null;
 }
 
+interface DictionaryPageResponse {
+  items: Dictionary[]
+  total: number
+}
+
 interface DictionaryForm {
   name: string;
   description: string;
@@ -427,12 +541,19 @@ type DictionaryView = Pick<Dictionary, 'id' | 'name' | 'dict_type' | 'service_ty
 const dictionaries = ref<Dictionary[]>([])
 const selectedType = ref('all')
 const selectedSubtype = ref('')
+const viewMode = ref<'list' | 'card'>('list')
+const loadingDictionaries = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(10)
+const totalDictionaries = ref(0)
+const pageInput = ref('1')
 const showCreateModal = ref(false)
 const editingDictionary = ref<Dictionary | null>(null)
 const saving = ref(false)
 const initializing = ref(false)
 // 默认字典映射：{ [dict_type]: dictionary_id }
 const defaultMap = ref<Record<string, string>>({})
+const pageSizeOptions = [10, 20, 50, 100]
 
 // 表单数据
 const dictionaryForm = ref({
@@ -476,32 +597,45 @@ const serviceTypes = [
 ]
 
 // 计算属性
-const filteredDictionaries = computed(() => {
-  return dictionaries.value.filter(dict => {
-    if (selectedType.value !== 'all' && dict.dict_type !== selectedType.value) {
-      return false
-    }
-    if (selectedSubtype.value && getDictionarySubtypeKey(dict) !== selectedSubtype.value) {
-      return false
-    }
-    return true
-  })
-})
+const pageCount = computed(() => Math.max(1, Math.ceil(totalDictionaries.value / pageSize.value)))
 
 // 方法
 const loadDictionaries = async () => {
+  loadingDictionaries.value = true
   try {
-    const result = await invoke('get_dictionaries', {
+    const result = await invoke<DictionaryPageResponse>('get_dictionaries_paged', {
       dict_type: selectedType.value === 'all' ? null : selectedType.value,
       service_type: null,
       category: null,
       is_builtin: null,
       is_active: null,
-      search_term: null
-    }) as Dictionary[]
-    dictionaries.value = result || []
+      search_term: null,
+      subtype: selectedSubtype.value || null,
+      limit: pageSize.value,
+      offset: (currentPage.value - 1) * pageSize.value,
+    })
+    dictionaries.value = result?.items || []
+    totalDictionaries.value = result?.total || 0
+
+    if (totalDictionaries.value === 0 && currentPage.value !== 1) {
+      currentPage.value = 1
+      pageInput.value = '1'
+      await loadDictionaries()
+      return
+    }
+
+    if (currentPage.value > pageCount.value) {
+      currentPage.value = pageCount.value
+      pageInput.value = String(currentPage.value)
+      await loadDictionaries()
+      return
+    }
+
+    pageInput.value = String(currentPage.value)
   } catch (error) {
     console.error('Failed to load dictionaries:', error)
+  } finally {
+    loadingDictionaries.value = false
   }
 }
 
@@ -745,21 +879,14 @@ const getDictionarySubtypeBadgeClass = (dictionary: DictionaryView) => {
 }
 
 const availableSubtypeOptions = computed(() => {
-  const subtypeKeys = new Set<string>()
-  for (const dictionary of dictionaries.value) {
-    if (selectedType.value !== 'all' && dictionary.dict_type !== selectedType.value) {
-      continue
-    }
-    const subtype = getDictionarySubtypeKey(dictionary)
-    if (subtype) subtypeKeys.add(subtype)
-  }
+  const options = selectedType.value === 'all'
+    ? getAllSubtypeOptions()
+    : getSubtypeOptions(selectedType.value)
 
-  return Array.from(subtypeKeys)
-    .sort()
-    .map(value => ({
-      value,
-      label: t(`dictionary.subtypes.${value}`, value),
-    }))
+  return options.map(option => ({
+    value: option.value,
+    label: t(`dictionary.subtypes.${option.value}`, option.label),
+  }))
 })
 
 const subtypeFilterVisible = computed(() => availableSubtypeOptions.value.length > 0)
@@ -767,15 +894,72 @@ const managingDictionarySubtypeKey = computed(() =>
   managingDictionary.value ? getDictionarySubtypeKey(managingDictionary.value) : null
 )
 
-watch(selectedType, () => {
-  selectedSubtype.value = ''
-})
-
-watch(availableSubtypeOptions, options => {
-  if (!options.some(option => option.value === selectedSubtype.value)) {
+const onTypeChange = (value: string) => {
+  if (selectedType.value === value) return
+  selectedType.value = value
+  if (!availableSubtypeOptions.value.some(option => option.value === selectedSubtype.value)) {
     selectedSubtype.value = ''
   }
-})
+  currentPage.value = 1
+  pageInput.value = '1'
+  loadDictionaries()
+}
+
+const onSubtypeChange = () => {
+  currentPage.value = 1
+  pageInput.value = '1'
+  loadDictionaries()
+}
+
+const onPageSizeChange = () => {
+  currentPage.value = 1
+  pageInput.value = '1'
+  loadDictionaries()
+}
+
+const goToPrevPage = () => {
+  if (currentPage.value <= 1) return
+  currentPage.value -= 1
+  pageInput.value = String(currentPage.value)
+  loadDictionaries()
+}
+
+const goToNextPage = () => {
+  if (currentPage.value >= pageCount.value) return
+  currentPage.value += 1
+  pageInput.value = String(currentPage.value)
+  loadDictionaries()
+}
+
+const goToFirstPage = () => {
+  if (currentPage.value <= 1) return
+  currentPage.value = 1
+  pageInput.value = '1'
+  loadDictionaries()
+}
+
+const goToLastPage = () => {
+  if (currentPage.value >= pageCount.value) return
+  currentPage.value = pageCount.value
+  pageInput.value = String(currentPage.value)
+  loadDictionaries()
+}
+
+const applyPageJump = () => {
+  const nextPage = Number.parseInt(pageInput.value, 10)
+  if (Number.isNaN(nextPage)) {
+    pageInput.value = String(currentPage.value)
+    return
+  }
+  const clamped = Math.min(Math.max(1, nextPage), pageCount.value)
+  if (clamped === currentPage.value) {
+    pageInput.value = String(currentPage.value)
+    return
+  }
+  currentPage.value = clamped
+  pageInput.value = String(currentPage.value)
+  loadDictionaries()
+}
 
 const getServiceTypeLabel = (type: string) => {
   const serviceObj = serviceTypes.find(s => s.value === type)
@@ -798,8 +982,14 @@ onMounted(async () => {
   padding: 1rem;
 }
 
-.modal-box {
-  max-height: 90vh;
+.dictionary-modal {
+  z-index: 70;
+  align-items: flex-start;
+  padding: 5rem 1rem 1.5rem;
+}
+
+.dictionary-modal-box {
+  max-height: calc(100vh - 6.5rem);
   overflow-y: auto;
 }
 

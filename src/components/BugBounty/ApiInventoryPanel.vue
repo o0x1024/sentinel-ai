@@ -775,8 +775,8 @@ const loadTargets = async (reset = true) => {
       ? (Array.isArray(response?.items) ? response.items : [])
       : [...targets.value, ...(Array.isArray(response?.items) ? response.items : [])]
     totalTargetCount.value = Number(response?.total || 0)
-    filteredTargetCount.value = Number(response?.filteredTotal || 0)
-    hasMoreTargets.value = Boolean(response?.hasMore)
+    filteredTargetCount.value = Number(response?.filtered_total || 0)
+    hasMoreTargets.value = Boolean(response?.has_more)
     targetStats.value = response?.stats || {
       total_endpoints: 0,
       successful_targets: 0,
@@ -990,9 +990,8 @@ const endpointStatusBadgeClass = (endpoint: ApiInventoryEndpoint) => {
 }
 
 watch(propSelectedProgramId, next => {
-  if (!programFilterTouched.value) {
-    programFilter.value = next
-  }
+  programFilterTouched.value = false
+  programFilter.value = next
 }, { immediate: true })
 
 watch(
@@ -1041,16 +1040,6 @@ watch(
   () => {
     selectedEndpointKey.value = ''
   },
-)
-
-watch(
-  () => props.selectedProgram?.id,
-  async () => {
-    if (!programFilterTouched.value) {
-      programFilter.value = propSelectedProgramId.value
-    }
-  },
-  { immediate: true },
 )
 
 onMounted(async () => {

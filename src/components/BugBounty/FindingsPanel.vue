@@ -39,6 +39,14 @@
               :disabled="loading || selectionLoading || batchActionLoading"
               @input="onFilterChange"
             />
+            <button
+              class="btn btn-sm btn-outline"
+              :disabled="loading || selectionLoading || batchActionLoading"
+              @click="$emit('refresh')"
+            >
+              <i class="fas fa-rotate-right mr-2"></i>
+              {{ t('common.refresh', '刷新') }}
+            </button>
             <button class="btn btn-sm btn-primary" :disabled="batchActionLoading" @click="$emit('create')">
               <i class="fas fa-plus mr-2"></i>
               {{ t('bugBounty.createFinding') }}
@@ -254,6 +262,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'create'): void
+  (e: 'refresh'): void
   (e: 'view', finding: any): void
   (e: 'delete', finding: any): void
   (e: 'create-submission', finding: any): void

@@ -90,7 +90,12 @@ impl WebSearchTool {
     }
 
     pub const NAME: &'static str = "web_search";
-    pub const DESCRIPTION: &'static str = "Search the web for real-time information using Tavily API. Returns relevant search results with titles, URLs, and content snippets. Useful for finding current information, documentation, CVEs, security advisories, and CTF writeups.";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Search the public web for up-to-date external information when the exact source URL is not known. ",
+        "Use for current facts, documentation discovery, CVEs, advisories, vendor pages, or reconnaissance leads. ",
+        "Returns ranked results with titles, URLs, and snippets, not full-page fetches. ",
+        "Prefer http_request when you already know the URL and need the exact page or API response."
+    );
 }
 
 impl Tool for WebSearchTool {

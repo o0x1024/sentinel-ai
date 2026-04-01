@@ -237,9 +237,31 @@
                 <div class="text-xl">
                   <i :class="getProviderIcon(provider)"></i>
                 </div>
-                <span class="font-medium">{{ getProviderName(provider) }}</span>
+                <span class="font-medium flex-1 min-w-0 truncate">{{ getProviderName(provider) }}</span>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  :title="t('common.delete', '删除')"
+                  @click.stop="deleteProvider(provider)"
+                >
+                  <i class="fas fa-trash"></i>
+                </button>
               </a>
             </li>
+          </div>
+
+          <div v-if="missingBuiltinProviders.length > 0" class="mt-4 rounded-box border border-base-300 bg-base-100 p-3">
+            <div class="text-sm font-medium mb-2">{{ t('settings.ai.quickAddBuiltinProviders', '快速添加内置提供商') }}</div>
+            <div class="flex flex-col gap-2">
+              <button
+                v-for="provider in missingBuiltinProviders"
+                :key="provider"
+                class="btn btn-sm btn-outline justify-start"
+                @click="restoreBuiltinProvider(provider)"
+              >
+                <i :class="getProviderIcon(provider)" class="mr-2"></i>
+                {{ getProviderName(provider) }}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -955,6 +977,8 @@ interface Emits {
   'testConnection': [provider: string]
   'testCustomProvider': []
   'addCustomProvider': []
+  'deleteProvider': [provider: string]
+  'restoreBuiltinProvider': [provider: string]
   'saveAiConfig': []
   'refreshModels': [provider: string]
   'applyManualConfig': [config: any]
@@ -1018,6 +1042,53 @@ const sortedProviderKeys = computed(() => {
   return Object.keys(providers).sort((a, b) =>
     a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true })
   )
+})
+
+const builtinProviderNames = [
+  'Anthropic',
+  'OpenAI',
+  'Azure OpenAI',
+  'Cohere',
+  'DeepSeek',
+  'EternalAI',
+  'Google Gemini',
+  'Galadriel',
+  'Groq',
+  'Hyperbolic',
+  'Mira',
+  'Moonshot',
+  'Ollama',
+  'Perplexity',
+  'TogetherAI',
+  'OpenRouter',
+  'xAI',
+]
+
+const builtinProviderKeys = new Set([
+  'anthropic',
+  'openai',
+  'azure openai',
+  'cohere',
+  'deepseek',
+  'eternalai',
+  'google gemini',
+  'galadriel',
+  'groq',
+  'hyperbolic',
+  'mira',
+  'moonshot',
+  'ollama',
+  'perplexity',
+  'togetherai',
+  'openrouter',
+  'xai',
+])
+
+const missingBuiltinProviders = computed(() => {
+  const existingProviders = new Set(
+    Object.keys(props.aiConfig?.providers || {}).map((provider) => provider.toLowerCase()),
+  )
+  return builtinProviderNames.filter((provider) => !existingProviders.has(provider.toLowerCase()))
 })
 
 const settings = computed({
@@ -1337,6 +1408,14 @@ const testCustomProvider = () => {
 
 const addCustomProvider = () => {
   emit('addCustomProvider')
+}
+
+const deleteProvider = (provider: string) => {
+  emit('deleteProvider', provider)
+}
+
+const restoreBuiltinProvider = (provider: string) => {
+  emit('restoreBuiltinProvider', provider)
 }
 
 const clearUsageStats = () => {

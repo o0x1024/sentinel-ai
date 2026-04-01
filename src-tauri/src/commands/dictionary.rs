@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde::Serialize;
 use std::sync::Arc;
 use tauri::State;
 
@@ -11,6 +12,12 @@ use sentinel_core::models::dictionary::{
 use sentinel_db::Database;
 use sentinel_services::nmap_service_probes::parse_nmap_service_probes;
 use std::collections::HashMap;
+
+#[derive(Debug, Serialize)]
+pub struct DictionaryPageResponse {
+    pub items: Vec<Dictionary>,
+    pub total: i64,
+}
 
 /// 获取字典列表
 #[tauri::command(rename_all = "snake_case")]
@@ -50,6 +57,58 @@ pub async fn get_dictionaries(
         .list_dictionaries(filter)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 分页获取字典列表
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_dictionaries_paged(
+    db_service: State<'_, Arc<DatabaseService>>,
+    dict_type: Option<String>,
+    service_type: Option<String>,
+    category: Option<String>,
+    is_builtin: Option<bool>,
+    is_active: Option<bool>,
+    search_term: Option<String>,
+    subtype: Option<String>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+) -> Result<DictionaryPageResponse, String> {
+    let pool = db_service.get_runtime_pool().map_err(|e| e.to_string())?;
+    let dictionary_service = DictionaryService::new(pool.clone());
+
+    let filter = if dict_type.is_some()
+        || service_type.is_some()
+        || category.is_some()
+        || is_builtin.is_some()
+        || is_active.is_some()
+        || search_term.is_some()
+    {
+        Some(DictionaryFilter {
+            dict_type: dict_type.map(DictionaryType::from),
+            service_type: service_type.map(ServiceType::from),
+            category,
+            is_builtin,
+            is_active,
+            tags: None,
+            search_term,
+        })
+    } else {
+        None
+    };
+
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(10);
+
+    let items = dictionary_service
+        .list_dictionaries_paged(filter.clone(), subtype.clone(), offset, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    let total = dictionary_service
+        .count_dictionaries(filter, subtype)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(DictionaryPageResponse { items, total })
 }
 
 /// 获取单个字典

@@ -48,6 +48,11 @@ pub struct AddCustomProviderRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteProviderRequest {
+    pub provider: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AiProviderConfig {
     pub id: String,
     pub provider: String,
@@ -309,6 +314,209 @@ pub async fn add_custom_provider(
     }
 
     // Emit config update event
+    if let Err(e) = app.emit("ai_config_updated", ()) {
+        tracing::warn!("Failed to emit ai_config_updated event: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Delete custom provider
+#[tauri::command]
+pub async fn delete_ai_provider(
+    request: DeleteProviderRequest,
+    db: State<'_, Arc<DatabaseService>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    tracing::info!("Deleting AI provider: {}", request.provider);
+
+    let mut providers: HashMap<String, AiProviderConfig> =
+        match db.get_config_internal("ai", "providers_config").await {
+            Ok(Some(config_str)) => {
+                serde_json::from_str(&config_str).unwrap_or_else(|_| HashMap::new())
+            }
+            _ => HashMap::new(),
+        };
+
+    let matched_key = providers
+        .keys()
+        .find(|key| key.eq_ignore_ascii_case(&request.provider))
+        .cloned()
+        .ok_or_else(|| format!("Provider '{}' not found", request.provider))?;
+
+    let removed_provider = providers
+        .remove(&matched_key)
+        .ok_or_else(|| format!("Provider '{}' not found", matched_key))?;
+
+    let config_str = serde_json::to_string(&providers)
+        .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
+
+    db.set_config_internal(
+        "ai",
+        "providers_config",
+        &config_str,
+        Some("AI providers configuration"),
+    )
+    .await
+    .map_err(|e| format!("Failed to save providers config to DB: {}", e))?;
+
+    let api_key_name = format!("api_key_{}", removed_provider.provider.to_lowercase());
+    db.delete_config_internal("ai", &api_key_name)
+        .await
+        .map_err(|e| format!("Failed to remove provider API key: {}", e))?;
+
+    let deleted_provider_lower = removed_provider.provider.to_lowercase();
+    let fallback_provider = providers
+        .values()
+        .find(|provider| provider.provider.eq_ignore_ascii_case("openai"))
+        .map(|provider| provider.provider.to_lowercase())
+        .or_else(|| providers.values().next().map(|provider| provider.provider.to_lowercase()));
+
+    if let Ok(Some(default_llm_provider)) = db.get_config_internal("ai", "default_llm_provider").await {
+        if default_llm_provider.eq_ignore_ascii_case(&deleted_provider_lower) {
+            if let Some(fallback_provider) = &fallback_provider {
+                db.set_config_internal(
+                    "ai",
+                    "default_llm_provider",
+                    fallback_provider,
+                    Some("Global default LLM provider"),
+                )
+                .await
+                .map_err(|e| format!("Failed to update default LLM provider: {}", e))?;
+
+                if let Err(e) = app.emit("ai_default_llm_provider_updated", fallback_provider) {
+                    tracing::warn!("Failed to emit ai_default_llm_provider_updated event: {}", e);
+                }
+            } else {
+                db.delete_config_internal("ai", "default_llm_provider")
+                    .await
+                    .map_err(|e| format!("Failed to clear default LLM provider: {}", e))?;
+            }
+        }
+    }
+
+    if let Ok(Some(default_vlm_provider)) = db.get_config_internal("ai", "default_vlm_provider").await {
+        if default_vlm_provider.eq_ignore_ascii_case(&deleted_provider_lower) {
+            if let Some(fallback_provider) = &fallback_provider {
+                db.set_config_internal(
+                    "ai",
+                    "default_vlm_provider",
+                    fallback_provider,
+                    Some("Default VLM provider"),
+                )
+                .await
+                .map_err(|e| format!("Failed to update default VLM provider: {}", e))?;
+            } else {
+                db.delete_config_internal("ai", "default_vlm_provider")
+                    .await
+                    .map_err(|e| format!("Failed to clear default VLM provider: {}", e))?;
+            }
+        }
+    }
+
+    if let Ok(Some(default_llm_model)) = db.get_config_internal("ai", "default_llm_model").await {
+        if provider_model_belongs_to(&default_llm_model, &deleted_provider_lower) {
+            db.delete_config_internal("ai", "default_llm_model")
+                .await
+                .map_err(|e| format!("Failed to clear default LLM model: {}", e))?;
+
+            if let Err(e) = app.emit("ai_default_llm_model_updated", "") {
+                tracing::warn!("Failed to emit ai_default_llm_model_updated event: {}", e);
+            }
+        }
+    }
+
+    if let Ok(Some(default_vlm_model)) = db.get_config_internal("ai", "default_vlm_model").await {
+        if provider_model_belongs_to(&default_vlm_model, &deleted_provider_lower) {
+            db.delete_config_internal("ai", "default_vlm_model")
+                .await
+                .map_err(|e| format!("Failed to clear default VLM model: {}", e))?;
+        }
+    }
+
+    if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
+        if let Err(e) = ai_manager.reload_services().await {
+            tracing::error!("Failed to reload AI services after deleting provider: {}", e);
+        } else if let Some(fallback_provider) = &fallback_provider {
+            if let Err(e) = ai_manager.set_default_alias_to(fallback_provider).await {
+                tracing::warn!(
+                    "Failed to set fallback default alias '{}' after deleting provider: {}",
+                    fallback_provider,
+                    e
+                );
+            }
+        }
+    }
+
+    if let Err(e) = app.emit("ai_config_updated", ()) {
+        tracing::warn!("Failed to emit ai_config_updated event: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Restore built-in provider
+#[tauri::command]
+pub async fn restore_builtin_ai_provider(
+    request: DeleteProviderRequest,
+    db: State<'_, Arc<DatabaseService>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    tracing::info!("Restoring built-in AI provider: {}", request.provider);
+
+    let defaults = default_providers_config();
+    let default_map = defaults
+        .as_object()
+        .ok_or_else(|| "Built-in AI provider catalog is invalid".to_string())?;
+
+    let matched_entry = default_map
+        .iter()
+        .find(|(key, value)| {
+            key.eq_ignore_ascii_case(&request.provider)
+                || value
+                    .get("provider")
+                    .and_then(|provider| provider.as_str())
+                    .map(|provider| provider.eq_ignore_ascii_case(&request.provider))
+                    .unwrap_or(false)
+        })
+        .ok_or_else(|| format!("Built-in provider '{}' not found", request.provider))?;
+
+    let matched_key = matched_entry.0.clone();
+    let provider_value = matched_entry.1.clone();
+
+    let mut providers = match db.get_config_internal("ai", "providers_config").await {
+        Ok(Some(config_str)) => serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&config_str)
+            .unwrap_or_default(),
+        _ => serde_json::Map::new(),
+    };
+
+    if providers
+        .keys()
+        .any(|key| key.eq_ignore_ascii_case(&matched_key))
+    {
+        return Err(format!("Provider '{}' already exists", matched_key));
+    }
+
+    providers.insert(matched_key.clone(), provider_value);
+
+    let config_str = serde_json::to_string(&providers)
+        .map_err(|e| format!("Failed to serialize providers config: {}", e))?;
+
+    db.set_config_internal(
+        "ai",
+        "providers_config",
+        &config_str,
+        Some("AI providers configuration"),
+    )
+    .await
+    .map_err(|e| format!("Failed to save providers config to DB: {}", e))?;
+
+    if let Some(ai_manager) = app.try_state::<Arc<AiServiceManager>>() {
+        if let Err(e) = ai_manager.reload_services().await {
+            tracing::error!("Failed to reload AI services after restoring provider: {}", e);
+        }
+    }
+
     if let Err(e) = app.emit("ai_config_updated", ()) {
         tracing::warn!("Failed to emit ai_config_updated event: {}", e);
     }
@@ -1407,4 +1615,10 @@ fn default_providers_config() -> serde_json::Value {
         map.insert(key.to_string(), value);
     }
     serde_json::Value::Object(map)
+}
+
+fn provider_model_belongs_to(model: &str, provider: &str) -> bool {
+    model.split_once('/')
+        .map(|(model_provider, _)| model_provider.eq_ignore_ascii_case(provider))
+        .unwrap_or(false)
 }
